@@ -1,0 +1,54 @@
+# Build artifacts
+iso/cache/
+iso/build/
+output/
+*.iso
+*.img
+
+# Temporary files
+tmp/
+*.tmp
+*~
+.*.swp
+.DS_Store
+
+# Log files
+*.log
+logs/
+
+# Keys and sensitive data
+*.key
+*.pem
+*.crt
+*.pfx
+vault_config.conf
+
+# User-specific files
+.orionx_theme
+
+# Compressed files
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+.venv/
+.pytest_cache/
+
+# Analysis results
+analysis_results/
+
+# Package files
+*.deb
+*.rpm
+
+# Original source (not tracked — flattened into repo root)
+ORION-X/
