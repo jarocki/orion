@@ -1,0 +1,27 @@
+{
+  "name": "Orion-X Phoenix Edition",
+  "version": "1.5.5",
+  "release_date": "2025-05-03",
+  "contents": [
+    { "path": "scripts/install.sh", "description": "Installation script", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
+    { "path": "data/samples/pcaps/2025-01-22-traffic-analysis-exercise.pcap.zip", "source": "malware-traffic-analysis.net", "license": "Copyright, used with permission" },
+    { "path": "tools/lynis/", "source": "CISOfy Lynis v3.0.0", "license": "GPLv3" },
+    { "path": "tools/volatility/", "source": "Volatility Framework v2.6", "license": "GPLv2" },
+    { "path": "theme/login.png", "author": "OrionX Design Team", "license": "CC BY-SA 4.0" }
+  ],
+  "third_party": [
+    { "name": "WireGuard", "version": "1.0.2025", "license": "GPLv2", "website": "https://www.wireguard.com" },
+    { "name": "Matrix Synapse", "version": "1.79.0", "license": "Apache 2.0", "website": "https://matrix.org" },
+    { "name": "Matrix Client (Element)", "version": "1.11.34", "license": "Apache 2.0", "website": "https://element.io" },
+    { "name": "Lynis", "version": "3.0.0", "license": "GPLv3", "website": "https://cisofy.com/lynis" },
+    { "name": "Cowrie Honeypot", "version": "2.3.0", "license": "MIT", "website": "https://github.com/cowrie/cowrie" },
+    { "name": "OpenWrt Firmware Image", "version": "19.07.8", "license": "GPLv2", "source": "OpenWrt Project" }
+  ],
+  "history": [
+    { "version": "1.0.0", "codename": "Squirrel Edition", "date": "2024-01-15", "summary": "Initial prototype with basic IR tools and simple UI." },
+    { "version": "1.2.0", "date": "2024-06-10", "summary": "Added VPN integration and sample PCAP data." },
+    { "version": "1.3.5", "date": "2024-09-30", "summary": "Introduced Matrix communication feature." },
+    { "version": "1.5.0", "codename": "Phoenix Edition", "date": "2025-03-01", "summary": "Major update with UI redesign, full disk encryption, expanded data samples." },
+    { "version": "1.5.5", "date": "2025-05-03", "summary": "Current release with security audit fixes and additional content." }
+  ]
+}

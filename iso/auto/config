@@ -1,0 +1,37 @@
+#!/bin/sh
+#
+# Orion-X Phoenix Edition v1.5.5
+# Live-build configuration script
+#
+# This script configures the live-build system for Orion-X.
+
+set -e
+
+# Base distribution
+DISTRIBUTION="bullseye"
+MIRROR_URL="http://deb.debian.org/debian/"
+
+# Configure live-build
+lb config noauto \
+    --mode debian \
+    --architectures amd64 \
+    --distribution "$DISTRIBUTION" \
+    --mirror-bootstrap "$MIRROR_URL" \
+    --mirror-binary "$MIRROR_URL" \
+    --archive-areas "main contrib non-free" \
+    --apt-indices false \
+    --apt-recommends true \
+    --debian-installer false \
+    --debian-installer-distribution "$DISTRIBUTION" \
+    --debian-installer-gui false \
+    --bootappend-live "boot=live components splash quiet persistence" \
+    --bootappend-install "locales=en_US.UTF-8" \
+    --bootloader "syslinux,grub-efi" \
+    --iso-application "Orion-X Phoenix Edition" \
+    --iso-publisher "Orion-X Project" \
+    --iso-volume "OrionX-v1.5.5" \
+    --memtest none \
+    --security true \
+    --updates true \
+    --win32-loader false \
+    "${@}"

@@ -14,7 +14,7 @@ tmp/
 
 # Log files
 *.log
-logs/
+/logs/
 
 # Keys and sensitive data
 *.key

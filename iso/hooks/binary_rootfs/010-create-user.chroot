@@ -1,0 +1,194 @@
+#!/bin/sh
+#
+# Orion-X Phoenix Edition v1.5.5
+# User creation hook for live-build
+#
+# This script creates the default live user and sets up the home directory.
+
+set -e
+
+# Create the orionx user and group
+if ! getent group orionx > /dev/null; then
+    addgroup --system orionx
+fi
+
+if ! getent passwd orionx > /dev/null; then
+    adduser --system --shell /bin/bash --ingroup orionx --home /home/orionx orionx
+    adduser orionx sudo
+    passwd -d orionx
+fi
+
+# Create home directory if it doesn't exist
+if [ ! -d /home/orionx ]; then
+    mkdir -p /home/orionx
+    chown orionx:orionx /home/orionx
+fi
+
+# Set up skeleton directories
+mkdir -p /home/orionx/Desktop
+mkdir -p /home/orionx/Documents
+mkdir -p /home/orionx/Analysis
+
+# Create desktop shortcuts
+cat > /home/orionx/Desktop/terminal.desktop << EOF
+[Desktop Entry]
+Name=Terminal
+Comment=Terminal for Orion-X
+Exec=xfce4-terminal
+Icon=utilities-terminal
+Terminal=false
+Type=Application
+Categories=System;TerminalEmulator;
+EOF
+
+cat > /home/orionx/Desktop/wireshark.desktop << EOF
+[Desktop Entry]
+Name=Wireshark
+Comment=Network Protocol Analyzer
+Exec=wireshark
+Icon=wireshark
+Terminal=false
+Type=Application
+Categories=Network;Analysis;
+EOF
+
+cat > /home/orionx/Desktop/orionx-guide.desktop << EOF
+[Desktop Entry]
+Name=Orion-X User Guide
+Comment=Documentation for Orion-X Phoenix Edition
+Exec=xdg-open /usr/share/doc/orionx/User_Guide.md
+Icon=help-browser
+Terminal=false
+Type=Application
+Categories=Documentation;
+EOF
+
+# Set correct permissions for desktop shortcuts
+chmod +x /home/orionx/Desktop/*.desktop
+chown -R orionx:orionx /home/orionx/Desktop
+
+# Copy documentation to user's Documents folder
+if [ -d /usr/share/doc/orionx ]; then
+    cp -r /usr/share/doc/orionx/* /home/orionx/Documents/
+    chown -R orionx:orionx /home/orionx/Documents
+fi
+
+# Set up bash configuration
+cat > /home/orionx/.bashrc << EOF
+# Orion-X Phoenix Edition v1.5.5 bash configuration
+
+# If not running interactively, don't do anything
+case \$- in
+    *i*) ;;
+      *) return;;
+esac
+
+# History control
+HISTCONTROL=ignoreboth
+HISTSIZE=1000
+HISTFILESIZE=2000
+shopt -s histappend
+
+# Check window size after each command
+shopt -s checkwinsize
+
+# Set prompt
+PS1='\[\033[38;5;214m\][Orion-X]\[\033[00m\] \[\033[01;34m\]\w\[\033[00m\]\\$ '
+
+# Aliases
+alias ll='ls -la'
+alias la='ls -A'
+alias l='ls -CF'
+alias update='sudo apt-get update && sudo apt-get upgrade'
+alias cls='clear'
+
+# Path
+export PATH=\$PATH:/usr/bin:/usr/local/bin
+
+# Welcome message
+echo "Welcome to Orion-X Phoenix Edition v1.5.5!"
+echo "Type 'orionx-help' for assistance."
+
+# Custom help function
+orionx-help() {
+    echo "Orion-X Phoenix Edition v1.5.5 Help"
+    echo "-----------------------------------"
+    echo "setup-vpn.sh     : Configure WireGuard VPN"
+    echo "setup-matrix.sh  : Setup secure communication"
+    echo "toggle-theme.sh  : Switch between dark and green themes"
+    echo "run-lynis.sh     : Run security audit"
+    echo ""
+    echo "Forensic Tools:"
+    echo "artifact-analyzer.py : Automate artifact analysis"
+    echo "storyboard-gen.py    : Create incident timeline"
+    echo ""
+    echo "Documentation available in /usr/share/doc/orionx/"
+}
+EOF
+
+# Set up Xfce4 terminal configuration
+mkdir -p /home/orionx/.config/xfce4/terminal
+cat > /home/orionx/.config/xfce4/terminal/terminalrc << EOF
+[Configuration]
+FontName=Monospace 12
+MiscAlwaysShowTabs=FALSE
+MiscBell=FALSE
+MiscBellUrgent=FALSE
+MiscBordersDefault=TRUE
+MiscCursorBlinks=TRUE
+MiscCursorShape=TERMINAL_CURSOR_SHAPE_BLOCK
+MiscDefaultGeometry=80x24
+MiscInheritGeometry=FALSE
+MiscMenubarDefault=FALSE
+MiscMouseAutohide=FALSE
+MiscMouseWheelZoom=TRUE
+MiscToolbarDefault=FALSE
+MiscConfirmClose=TRUE
+MiscCycleTabs=TRUE
+MiscTabCloseButtons=TRUE
+MiscTabCloseMiddleClick=TRUE
+MiscTabPosition=GTK_POS_TOP
+MiscHighlightUrls=TRUE
+MiscMiddleClickOpensUri=FALSE
+MiscCopyOnSelect=FALSE
+MiscShowRelaunchDialog=TRUE
+MiscRewrapOnResize=TRUE
+MiscUseShiftArrowsToScroll=FALSE
+MiscSlimTabs=FALSE
+MiscNewTabAdjacent=FALSE
+ColorForeground=#ff9900
+ColorBackground=#1a1a1a
+ColorCursor=#aaaaaa
+ColorPalette=#2e3436;#cc0000;#4e9a06;#c4a000;#3465a4;#75507b;#06989a;#d3d7cf;#555753;#ef2929;#8ae234;#fce94f;#729fcf;#ad7fa8;#34e2e2;#eeeeec
+EOF
+
+# Set file permissions
+chown -R orionx:orionx /home/orionx/.config
+
+# Set default theme preference
+echo "dark" > /home/orionx/.orionx_theme
+chown orionx:orionx /home/orionx/.orionx_theme
+
+# Create a welcome message that shows at login
+cat > /etc/update-motd.d/10-orionx-welcome << EOF
+#!/bin/sh
+echo "
+ ██████╗ ██████╗ ██╗ ██████╗ ███╗   ██╗      ██╗  ██╗
+██╔═══██╗██╔══██╗██║██╔═══██╗████╗  ██║      ╚██╗██╔╝
+██║   ██║██████╔╝██║██║   ██║██╔██╗ ██║█████╗ ╚███╔╝ 
+██║   ██║██╔══██╗██║██║   ██║██║╚██╗██║╚════╝ ██╔██╗ 
+╚██████╔╝██║  ██║██║╚██████╔╝██║ ╚████║      ██╔╝ ██╗
+ ╚═════╝ ╚═╝  ╚═╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝      ╚═╝  ╚═╝
+"
+echo "Phoenix Edition v1.5.5 - Incident Response & Digital Forensics Toolkit"
+echo ""
+echo "Type 'orionx-help' for a list of available tools and commands"
+echo "Documentation available in /usr/share/doc/orionx/"
+echo ""
+EOF
+chmod +x /etc/update-motd.d/10-orionx-welcome
+
+# Ensure proper permissions
+chown -R orionx:orionx /home/orionx
+
+exit 0

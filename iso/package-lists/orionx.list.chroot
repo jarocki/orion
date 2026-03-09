@@ -1,0 +1,126 @@
+# Orion-X Phoenix Edition v2.0.0-dev
+# Package list for live-build (Debian Bullseye)
+#
+# Packages marked EXTERNAL are NOT in the standard Debian Bullseye repos.
+# They must be installed via separate mechanisms (custom .deb, pip, or
+# third-party repo) and are commented out here so apt does not fail the
+# live-build.  See docs/DEVELOPMENT_CHECKLIST.md for install procedures.
+
+# Base system
+live-boot
+live-config
+live-tools
+dbus
+eject
+locales
+sudo
+user-setup
+
+# Desktop environment
+xfce4
+xfce4-terminal
+lightdm
+
+# Forensic tools
+# EXTERNAL: autopsy          — install via https://www.autopsy.com/download/
+binwalk
+bulk-extractor
+dc3dd
+foremost
+# EXTERNAL: ghidra           — install via https://ghidra-sre.org/
+hexedit
+sleuthkit
+tcpdump
+testdisk
+# EXTERNAL: volatility3      — install via: pip3 install volatility3
+wireshark
+# EXTERNAL: zeek             — install via https://zeek.org/get-zeek/
+
+# Networking tools
+curl
+dnsutils
+ethtool
+fping
+iputils-ping
+netcat-openbsd
+nmap
+openvpn
+proxychains
+smbclient
+ssh
+traceroute
+wget
+wireguard-tools
+
+# Security tools
+aircrack-ng
+chntpw
+clamav
+cryptsetup
+hashcat
+hydra
+john
+lynis
+macchanger
+nikto
+rkhunter
+steghide
+
+# Development tools
+build-essential
+gcc
+git
+make
+python3
+python3-pip
+python3-venv
+
+# Utilities
+apt-transport-https
+atop
+bsdmainutils
+ca-certificates
+coreutils
+ddrescue
+dialog
+encfs
+file
+gawk
+gnupg
+gparted
+gzip
+htop
+iotop
+jq
+less
+lsof
+man-db
+moreutils
+ncdu
+neovim
+net-tools
+openssl
+p7zip-full
+parallel
+pciutils
+powertop
+rsync
+screen
+smartmontools
+strace
+tmux
+usbutils
+vim
+whois
+zip
+
+# Libraries and dependencies
+libimage-exiftool-perl
+libssl-dev
+python3-dev
+python3-numpy
+python3-scapy
+
+# Custom packages (will be installed from config/packages.chroot/)
+# orionx-custom-tools
+# orionx-theme

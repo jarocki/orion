@@ -1,0 +1,18 @@
+version: '3'
+
+services:
+  orionx:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: orionx-phoenix
+    hostname: orionx-phoenix
+    cap_add:
+      - NET_ADMIN  # For network operations like tcpdump
+      - SYS_PTRACE # For memory analysis
+    volumes:
+      - ./analysis:/home/orionx/analysis # For saving analysis results
+    ports:
+      - "8888:8888" # Example port for any web services
+    tty: true
+    stdin_open: true
