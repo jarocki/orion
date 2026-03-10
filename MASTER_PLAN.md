@@ -1,70 +1,56 @@
-# MASTER_PLAN: Orion-X Phoenix Edition — First Production Release (v2.0.0)
+# MASTER_PLAN: Orion-X Phoenix Edition
 
 ## Original Intent
 
-> Take the existing Orion-X Phoenix Edition v1.5.5 codebase — a bootable forensic response platform with WireGuard VPN, Matrix communications, and a full forensic toolkit — and produce a genuinely buildable, tested, shippable v2.0.0 release. The v1.5.5 scripts and ISO configuration exist under `ORION-X/v1.5.5/` but have never been checked into the repository. The work spans 8 phases: repository bootstrap, build system, P2P mesh networking rewrite, Matrix collaboration validation, forensic toolkit testing, security hardening, integration testing, and final release. The core differentiator is transforming the client-server VPN into a true peer-to-peer auto-healing mesh network for teams operating in hostile environments.
+> Take the existing Orion-X Phoenix Edition v1.5.5 codebase — a bootable forensic response platform with WireGuard VPN, Matrix communications, and a full forensic toolkit — and produce a genuinely buildable, tested, shippable v2.0.0 release. Then evolve it into an autonomous forensic intelligence platform that matches the adversary's AI-driven speed, integrating MCP-orchestrated forensic tools, local LLMs, blockchain evidence integrity, post-quantum cryptography, and cloud/container forensics.
 
 ## Context
 
 Orion-X: Phoenix Edition is a modernization of John Jarocki's original Orion Live CD (~2010) — a bootable forensic response environment for incident responders. The Phoenix Edition transforms it into a **self-contained, peer-to-peer mesh-networked, encrypted platform** for cybersecurity teams operating in hostile environments.
 
-The project currently exists as well-designed scripts and documentation across `ORION-X/v1.5.0`, `ORION-X/v1.5.5`, and `ORION-X/orionx-phoenix-installation-bundle` — none checked into the repository. v1.5.5 is the most mature and becomes our foundation.
+**The threat landscape has changed fundamentally.** The GTG-1002 campaign (November 2025) demonstrated Chinese state actors weaponizing Claude Code with MCP for autonomous offense across 30+ organizations. Sysdig documented an 8-minute AWS escalation at [un]prompted (March 2026). Trend Micro's AESIR platform discovers critical zero-days in hours, including command injection flaws in MCP tooling itself. AI-specific CVEs grew 70% YoY to 1,000+ in 2025. Defenders must match the adversary's architecture: orchestration + tool integration + autonomous execution.
 
-**Goal:** Take v1.5.5 and produce a genuinely buildable, tested, shippable v2.0.0 release.
+Rob Lee's Protocol SIFT proved this works — the first autonomous forensic framework integrating MCP to orchestrate 200+ forensic utilities, reducing 90-minute analyses to 12 minutes with human validation.
+
+**Strategy:** Ship v2.0.0 as the buildable foundation (mesh + Matrix + toolkit), then layer AI, blockchain, PQC, and cloud forensics on top.
 
 ---
 
-## Critical Gaps (Code vs Documentation)
+## Architecture (6 Layers)
 
-| Gap | Severity | Detail |
+The architecture expands from the original 4 layers to 6, with AI as the central nervous system:
+
+| Layer | Name | v2.0.0 Scope | v3.0 Vision |
+|-------|------|-------------|-------------|
+| 1 | **Trusted Platform** | Debian Bullseye live-build, LUKS, UEFI+BIOS | NixOS immutable, TPM 2.0 measured boot, reproducible builds |
+| 2 | **Mesh Network** | WireGuard P2P auto-mesh, LAN-only | PQC hybrid (ML-KEM + X25519), mutual attestation, WAN via Tor |
+| 3 | **AI Forensic Engine** | Manual tool invocation | MCP orchestration (Protocol SIFT model), local LLMs, ATT&CK mapping |
+| 4 | **Cloud/Container Adapters** | Not in scope | AWS/Azure/GCP evidence collection, K8s forensic capture |
+| 5 | **Evidence Ledger** | File hashes + manual chain-of-custody | Blockchain Merkle-tree, smart contracts, quantum-resistant hashing |
+| 6 | **Team Collaboration** | Matrix/Synapse + Element, E2E encrypted | PQC-hybrid encryption, AI sitreps, integrated case management |
+
+Full architectural detail: `tmp/ORION-X-VISION-v3.md`
+
+---
+
+## Initiative 1: First Production Release (v2.0.0)
+
+### Critical Gaps (Code vs Documentation)
+
+| Gap | Severity | Status |
 |-----|----------|--------|
-| **VPN is client-server, not P2P mesh** | HIGH | `setup-vpn.sh` prompts for a server endpoint + pubkey. No auto-mesh, no peer discovery, no health checks. The "auto-healing mesh" exists only in docs. |
-| **Package list issues** | MEDIUM | `orionx.list.chroot` lists `ghidra`, `autopsy`, `volatility3`, `zeek` — several not in Debian Bullseye repos. Duplicate `cryptsetup` (lines 54, 79). |
-| **No tests whatsoever** | HIGH | Zero shell tests, zero Python tests, no CI. |
-| **Nested git repo** | LOW | v1.5.5 has its own `.git` inside the parent repo. Must flatten. |
-| **Sample data is placeholders** | LOW | `data/samples/` dirs contain only README.txt files; actual data downloaded at runtime. |
-
----
-
-## Architecture (4 Layers — Retained)
-
-1. **Bootable Media** — Debian Bullseye live-build, UEFI+BIOS hybrid, LUKS persistence, read-only host FS
-2. **Secure Mesh Network** — WireGuard P2P auto-mesh VPN *(needs rewrite)*
-3. **Team Collaboration** — Matrix/Synapse + Element, E2E encrypted, dual-mode (local/central)
-4. **Forensic Toolkit** — Volatility3, DC3DD, bulk_extractor, binwalk, TSK, Plaso, Ghidra, chain-of-custody
-
----
-
-## Phased Plan
-
-### Phase 1: Repository Bootstrap — ACTIVE
-**Env:** macOS | **Status:** In Progress
-
-Flatten v1.5.5 into the repo root with clean structure:
-```
-/
-├── scripts/            # setup-vpn.sh, setup-matrix.sh, install.sh, *.py
-├── iso/                # auto/config, hooks/, package-lists/
-├── data/samples/       # pcaps/, memory/, firmware/, logs/
-├── docs/               # User_Guide.md, SUPPORT.md, CONTRIBUTING.md
-├── tests/unit/         # New
-├── tests/integration/  # New
-├── .github/workflows/  # CI scaffolding
-├── Makefile            # Build orchestrator
-├── README.md, LICENSE.md, manifest.json, MASTER_PLAN.md
-└── archive/            # v1.5.0, orionx-phoenix-installation-bundle (preserved)
-```
-
-**Acceptance:** Clean initial commit on `develop` branch. `shellcheck scripts/*.sh` runs. `python3 -m py_compile scripts/*.py` passes. No nested `.git`.
-
----
+| VPN is client-server, not P2P mesh | HIGH | Phase 3 will address |
+| Package list issues (external pkgs, duplicates) | MEDIUM | Fixed in Phase 1 |
+| No tests whatsoever | HIGH | Phase 2 will address |
+| Nested git repo | LOW | Fixed in Phase 1 |
+| Sample data is placeholders | LOW | Phase 5 will address |
 
 ### Phase 2: Build System & Linting
-**Env:** macOS (Docker) + Linux VM (ISO) | **Status:** Planned
+**Env:** macOS (Docker) + Linux VM (ISO) | **Status:** Active
 
-- Create `Makefile` with targets: `lint`, `test-unit`, `docker-build`, `iso-build`, `clean`
-- Fix package list: remove duplicate `cryptsetup`, validate each package against Bullseye repos, create install hooks for packages needing external sources (Ghidra, Autopsy, volatility3, zeek)
-- Add ShellCheck + ruff/flake8 linting
+- Expand `Makefile` with targets: `lint`, `test-unit`, `docker-build`, `iso-build`, `clean`
+- Validate each package in `orionx.list.chroot` against Bullseye repos, create install hooks for EXTERNAL packages (Ghidra, Autopsy, volatility3, zeek)
+- Add ShellCheck + ruff linting to CI
 - Validate `build-iso.sh` end-to-end on Linux
 
 **Acceptance:** `make lint` passes. `make iso-build` produces bootable ISO on Linux.
@@ -91,7 +77,6 @@ Flatten v1.5.5 into the repo root with clean structure:
 **Env:** Docker | **Status:** Planned
 
 - Validate Synapse homeserver boots in container
-- Fix `apt-key add` deprecation (use `/usr/share/keyrings/`)
 - Test E2E encryption between two Element clients
 - Add systemd service for Synapse auto-start
 - Test message exchange over WireGuard mesh (combine with Phase 3)
@@ -104,10 +89,10 @@ Flatten v1.5.5 into the repo root with clean structure:
 **Env:** Docker + Linux VM | **Status:** Planned
 
 - Create `tests/integration/test-forensic-tools.sh` — verify each tool responds to `--version`/`--help`
-- Fix `artifact-analyzer.py`: bare `except:` → specific exceptions, add `requirements.txt`
 - Validate `storyboard-gen.py` HTML timeline generation
 - Fix `download-samples.sh`: validate URLs, add checksums, add `--offline` mode
-- Unit tests for Python scripts (mocked subprocesses)
+- Add `requirements.txt` for Python dependencies
+- Unit tests for Python scripts
 
 **Acceptance:** All forensic tools functional in ISO. `artifact-analyzer.py` produces valid output from sample data. Python test coverage >= 60%.
 
@@ -130,7 +115,7 @@ Flatten v1.5.5 into the repo root with clean structure:
 **Env:** Docker + QEMU + physical hardware | **Status:** Planned
 
 **End-to-end scenario:**
-1. Boot 3 nodes → form WireGuard mesh → establish Matrix comms
+1. Boot 3 nodes -> form WireGuard mesh -> establish Matrix comms
 2. Run forensic analysis on sample data from one node
 3. Share results via Matrix
 4. Generate incident report with chain of custody
@@ -145,7 +130,7 @@ Flatten v1.5.5 into the repo root with clean structure:
 
 ---
 
-### Phase 8: Release
+### Phase 8: Release v2.0.0
 **Env:** macOS + Linux | **Status:** Planned
 
 - Bump all version strings to v2.0.0
@@ -155,6 +140,67 @@ Flatten v1.5.5 into the repo root with clean structure:
 - Close all phase issues
 
 **Acceptance:** `sha256sum -c` passes. User Guide walkthrough succeeds on fresh ISO.
+
+---
+
+## Initiative 2: Autonomous Forensic Platform (v2.1 -> v3.x)
+
+This initiative transforms Orion X from a toolkit into an autonomous forensic intelligence platform. Each release builds on v2.0.0 and is independently valuable.
+
+### v2.1.0 — AI Integration (Protocol SIFT Model)
+
+**The core transformation.** Integrate MCP-orchestrated AI forensics inspired by Protocol SIFT.
+
+- **MCP Tool Server** — Expose all forensic utilities (Volatility3, tshark, bulk_extractor, Ghidra headless, Plaso, Zeek, sleuthkit, binwalk) as MCP tools with semantic descriptions
+- **Local LLM Runtime** — Self-hosted models via Ollama/llama.cpp. All AI processing is LOCAL. No evidence data leaves the platform
+- **Inference Constraint Layer** — High constraint mode (default): AI directs verified tool execution and interprets output. Direct evidence summarization without tool verification is blocked
+- **Ralph Wiggum Loop** — Failure-recovery: when tools fail, the engine reads errors, adjusts hypotheses, retries with alternatives
+- **Natural Language Interface** — "Show me lateral movement in the last 48 hours" -> coordinated multi-tool analysis
+- **MITRE ATT&CK v18+ Mapping** — Automatic indicator-to-technique mapping, ATLAS for AI threats
+- **Evidence integrity logging** — Merkle-tree hash chain for all evidence operations (blockchain MVP)
+- **AI stack self-defense** — Sandboxed MCP execution, input validation, dependency CVE scanning, model integrity verification (informed by AESIR's MCP vulnerability discoveries)
+
+### v2.2.0 — Cloud & Container Forensics
+
+- **Cloud forensic adapters** — AWS CloudTrail/GCP Audit/Azure Activity evidence collection via API
+- **Kubernetes forensic capture** — Pod snapshots, syscall traces via Falco/Sysdig, container post-mortem
+- **Serverless function log analysis** — Lambda, Cloud Functions, Azure Functions
+- **Multi-cloud evidence normalization** — Unified event schema
+- **8-minute response automation** — Rapid capture playbooks for ephemeral evidence
+
+### v3.0.0 — Blockchain & Post-Quantum Cryptography
+
+- **Distributed blockchain evidence ledger** — Private Merkle-tree across mesh nodes, smart contract chain-of-custody rules
+- **Quantum-resistant mesh encryption** — WireGuard with ML-KEM/Kyber + X25519 hybrid
+- **Quantum-resistant evidence hashing** — SLH-DSA/SPHINCS+ for long-term integrity
+- **AI audit trail** — Every inference, prompt, tool output, and conclusion recorded on-chain
+- **Court export** — Human-readable reports + cryptographic proofs + verifiable AI reasoning chains
+
+### v3.1.0 — Immutable Platform Migration
+
+- **NixOS migration** — Declarative, reproducible builds replacing Debian live-build
+- **TPM 2.0 measured boot** — Cryptographic platform attestation
+- **Mutual mesh attestation** — Nodes verify each other's integrity before joining
+- **Hardware Security Module integration** — YubiKey/Nitrokey for key material
+- **Atomic updates with rollback** — No configuration drift between deployments
+
+---
+
+## Design Principles
+
+**From the original Orion (retained):**
+1. Trusted platform in hostile environments
+2. Strong authentication and encrypted communications
+3. Self-contained operation (no dependency on compromised infrastructure)
+4. Pre-installed tools ready for immediate use
+
+**Extended for the modern era:**
+5. **AI-first, human-validated** — The machine proposes, the analyst disposes. Every AI conclusion requires verifiable tool output
+6. **Evidence integrity by default** — Everything is logged. There is no "unlogged" mode
+7. **Quantum-ready today** — Hybrid crypto everywhere. "Harvest now, decrypt later" is an active threat
+8. **Cloud-native forensics** — The crime scene extends to every cloud provider and container orchestrator
+9. **Reproducible trust** — The platform itself is cryptographically verifiable
+10. **Match the adversary's speed** — If offense operates at AI speed, defense must too
 
 ---
 
@@ -170,19 +216,45 @@ Flatten v1.5.5 into the repo root with clean structure:
 | ID | Date | Decision | Rationale |
 |----|------|----------|-----------|
 | DEC-001 | 2026-03-08 | Start from v1.5.5 as foundation | Most mature version, has all scripts and ISO config |
-| DEC-002 | 2026-03-08 | Debian Bullseye retained for v2.0 | Stable, known working; Bookworm migration deferred to v2.1 |
-| DEC-003 | 2026-03-08 | LAN-only mesh for MVP | NAT traversal adds significant complexity; defer to v2.1 |
+| DEC-002 | 2026-03-08 | Debian Bullseye retained for v2.0 | Stable, known working; NixOS migration deferred to v3.1 |
+| DEC-003 | 2026-03-08 | LAN-only mesh for MVP | NAT traversal adds complexity; defer to v2.1 |
+| DEC-004 | 2026-03-08 | Expand from 4 to 6 layers | AI engine, cloud adapters, blockchain ledger are essential for modern threats |
+| DEC-005 | 2026-03-08 | Protocol SIFT as AI architecture model | Proven by SANS (40+ students, 2/3 improved), MCP orchestration is the right pattern |
+| DEC-006 | 2026-03-08 | All AI processing must be LOCAL | Evidence data must never leave the platform; no cloud AI APIs |
+| DEC-007 | 2026-03-08 | MCP tool server needs sandboxed execution | AESIR found command injection in MCP tooling; our AI stack is an attack surface |
+| DEC-008 | 2026-03-08 | Ship v2.0 before AI integration | Foundation must work first; AI layers on top of proven mesh+comms+toolkit |
 
 ## Risk Register
 
 | Risk | Mitigation |
 |------|------------|
-| Packages not in Bullseye (Ghidra, Autopsy, zeek) | Install hooks from upstream; consider Bookworm upgrade for v2.1 |
-| P2P mesh complexity (NAT traversal) | MVP = LAN-only mesh; NAT traversal deferred to v2.1 |
+| Packages not in Bullseye (Ghidra, Autopsy, zeek) | Install hooks from upstream; Bookworm/NixOS in v3.1 |
+| P2P mesh complexity (NAT traversal) | MVP = LAN-only mesh; NAT traversal deferred |
 | ISO build needs Linux | Document build env; GitHub Actions CI |
-| Debian Bullseye EOL (June 2026) | Bookworm migration planned for v2.1 |
+| Debian Bullseye EOL (June 2026) | NixOS migration planned for v3.1 |
 | Sample data URLs go stale | `--offline` mode with synthetic data |
+| MCP tooling vulnerabilities (AESIR findings) | Sandboxed execution, input validation, CVE monitoring |
+| LLM hallucination in forensic analysis | Inference Constraint Layer, tool-output-only conclusions |
+| AI stack as attack surface | Air-gap capable, model integrity verification, audit logging |
+| Post-quantum transition urgency | Hybrid crypto from v3.0; classical remains secure for now |
+
+## References
+
+- [1] Jarocki, J. "Orion Incident Response Live CD" — SANS White Paper #33368
+- [2] Lee, R.T. "Introducing Protocol SIFT" — robtlee73.substack.com, March 2026
+- [3] NIST FIPS 203 (ML-KEM), FIPS 204 (ML-DSA), FIPS 205 (SLH-DSA) — PQC Standards
+- [4] MITRE ATT&CK v18.1 (Dec 2025); MITRE ATLAS AI Threat Framework
+- [5] ForensicLLM — Fine-tuned LLaMA-3.1-8B for digital forensics (ResearchGate, 2025)
+- [6] SANS FOR563 — Applied AI for DFIR with Local LLMs
+- [7] GTG-1002 Campaign — Chinese state-sponsored AI-driven attacks, Nov 2025
+- [8] Sysdig — 8-minute AWS escalation, [un]prompted March 2026
+- [9] mcp-forensic-toolkit — Open-source MCP forensic server (GitHub)
+- [10] Trend Micro AESIR — 21 critical CVEs including MCP tooling flaws, Jan 2026
+- [11] Deep Research — `.claude/research/DeepResearch_OrionX_Modern_Vision_2026-03-08/report.md`
 
 ## Completed Initiatives
 
-*(none yet)*
+### Phase 1: Repository Bootstrap (v2.0.0)
+**Completed:** 2026-03-08 | **Commit:** `1d8845f` on `develop`
+
+Flattened v1.5.5 into repo root. 35 files, clean structure (scripts/, iso/, data/, docs/, tests/, archive/). Fixed: bare `except:` in Python scripts, deprecated `apt-key` in setup-matrix.sh, duplicate `cryptsetup` in package list, external packages tagged. Created Makefile and CI scaffold.
