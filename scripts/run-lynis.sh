@@ -38,7 +38,7 @@ fi
 # Create custom Lynis profile if it doesn't exist
 if [ ! -f "$LYNIS_PROFILE" ]; then
     log "Creating custom Lynis profile..."
-    mkdir -p $(dirname "$LYNIS_PROFILE")
+    mkdir -p "$(dirname "$LYNIS_PROFILE")"
     
     cat > "$LYNIS_PROFILE" << EOF
 # Custom Lynis profile for Orion-X Phoenix Edition

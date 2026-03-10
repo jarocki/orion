@@ -59,7 +59,7 @@ check_requirements() {
 get_user_inputs() {
     # Get ISO path if not provided
     while [ -z "$ISO_PATH" ] || [ ! -f "$ISO_PATH" ]; do
-        read -p "Enter path to Orion-X ISO file: " ISO_PATH
+        read -rp "Enter path to Orion-X ISO file: " ISO_PATH
         if [ ! -f "$ISO_PATH" ]; then
             echo "ISO file not found. Please enter a valid path."
         fi
@@ -71,13 +71,13 @@ get_user_inputs() {
     
     # Get target device
     while [ -z "$TARGET_DEVICE" ]; do
-        read -p "Enter target device (e.g., /dev/sdb): " TARGET_DEVICE
+        read -rp "Enter target device (e.g., /dev/sdb): " TARGET_DEVICE
         if [ ! -b "$TARGET_DEVICE" ]; then
             echo "Device not found. Please enter a valid device."
             TARGET_DEVICE=""
         else
             echo "WARNING: All data on $TARGET_DEVICE will be erased!"
-            read -p "Continue? (y/n): " confirm
+            read -rp "Continue? (y/n): " confirm
             if [ "$confirm" != "y" ]; then
                 TARGET_DEVICE=""
             fi
@@ -85,12 +85,12 @@ get_user_inputs() {
     done
     
     # Ask for persistence
-    read -p "Enable persistence? (y/n): " persistence
+    read -rp "Enable persistence? (y/n): " persistence
     if [ "$persistence" = "y" ]; then
         ENABLE_PERSISTENCE=true
         
         # Ask for encryption
-        read -p "Encrypt persistent storage? (y/n): " encryption
+        read -rp "Encrypt persistent storage? (y/n): " encryption
         if [ "$encryption" = "y" ]; then
             ENABLE_ENCRYPTION=true
         fi
@@ -102,7 +102,7 @@ prepare_device() {
     log "Preparing target device $TARGET_DEVICE..."
     
     # Unmount any partitions on the target device
-    umount ${TARGET_DEVICE}* 2>/dev/null || true
+    umount "${TARGET_DEVICE}"* 2>/dev/null || true
     
     # Create new partition table
     log "Creating new partition table..."

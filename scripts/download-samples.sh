@@ -8,7 +8,7 @@ SAMPLES_DIR="/opt/orionx/data/samples"
 # Create log directory if it doesn't exist
 sudo mkdir -p /var/log/orionx
 sudo touch $LOGFILE
-sudo chown -R $(whoami):$(whoami) /var/log/orionx
+sudo chown -R "$(whoami)":"$(whoami)" /var/log/orionx
 
 # Log function
 log() {
@@ -300,7 +300,7 @@ create_firmware_sample
 create_log_samples
 
 # Set correct permissions
-sudo chown -R $(whoami):$(whoami) "$SAMPLES_DIR"
+sudo chown -R "$(whoami)":"$(whoami)" "$SAMPLES_DIR"
 sudo chmod -R 755 "$SAMPLES_DIR"
 
 log "Sample data download/creation completed"

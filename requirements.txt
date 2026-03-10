@@ -1,0 +1,2 @@
+# Orion-X Phoenix Edition Python Dependencies
+# Used by artifact-analyzer.py and storyboard-gen.py

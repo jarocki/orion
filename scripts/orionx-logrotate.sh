@@ -36,10 +36,11 @@ rotate_log() {
     fi
     
     # Get log file name without path
-    local log_name=$(basename "$log_file")
+    local log_name
+    log_name=$(basename "$log_file")
     
     # Check if log file size exceeds the limit
-    if [ $(stat -c%s "$log_file") -gt $(numfmt --from=iec "$MAX_LOG_SIZE") ]; then
+    if [ "$(stat -c%s "$log_file")" -gt "$(numfmt --from=iec "$MAX_LOG_SIZE")" ]; then
         log "Rotating log file: $log_file"
         
         # Create archive filename
@@ -68,11 +69,12 @@ cleanup_old_archives() {
     local archives=("$ARCHIVE_DIR/${log_name}-"*.gz)
     local archive_count=${#archives[@]}
     
-    if [ $archive_count -gt $MAX_ARCHIVES ]; then
+    if [ "$archive_count" -gt "$MAX_ARCHIVES" ]; then
         log "Cleaning up old archives for: $log_name"
         
         # Sort archives by date (oldest first)
-        local sorted_archives=($(ls -t "$ARCHIVE_DIR/${log_name}-"*.gz | tac))
+        local sorted_archives=()
+        mapfile -t sorted_archives < <(find "$ARCHIVE_DIR" -maxdepth 1 -name "${log_name}-*.gz" -printf '%T@ %p\n' | sort -n | awk '{print $2}')
         
         # Calculate how many to delete
         local delete_count=$((archive_count - MAX_ARCHIVES))
@@ -92,6 +94,7 @@ upload_to_vault() {
         log "Artifact vault configuration found, checking for logs to upload"
         
         # Source the configuration
+        # shellcheck source=/dev/null
         source "/etc/orionx/vault_config.conf"
         
         # Check if required variables are set
@@ -99,7 +102,8 @@ upload_to_vault() {
             log "Uploading log archives to artifact vault"
             
             # Find all archives from today
-            local today=$(date +%Y%m%d)
+            local today
+            today=$(date +%Y%m%d)
             local today_archives=("$ARCHIVE_DIR/"*"$today"*.gz)
             
             if [ ${#today_archives[@]} -eq 0 ]; then
@@ -150,7 +154,7 @@ done
 # Check for other logs in the directory
 for log_file in "$LOG_DIR"/*.log; do
     # Skip already processed logs
-    if [[ ! " ${LOGS_TO_ROTATE[*]} " =~ " ${log_file} " ]]; then
+    if [[ ! " ${LOGS_TO_ROTATE[*]} " =~ (^|[[:space:]])"${log_file}"([[:space:]]|$) ]]; then
         rotate_log "$log_file"
     fi
 done

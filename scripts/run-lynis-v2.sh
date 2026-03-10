@@ -15,7 +15,7 @@ REPORT_FILE="$REPORT_DIR/lynis-report.txt"
 sudo mkdir -p /var/log/orionx
 sudo mkdir -p "$REPORT_DIR"
 sudo touch "$LOGFILE"
-sudo chown -R $(whoami):$(whoami) /var/log/orionx
+sudo chown -R "$(whoami)":"$(whoami)" /var/log/orionx
 
 # Log function
 log() {
@@ -91,7 +91,7 @@ config-data=lynis.log-tests-incorrect=yes
 EOF
 
 # Run Lynis with Docker-specific options
-if sudo lynis audit system --profile="$PROFILE_FILE" --no-colors --quick > "$REPORT_FILE" 2>> "$LOGFILE"; then
+if sudo lynis audit system --profile="$PROFILE_FILE" --no-colors --quick 2>>"$LOGFILE" | sudo tee "$REPORT_FILE" > /dev/null; then
     log "Lynis audit completed successfully"
 else
     log "WARNING: Lynis audit completed with warnings or errors"

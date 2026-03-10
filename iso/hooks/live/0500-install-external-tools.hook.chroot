@@ -1,0 +1,30 @@
+#!/bin/bash
+# Install tools not available in Debian Bullseye standard repos
+# These are installed from upstream sources during ISO build
+
+set -e
+
+echo "=== Installing external tools ==="
+
+# Volatility3 (Python package)
+pip3 install volatility3 || echo "WARNING: volatility3 install failed"
+
+# Zeek (from upstream repo)
+echo 'deb http://download.opensuse.org/repositories/security:/zeek/Debian_11/ /' > /etc/apt/sources.list.d/zeek.list
+curl -fsSL https://download.opensuse.org/repositories/security:zeek/Debian_11/Release.key | gpg --dearmor > /etc/apt/trusted.gpg.d/zeek.gpg
+apt-get update
+apt-get install -y zeek || echo "WARNING: zeek install failed"
+
+# Ghidra (download binary release)
+GHIDRA_VERSION="11.3.1"
+GHIDRA_DATE="20250205"
+curl -fsSL -o /tmp/ghidra.zip "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_DATE}.zip"
+unzip -q /tmp/ghidra.zip -d /opt/
+ln -sf /opt/ghidra_${GHIDRA_VERSION}_PUBLIC /opt/ghidra
+rm /tmp/ghidra.zip
+echo 'export PATH="/opt/ghidra:$PATH"' >> /etc/profile.d/ghidra.sh
+
+# Autopsy (requires Java, complex install — placeholder)
+echo "NOTE: Autopsy requires manual installation. See docs/INSTALL_AUTOPSY.md"
+
+echo "=== External tools installation complete ==="

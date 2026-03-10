@@ -161,7 +161,7 @@ if [ -f "$HOME/.bashrc" ]; then
     
     # Add new PS1 setting
     echo "# Orion-X Phoenix Edition PS1" >> "$HOME/.bashrc"
-    echo "PS1='${PS1_COLOR}[Orion-X]\[\033[00m\] \[\033[01;34m\]\w\[\033[00m\]\\$ '" >> "$HOME/.bashrc"
+    printf "PS1='%s[Orion-X]\\[\\033[00m\\] \\[\\033[01;34m\\]\\w\\[\\033[00m\\]\\\\$ '\n" "${PS1_COLOR}" >> "$HOME/.bashrc"
     
     log "Bash prompt updated"
 else

@@ -73,7 +73,7 @@ get_setup_mode() {
     echo "Please select Matrix setup mode:"
     echo "1) Configure this device as a Matrix homeserver"
     echo "2) Connect to an existing Matrix homeserver"
-    read -p "Select mode (1 or 2): " mode_choice
+    read -rp "Select mode (1 or 2): " mode_choice
     
     if [ "$mode_choice" = "1" ]; then
         SERVER_MODE="server"
@@ -92,7 +92,7 @@ setup_matrix_server() {
     log "Setting up Matrix Synapse homeserver..."
     
     # Get server name
-    read -p "Enter server name (e.g., orionx.local): " SERVER_NAME
+    read -rp "Enter server name (e.g., orionx.local): " SERVER_NAME
     
     # Generate a random registration shared secret
     REGISTRATION_SECRET=$(cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w 32 | head -n 1)
@@ -125,8 +125,8 @@ setup_matrix_server() {
     
     # Set up admin user
     log "Setting up admin user..."
-    read -p "Enter admin username: " MATRIX_USERNAME
-    read -s -p "Enter admin password: " MATRIX_PASSWORD
+    read -rp "Enter admin username: " MATRIX_USERNAME
+    read -rsp "Enter admin password: " MATRIX_PASSWORD
     echo ""
     
     # Start the Synapse server
@@ -153,11 +153,11 @@ setup_matrix_client() {
     log "Setting up Matrix client..."
     
     # Get homeserver URL
-    read -p "Enter Matrix homeserver URL (e.g., https://matrix.example.org): " HOMESERVER_URL
+    read -rp "Enter Matrix homeserver URL (e.g., https://matrix.example.org): " HOMESERVER_URL
     
     # Get user credentials
-    read -p "Enter Matrix user ID (@username:server.org): " MATRIX_USER_ID
-    read -s -p "Enter password: " MATRIX_PASSWORD
+    read -rp "Enter Matrix user ID (@username:server.org): " MATRIX_USER_ID
+    read -rsp "Enter password: " MATRIX_PASSWORD
     echo ""
     
     # Configure Element client
@@ -169,7 +169,7 @@ setup_matrix_client() {
 # Function to configure Element client
 setup_element_client() {
     local homeserver_url="$1"
-    local user_id="$2"
+    local _user_id="$2"  # reserved for future use
     
     log "Configuring Element client..."
     

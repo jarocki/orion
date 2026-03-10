@@ -46,7 +46,7 @@ chmod 700 "$CONFIG_DIR"
 get_config_inputs() {
     # Check for existing config file
     if [ -f "$CONFIG_FILE" ]; then
-        read -p "WireGuard configuration already exists. Overwrite? (y/n): " overwrite
+        read -rp "WireGuard configuration already exists. Overwrite? (y/n): " overwrite
         if [ "$overwrite" != "y" ]; then
             log "Keeping existing configuration"
             return
@@ -55,22 +55,22 @@ get_config_inputs() {
     
     # Get server endpoint
     echo "Please enter your team's WireGuard server information:"
-    read -p "Server endpoint (IP:Port): " SERVER_ENDPOINT
+    read -rp "Server endpoint (IP:Port): " SERVER_ENDPOINT
     
     # Get server public key
-    read -p "Server public key: " SERVER_PUBKEY
+    read -rp "Server public key: " SERVER_PUBKEY
     
     # Get client IP address
-    read -p "Client IP address (with CIDR, e.g. 10.10.10.2/24): " CLIENT_IP
+    read -rp "Client IP address (with CIDR, e.g. 10.10.10.2/24): " CLIENT_IP
     
     # Optional: Get DNS servers
-    read -p "DNS servers (comma separated, default: $DNS_SERVERS): " custom_dns
+    read -rp "DNS servers (comma separated, default: $DNS_SERVERS): " custom_dns
     if [ -n "$custom_dns" ]; then
         DNS_SERVERS="$custom_dns"
     fi
     
     # Optional: Get allowed IPs
-    read -p "Allowed IPs (comma separated, default: $ALLOWED_IPS): " custom_ips
+    read -rp "Allowed IPs (comma separated, default: $ALLOWED_IPS): " custom_ips
     if [ -n "$custom_ips" ]; then
         ALLOWED_IPS="$custom_ips"
     fi
