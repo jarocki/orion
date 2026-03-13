@@ -13,7 +13,7 @@ Rationale:
     CLI so analysts do not need to remember per-tool invocation syntax.
     Produces a chain-of-custody document alongside every analysis run.
 
-@decision DEC-BOOTSTRAP-001
+@decision DEC-003 [BOOTSTRAP]
 @title Phase 1 bootstrap — copy with targeted bug fixes
 @status accepted
 @rationale Bare except: clauses replaced with typed exceptions; file(1)

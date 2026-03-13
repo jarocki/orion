@@ -71,6 +71,14 @@ Full architectural detail: `tmp/ORION-X-VISION-v3.md`
 
 **Acceptance:** 3-node WireGuard mesh forms automatically in Docker compose. `wg show` on each node shows 2 peers. Health check recovers from killed peer within 120s.
 
+**Non-Goals (v2.0.0):**
+- NAT traversal / STUN / TURN (deferred to v2.1, per DEC-003)
+- Internet-routable mesh (LAN-only for MVP)
+- Dynamic topology changes (fixed full-mesh only)
+- Mobile device support
+- GUI for mesh management (CLI only: `orionx-mesh`)
+- Certificate-based authentication (PSK for v2.0.0)
+
 ---
 
 ### Phase 4: Matrix Team Collaboration
@@ -215,14 +223,15 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 
 | ID | Date | Decision | Rationale |
 |----|------|----------|-----------|
-| DEC-001 | 2026-03-08 | Start from v1.5.5 as foundation | Most mature version, has all scripts and ISO config |
-| DEC-002 | 2026-03-08 | Debian Bullseye retained for v2.0 | Stable, known working; NixOS migration deferred to v3.1 |
-| DEC-003 | 2026-03-08 | LAN-only mesh for MVP | NAT traversal adds complexity; defer to v2.1 |
-| DEC-004 | 2026-03-08 | Expand from 4 to 6 layers | AI engine, cloud adapters, blockchain ledger are essential for modern threats |
-| DEC-005 | 2026-03-08 | Protocol SIFT as AI architecture model | Proven by SANS (40+ students, 2/3 improved), MCP orchestration is the right pattern |
-| DEC-006 | 2026-03-08 | All AI processing must be LOCAL | Evidence data must never leave the platform; no cloud AI APIs |
-| DEC-007 | 2026-03-08 | MCP tool server needs sandboxed execution | AESIR found command injection in MCP tooling; our AI stack is an attack surface |
-| DEC-008 | 2026-03-08 | Ship v2.0 before AI integration | Foundation must work first; AI layers on top of proven mesh+comms+toolkit |
+| DEC-001 | 2026-03-08 | [FOUNDATION] Start from v1.5.5 as foundation | Most mature version, has all scripts and ISO config |
+| DEC-002 | 2026-03-08 | [INFRA] Debian Bullseye retained for v2.0 | Stable, known working; NixOS migration deferred to v3.1 |
+| DEC-003 | 2026-03-08 | [MESH] LAN-only mesh for MVP | NAT traversal adds complexity; defer to v2.1. Code: `scripts/artifact-analyzer.py` |
+| DEC-004 | 2026-03-08 | [ARCH] Expand from 4 to 6 layers | AI engine, cloud adapters, blockchain ledger are essential for modern threats. Code: `scripts/storyboard-gen.py` |
+| DEC-005 | 2026-03-08 | [BUILD] Protocol SIFT as AI architecture model | Proven by SANS (40+ students, 2/3 improved), MCP orchestration is the right pattern. Code: `Makefile` |
+| DEC-006 | 2026-03-08 | [SECURITY] All AI processing must be LOCAL | Evidence data must never leave the platform; no cloud AI APIs |
+| DEC-007 | 2026-03-08 | [SECURITY] MCP tool server needs sandboxed execution | AESIR found command injection in MCP tooling; our AI stack is an attack surface |
+| DEC-008 | 2026-03-08 | [STRATEGY] Ship v2.0 before AI integration | Foundation must work first; AI layers on top of proven mesh+comms+toolkit |
+| DEC-009 | 2026-03-12 | [INFRA] Retain Bullseye for v2.0.0; plan Bookworm migration as future initiative | Bullseye EOL June 2026; v2.0.0 ships before EOL. Bookworm migration deferred to post-v2.0.0 initiative |
 
 ## Risk Register
 
@@ -231,7 +240,7 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | Packages not in Bullseye (Ghidra, Autopsy, zeek) | Install hooks from upstream; Bookworm/NixOS in v3.1 |
 | P2P mesh complexity (NAT traversal) | MVP = LAN-only mesh; NAT traversal deferred |
 | ISO build needs Linux | Document build env; GitHub Actions CI |
-| Debian Bullseye EOL (June 2026) | NixOS migration planned for v3.1 |
+| Debian Bullseye EOL June 2026 | DEC-009: Ship v2.0.0 before EOL; Bookworm migration planned as post-v2.0.0 initiative |
 | Sample data URLs go stale | `--offline` mode with synthetic data |
 | MCP tooling vulnerabilities (AESIR findings) | Sandboxed execution, input validation, CVE monitoring |
 | LLM hallucination in forensic analysis | Inference Constraint Layer, tool-output-only conclusions |

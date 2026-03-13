@@ -1,6 +1,6 @@
 {
   "name": "Orion-X Phoenix Edition",
-  "version": "1.5.5",
+  "version": "2.0.0-dev",
   "release_date": "2025-05-03",
   "contents": [
     { "path": "scripts/install.sh", "description": "Installation script", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },

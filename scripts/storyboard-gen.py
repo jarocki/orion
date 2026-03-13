@@ -14,7 +14,7 @@ Rationale:
     and emits a single unified timeline so the responder reads one document
     instead of many.
 
-@decision DEC-BOOTSTRAP-002
+@decision DEC-004 [BOOTSTRAP]
 @title Phase 1 bootstrap — storyboard-gen bare-except fixes
 @status accepted
 @rationale Three bare except: clauses replaced with typed exceptions.

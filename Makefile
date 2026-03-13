@@ -1,5 +1,5 @@
 ##
-# @decision DEC-BUILD-001
+# @decision DEC-005 [BUILD]
 # @title Makefile targets for Orion-X Phoenix Edition build system
 # @status accepted
 # @rationale Centralises lint, test, and build entry points so CI and
