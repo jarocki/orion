@@ -46,7 +46,7 @@ Full architectural detail: `tmp/ORION-X-VISION-v3.md`
 | Sample data is placeholders | LOW | Phase 5 will address |
 
 ### Phase 2: Build System & Linting
-**Env:** macOS (Docker) + Linux VM (ISO) | **Status:** Active
+**Env:** macOS (Docker) + Linux VM (ISO) | **Status:** Completed
 
 - Expand `Makefile` with targets: `lint`, `test-unit`, `docker-build`, `iso-build`, `clean`
 - Validate each package in `orionx.list.chroot` against Bullseye repos, create install hooks for EXTERNAL packages (Ghidra, Autopsy, volatility3, zeek)
@@ -58,7 +58,7 @@ Full architectural detail: `tmp/ORION-X-VISION-v3.md`
 ---
 
 ### Phase 3: P2P Mesh Networking (Core Differentiator)
-**Env:** Docker multi-container + Linux VMs | **Status:** Planned
+**Env:** Docker multi-container + Linux VMs | **Status:** Active
 
 **Rewrite `setup-vpn.sh` as true P2P mesh:**
 - Each node generates keypair on boot
@@ -232,6 +232,10 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | DEC-007 | 2026-03-08 | [SECURITY] MCP tool server needs sandboxed execution | AESIR found command injection in MCP tooling; our AI stack is an attack surface |
 | DEC-008 | 2026-03-08 | [STRATEGY] Ship v2.0 before AI integration | Foundation must work first; AI layers on top of proven mesh+comms+toolkit |
 | DEC-009 | 2026-03-12 | [INFRA] Retain Bullseye for v2.0.0; plan Bookworm migration as future initiative | Bullseye EOL June 2026; v2.0.0 ships before EOL. Bookworm migration deferred to post-v2.0.0 initiative |
+| DEC-010 | 2026-04-05 | [STRATEGY] Aggressive timeline — ship v2.0.0 on Bullseye before June 2026 EOL | 6 phases remain, ~2 months to EOL. No margin for delay. Reckoning confirmed foundations are sound — execute now |
+| DEC-011 | 2026-04-05 | [MESH] Full P2P mesh scope for Phase 3 | Core differentiator. Reduced scope would undermine the project's identity. LAN-only constraint (DEC-003) already limits complexity |
+| DEC-012 | 2026-04-05 | [HOUSEKEEPING] Move ORION-X/ to archive/legacy-orionx/ | 17MB of legacy PDFs, images, and old versions at repo root. v1.5.5 scripts already flattened. v1.5.0 analysis scripts preserved as reference for future AI phases |
+| DEC-013 | 2026-04-05 | [PROCESS] Weekly development cadence with session checkpoints | Project demonstrated burst execution (4 days) then stalled 24 days. Regular cadence prevents drift |
 
 ## Risk Register
 
@@ -240,7 +244,7 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | Packages not in Bullseye (Ghidra, Autopsy, zeek) | Install hooks from upstream; Bookworm/NixOS in v3.1 |
 | P2P mesh complexity (NAT traversal) | MVP = LAN-only mesh; NAT traversal deferred |
 | ISO build needs Linux | Document build env; GitHub Actions CI |
-| Debian Bullseye EOL June 2026 | DEC-009: Ship v2.0.0 before EOL; Bookworm migration planned as post-v2.0.0 initiative |
+| Debian Bullseye EOL June 2026 | DEC-010: Aggressive timeline, ship before EOL. Weekly cadence (DEC-013). Scope constrained by DEC-003 (LAN-only) and Phase 3 non-goals |
 | Sample data URLs go stale | `--offline` mode with synthetic data |
 | MCP tooling vulnerabilities (AESIR findings) | Sandboxed execution, input validation, CVE monitoring |
 | LLM hallucination in forensic analysis | Inference Constraint Layer, tool-output-only conclusions |
@@ -267,3 +271,8 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 **Completed:** 2026-03-08 | **Commit:** `1d8845f` on `develop`
 
 Flattened v1.5.5 into repo root. 35 files, clean structure (scripts/, iso/, data/, docs/, tests/, archive/). Fixed: bare `except:` in Python scripts, deprecated `apt-key` in setup-matrix.sh, duplicate `cryptsetup` in package list, external packages tagged. Created Makefile and CI scaffold.
+
+### Phase 2: Build System & Linting (v2.0.0)
+**Completed:** 2026-04-05 | **Commit:** `562d998` on `develop`
+
+Makefile with 9 targets (lint, test-unit, docker-build, iso-build, clean, and supporting targets). Dockerfile and docker-compose.yml for containerized builds. GitHub Actions CI (lint.yml) with ShellCheck + ruff linting. Unit test suite (tests/test_phase2_build_system.py, 250 lines). requirements.txt for Python dependencies. All linting passes.

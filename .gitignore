@@ -50,5 +50,5 @@ analysis_results/
 *.deb
 *.rpm
 
-# Original source (not tracked — flattened into repo root)
-ORION-X/
+# Legacy archive (not tracked — flattened into repo root, original preserved here)
+archive/legacy-orionx/
