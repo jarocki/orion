@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# Orion-X Phoenix Edition v2.0.0
+# Mesh Networking CLI — Main Entrypoint
+#
+# CLI tool for managing the WireGuard P2P mesh network.
+# Incident responders use this to join, monitor, and leave the mesh.
+#
+# Usage: orionx-mesh <command> [options]
+#
+# @decision DEC-MESH-004
+# @title Single bash CLI with case-based subcommands
+# @status accepted
+# @rationale Consistent with existing codebase (all shell scripts). No Python
+#   dependency for core mesh operations. Case-based routing keeps the entrypoint
+#   thin — business logic lives in mesh-lib.sh and future subcommand scripts.
+#   This design supports the Phase 3 goal of a simple, reliable CLI that works
+#   in austere forensic environments where Python may not be available.
+#
+
+set -euo pipefail
+
+# --- Resolve script directory for reliable sourcing ---
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --- Root permission check ---
+# Mesh operations require root (WireGuard interface management, network config).
+# ORIONX_SKIP_ROOT_CHECK=1 bypasses this for automated testing.
+if [[ "${ORIONX_SKIP_ROOT_CHECK:-0}" != "1" ]]; then
+    if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+        echo "ERROR: orionx-mesh requires root privileges." >&2
+        echo "Run with: sudo orionx-mesh <command>" >&2
+        exit 1
+    fi
+fi
+
+# --- Source mesh library ---
+# shellcheck source=mesh-lib.sh disable=SC1091
+source "$SCRIPT_DIR/mesh-lib.sh"
+
+# --- Global state ---
+CONFIG_FILE=""
+
+# --- Usage ---
+usage() {
+    cat <<'EOF'
+Orion-X Mesh Networking Tool v2.0.0
+
+Usage: orionx-mesh <command> [options]
+
+Commands:
+  join     Join or create a WireGuard mesh network
+  status   Show mesh status
+  peers    List connected peers
+  leave    Leave the mesh network
+  help     Show this help message
+
+Options:
+  --config <file>   Use shared peers config (pre-planned mode)
+  --verbose, -v     Enable debug logging
+  --help, -h        Show this help message
+
+Examples:
+  orionx-mesh join                    # Auto-discover peers on LAN
+  orionx-mesh join --config peers.conf  # Use pre-planned config
+  orionx-mesh status                  # Check mesh health
+  orionx-mesh peers                   # List all connected peers
+  orionx-mesh leave                   # Disconnect from mesh
+EOF
+}
+
+# --- Subcommand: status ---
+cmd_status() {
+    if mesh_is_active; then
+        # When mesh is active, show detailed status.
+        # This will be implemented fully when mesh_is_active has real backing.
+        local vpn_ip iface peer_count uptime mode
+        iface="$MESH_IFACE"
+        vpn_ip="unknown"
+        peer_count="0"
+        uptime="unknown"
+        mode="unknown"
+
+        # Attempt to read state file for details
+        if [[ -f "$MESH_STATE_FILE" ]]; then
+            vpn_ip=$(sed -n 's/^vpn_ip=//p' "$MESH_STATE_FILE" 2>/dev/null || echo "unknown")
+            peer_count=$(sed -n 's/^peer_count=//p' "$MESH_STATE_FILE" 2>/dev/null || echo "0")
+            uptime=$(sed -n 's/^uptime=//p' "$MESH_STATE_FILE" 2>/dev/null || echo "unknown")
+            mode=$(sed -n 's/^mode=//p' "$MESH_STATE_FILE" 2>/dev/null || echo "unknown")
+        fi
+
+        echo "Mesh: active"
+        echo "  Interface:  $iface"
+        echo "  VPN IP:     $vpn_ip"
+        echo "  Peers:      $peer_count"
+        echo "  Uptime:     $uptime"
+        echo "  Mode:       $mode"
+    else
+        echo "Mesh: inactive"
+    fi
+}
+
+# --- Subcommand: peers ---
+cmd_peers() {
+    if ! mesh_is_active; then
+        echo "Not in a mesh. Join one first: orionx-mesh join" >&2
+        return 1
+    fi
+
+    # When active, display formatted peer table.
+    # Full implementation will come with W-003 (peer discovery).
+    echo "PEER              VPN IP          ENDPOINT            LAST SEEN"
+    echo "----              ------          --------            ---------"
+    # Peer entries will be populated by wg show parsing
+}
+
+# --- Subcommand: join (stub) ---
+cmd_join() {
+    mesh_log "INFO" "join not yet implemented"
+    echo "join not yet implemented"
+}
+
+# --- Subcommand: leave (stub) ---
+cmd_leave() {
+    mesh_log "INFO" "leave not yet implemented"
+    echo "leave not yet implemented"
+}
+
+# --- Parse global flags ---
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --config)
+                if [[ $# -lt 2 ]]; then
+                    echo "ERROR: --config requires a file argument" >&2
+                    exit 1
+                fi
+                CONFIG_FILE="$2"
+                export MESH_CONFIG_FILE="$CONFIG_FILE"
+                shift 2
+                ;;
+            --verbose|-v)
+                export MESH_VERBOSE="1"
+                shift
+                ;;
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            -*)
+                echo "ERROR: Unknown option: $1" >&2
+                echo "" >&2
+                usage >&2
+                exit 1
+                ;;
+            *)
+                # First non-flag argument is the subcommand
+                SUBCOMMAND="$1"
+                shift
+                SUBCOMMAND_ARGS=("$@")
+                return 0
+                ;;
+        esac
+    done
+
+    # No subcommand provided — show usage
+    SUBCOMMAND="help"
+    SUBCOMMAND_ARGS=()
+}
+
+# --- Main ---
+main() {
+    local SUBCOMMAND=""
+    local SUBCOMMAND_ARGS=()
+
+    parse_args "$@"
+
+    case "$SUBCOMMAND" in
+        join)
+            cmd_join "${SUBCOMMAND_ARGS[@]+"${SUBCOMMAND_ARGS[@]}"}"
+            ;;
+        status)
+            cmd_status "${SUBCOMMAND_ARGS[@]+"${SUBCOMMAND_ARGS[@]}"}"
+            ;;
+        peers)
+            cmd_peers "${SUBCOMMAND_ARGS[@]+"${SUBCOMMAND_ARGS[@]}"}"
+            ;;
+        leave)
+            cmd_leave "${SUBCOMMAND_ARGS[@]+"${SUBCOMMAND_ARGS[@]}"}"
+            ;;
+        help)
+            usage
+            ;;
+        *)
+            echo "ERROR: Unknown command: $SUBCOMMAND" >&2
+            echo "" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
