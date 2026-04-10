@@ -73,29 +73,19 @@ EOF
 # --- Subcommand: status ---
 cmd_status() {
     if mesh_is_active; then
-        # When mesh is active, show detailed status.
-        # This will be implemented fully when mesh_is_active has real backing.
-        local vpn_ip iface peer_count uptime mode
-        iface="$MESH_IFACE"
-        vpn_ip="unknown"
-        peer_count="0"
-        uptime="unknown"
-        mode="unknown"
-
-        # Attempt to read state file for details
-        if [[ -f "$MESH_STATE_FILE" ]]; then
-            vpn_ip=$(sed -n 's/^vpn_ip=//p' "$MESH_STATE_FILE" 2>/dev/null || echo "unknown")
-            peer_count=$(sed -n 's/^peer_count=//p' "$MESH_STATE_FILE" 2>/dev/null || echo "0")
-            uptime=$(sed -n 's/^uptime=//p' "$MESH_STATE_FILE" 2>/dev/null || echo "unknown")
-            mode=$(sed -n 's/^mode=//p' "$MESH_STATE_FILE" 2>/dev/null || echo "unknown")
-        fi
+        local iface vpn_ip mode pubkey peer_count
+        iface="$(mesh_state_read interface 2>/dev/null || echo "unknown")"
+        vpn_ip="$(mesh_state_read vpn_ip 2>/dev/null || echo "unknown")"
+        mode="$(mesh_state_read mode 2>/dev/null || echo "unknown")"
+        pubkey="$(mesh_state_read pubkey 2>/dev/null || echo "unknown")"
+        peer_count="$(wg show "$MESH_IFACE" peers 2>/dev/null | wc -l | tr -d ' ')"
 
         echo "Mesh: active"
-        echo "  Interface:  $iface"
-        echo "  VPN IP:     $vpn_ip"
-        echo "  Peers:      $peer_count"
-        echo "  Uptime:     $uptime"
-        echo "  Mode:       $mode"
+        echo "  Interface: $iface"
+        echo "  VPN IP:    $vpn_ip"
+        echo "  Mode:      $mode"
+        echo "  Peers:     $peer_count"
+        echo "  Pubkey:    ${pubkey:0:8}..."
     else
         echo "Mesh: inactive"
     fi
@@ -104,27 +94,35 @@ cmd_status() {
 # --- Subcommand: peers ---
 cmd_peers() {
     if ! mesh_is_active; then
-        echo "Not in a mesh. Join one first: orionx-mesh join" >&2
+        echo "Not in a mesh. Run 'orionx-mesh join' first." >&2
         return 1
     fi
 
-    # When active, display formatted peer table.
-    # Full implementation will come with W-003 (peer discovery).
-    echo "PEER              VPN IP          ENDPOINT            LAST SEEN"
-    echo "----              ------          --------            ---------"
-    # Peer entries will be populated by wg show parsing
+    echo "PUBKEY              VPN_IP          ENDPOINT            HANDSHAKE       TX/RX"
+    echo "------------------------------------------------------------------------------------"
+    wg show "$MESH_IFACE" dump | tail -n +2 | while IFS=$'\t' read -r pubkey _psk endpoint allowed_ips handshake tx rx _keepalive; do
+        local short_key="${pubkey:0:16}..."
+        local handshake_str="never"
+        if [[ "$handshake" != "0" ]]; then
+            # Try GNU date first (-d), then BSD date (-r)
+            handshake_str="$(date -d "@$handshake" '+%H:%M:%S' 2>/dev/null || date -r "$handshake" '+%H:%M:%S' 2>/dev/null || echo "$handshake")"
+        fi
+        printf "%-20s %-16s %-20s %-16s %s/%s\n" "$short_key" "$allowed_ips" "$endpoint" "$handshake_str" "$tx" "$rx"
+    done
 }
 
-# --- Subcommand: join (stub) ---
+# --- Subcommand: join ---
 cmd_join() {
-    mesh_log "INFO" "join not yet implemented"
-    echo "join not yet implemented"
+    # shellcheck source=mesh-join.sh disable=SC1091
+    source "$SCRIPT_DIR/mesh-join.sh"
+    mesh_join "$CONFIG_FILE"
 }
 
-# --- Subcommand: leave (stub) ---
+# --- Subcommand: leave ---
 cmd_leave() {
-    mesh_log "INFO" "leave not yet implemented"
-    echo "leave not yet implemented"
+    # shellcheck source=mesh-leave.sh disable=SC1091
+    source "$SCRIPT_DIR/mesh-leave.sh"
+    mesh_leave
 }
 
 # --- Parse global flags ---

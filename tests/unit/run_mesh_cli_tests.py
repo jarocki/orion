@@ -77,12 +77,15 @@ check("status exits 0", r.returncode == 0, f"rc={r.returncode}")
 check("status shows inactive", "inactive" in r.stdout.lower(), r.stdout)
 
 r = run("join")
-check("join exits 0", r.returncode == 0)
-check("join stub message", "not yet implemented" in r.stdout.lower(), r.stdout)
+# join now attempts real WireGuard setup; without WG it fails gracefully
+check("join attempts real join", r.returncode != 0,
+      f"rc={r.returncode} (expected non-zero without WireGuard)")
+check("join error message", "error" in (r.stdout + r.stderr).lower() or "permission denied" in (r.stdout + r.stderr).lower(),
+      (r.stdout + r.stderr)[:300])
 
 r = run("leave")
 check("leave exits 0", r.returncode == 0)
-check("leave stub message", "not yet implemented" in r.stdout.lower(), r.stdout)
+check("leave not-in-mesh message", "not in a mesh" in r.stdout.lower(), r.stdout)
 
 r = run("peers")
 out = r.stdout + r.stderr
@@ -112,16 +115,19 @@ r1 = run("status")
 r2 = run("help")
 r3 = run("join")
 r4 = run("status")
+# join now attempts real WireGuard setup and fails without it (non-zero exit)
 check("responder workflow",
       r1.returncode == 0 and "inactive" in r1.stdout.lower()
       and r2.returncode == 0 and "join" in r2.stdout
-      and r3.returncode == 0 and "not yet implemented" in r3.stdout.lower()
+      and r3.returncode != 0  # join fails gracefully without WG
       and r4.returncode == 0 and "inactive" in r4.stdout.lower())
 
 r1 = run("joinn")
 r2 = run("join")
+# join returns non-zero (no WireGuard available) but does attempt real join
 check("typo recovery",
-      r1.returncode != 0 and "Usage:" in (r1.stdout + r1.stderr) and r2.returncode == 0)
+      r1.returncode != 0 and "Usage:" in (r1.stdout + r1.stderr)
+      and r2.returncode != 0)  # join fails without WG, but was routed correctly
 
 # --- Summary ---
 total = passed + failed

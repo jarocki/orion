@@ -248,18 +248,21 @@ else
     fail "'status' shows inactive" "Output: $output"
 fi
 
+# join now attempts real WireGuard setup; without WG it fails gracefully
+set +e
 output=$(run_cli join)
 rc=$?
-if [[ $rc -eq 0 ]]; then
-    pass "'join' exits 0 (stub)"
+set -e
+if [[ $rc -ne 0 ]]; then
+    pass "'join' fails gracefully without WireGuard"
 else
-    fail "'join' exits 0 (stub)" "Exit code: $rc"
+    fail "'join' fails gracefully without WireGuard" "Exit code was 0 (expected non-zero)"
 fi
 
-if echo "$output" | grep -qi 'not yet implemented'; then
-    pass "'join' shows stub message"
+if echo "$output" | grep -qi 'error\|permission denied'; then
+    pass "'join' shows error message"
 else
-    fail "'join' shows stub message" "Output: $output"
+    fail "'join' shows error message" "Output: $output"
 fi
 
 output=$(run_cli leave)
@@ -270,10 +273,10 @@ else
     fail "'leave' exits 0 (stub)" "Exit code: $rc"
 fi
 
-if echo "$output" | grep -qi 'not yet implemented'; then
-    pass "'leave' shows stub message"
+if echo "$output" | grep -qi 'not in a mesh'; then
+    pass "'leave' shows not-in-mesh message"
 else
-    fail "'leave' shows stub message" "Output: $output"
+    fail "'leave' shows not-in-mesh message" "Output: $output"
 fi
 
 # peers with no active mesh should exit non-zero
@@ -376,28 +379,31 @@ fi
 section "Production Sequence"
 
 # Full workflow: status → help → join → status
+# join now attempts real WireGuard setup and fails without it (non-zero exit)
 r1=$(run_cli status); rc1=$?
 r2=$(run_cli help); rc2=$?
+set +e
 r3=$(run_cli join); rc3=$?
+set -e
 r4=$(run_cli status); rc4=$?
 
 if [[ $rc1 -eq 0 ]] && echo "$r1" | grep -qi 'inactive' \
    && [[ $rc2 -eq 0 ]] && echo "$r2" | grep -q 'join' \
-   && [[ $rc3 -eq 0 ]] && echo "$r3" | grep -qi 'not yet implemented' \
+   && [[ $rc3 -ne 0 ]]  \
    && [[ $rc4 -eq 0 ]] && echo "$r4" | grep -qi 'inactive'; then
-    pass "Responder workflow: status→help→join→status"
+    pass "Responder workflow: status→help→join(fail-no-WG)→status"
 else
     fail "Responder workflow" "rc1=$rc1 rc2=$rc2 rc3=$rc3 rc4=$rc4"
 fi
 
-# Typo recovery: bad cmd → help displayed → correct cmd
+# Typo recovery: bad cmd → help displayed → correct cmd (join fails without WG but routes correctly)
 set +e
 r1=$(ORIONX_SKIP_ROOT_CHECK=1 bash "$CLI_SCRIPT" joinn 2>&1); rc1=$?
-set -e
 r2=$(run_cli join); rc2=$?
+set -e
 if [[ $rc1 -ne 0 ]] && echo "$r1" | grep -q 'Usage:' \
-   && [[ $rc2 -eq 0 ]]; then
-    pass "Typo recovery: bad cmd→usage→correct cmd"
+   && [[ $rc2 -ne 0 ]]; then
+    pass "Typo recovery: bad cmd→usage→correct cmd(routes to join)"
 else
     fail "Typo recovery" "rc1=$rc1 rc2=$rc2"
 fi
