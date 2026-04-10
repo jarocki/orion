@@ -1,0 +1,16 @@
+[Unit]
+Description=Orion-X Mesh Peer Discovery Listener
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/orionx/scripts/mesh/mesh-discover.sh listen
+ExecStop=/opt/orionx/scripts/mesh/mesh-discover.sh stop
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

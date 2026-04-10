@@ -1,0 +1,11 @@
+[Unit]
+Description=Orion-X Mesh Beacon Timer
+
+[Timer]
+OnBootSec=5s
+OnUnitActiveSec=10s
+AccuracySec=1s
+Unit=orionx-mesh-beacon.service
+
+[Install]
+WantedBy=timers.target
