@@ -50,5 +50,7 @@ analysis_results/
 *.deb
 *.rpm
 
-# Legacy archive (not tracked — flattened into repo root, original preserved here)
-archive/legacy-orionx/
+# Archive (legacy artifacts, not tracked — INVENTORY.md is the sole exception)
+# Use archive/* (not archive/) so git enters the directory and the negation works
+archive/*
+!archive/INVENTORY.md
