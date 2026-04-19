@@ -387,3 +387,52 @@ mesh_is_active() {
 
     return 0
 }
+
+# =========================================================================
+# Output formatting helpers
+# =========================================================================
+
+# Format seconds into human-readable duration (e.g., "1h 23m", "45s")
+mesh_format_duration() {
+    local seconds="${1:-0}"
+    if [[ "$seconds" -lt 60 ]]; then
+        echo "${seconds}s"
+    elif [[ "$seconds" -lt 3600 ]]; then
+        echo "$((seconds / 60))m $((seconds % 60))s"
+    elif [[ "$seconds" -lt 86400 ]]; then
+        echo "$((seconds / 3600))h $((seconds % 3600 / 60))m"
+    else
+        echo "$((seconds / 86400))d $((seconds % 86400 / 3600))h"
+    fi
+}
+
+# Format bytes into human-readable size (e.g., "1.2K", "3.4M")
+mesh_format_bytes() {
+    local bytes="${1:-0}"
+    if [[ "$bytes" -lt 1024 ]]; then
+        echo "${bytes}B"
+    elif [[ "$bytes" -lt 1048576 ]]; then
+        echo "$(( bytes / 1024 )).$(( (bytes % 1024) * 10 / 1024 ))K"
+    elif [[ "$bytes" -lt 1073741824 ]]; then
+        echo "$(( bytes / 1048576 )).$(( (bytes % 1048576) * 10 / 1048576 ))M"
+    else
+        echo "$(( bytes / 1073741824 )).$(( (bytes % 1073741824) * 10 / 1073741824 ))G"
+    fi
+}
+
+# Format handshake timestamp as relative time (e.g., "12s ago", "never")
+mesh_format_handshake() {
+    local ts="${1:-0}"
+    if [[ "$ts" == "0" || -z "$ts" ]]; then
+        echo "never"
+        return
+    fi
+    local now
+    now=$(date +%s)
+    local diff=$(( now - ts ))
+    if [[ "$diff" -lt 0 ]]; then
+        echo "future?"
+    else
+        echo "$(mesh_format_duration "$diff") ago"
+    fi
+}

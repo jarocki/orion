@@ -52,9 +52,10 @@ mesh_leave() {
     # --- 4. Tear down interface ---
     mesh_interface_down
 
-    # --- 5. Remove state file ---
+    # --- 5. Remove state file and health counters ---
     rm -f "$MESH_STATE_FILE"
-    mesh_log INFO "State file removed"
+    rm -f /var/run/orionx-mesh-health-* 2>/dev/null
+    mesh_log INFO "State file and health counters removed"
 
     # --- 6. Print message ---
     echo "Left the mesh. Interface $MESH_IFACE removed."
