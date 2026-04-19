@@ -1,0 +1,11 @@
+[Unit]
+Description=Orion-X Mesh Health Check Timer
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Unit=orionx-mesh-health.service
+
+[Install]
+WantedBy=timers.target

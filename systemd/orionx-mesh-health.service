@@ -1,0 +1,9 @@
+[Unit]
+Description=Orion-X Mesh Health Check (oneshot)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/orionx/scripts/mesh/mesh-health.sh
+StandardOutput=journal
+StandardError=journal
