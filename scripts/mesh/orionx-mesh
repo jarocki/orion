@@ -73,12 +73,44 @@ EOF
 # --- Subcommand: status ---
 cmd_status() {
     if mesh_is_active; then
-        local iface vpn_ip mode pubkey peer_count
+        local iface vpn_ip mode pubkey peer_count start_time
         iface="$(mesh_state_read interface 2>/dev/null || echo "unknown")"
         vpn_ip="$(mesh_state_read vpn_ip 2>/dev/null || echo "unknown")"
         mode="$(mesh_state_read mode 2>/dev/null || echo "unknown")"
         pubkey="$(mesh_state_read pubkey 2>/dev/null || echo "unknown")"
+        start_time="$(mesh_state_read start_time 2>/dev/null || echo "0")"
         peer_count="$(wg show "$MESH_IFACE" peers 2>/dev/null | wc -l | tr -d ' ')"
+
+        # Calculate uptime from start_time
+        local uptime_str="unknown"
+        if [[ "$start_time" =~ ^[0-9]+$ && "$start_time" != "0" ]]; then
+            local now elapsed
+            now="$(date +%s)"
+            elapsed=$(( now - start_time ))
+            uptime_str="$(mesh_format_duration "$elapsed")"
+        fi
+
+        # Determine peer health: count stale handshakes (>180s old)
+        local health_str="no peers"
+        if [[ "$peer_count" -gt 0 ]]; then
+            local stale_count=0 now_ts
+            now_ts="$(date +%s)"
+            while IFS=$'\t' read -r _pubkey _psk _endpoint _allowed_ips handshake _tx _rx _keepalive; do
+                if [[ "$handshake" == "0" ]]; then
+                    (( stale_count++ )) || true
+                elif [[ $(( now_ts - handshake )) -gt 180 ]]; then
+                    (( stale_count++ )) || true
+                fi
+            done < <(wg show "$MESH_IFACE" dump 2>/dev/null | tail -n +2)
+
+            if [[ "$stale_count" -eq 0 ]]; then
+                health_str="all peers responsive"
+            elif [[ "$stale_count" -eq 1 ]]; then
+                health_str="1 peer stale"
+            else
+                health_str="${stale_count} peers stale"
+            fi
+        fi
 
         echo "Mesh: active"
         echo "  Interface: $iface"
@@ -86,6 +118,8 @@ cmd_status() {
         echo "  Mode:      $mode"
         echo "  Peers:     $peer_count"
         echo "  Pubkey:    ${pubkey:0:8}..."
+        echo "  Uptime:    $uptime_str"
+        echo "  Health:    $health_str"
     else
         echo "Mesh: inactive"
     fi
@@ -98,17 +132,29 @@ cmd_peers() {
         return 1
     fi
 
+    local peer_data
+    peer_data="$(wg show "$MESH_IFACE" dump 2>/dev/null | tail -n +2)"
+
+    if [[ -z "$peer_data" ]]; then
+        echo "No peers connected."
+        return 0
+    fi
+
+    local peer_count=0
     echo "PUBKEY              VPN_IP          ENDPOINT            HANDSHAKE       TX/RX"
     echo "------------------------------------------------------------------------------------"
-    wg show "$MESH_IFACE" dump | tail -n +2 | while IFS=$'\t' read -r pubkey _psk endpoint allowed_ips handshake tx rx _keepalive; do
+    while IFS=$'\t' read -r pubkey _psk endpoint allowed_ips handshake tx rx _keepalive; do
         local short_key="${pubkey:0:16}..."
-        local handshake_str="never"
-        if [[ "$handshake" != "0" ]]; then
-            # Try GNU date first (-d), then BSD date (-r)
-            handshake_str="$(date -d "@$handshake" '+%H:%M:%S' 2>/dev/null || date -r "$handshake" '+%H:%M:%S' 2>/dev/null || echo "$handshake")"
-        fi
-        printf "%-20s %-16s %-20s %-16s %s/%s\n" "$short_key" "$allowed_ips" "$endpoint" "$handshake_str" "$tx" "$rx"
-    done
+        local handshake_str
+        handshake_str="$(mesh_format_handshake "$handshake")"
+        local tx_str rx_str
+        tx_str="$(mesh_format_bytes "$tx")"
+        rx_str="$(mesh_format_bytes "$rx")"
+        printf "%-20s %-16s %-20s %-16s %s/%s\n" "$short_key" "$allowed_ips" "$endpoint" "$handshake_str" "$tx_str" "$rx_str"
+        (( peer_count++ )) || true
+    done <<< "$peer_data"
+    echo "------------------------------------------------------------------------------------"
+    echo "$peer_count peer(s) total"
 }
 
 # --- Subcommand: join ---
