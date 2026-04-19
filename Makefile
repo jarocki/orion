@@ -8,7 +8,7 @@
 #   a fallback when neither linter is installed.
 ##
 
-.PHONY: lint lint-shell lint-python test-unit test-integration docker-build iso-build clean help
+.PHONY: lint lint-shell lint-python test-unit test-integration test-mesh docker-build iso-build clean help
 
 SHELL_SCRIPTS := $(wildcard scripts/*.sh)
 PYTHON_SCRIPTS := $(wildcard scripts/*.py)
@@ -44,6 +44,15 @@ test-integration: ## Run integration tests
 	else \
 		echo "No integration tests found yet"; \
 	fi
+
+test-mesh: ## Run 3-node mesh integration test in Docker
+	docker compose -f docker/docker-compose.mesh-test.yml build
+	docker compose -f docker/docker-compose.mesh-test.yml up -d
+	@echo "Waiting for mesh formation (30s)..."
+	@sleep 30
+	@echo "Running integration tests..."
+	bash tests/integration/test-mesh.sh || true
+	docker compose -f docker/docker-compose.mesh-test.yml down -v
 
 docker-build: ## Build Docker development environment
 	docker build -t orionx-dev .
