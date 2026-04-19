@@ -1,0 +1,47 @@
+# @decision DEC-MESH-003
+# @title In-kernel Docker testing with dedicated 3-node compose file
+# @status accepted
+# @rationale Production fidelity; NET_ADMIN + /dev/net/tun for real WireGuard.
+#   Separate compose keeps mesh testing isolated from dev container.
+#   Bullseye-slim chosen for minimal footprint while providing all required
+#   networking tools. wireguard-go is not packaged for bullseye-slim, so the
+#   host must have the WireGuard kernel module loaded (modprobe wireguard).
+
+FROM debian:bullseye-slim
+
+LABEL maintainer="Orion-X Project"
+LABEL description="Orion-X mesh test node — minimal image for 3-node WireGuard mesh testing"
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install WireGuard tools, socat, jq, networking utils
+# Single RUN layer to minimise image size
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wireguard-tools \
+    socat \
+    jq \
+    iputils-ping \
+    iproute2 \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create required directories
+RUN mkdir -p /opt/orionx/scripts/mesh /var/log/orionx /etc/wireguard /var/run
+
+# Copy mesh scripts
+COPY scripts/mesh/ /opt/orionx/scripts/mesh/
+RUN chmod +x /opt/orionx/scripts/mesh/orionx-mesh \
+    /opt/orionx/scripts/mesh/mesh-discover.sh \
+    /opt/orionx/scripts/mesh/mesh-join.sh \
+    /opt/orionx/scripts/mesh/mesh-leave.sh \
+    /opt/orionx/scripts/mesh/mesh-health.sh
+
+# Symlink CLI to PATH
+RUN ln -sf /opt/orionx/scripts/mesh/orionx-mesh /usr/local/bin/orionx-mesh
+
+# Default entrypoint: join mesh then keep container alive
+COPY docker/mesh-entrypoint.sh /usr/local/bin/mesh-entrypoint.sh
+RUN chmod +x /usr/local/bin/mesh-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/mesh-entrypoint.sh"]

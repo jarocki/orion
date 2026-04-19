@@ -1,0 +1,72 @@
+##
+# Orion-X 3-Node Mesh Test Environment
+#
+# Spins up three isolated mesh nodes on a dedicated Docker bridge network.
+# Each node gets NET_ADMIN + /dev/net/tun for real WireGuard operation.
+#
+# Prerequisites:
+#   - Host must have the WireGuard kernel module loaded (modprobe wireguard)
+#   - Docker with compose v2 plugin
+#
+# Usage:
+#   docker compose -f docker/docker-compose.mesh-test.yml up -d
+#   docker compose -f docker/docker-compose.mesh-test.yml down -v
+##
+
+version: '3.8'
+
+services:
+  node-1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.mesh-node
+    hostname: orionx-node-1
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+    networks:
+      mesh-test-net:
+        ipv4_address: 172.20.0.2
+
+  node-2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.mesh-node
+    hostname: orionx-node-2
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+    networks:
+      mesh-test-net:
+        ipv4_address: 172.20.0.3
+
+  node-3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.mesh-node
+    hostname: orionx-node-3
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+    networks:
+      mesh-test-net:
+        ipv4_address: 172.20.0.4
+
+networks:
+  mesh-test-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
