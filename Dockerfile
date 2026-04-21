@@ -61,9 +61,11 @@ COPY docs/ /usr/share/doc/orionx/
 COPY data/ /opt/orionx/data/
 COPY theme/ /opt/orionx/theme/
 
-# Make scripts executable and link them to /usr/bin
-RUN chmod +x /opt/orionx/scripts/*.sh /opt/orionx/scripts/*.py && \
-    ln -sf /opt/orionx/scripts/setup-vpn.sh /usr/bin/ && \
+# Make scripts executable (including mesh subdirectory) and link to PATH
+# NOTE: setup-vpn.sh was renamed to setup-wireguard.sh in v2.0.0
+RUN chmod +x /opt/orionx/scripts/*.sh /opt/orionx/scripts/*.py /opt/orionx/scripts/mesh/* && \
+    ln -sf /opt/orionx/scripts/setup-wireguard.sh /usr/bin/ && \
+    ln -sf /opt/orionx/scripts/mesh/orionx-mesh /usr/local/bin/orionx-mesh && \
     ln -sf /opt/orionx/scripts/setup-matrix.sh /usr/bin/ && \
     ln -sf /opt/orionx/scripts/artifact-analyzer.py /usr/bin/ && \
     ln -sf /opt/orionx/scripts/storyboard-gen.py /usr/bin/ && \
@@ -76,7 +78,7 @@ RUN echo '#!/bin/bash\necho ""\necho "Welcome to Orion-X Phoenix Edition v2.0.0-
     chmod +x /etc/update-motd.d/10-orionx
 
 # Add bash aliases and help function for user
-RUN echo '\n# Orion-X Phoenix Edition\nexport PATH=$PATH:/opt/orionx/scripts\nalias ll="ls -la"\nalias cls="clear"\n\norionx-help() {\n  echo "Orion-X Phoenix Edition v2.0.0-dev Help"\n  echo "-----------------------------------"\n  echo "setup-vpn.sh     : Configure WireGuard VPN"\n  echo "setup-matrix.sh  : Setup secure communication"\n  echo "toggle-theme.sh  : Switch between dark and green themes"\n  echo "run-lynis.sh     : Run security audit"\n  echo "download-samples.sh : Download sample data for analysis"\n  echo ""\n  echo "Forensic Tools:"\n  echo "artifact-analyzer.py : Automate artifact analysis"\n  echo "storyboard-gen.py    : Create incident timeline"\n  echo ""\n  echo "Documentation available in /usr/share/doc/orionx/"\n}\n' >> /home/orionx/.bashrc
+RUN echo '\n# Orion-X Phoenix Edition\nexport PATH=$PATH:/opt/orionx/scripts\nalias ll="ls -la"\nalias cls="clear"\n\norionx-help() {\n  echo "Orion-X Phoenix Edition v2.0.0-dev Help"\n  echo "-----------------------------------"\n  echo "setup-wireguard.sh : Standalone WireGuard tunnel setup"\n  echo "orionx-mesh        : P2P mesh networking (join, leave, status)"\n  echo "setup-matrix.sh  : Setup secure communication"\n  echo "toggle-theme.sh  : Switch between dark and green themes"\n  echo "run-lynis.sh     : Run security audit"\n  echo "download-samples.sh : Download sample data for analysis"\n  echo ""\n  echo "Forensic Tools:"\n  echo "artifact-analyzer.py : Automate artifact analysis"\n  echo "storyboard-gen.py    : Create incident timeline"\n  echo ""\n  echo "Documentation available in /usr/share/doc/orionx/"\n}\n' >> /home/orionx/.bashrc
 
 # Set working directory
 WORKDIR /home/orionx

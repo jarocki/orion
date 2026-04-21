@@ -10,7 +10,7 @@
 
 .PHONY: lint lint-shell lint-python test-unit test-integration test-mesh docker-build iso-build clean help
 
-SHELL_SCRIPTS := $(wildcard scripts/*.sh)
+SHELL_SCRIPTS := $(shell find scripts -name '*.sh' -type f)
 PYTHON_SCRIPTS := $(wildcard scripts/*.py)
 
 help: ## Show this help
