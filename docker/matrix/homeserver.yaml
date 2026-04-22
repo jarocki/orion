@@ -1,0 +1,47 @@
+# Orion-X Synapse Homeserver Configuration Template
+#
+# Pre-built config for LAN-only, single-homeserver operation.
+# Placeholders (ORIONX_*) are replaced at container startup by
+# docker/matrix-entrypoint.sh via sed substitution.
+#
+# @decision DEC-MATRIX-001
+# @title Pre-built Synapse config template with LAN-only defaults
+# @status accepted
+# @rationale Reproducible, inspectable configuration. SQLite for
+#   single-server simplicity. Registration enabled without verification
+#   for testing. Empty trusted_key_servers for LAN-only isolation.
+
+server_name: "ORIONX_SERVER_NAME"
+pid_file: /data/homeserver.pid
+
+listeners:
+  - port: 8008
+    tls: false
+    type: http
+    x_forwarded: false
+    bind_addresses: ['0.0.0.0']
+    resources:
+      - names: [client, federation]
+        compress: false
+
+database:
+  name: sqlite3
+  args:
+    database: /data/homeserver.db
+
+log_config: "/data/log.config"
+
+media_store_path: /data/media_store
+
+registration_shared_secret: "ORIONX_REGISTRATION_SECRET"
+enable_registration: true
+enable_registration_without_verification: true
+
+report_stats: false
+
+macaroon_secret_key: "ORIONX_MACAROON_SECRET"
+form_secret: "ORIONX_FORM_SECRET"
+signing_key_path: "/data/signing.key"
+
+suppress_key_server_warning: true
+trusted_key_servers: []

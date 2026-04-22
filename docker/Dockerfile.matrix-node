@@ -1,0 +1,78 @@
+# @decision DEC-MATRIX-002
+# @title Layered Docker — matrix node extends mesh capabilities
+# @status accepted
+# @rationale Tests Matrix-over-WireGuard mesh (actual acceptance criteria).
+#   Builds on the mesh node pattern (DEC-MESH-003) adding Synapse homeserver.
+#   Bullseye-slim base for consistency with Dockerfile.mesh-node. Synapse
+#   installed from Matrix.org Debian repo with pip3 fallback if repo install
+#   fails. matrix-commander is optional — curl-based API testing works as
+#   fallback for E2E test automation.
+
+FROM debian:bullseye-slim
+
+LABEL maintainer="Orion-X Project"
+LABEL description="Orion-X Matrix node — Synapse homeserver over WireGuard mesh"
+
+# Prevent interactive prompts during installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system deps + WireGuard + Synapse prereqs
+# Single RUN layer to minimise image size
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wireguard-tools \
+    socat \
+    jq \
+    iputils-ping \
+    iproute2 \
+    procps \
+    curl \
+    python3 \
+    python3-pip \
+    lsb-release \
+    wget \
+    apt-transport-https \
+    gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Add Matrix Synapse repo and install (with pip3 fallback)
+RUN wget -qO /usr/share/keyrings/matrix-org-archive-keyring.gpg \
+        https://packages.matrix.org/debian/matrix-org-archive-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/matrix-org-archive-keyring.gpg] \
+        https://packages.matrix.org/debian/ $(lsb_release -cs) main" \
+        > /etc/apt/sources.list.d/matrix-org.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends matrix-synapse-py3 \
+    && rm -rf /var/lib/apt/lists/* \
+    || { echo "Matrix repo install failed, falling back to pip"; \
+         pip3 install --no-cache-dir matrix-synapse; }
+
+# Install matrix-commander for E2E testing (optional — curl-based fallback)
+RUN pip3 install --no-cache-dir matrix-commander 2>/dev/null \
+    || echo "matrix-commander install failed, will use curl-based testing"
+
+# Create required directories
+RUN mkdir -p /opt/orionx/scripts/mesh /var/log/orionx /etc/wireguard /var/run /data
+
+# Copy mesh scripts
+COPY scripts/mesh/ /opt/orionx/scripts/mesh/
+RUN chmod +x /opt/orionx/scripts/mesh/orionx-mesh \
+    /opt/orionx/scripts/mesh/mesh-discover.sh \
+    /opt/orionx/scripts/mesh/mesh-join.sh \
+    /opt/orionx/scripts/mesh/mesh-leave.sh \
+    /opt/orionx/scripts/mesh/mesh-health.sh
+
+# Symlink CLI to PATH
+RUN ln -sf /opt/orionx/scripts/mesh/orionx-mesh /usr/local/bin/orionx-mesh
+
+# Copy Matrix config templates
+COPY docker/matrix/homeserver.yaml /data/homeserver.yaml.template
+COPY docker/matrix/log.config /data/log.config
+
+# Copy entrypoint
+COPY docker/matrix-entrypoint.sh /usr/local/bin/matrix-entrypoint.sh
+RUN chmod +x /usr/local/bin/matrix-entrypoint.sh
+
+EXPOSE 8008 8448
+VOLUME /data
+
+ENTRYPOINT ["/usr/local/bin/matrix-entrypoint.sh"]
