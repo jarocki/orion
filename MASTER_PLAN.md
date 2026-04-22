@@ -39,7 +39,7 @@ Full architectural detail: `tmp/ORION-X-VISION-v3.md`
 
 | Gap | Severity | Status |
 |-----|----------|--------|
-| VPN is client-server, not P2P mesh | HIGH | Phase 3 will address |
+| VPN is client-server, not P2P mesh | HIGH | **Fixed in Phase 3** — full P2P mesh via orionx-mesh |
 | Package list issues (external pkgs, duplicates) | MEDIUM | Fixed in Phase 1 |
 | No tests whatsoever | HIGH | Phase 2 will address |
 | Nested git repo | LOW | Fixed in Phase 1 |
@@ -58,7 +58,7 @@ Full architectural detail: `tmp/ORION-X-VISION-v3.md`
 ---
 
 ### Phase 3: P2P Mesh Networking (Core Differentiator)
-**Env:** Docker multi-container + Linux VMs | **Status:** Active
+**Env:** Docker multi-container + Linux VMs | **Status:** Completed
 
 **Rewrite `setup-vpn.sh` as true P2P mesh:**
 - Each node generates keypair on boot
@@ -82,7 +82,7 @@ Full architectural detail: `tmp/ORION-X-VISION-v3.md`
 ---
 
 ### Phase 4: Matrix Team Collaboration
-**Env:** Docker | **Status:** Planned
+**Env:** Docker | **Status:** Active
 
 - Validate Synapse homeserver boots in container
 - Test E2E encryption between two Element clients
@@ -236,6 +236,12 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | DEC-011 | 2026-04-05 | [MESH] Full P2P mesh scope for Phase 3 | Core differentiator. Reduced scope would undermine the project's identity. LAN-only constraint (DEC-003) already limits complexity |
 | DEC-012 | 2026-04-05 | [HOUSEKEEPING] Move ORION-X/ to archive/legacy-orionx/ | 17MB of legacy PDFs, images, and old versions at repo root. v1.5.5 scripts already flattened. v1.5.0 analysis scripts preserved as reference for future AI phases |
 | DEC-013 | 2026-04-05 | [PROCESS] Weekly development cadence with session checkpoints | Project demonstrated burst execution (4 days) then stalled 24 days. Regular cadence prevents drift |
+| DEC-MESH-001 | 2026-04-06 | [MESH] UDP broadcast + shared config for dual-mode peer discovery | Avahi overkill for LAN-only; UDP broadcast zero-dep, works on Docker bridge. Code: `scripts/mesh/mesh-discover.sh` |
+| DEC-MESH-002 | 2026-04-06 | [MESH] systemd timer + oneshot for health checking (60s interval) | Native journald, crash recovery, dependency management. Code: `scripts/mesh/mesh-health.sh` |
+| DEC-MESH-003 | 2026-04-06 | [MESH] In-kernel Docker testing with dedicated 3-node compose file | Production fidelity; separate compose keeps mesh testing isolated. Code: `docker/Dockerfile.mesh-node` |
+| DEC-MESH-004 | 2026-04-06 | [MESH] Single bash CLI (orionx-mesh) with case-based subcommands | Consistent with existing codebase. Code: `scripts/mesh/orionx-mesh` |
+| DEC-MESH-005 | 2026-04-06 | [MESH] Direct wg/ip for runtime, wg-quick for bootstrap only | Soft healing avoids 2-min handshake lockout. Code: `scripts/mesh/mesh-health.sh` |
+| DEC-MESH-STANDALONE-001 | 2026-04-20 | [MESH] Retain standalone WireGuard setup alongside mesh | Not every scenario needs full mesh; simple tunnel useful for individual operators. Code: `scripts/setup-wireguard.sh` |
 
 ## Risk Register
 
@@ -276,3 +282,16 @@ Flattened v1.5.5 into repo root. 35 files, clean structure (scripts/, iso/, data
 **Completed:** 2026-04-05 | **Commit:** `562d998` on `develop`
 
 Makefile with 9 targets (lint, test-unit, docker-build, iso-build, clean, and supporting targets). Dockerfile and docker-compose.yml for containerized builds. GitHub Actions CI (lint.yml) with ShellCheck + ruff linting. Unit test suite (tests/test_phase2_build_system.py, 250 lines). requirements.txt for Python dependencies. All linting passes.
+
+### Phase 3: P2P Mesh Networking (v2.0.0)
+**Completed:** 2026-04-20 | **Commits:** `edff558`..`03b6704` on `develop`
+
+Full P2P WireGuard mesh networking — the project's core differentiator. 9 work items across 5 waves:
+- Core library (`mesh-lib.sh`) with WireGuard helpers, state management, config parsing
+- `orionx-mesh` CLI: join|status|peers|leave with human-readable formatting
+- UDP broadcast peer discovery (socat, port 55555) + shared config for pre-planned ops
+- Health check daemon (systemd timer, 60s) with soft/aggressive auto-healing
+- Docker 3-node test environment with integration tests for all 4 acceptance criteria
+- Standalone WireGuard retained as `setup-wireguard.sh` (renamed from setup-vpn.sh)
+
+Decisions: DEC-MESH-001 (UDP broadcast), DEC-MESH-002 (systemd timer), DEC-MESH-003 (Docker testing), DEC-MESH-004 (bash CLI), DEC-MESH-005 (soft heal), DEC-MESH-STANDALONE-001 (standalone WireGuard retained)
