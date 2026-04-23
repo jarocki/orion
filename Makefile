@@ -8,7 +8,7 @@
 #   a fallback when neither linter is installed.
 ##
 
-.PHONY: lint lint-shell lint-python test-unit test-integration test-mesh docker-build iso-build clean help
+.PHONY: lint lint-shell lint-python test-unit test-integration test-mesh test-matrix docker-build docker-build-matrix iso-build clean help
 
 SHELL_SCRIPTS := $(shell find scripts -name '*.sh' -type f)
 PYTHON_SCRIPTS := $(wildcard scripts/*.py)
@@ -53,6 +53,18 @@ test-mesh: ## Run 3-node mesh integration test in Docker
 	@echo "Running integration tests..."
 	bash tests/integration/test-mesh.sh || true
 	docker compose -f docker/docker-compose.mesh-test.yml down -v
+
+docker-build-matrix: ## Build Matrix test Docker image
+	docker compose -f docker/docker-compose.matrix-test.yml build
+
+test-matrix: ## Run Matrix integration test in Docker
+	docker compose -f docker/docker-compose.matrix-test.yml build
+	docker compose -f docker/docker-compose.matrix-test.yml up -d
+	@echo "Waiting for Synapse to be healthy..."
+	@timeout 120 bash -c 'until docker compose -f docker/docker-compose.matrix-test.yml exec -T matrix-server curl -sf http://localhost:8008/_matrix/client/versions >/dev/null 2>&1; do sleep 5; done' || echo "WARNING: Synapse health check timed out"
+	@echo "Running Matrix integration tests..."
+	bash tests/integration/test-matrix.sh || true
+	docker compose -f docker/docker-compose.matrix-test.yml down -v
 
 docker-build: ## Build Docker development environment
 	docker build -t orionx-dev .

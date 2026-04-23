@@ -1,0 +1,91 @@
+##
+# @decision DEC-MATRIX-COMPOSE-001
+# @title 2-node Docker Compose for Matrix integration testing
+# @status accepted
+# @rationale Two-service topology (server + client) on a dedicated bridge
+#   network (172.21.0.0/24) avoids IP conflicts with the mesh-test network
+#   (172.20.0.0/24). The server runs Synapse with a healthcheck on the
+#   /_matrix/client/versions endpoint; the client starts only after the server
+#   is healthy. Static test secrets are clearly labeled not for production.
+#   Both nodes get NET_ADMIN + /dev/net/tun for WireGuard mesh participation.
+#
+# Orion-X 2-Node Matrix Test Environment
+#
+# Spins up a Synapse server and a client node on a dedicated Docker bridge
+# network. Both join the WireGuard mesh; node-1 runs Synapse, node-2 is
+# client-only.
+#
+# Prerequisites:
+#   - Host must have the WireGuard kernel module loaded (modprobe wireguard)
+#   - Docker with compose v2 plugin
+#
+# Usage:
+#   docker compose -f docker/docker-compose.matrix-test.yml up -d
+#   docker compose -f docker/docker-compose.matrix-test.yml down -v
+##
+
+version: '3.8'
+
+services:
+  matrix-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.matrix-node
+    hostname: orionx-matrix-server
+    environment:
+      - ORIONX_MATRIX_ROLE=server
+      - ORIONX_SERVER_NAME=orionx.local
+      - ORIONX_REGISTRATION_SECRET=test-registration-secret-do-not-use-in-prod
+      - ORIONX_MACAROON_SECRET=test-macaroon-secret
+      - ORIONX_FORM_SECRET=test-form-secret
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+    ports:
+      - "8008:8008"
+    volumes:
+      - matrix-data:/data
+    networks:
+      matrix-test-net:
+        ipv4_address: 172.21.0.2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8008/_matrix/client/versions"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  matrix-client:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.matrix-node
+    hostname: orionx-matrix-client
+    environment:
+      - ORIONX_MATRIX_ROLE=client
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+    depends_on:
+      matrix-server:
+        condition: service_healthy
+    networks:
+      matrix-test-net:
+        ipv4_address: 172.21.0.3
+
+volumes:
+  matrix-data:
+
+networks:
+  matrix-test-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/24
