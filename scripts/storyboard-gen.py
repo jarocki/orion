@@ -37,8 +37,6 @@ import logging
 import json
 import datetime
 import re
-from pathlib import Path
-from collections import defaultdict
 
 # Configure logging
 logging.basicConfig(

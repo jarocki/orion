@@ -82,7 +82,7 @@ Full architectural detail: `tmp/ORION-X-VISION-v3.md`
 ---
 
 ### Phase 4: Matrix Team Collaboration
-**Env:** Docker | **Status:** Active
+**Env:** Docker | **Status:** Completed
 
 - Validate Synapse homeserver boots in container
 - Test E2E encryption between two Element clients
@@ -94,7 +94,7 @@ Full architectural detail: `tmp/ORION-X-VISION-v3.md`
 ---
 
 ### Phase 5: Forensic Toolkit Validation
-**Env:** Docker + Linux VM | **Status:** Planned
+**Env:** Docker + Linux VM | **Status:** Active
 
 - Create `tests/integration/test-forensic-tools.sh` — verify each tool responds to `--version`/`--help`
 - Validate `storyboard-gen.py` HTML timeline generation
@@ -242,6 +242,12 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | DEC-MESH-004 | 2026-04-06 | [MESH] Single bash CLI (orionx-mesh) with case-based subcommands | Consistent with existing codebase. Code: `scripts/mesh/orionx-mesh` |
 | DEC-MESH-005 | 2026-04-06 | [MESH] Direct wg/ip for runtime, wg-quick for bootstrap only | Soft healing avoids 2-min handshake lockout. Code: `scripts/mesh/mesh-health.sh` |
 | DEC-MESH-STANDALONE-001 | 2026-04-20 | [MESH] Retain standalone WireGuard setup alongside mesh | Not every scenario needs full mesh; simple tunnel useful for individual operators. Code: `scripts/setup-wireguard.sh` |
+| DEC-MATRIX-002 | 2026-04-22 | [MATRIX] Layered Docker — matrix node extends mesh capabilities | Tests Matrix-over-WireGuard mesh (actual acceptance criteria). Code: `docker/Dockerfile.matrix-node` |
+| DEC-MATRIX-003 | 2026-04-22 | [MATRIX] Pre-built homeserver.yaml template with placeholder substitution | Reproducible, fast container startup, inspectable. Code: `docker/matrix/homeserver.yaml` |
+| DEC-MATRIX-004 | 2026-04-22 | [MATRIX] SQLite backend, not PostgreSQL | Small forensic team (< 50 users), local-only operation, simplicity. Code: `docker/matrix/homeserver.yaml` |
+| DEC-MATRIX-005 | 2026-04-22 | [MATRIX] systemd unit validated statically, runtime testing in Phase 7 | Docker lacks systemd; validate correctness, defer runtime to QEMU. Code: `systemd/matrix-synapse-orionx.service` |
+| DEC-MATRIX-SETUP-001 | 2026-04-22 | [MATRIX] Modernize setup-matrix.sh with CLI arguments | Interactive prompts don't work in Docker. CLI args enable automated deployment. Code: `scripts/setup-matrix.sh` |
+| DEC-MATRIX-TEST-001 | 2026-04-23 | [MATRIX] CLI-based E2E verification via Synapse API, not Element Desktop | Headless Docker needs CLI tools. E2E property is what matters, not specific client. Code: `tests/integration/test-matrix.sh` |
 
 ## Risk Register
 
@@ -295,3 +301,16 @@ Full P2P WireGuard mesh networking — the project's core differentiator. 9 work
 - Standalone WireGuard retained as `setup-wireguard.sh` (renamed from setup-vpn.sh)
 
 Decisions: DEC-MESH-001 (UDP broadcast), DEC-MESH-002 (systemd timer), DEC-MESH-003 (Docker testing), DEC-MESH-004 (bash CLI), DEC-MESH-005 (soft heal), DEC-MESH-STANDALONE-001 (standalone WireGuard retained)
+
+### Phase 4: Matrix Team Collaboration (v2.0.0)
+**Completed:** 2026-04-23 | **Commits:** `53faabb`..`a8c822f` on `develop`
+
+Encrypted team communications over the WireGuard mesh. 6 work items across 3 waves:
+- Synapse Docker infrastructure with homeserver.yaml template and server/client entrypoint
+- Modernized setup-matrix.sh with CLI arguments (--mode, --server-name, --admin-user)
+- Docker Compose 2-node test environment with health-gated startup
+- systemd unit for Synapse with WireGuard mesh dependency (After + Requires wg-quick@wg0)
+- 751-line integration test: user registration, encrypted rooms, message exchange, restart survival
+- Security hardening: ProtectSystem, NoNewPrivileges, SQLite backend
+
+Decisions: DEC-MATRIX-002 (layered Docker), DEC-MATRIX-003 (template config), DEC-MATRIX-004 (SQLite), DEC-MATRIX-005 (static systemd validation), DEC-MATRIX-SETUP-001 (CLI args), DEC-MATRIX-TEST-001 (API-based E2E)

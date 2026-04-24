@@ -32,7 +32,6 @@ import sys
 import argparse
 import subprocess
 import logging
-import json
 import hashlib
 import datetime
 import shutil
@@ -210,8 +209,7 @@ def analyze_memory_dump(filename, output_dir):
         
         if os.path.exists(os.path.join(vol_output_dir, "malfind.txt")):
             f.write("== Potential Malware Found ==\n")
-            with open(os.path.join(vol_output_dir, "malfind.txt"), "r") as malfind:
-                f.write(f"  Malfind found potential malicious code. See full report in {vol_output_dir}/malfind.txt\n")
+            f.write(f"  Malfind found potential malicious code. See full report in {vol_output_dir}/malfind.txt\n")
             f.write("\n")
     
     logger.info(f"Memory analysis complete. Summary saved to {summary_file}")
@@ -353,13 +351,13 @@ def analyze_disk_image(filename, output_dir):
         tsk_output_dir = os.path.join(disk_output_dir, "recovered_files")
         if os.path.exists(tsk_output_dir):
             file_count = sum(1 for _ in Path(tsk_output_dir).rglob("*") if _.is_file())
-            f.write(f"== Recovered Files ==\n")
+            f.write("== Recovered Files ==\n")
             f.write(f"  Total files recovered: {file_count}\n\n")
         
         # Summarize interesting findings from bulk_extractor
         bulk_output_dir = os.path.join(disk_output_dir, "bulk_extractor")
         if os.path.exists(bulk_output_dir):
-            f.write(f"== Interesting Findings ==\n")
+            f.write("== Interesting Findings ==\n")
             
             # Check for email addresses
             email_file = os.path.join(bulk_output_dir, "email.txt")
@@ -454,7 +452,7 @@ def generate_chain_of_custody(filename, artifact_type, output_dir):
         
         f.write("ANALYSIS SUMMARY\n")
         f.write("================\n")
-        f.write(f"Analysis conducted using Orion-X Phoenix Edition v1.5.5\n")
+        f.write("Analysis conducted using Orion-X Phoenix Edition v2.0.0\n")
         f.write(f"Results saved to: {output_dir}\n")
     
     logger.info(f"Chain of custody document generated: {custody_file}")
@@ -485,7 +483,7 @@ def main():
     logger.info(f"Artifact type identified as: {artifact_type}")
     
     # Generate chain of custody document
-    custody_file = generate_chain_of_custody(args.artifact, artifact_type, output_dir)
+    generate_chain_of_custody(args.artifact, artifact_type, output_dir)
     
     # Analyze based on artifact type
     success = False
