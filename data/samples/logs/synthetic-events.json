@@ -1,0 +1,9 @@
+[
+  {"timestamp": "2025-01-15T08:23:01", "severity": "INFO", "source": "sshd", "message": "Accepted publickey for admin from 192.168.1.100"},
+  {"timestamp": "2025-01-15T08:23:05", "severity": "WARNING", "source": "kernel", "message": "UFW BLOCK SRC=10.0.0.99 DST=10.0.0.1 DPT=4444"},
+  {"timestamp": "2025-01-15T08:31:45", "severity": "ERROR", "source": "sshd", "message": "Failed password for root from 10.0.0.99"},
+  {"timestamp": "2025-01-15T08:31:46", "severity": "ERROR", "source": "sshd", "message": "Failed password for root from 10.0.0.99"},
+  {"timestamp": "2025-01-15T08:31:47", "severity": "ERROR", "source": "sshd", "message": "Failed password for root from 10.0.0.99"},
+  {"timestamp": "2025-01-15T09:00:00", "severity": "INFO", "source": "sshd", "message": "Accepted publickey for responder from 192.168.1.101"},
+  {"timestamp": "2025-01-15T10:00:00", "severity": "CRITICAL", "source": "clamav", "message": "Malware detected: Win.Trojan.Generic in /tmp/suspicious.exe"}
+]

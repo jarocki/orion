@@ -50,6 +50,32 @@ ATTRIBUTION:
 - Web server attack logs are sanitized logs from production servers
 - Windows and Linux logs are from sanitized incident response cases
 
+SYNTHETIC SAMPLES (Phase 5 Test Infrastructure):
+-------------------------------------------------
+
+3. synthetic-syslog.log
+   Description: 15-line synthetic syslog with mixed severity events
+   Source: Deterministically generated for Phase 5 parser testing
+   Contents: SSH auth (accept/fail), UFW firewall blocks, cron jobs,
+   Orion-X mesh health checks, Matrix Synapse requests, ClamAV malware
+   detection. All IPs and hostnames are fabricated.
+
+4. synthetic-events.csv
+   Description: CSV event log with timestamp, severity, source, message
+   Source: Deterministically generated for Phase 5 parser testing
+   Contents: 7 events with INFO/WARNING/ERROR/CRITICAL severity levels
+
+5. synthetic-events.json
+   Description: JSON array of structured events matching CSV content
+   Source: Deterministically generated for Phase 5 parser testing
+
+6. synthetic-events.xml
+   Description: XML event log with attribute-based structure
+   Source: Deterministically generated for Phase 5 parser testing
+
+NOTE: Synthetic files contain fabricated data with valid format for
+automated testing. Do not use them for forensic training.
+
 LICENSE:
 -------
 These logs are provided for educational purposes only. All logs have been

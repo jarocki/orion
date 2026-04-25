@@ -48,6 +48,22 @@ Memory images are provided courtesy of:
 - NIST CFReDS (cfreds.nist.gov)
 - Various CTF competitions (as noted per file)
 
+SYNTHETIC SAMPLES (Phase 5 Test Infrastructure):
+-------------------------------------------------
+
+3. synthetic-mini.raw
+   Description: 1024-byte synthetic memory dump with recognizable patterns
+   Source: Deterministically generated for Phase 5 parser testing
+   Size: 1024 bytes (1 KB)
+   Contents: MZ (PE) header signature at offset 0, followed by repeated
+   text pattern "This is synthetic memory data for Orion-X testing.",
+   padded with null bytes to exactly 1024 bytes.
+   Purpose: Validates that memory analysis parsers correctly identify
+   PE signatures and text patterns without requiring multi-GB real dumps.
+
+NOTE: This is NOT a real memory dump. It contains fabricated data with
+valid structural markers for automated testing only.
+
 LICENSE:
 -------
 These files are shared for educational and training purposes only.
