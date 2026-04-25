@@ -1,0 +1,7 @@
+# Development dependencies — not needed on the ISO
+#
+# Includes all runtime deps plus testing and linting tools.
+-r requirements.txt
+pytest>=7.0
+pytest-cov>=4.0
+ruff>=0.4.0
