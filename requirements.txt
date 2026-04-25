@@ -1,2 +1,9 @@
-# Orion-X Phoenix Edition Python Dependencies
-# Used by artifact-analyzer.py and storyboard-gen.py
+# Orion-X Phoenix Edition — Runtime Python Dependencies
+#
+# These packages are installed on the ISO for forensic analysis.
+# For development/testing deps, see requirements-dev.txt
+#
+# Note: artifact-analyzer.py and storyboard-gen.py use only stdlib.
+# The packages below are for the forensic toolkit runtime.
+volatility3>=2.0
+scapy>=2.5
