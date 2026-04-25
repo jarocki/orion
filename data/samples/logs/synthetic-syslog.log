@@ -1,0 +1,15 @@
+Jan 15 08:23:01 orionx-node-1 sshd[1234]: Accepted publickey for admin from 192.168.1.100 port 54321
+Jan 15 08:23:05 orionx-node-1 kernel: [UFW BLOCK] IN=eth0 OUT= SRC=10.0.0.99 DST=10.0.0.1 PROTO=TCP DPT=4444
+Jan 15 08:25:12 orionx-node-1 sudo: admin : TTY=pts/0 ; PWD=/home/admin ; COMMAND=/usr/bin/volatility3
+Jan 15 08:30:00 orionx-node-1 cron[5678]: (root) CMD (/usr/bin/lynis audit system)
+Jan 15 08:31:45 orionx-node-1 sshd[1234]: Failed password for root from 10.0.0.99 port 54322
+Jan 15 08:31:46 orionx-node-1 sshd[1234]: Failed password for root from 10.0.0.99 port 54323
+Jan 15 08:31:47 orionx-node-1 sshd[1234]: Failed password for root from 10.0.0.99 port 54324
+Jan 15 08:32:00 orionx-node-1 kernel: [UFW BLOCK] IN=eth0 OUT= SRC=10.0.0.99 DST=10.0.0.1 PROTO=TCP DPT=22
+Jan 15 08:35:00 orionx-node-1 orionx-mesh[9012]: Health check: 2 peers, 2 healthy, 0 stale
+Jan 15 08:40:15 orionx-node-1 matrix-synapse[3456]: Processed request: GET /_matrix/client/versions
+Jan 15 09:00:00 orionx-node-1 sshd[1234]: Accepted publickey for responder from 192.168.1.101 port 54325
+Jan 15 09:15:30 orionx-node-1 kernel: [UFW ALLOW] IN=wg0 OUT= SRC=10.0.99.2 DST=10.0.99.1 PROTO=TCP DPT=8008
+Jan 15 09:20:00 orionx-node-1 orionx-mesh[9012]: Discovered peer: orionx-node-2 (10.0.99.2) at 172.20.0.3
+Jan 15 10:00:00 orionx-node-1 clamav[7890]: /tmp/suspicious.exe: Win.Trojan.Generic FOUND
+Jan 15 10:05:00 orionx-node-1 orionx-mesh[9012]: Soft heal: refreshing endpoint for peer Ab3xK9m2

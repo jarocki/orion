@@ -1,0 +1,8 @@
+timestamp,severity,source,message
+2025-01-15T08:23:01,INFO,sshd,Accepted publickey for admin from 192.168.1.100
+2025-01-15T08:23:05,WARNING,kernel,UFW BLOCK SRC=10.0.0.99 DST=10.0.0.1 DPT=4444
+2025-01-15T08:31:45,ERROR,sshd,Failed password for root from 10.0.0.99
+2025-01-15T08:31:46,ERROR,sshd,Failed password for root from 10.0.0.99
+2025-01-15T08:31:47,ERROR,sshd,Failed password for root from 10.0.0.99
+2025-01-15T09:00:00,INFO,sshd,Accepted publickey for responder from 192.168.1.101
+2025-01-15T10:00:00,CRITICAL,clamav,Malware detected: Win.Trojan.Generic in /tmp/suspicious.exe

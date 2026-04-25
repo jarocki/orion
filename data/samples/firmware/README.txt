@@ -42,9 +42,22 @@ ATTRIBUTION:
 - OpenWrt firmware is © OpenWrt contributors and is provided under the GPL v2 license
 - DEF CON IoT Village challenge firmware is provided courtesy of Rapid7 and the IoT Village organizers
 
+SYNTHETIC SAMPLES (Phase 5 Test Infrastructure):
+-------------------------------------------------
+
+3. synthetic-firmware.bin
+   Description: 512-byte synthetic firmware binary with ELF magic header
+   Source: Deterministically generated for Phase 5 parser testing
+   Size: 512 bytes
+   Contents: ELF magic (0x7f454c46) at offset 0, followed by null padding,
+   text "Synthetic firmware for testing", and 0xff fill to 512 bytes.
+   Purpose: Validates that firmware analysis parsers correctly identify
+   ELF magic bytes without requiring large real firmware images.
+
+NOTE: This is NOT real firmware. It contains fabricated data with valid
+structural markers for automated testing only. Do NOT flash to hardware.
+
 LICENSE:
 -------
 The OpenWrt firmware is distributed under the GNU General Public License v2.
 Other firmware images are for educational use only within Orion-X.
-
-

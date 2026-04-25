@@ -15,6 +15,8 @@ tmp/
 # Log files
 *.log
 /logs/
+# Exception: synthetic sample logs needed for Phase 5 parser testing
+!data/samples/logs/synthetic-syslog.log
 
 # Keys and sensitive data
 *.key
