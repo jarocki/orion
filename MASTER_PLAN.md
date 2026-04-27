@@ -41,9 +41,9 @@ Full architectural detail: `tmp/ORION-X-VISION-v3.md`
 |-----|----------|--------|
 | VPN is client-server, not P2P mesh | HIGH | **Fixed in Phase 3** — full P2P mesh via orionx-mesh |
 | Package list issues (external pkgs, duplicates) | MEDIUM | Fixed in Phase 1 |
-| No tests whatsoever | HIGH | Phase 2 will address |
+| No tests whatsoever | HIGH | **Fixed in Phases 2-5** — unit + integration tests, 300+ assertions |
 | Nested git repo | LOW | Fixed in Phase 1 |
-| Sample data is placeholders | LOW | Phase 5 will address |
+| Sample data is placeholders | LOW | **Fixed in Phase 5** — synthetic samples (syslog, CSV, JSON, XML, pcap, memory, firmware) |
 
 ### Phase 2: Build System & Linting
 **Env:** macOS (Docker) + Linux VM (ISO) | **Status:** Completed
@@ -94,7 +94,7 @@ Full architectural detail: `tmp/ORION-X-VISION-v3.md`
 ---
 
 ### Phase 5: Forensic Toolkit Validation
-**Env:** Docker + Linux VM | **Status:** Active
+**Env:** Docker + Linux VM | **Status:** Completed
 
 - Create `tests/integration/test-forensic-tools.sh` — verify each tool responds to `--version`/`--help`
 - Validate `storyboard-gen.py` HTML timeline generation
@@ -107,7 +107,7 @@ Full architectural detail: `tmp/ORION-X-VISION-v3.md`
 ---
 
 ### Phase 6: Security Hardening
-**Env:** Linux VM (ISO) | **Status:** Planned
+**Env:** Linux VM (ISO) | **Status:** Active
 
 - Run Lynis audit on fresh ISO, document baseline score
 - AppArmor profiles for Synapse, WireGuard, forensic tools
@@ -248,6 +248,9 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | DEC-MATRIX-005 | 2026-04-22 | [MATRIX] systemd unit validated statically, runtime testing in Phase 7 | Docker lacks systemd; validate correctness, defer runtime to QEMU. Code: `systemd/matrix-synapse-orionx.service` |
 | DEC-MATRIX-SETUP-001 | 2026-04-22 | [MATRIX] Modernize setup-matrix.sh with CLI arguments | Interactive prompts don't work in Docker. CLI args enable automated deployment. Code: `scripts/setup-matrix.sh` |
 | DEC-MATRIX-TEST-001 | 2026-04-23 | [MATRIX] CLI-based E2E verification via Synapse API, not Element Desktop | Headless Docker needs CLI tools. E2E property is what matters, not specific client. Code: `tests/integration/test-matrix.sh` |
+| DEC-FORENSIC-001 | 2026-04-25 | [FORENSIC] Test pure logic functions without mocking subprocess | Honest >= 60% coverage; forensic tools not available in CI. Code: `tests/unit/test_artifact_analyzer.py`, `tests/unit/test_storyboard_gen.py` |
+| DEC-FORENSIC-002 | 2026-04-24 | [FORENSIC] Commit small synthetic sample files to repo | Deterministic tests, works offline, valid format headers. Code: `data/samples/` |
+| DEC-FORENSIC-003 | 2026-04-26 | [FORENSIC] download-samples.sh follows setup-matrix.sh CLI pattern | Consistent project conventions. --offline mode for air-gapped. Code: `scripts/download-samples.sh` |
 
 ## Risk Register
 
@@ -314,3 +317,16 @@ Encrypted team communications over the WireGuard mesh. 6 work items across 3 wav
 - Security hardening: ProtectSystem, NoNewPrivileges, SQLite backend
 
 Decisions: DEC-MATRIX-002 (layered Docker), DEC-MATRIX-003 (template config), DEC-MATRIX-004 (SQLite), DEC-MATRIX-005 (static systemd validation), DEC-MATRIX-SETUP-001 (CLI args), DEC-MATRIX-TEST-001 (API-based E2E)
+
+### Phase 5: Forensic Toolkit Validation (v2.0.0)
+**Completed:** 2026-04-26 | **Commits:** `1cd88b1`..`c380f82` on `develop`
+
+Forensic toolkit validation and Python test infrastructure. 6 work items across 3 waves:
+- requirements.txt (runtime: volatility3, scapy) + requirements-dev.txt (pytest, ruff)
+- Synthetic sample data: syslog, CSV, JSON, XML logs + binary pcap/memory/firmware stubs
+- Forensic tools integration test validating 24 tools (PASS/SKIP/FAIL pattern)
+- 61 unit tests for artifact-analyzer.py (type detection, hashing, chain-of-custody)
+- 56 unit tests for storyboard-gen.py (parsing, timeline, HTML/text reports)
+- Modernized download-samples.sh with --offline mode for air-gapped environments
+
+Decisions: DEC-FORENSIC-001 (test pure logic), DEC-FORENSIC-002 (synthetic samples), DEC-FORENSIC-003 (CLI pattern)
