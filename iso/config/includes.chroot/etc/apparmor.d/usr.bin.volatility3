@@ -1,0 +1,18 @@
+#include <tunables/global>
+
+profile volatility3 /usr/bin/vol {
+  #include <abstractions/base>
+  #include <abstractions/python>
+
+  # Read evidence and sample data
+  /opt/orionx/data/** r,
+  /home/orionx/Analysis/** rw,
+  /tmp/** rw,
+
+  # No network access for forensic tools
+  deny network,
+
+  # Python runtime
+  /usr/lib/python3/** r,
+  /usr/bin/python3* rix,
+}

@@ -1,0 +1,12 @@
+#include <tunables/global>
+
+profile bulk_extractor /usr/bin/bulk_extractor {
+  #include <abstractions/base>
+
+  /opt/orionx/data/** r,
+  /home/orionx/Analysis/** rw,
+  /tmp/** rw,
+
+  deny network,
+  deny /home/** w,
+}

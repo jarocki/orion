@@ -1,0 +1,28 @@
+# @decision DEC-SEC-002
+# @title Static AppArmor profiles shipped in repo
+#include <tunables/global>
+
+profile synapse /usr/bin/python3 flags=(attach_disconnected) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  #include <abstractions/python>
+  #include <abstractions/ssl_certs>
+
+  # Synapse data and config
+  /etc/matrix-synapse/** r,
+  /var/lib/matrix-synapse/** rw,
+  /var/log/matrix-synapse/** rw,
+  owner /data/** rw,
+
+  # Network access for Matrix federation and client API
+  network inet tcp,
+  network inet6 tcp,
+
+  # Deny access to user home directories
+  deny /home/** rw,
+  deny /root/** rw,
+
+  # Python runtime
+  /usr/lib/python3/** r,
+  /usr/bin/python3* rix,
+}
