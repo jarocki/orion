@@ -1,115 +1,369 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# shellcheck shell=bash
 #
-# Orion-X Phoenix Edition v1.5.5
-# Security Audit Script using Lynis
+# @decision DEC-SEC-005
+# @title Modernize run-lynis.sh, retire run-lynis-v2.sh
+# @status accepted
+# @rationale Single source of truth. run-lynis-v2.sh was a Docker workaround
+#   that duplicated logic with Docker-specific hacks. This unified script
+#   handles all environments: bare metal, Docker, CI. Custom Lynis profile
+#   generation tunes for Orion-X live CD forensic environment. Threshold
+#   gating and JSON output enable CI pipeline integration.
 #
-# This script runs Lynis to perform a security audit on the Orion-X system
-# and saves the results to a report file.
+# Orion-X Phoenix Edition v2.0.0 — Lynis security audit runner
+#
+# Runs Lynis to perform a security audit on the Orion-X system, with
+# custom profile generation tuned for forensic live CDs. Supports
+# threshold-based CI gating and JSON summary output.
+#
+# Usage: run-lynis.sh [options]
+#
+# Options:
+#   --profile <path>      Custom Lynis profile (default: built-in orionx profile)
+#   --output-dir <dir>    Output directory (default: /var/log/orionx/lynis)
+#   --quick               Quick audit (skip slow tests)
+#   --threshold <N>       Minimum hardening index (exit non-zero if below, default: 75)
+#   --json                Output JSON summary
+#   --help, -h            Show this help
 
-set -e
-LOGFILE="/var/log/orionx/lynis_audit.log"
-REPORT_DIR="/var/log/orionx/reports"
-REPORT_FILE="$REPORT_DIR/lynis-report.txt"
-LYNIS_PROFILE="/etc/lynis/custom.prf"
+set -euo pipefail
 
-# Create log directory if it doesn't exist
-mkdir -p /var/log/orionx
-mkdir -p "$REPORT_DIR"
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+CUSTOM_PROFILE=""
+OUTPUT_DIR="/var/log/orionx/lynis"
+QUICK_MODE=false
+THRESHOLD=75
+JSON_OUTPUT=false
 
-# Log function
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOGFILE"
+# ---------------------------------------------------------------------------
+# Usage / help
+# ---------------------------------------------------------------------------
+usage() {
+    cat <<'HELPTEXT'
+Usage: run-lynis.sh [options]
+
+Run a Lynis security audit on the Orion-X system.
+
+Options:
+  --profile <path>      Custom Lynis profile (default: built-in orionx profile)
+  --output-dir <dir>    Output directory (default: /var/log/orionx/lynis)
+  --quick               Quick audit (skip slow tests)
+  --threshold <N>       Minimum hardening index (exit non-zero if below, default: 75)
+  --json                Output JSON summary
+  --help, -h            Show this help
+
+The script generates a custom Lynis profile tuned for Orion-X forensic
+live CD environments, skipping tests irrelevant to ephemeral systems
+(bootloader passwords, password aging, etc.) and focusing on runtime
+security posture.
+
+When --threshold is set, the script exits non-zero if the Lynis
+Hardening Index falls below the given value. Combined with --json,
+this enables automated CI/CD security gates.
+
+Examples:
+  # Standard audit with default threshold (75):
+  run-lynis.sh
+
+  # Quick audit with JSON output for CI:
+  run-lynis.sh --quick --json --threshold 80
+
+  # Custom profile and output directory:
+  run-lynis.sh --profile /etc/lynis/custom.prf --output-dir /evidence/audit
+
+  # Quick check, relaxed threshold:
+  run-lynis.sh --quick --threshold 60
+HELPTEXT
 }
 
-log "Starting Lynis security audit for Orion-X Phoenix Edition v1.5.5"
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
 
-# Check if Lynis is installed
-if ! command -v lynis &> /dev/null; then
-    log "Lynis not found. Installing..."
-    apt-get update
-    apt-get install -y lynis
-    
-    if ! command -v lynis &> /dev/null; then
-        log "ERROR: Failed to install Lynis. Please install it manually."
-        exit 1
-    fi
-fi
+log_error() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: $1" >&2
+}
 
-# Create custom Lynis profile if it doesn't exist
-if [ ! -f "$LYNIS_PROFILE" ]; then
-    log "Creating custom Lynis profile..."
-    mkdir -p "$(dirname "$LYNIS_PROFILE")"
-    
-    cat > "$LYNIS_PROFILE" << EOF
-# Custom Lynis profile for Orion-X Phoenix Edition
+# ---------------------------------------------------------------------------
+# CLI argument parsing
+# ---------------------------------------------------------------------------
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --profile)
+                if [[ $# -lt 2 ]]; then
+                    log_error "--profile requires a path argument"
+                    exit 1
+                fi
+                CUSTOM_PROFILE="$2"
+                shift 2
+                ;;
+            --output-dir)
+                if [[ $# -lt 2 ]]; then
+                    log_error "--output-dir requires a directory argument"
+                    exit 1
+                fi
+                OUTPUT_DIR="$2"
+                shift 2
+                ;;
+            --quick)
+                QUICK_MODE=true
+                shift
+                ;;
+            --threshold)
+                if [[ $# -lt 2 ]]; then
+                    log_error "--threshold requires a numeric argument"
+                    exit 1
+                fi
+                if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+                    log_error "--threshold must be a number, got: $2"
+                    exit 1
+                fi
+                THRESHOLD="$2"
+                shift 2
+                ;;
+            --json)
+                JSON_OUTPUT=true
+                shift
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                usage >&2
+                exit 1
+                ;;
+        esac
+    done
+}
 
-# Skip tests that don't apply to a live/forensic environment
-skip-test=BOOT-5122  # Bootloader password
-skip-test=BOOT-5184  # Secure Boot settings (we handle this elsewhere)
-skip-test=AUTH-9328  # Password aging (not applicable for forensic system)
+# ---------------------------------------------------------------------------
+# Generate Orion-X Lynis profile
+# ---------------------------------------------------------------------------
+generate_orionx_profile() {
+    local profile_path="$1"
+    local profile_dir
+    profile_dir="$(dirname "$profile_path")"
 
-# Tests to include
-test=FILE-7524       # Find world-writable files
-test=MALW-3280       # Check for rootkits
-test=NETW-3032       # Check firewall status
-test=CRYP-7902       # Check SSH key permissions
-test=CONT-8102       # Check Docker security
+    mkdir -p "$profile_dir"
+
+    cat > "$profile_path" << 'PROFILE'
+# Orion-X Phoenix Edition — Custom Lynis profile
+# Tuned for forensic live CD environments
+#
+# Live CDs are ephemeral: bootloader, password aging, and persistent
+# storage tests are irrelevant. Focus on runtime security posture.
+
+# Skip tests irrelevant to live CD / forensic environments
+skip-test=BOOT-5122    # Bootloader password (live CD — no persistent bootloader)
+skip-test=BOOT-5184    # Secure Boot settings (handled by ISO build process)
+skip-test=AUTH-9328    # Password aging (not applicable for forensic system)
+skip-test=FILE-6310    # Unowned files (live CD overlay filesystem)
+skip-test=KRNL-5820    # Kernel hardening sysctl (live CD kernel is pre-built)
+
+# Tests to include (forensic/security focus)
+test=FILE-7524         # Find world-writable files
+test=MALW-3280         # Check for rootkits
+test=NETW-3032         # Check firewall status
+test=CRYP-7902         # Check SSH key permissions
+test=CONT-8102         # Check Docker security
+test=AUTH-9262         # Check sudo configuration
+test=PRNT-2307         # Check print daemon configuration
+test=USB-1000          # Check USB storage restrictions
 
 # Custom settings
 config-data=lynis.log-tests-incorrect=yes
-EOF
-    
-    log "Custom profile created at $LYNIS_PROFILE"
-fi
+PROFILE
 
-# Run Lynis audit
-log "Running Lynis audit..."
+    log "Generated Orion-X Lynis profile: $profile_path"
+}
 
-if lynis audit system --profile="$LYNIS_PROFILE" --cronjob > "$REPORT_FILE" 2>> "$LOGFILE"; then
-    log "Lynis audit completed successfully"
-else
-    log "WARNING: Lynis audit completed with warnings or errors"
-fi
+# ---------------------------------------------------------------------------
+# Parse Lynis output for hardening index
+# ---------------------------------------------------------------------------
+parse_hardening_index() {
+    local report_file="$1"
+    local score=""
 
-# Extract hardening score
-HARDENING_SCORE=$(grep "Hardening index" "$REPORT_FILE" | awk '{print $NF}')
-if [ -n "$HARDENING_SCORE" ]; then
-    log "Hardening score: $HARDENING_SCORE"
-fi
+    # Lynis outputs "Hardening index : NN [########    ]" or similar
+    if [[ -f "$report_file" ]]; then
+        score=$(grep -oP 'Hardening index\s*:\s*\K[0-9]+' "$report_file" 2>/dev/null || true)
+        # Fallback: try alternate format
+        if [[ -z "$score" ]]; then
+            score=$(grep "Hardening index" "$report_file" 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
+        fi
+    fi
 
-# Extract warnings count
-WARNINGS_COUNT=$(grep "Warnings" "$REPORT_FILE" | head -n 1 | awk '{print $NF}')
-if [ -n "$WARNINGS_COUNT" ]; then
-    log "Warnings found: $WARNINGS_COUNT"
-fi
+    echo "${score:-0}"
+}
 
-# Extract suggestions count
-SUGGESTIONS_COUNT=$(grep "Suggestions" "$REPORT_FILE" | head -n 1 | awk '{print $NF}')
-if [ -n "$SUGGESTIONS_COUNT" ]; then
-    log "Suggestions: $SUGGESTIONS_COUNT"
-fi
+# ---------------------------------------------------------------------------
+# Parse warnings and suggestions count
+# ---------------------------------------------------------------------------
+parse_warnings_count() {
+    local report_file="$1"
+    local count=""
+    if [[ -f "$report_file" ]]; then
+        count=$(grep -E '^\s*Warnings' "$report_file" 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
+    fi
+    echo "${count:-0}"
+}
 
-# Display summary information
-echo ""
-echo "=========================================="
-echo "Lynis Security Audit Complete"
-echo "=========================================="
-echo "Report file: $REPORT_FILE"
-echo "Log file: $LOGFILE"
-echo ""
-if [ -n "$HARDENING_SCORE" ]; then
-    echo "Hardening score: $HARDENING_SCORE"
-fi
-if [ -n "$WARNINGS_COUNT" ]; then
-    echo "Warnings found: $WARNINGS_COUNT"
-fi
-if [ -n "$SUGGESTIONS_COUNT" ]; then
-    echo "Suggestions: $SUGGESTIONS_COUNT"
-fi
-echo ""
-echo "Review the report for security recommendations."
-echo "To apply fixes for common issues, use:"
-echo "  sudo ./harden-system.sh"
-echo "=========================================="
+parse_suggestions_count() {
+    local report_file="$1"
+    local count=""
+    if [[ -f "$report_file" ]]; then
+        count=$(grep -E '^\s*Suggestions' "$report_file" 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
+    fi
+    echo "${count:-0}"
+}
 
-log "Lynis audit process completed"
+# ---------------------------------------------------------------------------
+# Emit JSON summary
+# ---------------------------------------------------------------------------
+emit_json_summary() {
+    local score="$1"
+    local warnings="$2"
+    local suggestions="$3"
+    local threshold="$4"
+    local passed="$5"
+    local report_file="$6"
+
+    cat <<JSONEOF
+{
+  "tool": "lynis",
+  "version": "$(lynis --version 2>/dev/null || echo 'unknown')",
+  "hardening_index": ${score},
+  "threshold": ${threshold},
+  "threshold_passed": ${passed},
+  "warnings": ${warnings},
+  "suggestions": ${suggestions},
+  "report_file": "${report_file}",
+  "timestamp": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+}
+JSONEOF
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+main() {
+    parse_args "$@"
+
+    # Check if Lynis is installed
+    if ! command -v lynis >/dev/null 2>&1; then
+        log "Lynis is not installed. Skipping security audit."
+        log "Install Lynis: apt-get install lynis (Debian/Ubuntu) or brew install lynis (macOS)"
+        if [[ "$JSON_OUTPUT" == true ]]; then
+            cat <<'SKIPJSON'
+{
+  "tool": "lynis",
+  "status": "skipped",
+  "reason": "Lynis not installed",
+  "hardening_index": null,
+  "threshold_passed": null
+}
+SKIPJSON
+        fi
+        exit 0
+    fi
+
+    # Create output directory
+    mkdir -p "$OUTPUT_DIR"
+
+    # Determine profile to use
+    local profile_path
+    if [[ -n "$CUSTOM_PROFILE" ]]; then
+        if [[ ! -f "$CUSTOM_PROFILE" ]]; then
+            log_error "Custom profile not found: $CUSTOM_PROFILE"
+            exit 1
+        fi
+        profile_path="$CUSTOM_PROFILE"
+        log "Using custom Lynis profile: $profile_path"
+    else
+        profile_path="$OUTPUT_DIR/orionx.prf"
+        generate_orionx_profile "$profile_path"
+    fi
+
+    # Build Lynis command
+    local lynis_args=("audit" "system" "--profile" "$profile_path" "--cronjob" "--no-colors")
+
+    if [[ "$QUICK_MODE" == true ]]; then
+        lynis_args+=("--quick")
+        log "Running Lynis quick audit..."
+    else
+        log "Running Lynis full audit..."
+    fi
+
+    # Run Lynis audit
+    local report_file="$OUTPUT_DIR/lynis-report.txt"
+    local lynis_log="$OUTPUT_DIR/lynis-audit.log"
+
+    set +e
+    lynis "${lynis_args[@]}" > "$report_file" 2>"$lynis_log"
+    local lynis_rc=$?
+    set -e
+
+    if [[ $lynis_rc -eq 0 ]]; then
+        log "Lynis audit completed successfully"
+    else
+        log "Lynis audit completed with exit code $lynis_rc (warnings or non-fatal errors)"
+    fi
+
+    # Parse results
+    local score warnings suggestions
+    score=$(parse_hardening_index "$report_file")
+    warnings=$(parse_warnings_count "$report_file")
+    suggestions=$(parse_suggestions_count "$report_file")
+
+    log "Hardening index: $score"
+    log "Warnings: $warnings"
+    log "Suggestions: $suggestions"
+
+    # Threshold check
+    local threshold_passed=true
+    if [[ "$score" -lt "$THRESHOLD" ]]; then
+        threshold_passed=false
+        log_error "Hardening index ($score) is below threshold ($THRESHOLD)"
+    else
+        log "Hardening index ($score) meets threshold ($THRESHOLD)"
+    fi
+
+    # Output JSON summary if requested
+    if [[ "$JSON_OUTPUT" == true ]]; then
+        emit_json_summary "$score" "$warnings" "$suggestions" "$THRESHOLD" "$threshold_passed" "$report_file"
+    else
+        # Display human-readable summary
+        echo ""
+        echo "=========================================="
+        echo "Lynis Security Audit Complete"
+        echo "=========================================="
+        echo "Report file: $report_file"
+        echo "Log file:    $lynis_log"
+        echo ""
+        echo "Hardening index: $score (threshold: $THRESHOLD)"
+        echo "Warnings:        $warnings"
+        echo "Suggestions:     $suggestions"
+        echo ""
+        if [[ "$threshold_passed" == false ]]; then
+            echo "RESULT: FAIL — hardening index below threshold"
+        else
+            echo "RESULT: PASS — hardening index meets threshold"
+        fi
+        echo "=========================================="
+    fi
+
+    # Exit non-zero if threshold not met
+    if [[ "$threshold_passed" == false ]]; then
+        exit 1
+    fi
+}
+
+main "$@"

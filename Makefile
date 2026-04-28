@@ -8,7 +8,7 @@
 #   a fallback when neither linter is installed.
 ##
 
-.PHONY: lint lint-shell lint-python test-unit test-integration test-forensic test-mesh test-matrix docker-build docker-build-matrix iso-build clean help
+.PHONY: lint lint-shell lint-python test-unit test-integration test-forensic test-mesh test-matrix docker-build docker-build-matrix iso-build lynis clean help
 
 SHELL_SCRIPTS := $(shell find scripts -name '*.sh' -type f)
 PYTHON_SCRIPTS := $(wildcard scripts/*.py)
@@ -78,6 +78,9 @@ iso-build: ## Build ISO image (Linux only)
 		exit 1; \
 	fi
 	bash scripts/build-iso.sh
+
+lynis: ## Run Lynis security audit
+	bash scripts/run-lynis.sh --threshold 75
 
 clean: ## Clean build artifacts
 	rm -rf output/ iso/cache/ iso/build/
