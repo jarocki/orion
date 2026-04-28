@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+set -euo pipefail
+#
+# Orion-X Phoenix Edition — Filesystem Hardening Hook
+#
+# Applied during ISO build to harden the filesystem.
+#
+# @decision DEC-SEC-FS-001
+# @title Filesystem hardening via live-build hook
+# @status accepted
+# @rationale /tmp as tmpfs noexec prevents code execution from temp dirs.
+#   Core dump disable prevents sensitive memory from being written to disk.
+#   Umask 027 restricts default file permissions.
+
+echo "[*] Applying filesystem hardening..."
+
+# 1. Configure /tmp as tmpfs with noexec,nosuid,nodev
+cat >> /etc/fstab << 'EOF'
+# Orion-X filesystem hardening
+tmpfs /tmp tmpfs defaults,noexec,nosuid,nodev,size=512M 0 0
+tmpfs /var/tmp tmpfs defaults,noexec,nosuid,nodev,size=256M 0 0
+tmpfs /dev/shm tmpfs defaults,noexec,nosuid,nodev 0 0
+EOF
+
+# 2. Disable core dumps
+cat > /etc/security/limits.d/orionx-no-coredump.conf << 'EOF'
+# Orion-X: Disable core dumps (prevent sensitive memory writes to disk)
+* hard core 0
+* soft core 0
+EOF
+
+# Also disable via sysctl
+cat > /etc/sysctl.d/60-orionx-coredump.conf << 'EOF'
+# Orion-X: Disable core dumps via kernel
+fs.suid_dumpable = 0
+kernel.core_pattern = |/bin/false
+EOF
+
+# 3. Set restrictive umask in login.defs
+if [ -f /etc/login.defs ]; then
+    sed -i 's/^UMASK\s\+022/UMASK\t\t027/' /etc/login.defs
+fi
+
+# 4. Set restrictive umask for bash sessions
+cat > /etc/profile.d/orionx-umask.sh << 'EOF'
+# Orion-X: Restrictive default umask
+umask 027
+EOF
+
+# 5. Ensure sticky bit on world-writable directories
+find / -xdev -type d -perm -0002 ! -perm -1000 -exec chmod +t {} \; 2>/dev/null || true
+
+echo "[*] Filesystem hardening complete"
