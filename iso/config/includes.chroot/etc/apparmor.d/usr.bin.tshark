@@ -1,0 +1,16 @@
+#include <tunables/global>
+
+profile tshark /usr/bin/tshark {
+  #include <abstractions/base>
+
+  /dev/net/tun rw,
+  /opt/orionx/data/** r,
+  /home/orionx/Analysis/** rw,
+
+  network packet raw,
+  network inet dgram,
+  capability net_raw,
+  capability net_admin,
+
+  deny /home/** w,
+}

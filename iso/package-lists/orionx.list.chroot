@@ -53,6 +53,10 @@ wget
 wireguard-tools
 
 # Security tools
+apparmor
+apparmor-utils
+apparmor-profiles
+apparmor-profiles-extra
 aircrack-ng
 chntpw
 clamav

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+set -euo pipefail
+#
+# @decision DEC-SEC-002
+# @title Enable AppArmor at boot with Orion-X profiles
+echo "[*] Enabling AppArmor..."
+
+# Enable AppArmor service
+if command -v systemctl &>/dev/null; then
+    systemctl enable apparmor
+fi
+
+# Add AppArmor boot parameter if not present
+GRUB_FILE="/etc/default/grub"
+if [ -f "$GRUB_FILE" ]; then
+    if ! grep -q "apparmor=1" "$GRUB_FILE"; then
+        sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="apparmor=1 security=apparmor /' "$GRUB_FILE"
+    fi
+fi
+
+echo "[*] AppArmor setup complete"
