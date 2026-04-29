@@ -107,7 +107,7 @@ Full architectural detail: `tmp/ORION-X-VISION-v3.md`
 ---
 
 ### Phase 6: Security Hardening
-**Env:** Linux VM (ISO) | **Status:** Active
+**Env:** Linux VM (ISO) | **Status:** Completed
 
 - Run Lynis audit on fresh ISO, document baseline score
 - AppArmor profiles for Synapse, WireGuard, forensic tools
@@ -120,7 +120,7 @@ Full architectural detail: `tmp/ORION-X-VISION-v3.md`
 ---
 
 ### Phase 7: Integration Testing
-**Env:** Docker + QEMU + physical hardware | **Status:** Planned
+**Env:** Docker + QEMU + physical hardware | **Status:** Active
 
 **End-to-end scenario:**
 1. Boot 3 nodes -> form WireGuard mesh -> establish Matrix comms
@@ -251,6 +251,11 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | DEC-FORENSIC-001 | 2026-04-25 | [FORENSIC] Test pure logic functions without mocking subprocess | Honest >= 60% coverage; forensic tools not available in CI. Code: `tests/unit/test_artifact_analyzer.py`, `tests/unit/test_storyboard_gen.py` |
 | DEC-FORENSIC-002 | 2026-04-24 | [FORENSIC] Commit small synthetic sample files to repo | Deterministic tests, works offline, valid format headers. Code: `data/samples/` |
 | DEC-FORENSIC-003 | 2026-04-26 | [FORENSIC] download-samples.sh follows setup-matrix.sh CLI pattern | Consistent project conventions. --offline mode for air-gapped. Code: `scripts/download-samples.sh` |
+| DEC-SEC-001 | 2026-04-27 | [SECURITY] nftables over iptables/ufw for firewall | Debian Bullseye default, kernel-native. Code: `iso/config/includes.chroot/etc/nftables.conf` |
+| DEC-SEC-002 | 2026-04-27 | [SECURITY] Static AppArmor profiles shipped in repo | Inspectable, version-controlled, deterministic. Code: `iso/config/includes.chroot/etc/apparmor.d/` |
+| DEC-SEC-003 | 2026-04-28 | [SECURITY] First-boot wizard as shell script + systemd oneshot | Zero additional deps, runs once and disables. Code: `scripts/security/first-boot-wizard.sh` |
+| DEC-SEC-004 | 2026-04-27 | [SECURITY] Structural validation in CI, runtime in Phase 7 | Docker lacks systemd/AppArmor kernel. Configs validated structurally. Code: `tests/integration/test-security-hardening.sh` |
+| DEC-SEC-005 | 2026-04-27 | [SECURITY] Modernize run-lynis.sh, retire v2 | Single source of truth. Code: `scripts/run-lynis.sh` |
 
 ## Risk Register
 
@@ -330,3 +335,18 @@ Forensic toolkit validation and Python test infrastructure. 6 work items across 
 - Modernized download-samples.sh with --offline mode for air-gapped environments
 
 Decisions: DEC-FORENSIC-001 (test pure logic), DEC-FORENSIC-002 (synthetic samples), DEC-FORENSIC-003 (CLI pattern)
+
+### Phase 6: Security Hardening (v2.0.0)
+**Completed:** 2026-04-28 | **Commits:** `a1af67e`..`229690c` on `develop`
+
+Platform security hardening for hostile environments. 8 work items across 3 waves:
+- Credential audit tool (zero hardcoded secrets, CI-ready)
+- nftables firewall: default-deny, WireGuard+Matrix+SSH only
+- Filesystem hardening: /tmp noexec, core dumps disabled, UMASK 027
+- 5 AppArmor profiles (Synapse, WireGuard, Volatility3, bulk_extractor, tshark)
+- Modernized Lynis with CLI args, threshold gate (>= 75), retired v2
+- First-boot wizard forcing credential setup on initial boot
+- Service hardening: SSH key-only, sysctl hardening, disabled unnecessary services
+- Integration test suite (36 checks across all 8 components)
+
+Decisions: DEC-SEC-001 (nftables), DEC-SEC-002 (static AppArmor), DEC-SEC-003 (first-boot wizard), DEC-SEC-004 (structural validation), DEC-SEC-005 (single Lynis)
