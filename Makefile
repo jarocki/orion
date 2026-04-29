@@ -8,7 +8,7 @@
 #   a fallback when neither linter is installed.
 ##
 
-.PHONY: lint lint-shell lint-python test-unit test-integration test-forensic test-mesh test-matrix docker-build docker-build-matrix iso-build lynis clean help
+.PHONY: lint lint-shell lint-python test-unit test-integration test-forensic test-security test-mesh test-matrix docker-build docker-build-matrix iso-build lynis clean help
 
 SHELL_SCRIPTS := $(shell find scripts -name '*.sh' -type f)
 PYTHON_SCRIPTS := $(wildcard scripts/*.py)
@@ -44,9 +44,15 @@ test-integration: ## Run integration tests
 	else \
 		echo "No integration tests found yet"; \
 	fi
+	@if [ -f tests/integration/test-security-hardening.sh ]; then \
+		bash tests/integration/test-security-hardening.sh; \
+	fi
 
 test-forensic: ## Validate forensic tools respond to --version/--help
 	bash tests/integration/test-forensic-tools.sh
+
+test-security: ## Validate Phase 6 security hardening deliverables
+	bash tests/integration/test-security-hardening.sh
 
 test-mesh: ## Run 3-node mesh integration test in Docker
 	docker compose -f docker/docker-compose.mesh-test.yml build
