@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+set -euo pipefail
+#
+# Orion-X Phoenix Edition — Service Hardening Hook
+#
+# @decision DEC-SEC-SVC-001
+# @title Disable unnecessary services, harden SSH and sysctl
+# @status accepted
+# @rationale Minimize attack surface. Only WireGuard, Matrix, and
+#   forensic tools should be active. SSH hardened for key-only auth.
+
+echo "[*] Applying service hardening..."
+
+# 1. Disable unnecessary services
+for svc in avahi-daemon cups bluetooth ModemManager; do
+    if systemctl list-unit-files "$svc.service" &>/dev/null 2>&1; then
+        systemctl disable "$svc.service" 2>/dev/null || true
+        systemctl mask "$svc.service" 2>/dev/null || true
+        echo "  Disabled: $svc"
+    fi
+done
+
+# 2. Harden SSH configuration
+SSHD_CONFIG="/etc/ssh/sshd_config"
+if [ -f "$SSHD_CONFIG" ]; then
+    cat > /etc/ssh/sshd_config.d/orionx-hardening.conf << 'EOF'
+# Orion-X SSH Hardening
+PermitRootLogin no
+PasswordAuthentication no
+MaxAuthTries 3
+X11Forwarding no
+AllowAgentForwarding no
+ClientAliveInterval 300
+ClientAliveCountMax 2
+LoginGraceTime 30
+EOF
+    echo "  SSH hardened: key-only, no root, MaxAuthTries=3"
+fi
+
+# 3. Kernel sysctl hardening
+cat > /etc/sysctl.d/60-orionx-hardening.conf << 'EOF'
+# Orion-X kernel hardening
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv4.tcp_syncookies = 1
+kernel.randomize_va_space = 2
+kernel.kptr_restrict = 2
+kernel.yama.ptrace_scope = 1
+EOF
+    echo "  Sysctl hardening applied"
+
+# 4. Add security directives to mesh systemd units if they exist
+for unit in /etc/systemd/system/orionx-mesh-*.service; do
+    if [ -f "$unit" ] && ! grep -q "ProtectSystem" "$unit"; then
+        cat >> "$unit" << 'EOF'
+
+# Security hardening (added by 0620-service-hardening.hook.chroot)
+ProtectSystem=strict
+NoNewPrivileges=true
+ProtectHome=true
+EOF
+        echo "  Hardened: $(basename "$unit")"
+    fi
+done
+
+echo "[*] Service hardening complete"
