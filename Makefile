@@ -8,7 +8,7 @@
 #   a fallback when neither linter is installed.
 ##
 
-.PHONY: lint lint-shell lint-python test-unit test-integration test-forensic test-security test-mesh test-matrix docker-build docker-build-matrix iso-build lynis clean help
+.PHONY: lint lint-shell lint-python test-unit test-unit-bash test-unit-python test-integration test-forensic test-security test-mesh test-matrix docker-build docker-build-matrix iso-build lynis clean help
 
 SHELL_SCRIPTS := $(shell find scripts -name '*.sh' -type f)
 PYTHON_SCRIPTS := $(wildcard scripts/*.py)
@@ -33,9 +33,19 @@ lint-python: ## Lint Python scripts with ruff (or flake8 fallback)
 	fi
 	@for f in $(PYTHON_SCRIPTS); do python3 -m py_compile "$$f" && echo "  $$f: OK"; done
 
-test-unit: ## Run unit tests
-	@echo "=== Unit Tests ==="
-	python3 -m pytest tests/unit/ -v --tb=short 2>/dev/null || echo "No unit tests found yet"
+test-unit-bash: ## Run bash unit tests
+	@echo "=== Bash Unit Tests ==="
+	@for f in tests/unit/test_*.sh; do \
+		[ -f "$$f" ] || continue; \
+		echo "  Running $$f ..."; \
+		bash "$$f" || exit 1; \
+	done
+
+test-unit-python: ## Run Python unit tests
+	@echo "=== Python Unit Tests ==="
+	python3 -m pytest tests/unit/ -v --tb=short 2>/dev/null || echo "No Python unit tests found yet"
+
+test-unit: test-unit-bash test-unit-python ## Run all unit tests (bash + python)
 
 test-integration: ## Run integration tests
 	@echo "=== Integration Tests ==="
@@ -78,7 +88,7 @@ test-matrix: ## Run Matrix integration test in Docker
 docker-build: ## Build Docker development environment
 	docker build -t orionx-dev .
 
-iso-build: ## Build ISO image (Linux only)
+iso-build: test-unit ## Build ISO image (Linux only); runs unit tests first per Evaluation Contract
 	@if [ "$$(uname)" != "Linux" ]; then \
 		echo "ERROR: ISO build requires Linux. Use 'make docker-build' then build inside container."; \
 		exit 1; \

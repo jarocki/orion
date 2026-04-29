@@ -1,11 +1,18 @@
 #!/bin/sh
 #
-# Orion-X Phoenix Edition v1.5.5
-# Live-build configuration script
+# Orion-X Phoenix Edition — Live-build configuration script
+#
+# Version is read from ORIONX_VERSION (exported by scripts/build-iso.sh).
+# Default: v2.0.0-rc1 (Phase 7 pre-release).
+# Do NOT hardcode a version literal here — scripts/build-iso.sh is the
+# single version authority (DEC-PHASE7-002).
 #
 # This script configures the live-build system for Orion-X.
 
 set -e
+
+# Version authority: read from environment; scripts/build-iso.sh exports it.
+ORIONX_VERSION="${ORIONX_VERSION:-v2.0.0-rc1}"
 
 # Base distribution
 DISTRIBUTION="bullseye"
@@ -29,7 +36,7 @@ lb config noauto \
     --bootloader "syslinux,grub-efi" \
     --iso-application "Orion-X Phoenix Edition" \
     --iso-publisher "Orion-X Project" \
-    --iso-volume "OrionX-v1.5.5" \
+    --iso-volume "OrionX-${ORIONX_VERSION}" \
     --memtest none \
     --security true \
     --updates true \
