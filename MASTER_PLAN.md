@@ -136,6 +136,34 @@ Full architectural detail: `tmp/ORION-X-VISION-v3.md`
 
 **Acceptance:** Full E2E scenario completes. ISO boots UEFI + BIOS. All failure scenarios recover.
 
+**Work Item Breakdown (planned 2026-04-28):**
+
+Phase 7 collapses 3 deferred runtime obligations (DEC-MATRIX-005, DEC-SEC-004,
+DEC-MESH-003 -> QEMU) into a single integration phase. Sequencing is "cheapest
+iteration first": Docker validates orchestration, QEMU validates kernel/systemd
+runtime, hardware validates USB boot.
+
+| W-ID | Title | Env | Wave | Deps | Weight | Gate |
+|------|-------|-----|------|------|--------|------|
+| W7-1 | ISO build pipeline modernization | Linux/Docker | 1 | - | M | review |
+| W7-2 | E2E scenario script (Docker, 3-node) | Docker | 1 | - | M | review |
+| W7-3 | QEMU boot test harness (UEFI + BIOS) | Linux/QEMU | 2 | W7-1 | L | review |
+| W7-4 | QEMU runtime verification (mesh + Matrix + AppArmor) | Linux/QEMU | 3 | W7-2, W7-3 | L | review |
+| W7-5 | Performance benchmark suite | Linux/QEMU | 4 | W7-3, W7-4 | M | review |
+| W7-6 | Failure-mode recovery tests | Docker + QEMU | 4 | W7-2, W7-4 | M | review |
+| W7-7 | Physical USB boot validation | Hardware | 5 | W7-3 | S | approve |
+| W7-8 | Phase 7 closure + Phase 8 activation | Repo | 6 | W7-1..W7-7 | S | review |
+
+**Critical path:** W7-1 -> W7-3 -> W7-4 -> W7-6 -> W7-8 (5 waves).
+**Max parallel width:** 2 (W7-1 and W7-2 in wave 1; W7-5 and W7-6 in wave 4).
+**Hardware gate:** W7-7 requires physical USB and human-in-the-loop and is the
+only `approve` gate; runs in parallel with W7-4..W7-6 once W7-3 lands.
+
+Detailed Scope Manifests and Evaluation Contracts for each work item live in
+`reckonings/2026-04-28-phase7-plan.md` (this section is the index; the
+expanded contracts are produced per-dispatch by the planner trailer when each
+W7-N item is provisioned).
+
 ---
 
 ### Phase 8: Release v2.0.0
@@ -256,6 +284,12 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | DEC-SEC-003 | 2026-04-28 | [SECURITY] First-boot wizard as shell script + systemd oneshot | Zero additional deps, runs once and disables. Code: `scripts/security/first-boot-wizard.sh` |
 | DEC-SEC-004 | 2026-04-27 | [SECURITY] Structural validation in CI, runtime in Phase 7 | Docker lacks systemd/AppArmor kernel. Configs validated structurally. Code: `tests/integration/test-security-hardening.sh` |
 | DEC-SEC-005 | 2026-04-27 | [SECURITY] Modernize run-lynis.sh, retire v2 | Single source of truth. Code: `scripts/run-lynis.sh` |
+| DEC-PHASE7-001 | 2026-04-28 | [INTEGRATION] Cheapest-iteration-first sequencing: Docker -> QEMU -> hardware | Docker validates orchestration in seconds, QEMU validates kernel/systemd in minutes, hardware validates USB boot once. Inverting this order would burn the Bullseye-EOL clock. Code: `MASTER_PLAN.md` Phase 7 work breakdown |
+| DEC-PHASE7-002 | 2026-04-28 | [INTEGRATION] ISO build script must be modernized as W7-1 before QEMU work | `scripts/build-iso.sh` still references v1.5.5 and uppercase `ISO/` path; `iso/` (lowercase) holds Phase 1-6 hardening assets. QEMU testing requires a build that actually emits hardened bits. Code: `scripts/build-iso.sh` |
+| DEC-PHASE7-003 | 2026-04-28 | [INTEGRATION] E2E scenario in Docker first, full mesh+Matrix+forensics+report flow | Docker mesh+matrix compose already exists; combining them validates the operator workflow before paying QEMU cost. QEMU re-runs the same script to confirm it works on real systemd. Code: `tests/integration/test-e2e-scenario.sh` (new) |
+| DEC-PHASE7-004 | 2026-04-28 | [INTEGRATION] Performance budgets are soft gates with documented exceptions | Boot <90s / ISO <4GB / idle RAM <1GB are operator-experience targets, not security invariants. If exceeded, ship with documented values and a remediation issue rather than blocking v2.0.0 release. EOL clock dominates. Code: `tests/integration/test-performance.sh` (new) |
+| DEC-PHASE7-005 | 2026-04-28 | [INTEGRATION] Hardware USB boot is mandatory but parallelizable with QEMU work | Goal contract names physical hardware explicitly; cannot defer. But hardware validation is human-in-the-loop, so it runs as parallel `approve` gate beside the QEMU automation track to avoid blocking software work. Code: `docs/phase7-hardware-boot-procedure.md` (new) |
+| DEC-PHASE7-006 | 2026-04-28 | [INTEGRATION] Failure-mode coverage is all 4: node drop, Synapse restart, disk full, network flap | All four are named in the desired end state; reducing coverage requires user signoff. Implementation: each as a discrete sub-test inside W7-6 with PASS/FAIL/SKIP semantics so partial completion is visible. Code: `tests/integration/test-failure-modes.sh` (new) |
 
 ## Risk Register
 
