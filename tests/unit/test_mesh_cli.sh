@@ -50,12 +50,12 @@ else
 fi
 
 pass() {
-    ((PASS++))
+    ((PASS+=1))
     echo "${GREEN}  PASS${NC}: $1"
 }
 
 fail() {
-    ((FAIL++))
+    ((FAIL+=1))
     echo "${RED}  FAIL${NC}: $1"
     if [[ -n "${2:-}" ]]; then
         echo "        $2"
@@ -63,7 +63,7 @@ fail() {
 }
 
 skip() {
-    ((SKIP++))
+    ((SKIP+=1))
     echo "${YELLOW}  SKIP${NC}: $1 — $2"
 }
 
@@ -72,11 +72,6 @@ run_cli() {
     ORIONX_SKIP_ROOT_CHECK=1 bash "$CLI_SCRIPT" "$@" 2>&1
 }
 
-run_cli_rc() {
-    # Run CLI and return exit code
-    ORIONX_SKIP_ROOT_CHECK=1 bash "$CLI_SCRIPT" "$@" 2>&1
-    return $?
-}
 
 section() {
     echo ""
@@ -383,7 +378,7 @@ section "Production Sequence"
 r1=$(run_cli status); rc1=$?
 r2=$(run_cli help); rc2=$?
 set +e
-r3=$(run_cli join); rc3=$?
+_r3=$(run_cli join); rc3=$?
 set -e
 r4=$(run_cli status); rc4=$?
 

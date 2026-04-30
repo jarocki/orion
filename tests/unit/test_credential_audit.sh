@@ -49,12 +49,12 @@ else
 fi
 
 pass() {
-    ((PASS++))
+    ((PASS+=1))
     echo "${GREEN}  PASS${NC}: $1"
 }
 
 fail() {
-    ((FAIL++))
+    ((FAIL+=1))
     echo "${RED}  FAIL${NC}: $1"
     if [[ -n "${2:-}" ]]; then
         echo "        $2"
@@ -62,7 +62,7 @@ fail() {
 }
 
 skip() {
-    ((SKIP++))
+    ((SKIP+=1))
     echo "${YELLOW}  SKIP${NC}: $1 — $2"
 }
 

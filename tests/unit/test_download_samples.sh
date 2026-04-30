@@ -53,12 +53,12 @@ else
 fi
 
 pass() {
-    ((PASS++))
+    ((PASS+=1))
     echo "${GREEN}  PASS${NC}: $1"
 }
 
 fail() {
-    ((FAIL++))
+    ((FAIL+=1))
     echo "${RED}  FAIL${NC}: $1"
     if [[ -n "${2:-}" ]]; then
         echo "        $2"
@@ -66,7 +66,7 @@ fail() {
 }
 
 skip() {
-    ((SKIP++))
+    ((SKIP+=1))
     echo "${YELLOW}  SKIP${NC}: $1 — $2"
 }
 
@@ -77,12 +77,7 @@ section() {
 
 # Temp directory for offline tests — cleaned up on exit
 TMPDIR_TEST=""
-cleanup() {
-    if [[ -n "$TMPDIR_TEST" && -d "$TMPDIR_TEST" ]]; then
-        rm -rf "$TMPDIR_TEST"
-    fi
-}
-trap cleanup EXIT
+trap '[[ -n "$TMPDIR_TEST" && -d "$TMPDIR_TEST" ]] && rm -rf "$TMPDIR_TEST"' EXIT
 
 echo "=== W5-6: download-samples.sh Modernization Tests ==="
 
@@ -368,7 +363,7 @@ section "Production Sequence: Air-Gapped Deployment"
 TMPDIR_PROD=$(mktemp -d)
 set +e
 r1=$(bash "$DOWNLOAD_SCRIPT" --help 2>&1); rc1=$?
-r2=$(bash "$DOWNLOAD_SCRIPT" --offline --samples-dir "$TMPDIR_PROD/evidence" 2>&1); rc2=$?
+_r2=$(bash "$DOWNLOAD_SCRIPT" --offline --samples-dir "$TMPDIR_PROD/evidence" 2>&1); rc2=$?
 set -e
 
 # Count total files created

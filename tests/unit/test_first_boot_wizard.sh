@@ -55,12 +55,12 @@ else
 fi
 
 pass() {
-    ((PASS++))
+    ((PASS+=1))
     echo "${GREEN}  PASS${NC}: $1"
 }
 
 fail() {
-    ((FAIL++))
+    ((FAIL+=1))
     echo "${RED}  FAIL${NC}: $1"
     if [[ -n "${2:-}" ]]; then
         echo "        $2"
@@ -68,7 +68,7 @@ fail() {
 }
 
 skip() {
-    ((SKIP++))
+    ((SKIP+=1))
     echo "${YELLOW}  SKIP${NC}: $1 — $2"
 }
 
@@ -350,7 +350,7 @@ PROD_FLAG="$PROD_DIR/.first-boot-done"
 
 # Step 1+2+3: First boot
 set +e
-boot1_output=$(ORIONX_FIRST_BOOT_DRY_RUN=1 \
+_boot1_output=$(ORIONX_FIRST_BOOT_DRY_RUN=1 \
     ORIONX_FIRST_BOOT_FLAG="$PROD_FLAG" \
     bash "$WIZARD_SCRIPT" --non-interactive 2>&1)
 boot1_rc=$?
