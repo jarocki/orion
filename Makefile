@@ -8,7 +8,7 @@
 #   a fallback when neither linter is installed.
 ##
 
-.PHONY: lint lint-shell lint-python test-unit test-unit-bash test-unit-python test-integration test-forensic test-security test-mesh test-matrix docker-build docker-build-matrix iso-build lynis clean help
+.PHONY: lint lint-shell lint-python test-unit test-unit-bash test-unit-python test-integration test-forensic test-security test-mesh test-matrix test-e2e docker-build docker-build-matrix iso-build lynis clean help
 
 SHELL_SCRIPTS := $(shell find scripts -name '*.sh' -type f)
 PYTHON_SCRIPTS := $(wildcard scripts/*.py)
@@ -72,6 +72,9 @@ test-mesh: ## Run 3-node mesh integration test in Docker
 	@echo "Running integration tests..."
 	bash tests/integration/test-mesh.sh || true
 	docker compose -f docker/docker-compose.mesh-test.yml down -v
+
+test-e2e: ## Run full Phase 7 E2E scenario in Docker (3-node stack, ~10min)
+	bash tests/integration/test-e2e-scenario.sh
 
 docker-build-matrix: ## Build Matrix test Docker image
 	docker compose -f docker/docker-compose.matrix-test.yml build
