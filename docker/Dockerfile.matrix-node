@@ -4,9 +4,23 @@
 # @rationale Tests Matrix-over-WireGuard mesh (actual acceptance criteria).
 #   Builds on the mesh node pattern (DEC-MESH-003) adding Synapse homeserver.
 #   Bullseye-slim base for consistency with Dockerfile.mesh-node. Synapse
-#   installed from Matrix.org Debian repo with pip3 fallback if repo install
-#   fails. matrix-commander is optional — curl-based API testing works as
-#   fallback for E2E test automation.
+#   installed via pip3 (PyPI) on the system python3 path — NOT via the
+#   matrix-org Debian package (matrix-synapse-py3) which ships Synapse in a
+#   private venv at /opt/venvs/matrix-synapse/ incompatible with the frozen
+#   Phase 4 entrypoint's `python3 -m synapse.app.homeserver` invocation.
+#   matrix-commander is optional — curl-based API testing works as fallback.
+#
+# @decision DEC-PHASE7-014
+# @title pip-only Synapse install retains Phase 4 entrypoint contract
+# @status accepted
+# @rationale The matrix-org Debian package (matrix-synapse-py3) installs
+#   Synapse in a private virtualenv (/opt/venvs/matrix-synapse/) that is NOT
+#   on the system python3 import path. matrix-entrypoint.sh (frozen, Phase 4
+#   / DEC-MATRIX-005) invokes `python3 -m synapse.app.homeserver`, which
+#   requires Synapse to be importable from system python3. pip3 install
+#   (PyPI: matrix-synapse) lands in /usr/local/lib/python3.x/site-packages/
+#   and satisfies that contract. The matrix-org Debian repo is therefore
+#   removed entirely from this Dockerfile.
 
 FROM debian:bullseye-slim
 
@@ -16,8 +30,12 @@ LABEL description="Orion-X Matrix node — Synapse homeserver over WireGuard mes
 # Prevent interactive prompts during installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system deps + WireGuard + Synapse prereqs
-# Single RUN layer to minimise image size
+# Install system deps + WireGuard tools + build prerequisites for pip native extensions.
+# Build deps (build-essential, python3-dev, libffi-dev, etc.) are required so pip3
+# can compile matrix-synapse's native dependencies (cryptography, bcrypt, Pillow,
+# frozendict, etc.) on bullseye. lsb-release retained for runtime use.
+# wget, apt-transport-https, gnupg removed — matrix-org Debian repo no longer used.
+# @decision DEC-MATRIX-002 — Bullseye base retained per DEC-009.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wireguard-tools \
     socat \
@@ -29,37 +47,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     lsb-release \
-    wget \
-    apt-transport-https \
-    gnupg \
+    build-essential \
+    python3-dev \
+    libffi-dev \
+    libssl-dev \
+    libjpeg-dev \
+    zlib1g-dev \
+    libxml2-dev \
+    libxslt1-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Add Matrix Synapse repo
-# @decision DEC-MATRIX-002 — Bullseye target retained per DEC-009; do not switch base image.
-RUN wget -qO /usr/share/keyrings/matrix-org-archive-keyring.gpg \
-        https://packages.matrix.org/debian/matrix-org-archive-keyring.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/matrix-org-archive-keyring.gpg] \
-        https://packages.matrix.org/debian/ $(lsb_release -cs) main" \
-        > /etc/apt/sources.list.d/matrix-org.list
+# Install Synapse via pip3 — installs to system python3 site-packages so that
+# `python3 -m synapse.app.homeserver` (matrix-entrypoint.sh, frozen Phase 4)
+# can import it without modification.
+# The matrix-org Debian package (matrix-synapse-py3) is NOT used: it places
+# Synapse in a private venv (/opt/venvs/matrix-synapse/) incompatible with the
+# system-python invocation in matrix-entrypoint.sh (DEC-PHASE7-014).
+RUN pip3 install --no-cache-dir matrix-synapse
 
-# Install Synapse — apt first, pip3 fallback if apt fails.
-# The if/then/else form keeps the fallback path explicit and prevents
-# the old &&...|| chain from masking a failed apt install when rm -rf
-# was the last command that succeeded.
-RUN apt-get update && \
-    if apt-get install -y --no-install-recommends matrix-synapse-py3; then \
-        echo "Synapse installed via matrix-org Debian repo"; \
-    else \
-        echo "Matrix repo install failed, falling back to pip3"; \
-        pip3 install --no-cache-dir matrix-synapse; \
-    fi && \
-    rm -rf /var/lib/apt/lists/*
-
-# Verify Synapse is importable — fails the build loudly if install did not work.
+# Verify Synapse is importable from system python3 — fails the build loudly if
+# pip install did not actually land on the system import path.
 # This is the single source of truth for install success (synapse_install_authority).
 RUN python3 -c "import synapse; print('synapse', synapse.__version__, 'imported from', synapse.__file__)"
 
-# Install matrix-commander for E2E testing (optional — curl-based fallback)
+# Install matrix-commander for E2E testing (optional — curl-based fallback if unavailable)
 RUN pip3 install --no-cache-dir matrix-commander 2>/dev/null \
     || echo "matrix-commander install failed, will use curl-based testing"
 
