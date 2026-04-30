@@ -53,12 +53,12 @@ else
 fi
 
 pass() {
-    ((PASS++))
+    ((PASS+=1))
     echo "${GREEN}  PASS${NC}: $1"
 }
 
 fail() {
-    ((FAIL++))
+    ((FAIL+=1))
     echo "${RED}  FAIL${NC}: $1"
     if [[ -n "${2:-}" ]]; then
         echo "        $2"
@@ -66,7 +66,7 @@ fail() {
 }
 
 skip() {
-    ((SKIP++))
+    ((SKIP+=1))
     echo "${YELLOW}  SKIP${NC}: $1 — $2"
 }
 
@@ -80,10 +80,6 @@ run_matrix() {
     ORIONX_MATRIX_DRY_RUN=1 bash "$MATRIX_SCRIPT" "$@" 2>&1
 }
 
-run_matrix_rc() {
-    ORIONX_MATRIX_DRY_RUN=1 bash "$MATRIX_SCRIPT" "$@" 2>&1
-    return $?
-}
 
 echo "=== W1-2: setup-matrix.sh Modernization Tests ==="
 
@@ -313,8 +309,8 @@ section "Production Sequence"
 # This simulates a Docker build where the script is called non-interactively
 set +e
 r1=$(run_matrix --help); rc1=$?
-r2=$(run_matrix --mode server --server-name deploy.local --admin-user deployer --admin-pass deploy123); rc2=$?
-r3=$(run_matrix --mode client --homeserver-url https://deploy.local:8448 --user-id '@responder:deploy.local' --password resp123); rc3=$?
+_r2=$(run_matrix --mode server --server-name deploy.local --admin-user deployer --admin-pass deploy123); rc2=$?
+_r3=$(run_matrix --mode client --homeserver-url https://deploy.local:8448 --user-id '@responder:deploy.local' --password resp123); rc3=$?
 set -e
 
 if [[ $rc1 -eq 0 ]] && echo "$r1" | grep -q 'Usage:' \
@@ -328,7 +324,7 @@ fi
 # Failure recovery: no mode → error → retry with mode
 set +e
 r1=$(run_matrix 2>&1); rc1=$?
-r2=$(run_matrix --mode server --admin-user admin --admin-pass pass); rc2=$?
+_r2=$(run_matrix --mode server --admin-user admin --admin-pass pass); rc2=$?
 set -e
 if [[ $rc1 -ne 0 ]] && [[ $rc2 -eq 0 ]]; then
     pass "Failure recovery: no-mode-error → retry with --mode succeeds"

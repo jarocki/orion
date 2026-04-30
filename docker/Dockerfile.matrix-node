@@ -34,17 +34,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# Add Matrix Synapse repo and install (with pip3 fallback)
+# Add Matrix Synapse repo
+# @decision DEC-MATRIX-002 — Bullseye target retained per DEC-009; do not switch base image.
 RUN wget -qO /usr/share/keyrings/matrix-org-archive-keyring.gpg \
         https://packages.matrix.org/debian/matrix-org-archive-keyring.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/matrix-org-archive-keyring.gpg] \
         https://packages.matrix.org/debian/ $(lsb_release -cs) main" \
-        > /etc/apt/sources.list.d/matrix-org.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends matrix-synapse-py3 \
-    && rm -rf /var/lib/apt/lists/* \
-    || { echo "Matrix repo install failed, falling back to pip"; \
-         pip3 install --no-cache-dir matrix-synapse; }
+        > /etc/apt/sources.list.d/matrix-org.list
+
+# Install Synapse — apt first, pip3 fallback if apt fails.
+# The if/then/else form keeps the fallback path explicit and prevents
+# the old &&...|| chain from masking a failed apt install when rm -rf
+# was the last command that succeeded.
+RUN apt-get update && \
+    if apt-get install -y --no-install-recommends matrix-synapse-py3; then \
+        echo "Synapse installed via matrix-org Debian repo"; \
+    else \
+        echo "Matrix repo install failed, falling back to pip3"; \
+        pip3 install --no-cache-dir matrix-synapse; \
+    fi && \
+    rm -rf /var/lib/apt/lists/*
+
+# Verify Synapse is importable — fails the build loudly if install did not work.
+# This is the single source of truth for install success (synapse_install_authority).
+RUN python3 -c "import synapse; print('synapse', synapse.__version__, 'imported from', synapse.__file__)"
 
 # Install matrix-commander for E2E testing (optional — curl-based fallback)
 RUN pip3 install --no-cache-dir matrix-commander 2>/dev/null \

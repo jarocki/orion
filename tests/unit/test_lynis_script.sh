@@ -56,12 +56,12 @@ else
 fi
 
 pass() {
-    ((PASS++))
+    ((PASS+=1))
     echo "${GREEN}  PASS${NC}: $1"
 }
 
 fail() {
-    ((FAIL++))
+    ((FAIL+=1))
     echo "${RED}  FAIL${NC}: $1"
     if [[ -n "${2:-}" ]]; then
         echo "        $2"
@@ -69,7 +69,7 @@ fail() {
 }
 
 skip() {
-    ((SKIP++))
+    ((SKIP+=1))
     echo "${YELLOW}  SKIP${NC}: $1 — $2"
 }
 
@@ -390,7 +390,7 @@ section "Production Sequence: CI Pipeline Gate"
 #   3. Expects graceful skip when Lynis is not installed
 set +e
 r1=$(bash "$LYNIS_SCRIPT" --help 2>&1); rc1=$?
-r2=$(bash "$LYNIS_SCRIPT" --threshold 75 --json 2>&1); rc2=$?
+_r2=$(bash "$LYNIS_SCRIPT" --threshold 75 --json 2>&1); rc2=$?
 set -e
 
 if [[ $rc1 -eq 0 ]] && echo "$r1" | grep -q 'Usage:' \
