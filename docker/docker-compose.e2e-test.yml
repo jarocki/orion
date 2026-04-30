@@ -1,0 +1,127 @@
+##
+# @decision DEC-PHASE7-007
+# @title E2E 3-node compose stack on dedicated 172.22.0.0/24 subnet
+# @status accepted
+# @rationale The E2E scenario needs a full 3-node environment: two mesh-only
+#   nodes (e2e-node-2, e2e-node-3) and one server node (e2e-server) that also
+#   runs Synapse.  Using 172.22.0.0/24 avoids collisions with the mesh-test
+#   stack (172.20.0.0/24) and the matrix-test stack (172.21.0.0/24) so all
+#   three stacks can run concurrently on the same Docker host without ARP or
+#   routing conflicts.  Project name orionx-e2e-test is distinct from
+#   orionx-mesh-test and orionx-matrix-test to keep containers/networks/volumes
+#   separate.  Reuses Dockerfile.matrix-node verbatim (DEC-MATRIX-002): that
+#   image is a superset — it contains both wireguard-tools and Synapse, so all
+#   three nodes can form a mesh and e2e-server can also run Synapse.
+#
+# @decision DEC-PHASE7-008
+# @title e2e-server exposes Synapse on port 8108 (NOT 8008) to avoid host conflict
+# @status accepted
+# @rationale When docker-compose.matrix-test.yml is also running, it binds
+#   localhost:8008.  The E2E stack binds localhost:8108 instead so both stacks
+#   coexist without a port conflict.  The test script targets 8108 explicitly.
+#
+# Orion-X 3-Node E2E Test Environment
+#
+# Three matrix-node containers (containing wireguard-tools + Synapse) on a
+# dedicated Docker bridge.  e2e-server runs Synapse in "server" role; the other
+# two nodes are mesh-only in "client" role (they join the mesh but do not start
+# Synapse, keeping resource use low).
+#
+# Prerequisites:
+#   - Docker with compose v2 plugin
+#   - Host WireGuard kernel module loaded (modprobe wireguard)
+#
+# Usage (via Makefile):
+#   make test-e2e
+#
+# Manual:
+#   docker compose -p orionx-e2e-test -f docker/docker-compose.e2e-test.yml up -d
+#   docker compose -p orionx-e2e-test -f docker/docker-compose.e2e-test.yml down -v
+##
+
+version: '3.8'
+
+services:
+  e2e-server:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.matrix-node
+    hostname: orionx-e2e-server
+    environment:
+      - ORIONX_MATRIX_ROLE=server
+      - ORIONX_SERVER_NAME=orionx.local
+      - ORIONX_REGISTRATION_SECRET=e2e-reg-secret-not-for-prod
+      - ORIONX_MACAROON_SECRET=e2e-macaroon-secret
+      - ORIONX_FORM_SECRET=e2e-form-secret
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+    ports:
+      - "8108:8008"
+    volumes:
+      - e2e-matrix-data:/data
+    networks:
+      e2e-test-net:
+        ipv4_address: 172.22.0.2
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8008/_matrix/client/versions"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 45s
+
+  e2e-node-2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.matrix-node
+    hostname: orionx-e2e-node-2
+    environment:
+      - ORIONX_MATRIX_ROLE=client
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+    depends_on:
+      e2e-server:
+        condition: service_healthy
+    networks:
+      e2e-test-net:
+        ipv4_address: 172.22.0.3
+
+  e2e-node-3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.matrix-node
+    hostname: orionx-e2e-node-3
+    environment:
+      - ORIONX_MATRIX_ROLE=client
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+    depends_on:
+      e2e-server:
+        condition: service_healthy
+    networks:
+      e2e-test-net:
+        ipv4_address: 172.22.0.4
+
+volumes:
+  e2e-matrix-data:
+
+networks:
+  e2e-test-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.22.0.0/24

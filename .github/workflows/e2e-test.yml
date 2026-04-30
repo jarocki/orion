@@ -1,0 +1,57 @@
+name: E2E Scenario Test
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # artifact-analyzer.py and storyboard-gen.py open /var/log/orionx/*.log
+      # at module import time.  ubuntu-latest runners are non-root; pre-create
+      # the directory with sudo so the Python file handlers do not crash before
+      # the scripts reach their main() entry point.  The scripts themselves are
+      # in the forbidden scope for W7-2 — this is the approved workaround.
+      #
+      # @decision DEC-PHASE7-013
+      # @title sudo pre-create /var/log/orionx on CI runner for analyzer scripts
+      # @status accepted
+      # @rationale artifact-analyzer.py and storyboard-gen.py hardcode
+      #   logging.FileHandler("/var/log/orionx/...") at module-import time.
+      #   On ubuntu-latest (non-root user) that directory does not exist, so
+      #   both scripts raise PermissionError before executing any analysis.
+      #   Modifying those scripts is out of W7-2 scope (forbidden paths).
+      #   Pre-creating /var/log/orionx/ with sudo in the CI workflow step is
+      #   the least-invasive workaround: it requires no source changes and
+      #   matches what a local operator would do with 'sudo mkdir -p /var/log/orionx'.
+      #   A follow-up issue tracks moving the log path out of the scripts
+      #   themselves (e.g. via $ORIONX_LOG_DIR env var) so this workaround
+      #   can be retired.
+      - name: Pre-create /var/log/orionx (required by analyzer scripts)
+        run: sudo mkdir -p /var/log/orionx && sudo chmod 777 /var/log/orionx
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q jq curl python3
+
+      - name: Install Python packages
+        run: pip install --quiet -r requirements.txt
+
+      - name: Run E2E scenario
+        run: make test-e2e
+
+      - name: Upload E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts-${{ github.run_id }}
+          path: tmp/e2e-artifacts/
+          if-no-files-found: warn
