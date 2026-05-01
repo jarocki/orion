@@ -3,11 +3,24 @@
 # @status accepted
 # @rationale Production fidelity; NET_ADMIN + /dev/net/tun for real WireGuard.
 #   Separate compose keeps mesh testing isolated from dev container.
-#   Bullseye-slim chosen for minimal footprint while providing all required
-#   networking tools. wireguard-go is not packaged for bullseye-slim, so the
-#   host must have the WireGuard kernel module loaded (modprobe wireguard).
+#   Base image is now debian:bookworm-slim per DEC-PHASE7-015 (see below).
+#   wireguard-go is not packaged for bookworm-slim, so the host must have
+#   the WireGuard kernel module loaded (modprobe wireguard).
+#
+# @decision DEC-PHASE7-015
+# @title Bookworm base image for docker/ container builds (bounded DEC-009 supersedence)
+# @status accepted
+# @rationale Bullseye ships Python 3.9; latest matrix-synapse raises a
+#   Generic+Collector MRO TypeError on Python 3.9 (CI issue #19). Bookworm
+#   ships Python 3.11 which resolves the MRO issue without pinning the
+#   matrix-synapse version. This switch applies ONLY to docker/ container
+#   builds (Dockerfile.matrix-node and Dockerfile.mesh-node). The iso/
+#   live-build configuration remains debian:bullseye for v2.0.0 per DEC-009
+#   — that boundary is explicitly preserved. Consistent Bookworm base across
+#   both container images avoids mixed Bullseye/Bookworm libc/glibc runtime
+#   divergence in the e2e compose stack.
 
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 LABEL maintainer="Orion-X Project"
 LABEL description="Orion-X mesh test node — minimal image for 3-node WireGuard mesh testing"
@@ -37,8 +50,19 @@ RUN chmod +x /opt/orionx/scripts/mesh/orionx-mesh \
     /opt/orionx/scripts/mesh/mesh-leave.sh \
     /opt/orionx/scripts/mesh/mesh-health.sh
 
-# Symlink CLI to PATH
-RUN ln -sf /opt/orionx/scripts/mesh/orionx-mesh /usr/local/bin/orionx-mesh
+# Symlink CLI and all sourced mesh library scripts to PATH.
+# orionx-mesh resolves $SCRIPT_DIR from the real path of the running script.
+# When invoked via the /usr/local/bin/orionx-mesh symlink, $SCRIPT_DIR
+# resolves to /usr/local/bin/ — so mesh-lib.sh (sourced at startup),
+# mesh-join.sh, and mesh-leave.sh must also be present in /usr/local/bin/.
+# CI issue #20: missing mesh-lib.sh at /usr/local/bin/ caused:
+#   /usr/local/bin/orionx-mesh: line 40: /usr/local/bin/mesh-lib.sh: No such file
+# Fix: symlink all scripts the CLI sources alongside the CLI symlink itself.
+# @decision DEC-PHASE7-015 — mesh-lib path fix bundled with Bookworm switch.
+RUN ln -sf /opt/orionx/scripts/mesh/orionx-mesh /usr/local/bin/orionx-mesh \
+    && ln -sf /opt/orionx/scripts/mesh/mesh-lib.sh /usr/local/bin/mesh-lib.sh \
+    && ln -sf /opt/orionx/scripts/mesh/mesh-join.sh /usr/local/bin/mesh-join.sh \
+    && ln -sf /opt/orionx/scripts/mesh/mesh-leave.sh /usr/local/bin/mesh-leave.sh
 
 # Default entrypoint: join mesh then keep container alive
 COPY docker/mesh-entrypoint.sh /usr/local/bin/mesh-entrypoint.sh
