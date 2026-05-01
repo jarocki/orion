@@ -73,13 +73,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxslt1-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# @decision DEC-PHASE7-016
+# @title --break-system-packages required for pip3 on Debian Bookworm (PEP 668)
+# @status accepted
+# @rationale Debian Bookworm marks the system Python as "externally managed"
+#   per PEP 668. pip3 install without --break-system-packages exits non-zero
+#   with "error: externally-managed-environment" (CI run 25224087401).
+#   --break-system-packages is the official pip escape hatch and is safe inside
+#   a Docker container where the entire filesystem is dedicated to the
+#   application — the "break" refers only to the Debian package manager's
+#   tracking, not to security. A venv is NOT used because matrix-entrypoint.sh
+#   (frozen Phase 4 / DEC-MATRIX-005) invokes `python3 -m synapse.app.homeserver`
+#   against the system python3 path, which a venv would shadow (DEC-PHASE7-014).
+
 # Install Synapse via pip3 — installs to system python3 site-packages so that
 # `python3 -m synapse.app.homeserver` (matrix-entrypoint.sh, frozen Phase 4)
 # can import it without modification.
 # The matrix-org Debian package (matrix-synapse-py3) is NOT used: it places
 # Synapse in a private venv (/opt/venvs/matrix-synapse/) incompatible with the
 # system-python invocation in matrix-entrypoint.sh (DEC-PHASE7-014).
-RUN pip3 install --no-cache-dir matrix-synapse
+# --break-system-packages: required on Bookworm (PEP 668). See DEC-PHASE7-016.
+RUN pip3 install --break-system-packages --no-cache-dir matrix-synapse
 
 # Verify Synapse is importable from system python3 — fails the build loudly if
 # pip install did not actually land on the system import path.
@@ -87,7 +101,8 @@ RUN pip3 install --no-cache-dir matrix-synapse
 RUN python3 -c "import synapse; print('synapse', synapse.__version__, 'imported from', synapse.__file__)"
 
 # Install matrix-commander for E2E testing (optional — curl-based fallback if unavailable)
-RUN pip3 install --no-cache-dir matrix-commander 2>/dev/null \
+# --break-system-packages: required on Bookworm (PEP 668). See DEC-PHASE7-016.
+RUN pip3 install --break-system-packages --no-cache-dir matrix-commander 2>/dev/null \
     || echo "matrix-commander install failed, will use curl-based testing"
 
 # Create required directories
