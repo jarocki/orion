@@ -93,8 +93,8 @@ echo "=== Test Group 2: Dockerfile.mesh-node Structure ==="
 
 DOCKERFILE="docker/Dockerfile.mesh-node"
 
-assert_file_contains "$DOCKERFILE" "^FROM debian:bullseye-slim" \
-    "Dockerfile uses debian:bullseye-slim base"
+assert_file_contains "$DOCKERFILE" "^FROM debian:bookworm-slim" \
+    "Dockerfile uses debian:bookworm-slim base"
 
 assert_file_contains "$DOCKERFILE" "wireguard-tools" \
     "Dockerfile installs wireguard-tools"
