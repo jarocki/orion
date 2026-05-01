@@ -3,8 +3,8 @@
 # @status accepted
 # @rationale Tests Matrix-over-WireGuard mesh (actual acceptance criteria).
 #   Builds on the mesh node pattern (DEC-MESH-003) adding Synapse homeserver.
-#   Bullseye-slim base for consistency with Dockerfile.mesh-node. Synapse
-#   installed via pip3 (PyPI) on the system python3 path — NOT via the
+#   Base image is now debian:bookworm-slim per DEC-PHASE7-015 (see below).
+#   Synapse installed via pip3 (PyPI) on the system python3 path — NOT via the
 #   matrix-org Debian package (matrix-synapse-py3) which ships Synapse in a
 #   private venv at /opt/venvs/matrix-synapse/ incompatible with the frozen
 #   Phase 4 entrypoint's `python3 -m synapse.app.homeserver` invocation.
@@ -21,8 +21,24 @@
 #   (PyPI: matrix-synapse) lands in /usr/local/lib/python3.x/site-packages/
 #   and satisfies that contract. The matrix-org Debian repo is therefore
 #   removed entirely from this Dockerfile.
+#
+# @decision DEC-PHASE7-015
+# @title Bookworm base image for docker/ container builds (bounded DEC-009 supersedence)
+# @status accepted
+# @rationale Bullseye ships Python 3.9; latest matrix-synapse raises a
+#   Generic+Collector MRO TypeError on Python 3.9 (CI issue #19). Bookworm
+#   ships Python 3.11 which resolves the MRO issue without pinning the
+#   matrix-synapse version. This switch applies ONLY to docker/ container
+#   builds (Dockerfile.matrix-node and Dockerfile.mesh-node). The iso/
+#   live-build configuration remains debian:bullseye for v2.0.0 per DEC-009
+#   — that boundary is explicitly preserved. DEC-MATRIX-005 (matrix-entrypoint.sh
+#   frozen) is unaffected: `python3 -m synapse.app.homeserver` works on
+#   Bookworm Python 3.11 with pip-installed matrix-synapse. Build deps
+#   (build-essential, python3-dev, libffi-dev, libssl-dev, libjpeg-dev,
+#   zlib1g-dev, libxml2-dev, libxslt1-dev) are retained — still required
+#   for native extension compilation on Bookworm.
 
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 LABEL maintainer="Orion-X Project"
 LABEL description="Orion-X Matrix node — Synapse homeserver over WireGuard mesh"
@@ -33,9 +49,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Install system deps + WireGuard tools + build prerequisites for pip native extensions.
 # Build deps (build-essential, python3-dev, libffi-dev, etc.) are required so pip3
 # can compile matrix-synapse's native dependencies (cryptography, bcrypt, Pillow,
-# frozendict, etc.) on bullseye. lsb-release retained for runtime use.
+# frozendict, etc.) on Bookworm. lsb-release retained for runtime use.
 # wget, apt-transport-https, gnupg removed — matrix-org Debian repo no longer used.
-# @decision DEC-MATRIX-002 — Bullseye base retained per DEC-009.
+# @decision DEC-PHASE7-015 — Bookworm base per bounded DEC-009 supersedence.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wireguard-tools \
     socat \
@@ -85,8 +101,19 @@ RUN chmod +x /opt/orionx/scripts/mesh/orionx-mesh \
     /opt/orionx/scripts/mesh/mesh-leave.sh \
     /opt/orionx/scripts/mesh/mesh-health.sh
 
-# Symlink CLI to PATH
-RUN ln -sf /opt/orionx/scripts/mesh/orionx-mesh /usr/local/bin/orionx-mesh
+# Symlink CLI and all sourced mesh library scripts to PATH.
+# orionx-mesh resolves $SCRIPT_DIR from the real path of the running script.
+# When invoked via the /usr/local/bin/orionx-mesh symlink, $SCRIPT_DIR
+# resolves to /usr/local/bin/ — so mesh-lib.sh (sourced at startup),
+# mesh-join.sh, and mesh-leave.sh must also be present in /usr/local/bin/.
+# CI issue #20: missing mesh-lib.sh at /usr/local/bin/ caused:
+#   /usr/local/bin/orionx-mesh: line 40: /usr/local/bin/mesh-lib.sh: No such file
+# Fix: symlink all scripts the CLI sources alongside the CLI symlink itself.
+# @decision DEC-PHASE7-015 — mesh-lib path fix bundled with Bookworm switch.
+RUN ln -sf /opt/orionx/scripts/mesh/orionx-mesh /usr/local/bin/orionx-mesh \
+    && ln -sf /opt/orionx/scripts/mesh/mesh-lib.sh /usr/local/bin/mesh-lib.sh \
+    && ln -sf /opt/orionx/scripts/mesh/mesh-join.sh /usr/local/bin/mesh-join.sh \
+    && ln -sf /opt/orionx/scripts/mesh/mesh-leave.sh /usr/local/bin/mesh-leave.sh
 
 # Copy Matrix config templates
 COPY docker/matrix/homeserver.yaml /data/homeserver.yaml.template

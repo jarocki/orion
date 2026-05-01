@@ -47,7 +47,7 @@ assert_file_exists() {
 assert_file_contains() {
     local file="$1"
     local pattern="$2"
-    local desc="${3:-$file contains '$pattern'}"
+    local desc="${3:-$file contains \"$pattern\"}"
     if grep -qE "$pattern" "$PROJECT_ROOT/$file" 2>/dev/null; then
         pass "$desc"
     else
@@ -205,15 +205,17 @@ assert_file_contains "$PACKAGE_LIST" "^nftables$" \
 echo ""
 echo "=== Test Group 8: Syntax Validation ==="
 
-if command -v nft >/dev/null 2>&1; then
+if ! command -v nft >/dev/null 2>&1; then
+    echo "  SKIP: nft not available — syntax check skipped"
+elif [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    echo "  SKIP: nft -c -f requires root (non-root CI runner) — syntax check skipped"
+else
     if nft -c -f "$PROJECT_ROOT/$NFTABLES_CONF" 2>/dev/null; then
         pass "nftables.conf passes syntax check (nft -c -f)"
     else
         fail "nftables.conf passes syntax check (nft -c -f)" \
             "nft reported syntax errors"
     fi
-else
-    echo "  SKIP: nft not available (macOS) — syntax check skipped"
 fi
 
 # ============================================================
