@@ -54,15 +54,20 @@ RUN chmod +x /opt/orionx/scripts/mesh/orionx-mesh \
 # orionx-mesh resolves $SCRIPT_DIR from the real path of the running script.
 # When invoked via the /usr/local/bin/orionx-mesh symlink, $SCRIPT_DIR
 # resolves to /usr/local/bin/ — so mesh-lib.sh (sourced at startup),
-# mesh-join.sh, and mesh-leave.sh must also be present in /usr/local/bin/.
+# mesh-join.sh, mesh-leave.sh, and mesh-discover.sh must also be present
+# in /usr/local/bin/.
 # CI issue #20: missing mesh-lib.sh at /usr/local/bin/ caused:
 #   /usr/local/bin/orionx-mesh: line 40: /usr/local/bin/mesh-lib.sh: No such file
+# CI issue #25: missing mesh-discover.sh at /usr/local/bin/ caused discovery
+#   mode to find 0 peers (Step 2 mesh formation failure):
+#   [WARN] Discovery script not found at /usr/local/bin/mesh-discover.sh
 # Fix: symlink all scripts the CLI sources alongside the CLI symlink itself.
 # @decision DEC-PHASE7-015 — mesh-lib path fix bundled with Bookworm switch.
 RUN ln -sf /opt/orionx/scripts/mesh/orionx-mesh /usr/local/bin/orionx-mesh \
     && ln -sf /opt/orionx/scripts/mesh/mesh-lib.sh /usr/local/bin/mesh-lib.sh \
     && ln -sf /opt/orionx/scripts/mesh/mesh-join.sh /usr/local/bin/mesh-join.sh \
-    && ln -sf /opt/orionx/scripts/mesh/mesh-leave.sh /usr/local/bin/mesh-leave.sh
+    && ln -sf /opt/orionx/scripts/mesh/mesh-leave.sh /usr/local/bin/mesh-leave.sh \
+    && ln -sf /opt/orionx/scripts/mesh/mesh-discover.sh /usr/local/bin/mesh-discover.sh
 
 # Default entrypoint: join mesh then keep container alive
 COPY docker/mesh-entrypoint.sh /usr/local/bin/mesh-entrypoint.sh
