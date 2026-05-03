@@ -448,7 +448,7 @@ kill_qemu() {
     QEMU_PID=0
 }
 
-# shellcheck disable=SC2329  # invoked indirectly via: trap cleanup EXIT
+# shellcheck disable=SC2329,SC2317  # false positive — reached indirectly via: trap cleanup EXIT
 cleanup() {
     # Ensure QEMU is dead on any exit path
     if [[ "${QEMU_PID}" -gt 0 ]]; then
