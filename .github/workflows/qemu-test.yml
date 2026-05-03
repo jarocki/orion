@@ -63,8 +63,11 @@ jobs:
         run: |
           sudo apt-get install -y live-build debootstrap xorriso isolinux
 
+      # live-build's lb_testroot requires root for chroot operations during
+      # bootstrap. Wrap iso-build with sudo on the CI runner. The harness
+      # itself does not need root.
       - name: Build ISO (W7-1 deliverable)
-        run: make iso-build
+        run: sudo make iso-build
 
       - name: Run QEMU boot test (BIOS + UEFI)
         run: make test-qemu-boot
