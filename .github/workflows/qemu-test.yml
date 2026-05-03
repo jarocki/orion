@@ -64,10 +64,14 @@ jobs:
           sudo apt-get install -y live-build debootstrap xorriso isolinux
 
       # live-build's lb_testroot requires root for chroot operations during
-      # bootstrap. Wrap iso-build with sudo on the CI runner. The harness
-      # itself does not need root.
+      # bootstrap. Invoke build-iso.sh directly with sudo to bypass the
+      # Makefile's `iso-build: test-unit` prerequisite — when run as root
+      # under sudo, certain bash unit tests behave differently (e.g.,
+      # test_mesh_cli.sh's WireGuard guard expects non-root failure paths).
+      # The lint.yml workflow runs `make test-unit` separately as the
+      # canonical test gate; qemu-test.yml only needs the ISO artifact.
       - name: Build ISO (W7-1 deliverable)
-        run: sudo make iso-build
+        run: sudo bash scripts/build-iso.sh
 
       - name: Run QEMU boot test (BIOS + UEFI)
         run: make test-qemu-boot
