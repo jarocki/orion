@@ -59,19 +59,30 @@ jobs:
       - name: Install Python packages
         run: pip install --quiet -r requirements.txt
 
-      - name: Install live-build dependencies
+      # Build the ISO inside a debian:bullseye container so live-build sees a
+      # Debian host and bootstraps from deb.debian.org/bullseye, not from
+      # archive.ubuntu.com/precise. Issue #25: ubuntu-latest runners' live-build
+      # autodetects host distro and overrides --mode debian / --distribution
+      # bullseye in iso/auto/config, attempting to bootstrap Ubuntu instead.
+      # Running build-iso.sh inside debian:bullseye-slim with --privileged
+      # (needed for chroot operations) sidesteps the host detection entirely.
+      # The resulting ISO is written to ${{ github.workspace }}/output/ via
+      # the bind mount, so the host runner's QEMU step finds it normally.
+      - name: Build ISO in debian:bullseye container (W7-1 deliverable, issue #25)
         run: |
-          sudo apt-get install -y live-build debootstrap xorriso isolinux
-
-      # live-build's lb_testroot requires root for chroot operations during
-      # bootstrap. Invoke build-iso.sh directly with sudo to bypass the
-      # Makefile's `iso-build: test-unit` prerequisite — when run as root
-      # under sudo, certain bash unit tests behave differently (e.g.,
-      # test_mesh_cli.sh's WireGuard guard expects non-root failure paths).
-      # The lint.yml workflow runs `make test-unit` separately as the
-      # canonical test gate; qemu-test.yml only needs the ISO artifact.
-      - name: Build ISO (W7-1 deliverable)
-        run: sudo bash scripts/build-iso.sh
+          docker run --rm --privileged \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            debian:bullseye-slim \
+            bash -c '
+              set -e
+              apt-get update -q
+              apt-get install -y -q --no-install-recommends \
+                live-build debootstrap xorriso isolinux \
+                ca-certificates wget gnupg python3 \
+                squashfs-tools rsync
+              bash scripts/build-iso.sh
+            '
 
       - name: Run QEMU boot test (BIOS + UEFI)
         run: make test-qemu-boot
