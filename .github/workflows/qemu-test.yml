@@ -1,0 +1,74 @@
+name: QEMU Boot Test
+
+# @decision DEC-PHASE7-021
+# @title KVM-when-available, TCG-fallback, 300s default timeout
+# @status accepted
+# @rationale ubuntu-latest runners expose /dev/kvm on larger SKUs but not
+#   every job. The harness detects /dev/kvm at runtime and falls back to
+#   TCG (-accel tcg -cpu max) automatically. Workflow stays green on any
+#   ubuntu-latest SKU. timeout-minutes: 30 covers iso-build (~10-15min) +
+#   two boot cycles at TCG speeds (~5-9min each) with headroom.
+#
+# @decision DEC-PHASE7-019
+# @title OVMF resolution order with explicit SKIP on missing firmware
+# @status accepted
+# @rationale This workflow installs the `ovmf` package (Debian/Ubuntu) so
+#   OVMF_CODE.fd lands at /usr/share/OVMF/OVMF_CODE.fd — the first path in
+#   the harness search order. The harness itself never re-implements resolution;
+#   CI only ensures the package is present.
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+
+jobs:
+  qemu-boot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install QEMU and OVMF
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q qemu-system-x86 ovmf
+
+      - name: Show QEMU and OVMF versions
+        run: |
+          qemu-system-x86_64 --version
+          ls -lh /usr/share/OVMF/OVMF_CODE.fd 2>/dev/null || echo "OVMF_CODE.fd not at expected path"
+
+      # KVM availability: ubuntu-latest exposes /dev/kvm on larger SKUs.
+      # The harness detects this automatically; this step just logs the state.
+      - name: Check KVM availability
+        run: |
+          if [ -r /dev/kvm ]; then
+            echo "KVM: available (/dev/kvm readable)"
+          else
+            echo "KVM: unavailable — harness will use TCG fallback (slower)"
+          fi
+
+      - name: Set up Python (for iso-build pre-checks)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python packages
+        run: pip install --quiet -r requirements.txt
+
+      - name: Build ISO (W7-1 deliverable)
+        run: make iso-build
+
+      - name: Run QEMU boot test (BIOS + UEFI)
+        run: make test-qemu-boot
+
+      - name: Upload QEMU artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-artifacts-${{ github.run_id }}
+          path: tmp/qemu-artifacts/
+          if-no-files-found: warn

@@ -8,7 +8,7 @@
 #   a fallback when neither linter is installed.
 ##
 
-.PHONY: lint lint-shell lint-python test-unit test-unit-bash test-unit-python test-integration test-forensic test-security test-mesh test-matrix test-e2e docker-build docker-build-matrix iso-build lynis clean help
+.PHONY: lint lint-shell lint-python test-unit test-unit-bash test-unit-python test-integration test-forensic test-security test-mesh test-matrix test-e2e test-qemu-boot docker-build docker-build-matrix iso-build lynis clean help
 
 SHELL_SCRIPTS := $(shell find scripts -name '*.sh' -type f)
 PYTHON_SCRIPTS := $(wildcard scripts/*.py)
@@ -87,6 +87,9 @@ test-matrix: ## Run Matrix integration test in Docker
 	@echo "Running Matrix integration tests..."
 	bash tests/integration/test-matrix.sh || true
 	docker compose -f docker/docker-compose.matrix-test.yml down -v
+
+test-qemu-boot: ## Run QEMU boot harness (UEFI + BIOS) on the latest ISO; override with ISO=<path>
+	bash scripts/qemu-boot-test.sh --mode both $(if $(ISO),--iso $(ISO),)
 
 docker-build: ## Build Docker development environment
 	docker build -t orionx-dev .
