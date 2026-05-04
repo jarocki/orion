@@ -106,6 +106,17 @@ jobs:
               bash scripts/build-iso.sh
             '
 
+      # Container ran as root (--privileged) so output/, tmp/, and any
+      # other build artifacts are root-owned on the bind mount. The host
+      # runner runs as the unprivileged `runner` user; without chown, the
+      # QEMU harness step fails to create new files under tmp/qemu-artifacts/
+      # ("Could not open '.../serial-bios.log': No such file or directory").
+      # Chown the workspace back to the runner so the rest of the workflow
+      # can write artifacts normally.
+      - name: Restore workspace ownership to runner
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" "${{ github.workspace }}"
+
       # Issue #27: ubuntu-latest runners typically don't expose /dev/kvm.
       # TCG emulation of full ISO boot to multi-user.target is much slower
       # than KVM (~5-10 min vs ~30s). Bumping --timeout to 900 gives TCG
