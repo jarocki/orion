@@ -26,7 +26,10 @@ on:
 jobs:
   qemu-boot:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Bumped from 30 → 60 minutes: TCG-mode boot under --timeout 900
+    # for both BIOS and UEFI may consume up to ~30 min total in worst case
+    # (no KVM on standard ubuntu-latest), plus ~10-15 min ISO build.
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -40,6 +43,25 @@ jobs:
         run: |
           qemu-system-x86_64 --version
           ls -lh /usr/share/OVMF/OVMF_CODE.fd 2>/dev/null || echo "OVMF_CODE.fd not at expected path"
+
+      # Issue #28: Ubuntu's ovmf package may install firmware at non-Debian
+      # paths (e.g., /usr/share/OVMF/OVMF_CODE_4M.fd or with .ms suffixes).
+      # Detect the actual file via dpkg -L and export OVMF_PATH for use as
+      # the harness's --ovmf override. Falls back to empty if package missing.
+      - name: Detect OVMF firmware path
+        id: ovmf
+        run: |
+          OVMF_PATH=$(dpkg -L ovmf 2>/dev/null \
+            | grep -E '/OVMF_CODE.*\.fd$' \
+            | grep -v '\.ms\.fd$' \
+            | head -1 || true)
+          if [[ -z "${OVMF_PATH}" ]]; then
+            OVMF_PATH=$(dpkg -L ovmf 2>/dev/null \
+              | grep -E '/OVMF.*\.fd$' \
+              | head -1 || true)
+          fi
+          echo "Detected OVMF_PATH: ${OVMF_PATH:-<not found>}"
+          echo "ovmf_path=${OVMF_PATH}" >> "${GITHUB_OUTPUT}"
 
       # KVM availability: ubuntu-latest exposes /dev/kvm on larger SKUs.
       # The harness detects this automatically; this step just logs the state.
@@ -84,8 +106,24 @@ jobs:
               bash scripts/build-iso.sh
             '
 
+      # Issue #27: ubuntu-latest runners typically don't expose /dev/kvm.
+      # TCG emulation of full ISO boot to multi-user.target is much slower
+      # than KVM (~5-10 min vs ~30s). Bumping --timeout to 900 gives TCG
+      # headroom while still failing fast on a genuinely stuck boot.
+      # Issue #28: pass --ovmf with the dpkg-detected path so UEFI mode
+      # finds firmware regardless of Ubuntu's package layout differences
+      # from Debian. Empty OVMF_PATH falls back to the harness's default
+      # search order and emits the canonical SKIP — never a silent pass.
       - name: Run QEMU boot test (BIOS + UEFI)
-        run: make test-qemu-boot
+        run: |
+          OVMF_FLAG=""
+          if [[ -n "${{ steps.ovmf.outputs.ovmf_path }}" ]]; then
+            OVMF_FLAG="--ovmf ${{ steps.ovmf.outputs.ovmf_path }}"
+          fi
+          bash scripts/qemu-boot-test.sh \
+            --mode both \
+            --timeout 900 \
+            ${OVMF_FLAG}
 
       - name: Upload QEMU artifacts
         if: always()
