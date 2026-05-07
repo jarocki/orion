@@ -7,6 +7,25 @@
 # Do NOT hardcode a version literal here — scripts/build-iso.sh is the
 # single version authority (DEC-PHASE7-002).
 #
+# @decision DEC-PHASE7-023
+# @title ISO bootloader serial console for CI testability (W7-3)
+# @status accepted
+# @rationale The QEMU harness (scripts/qemu-boot-test.sh) captures boot output
+#   via QEMU's -serial file: option. Without console=ttyS0,115200n8 in the
+#   kernel cmdline, the kernel sends all output to the VGA framebuffer and the
+#   serial capture log stays empty — both BIOS and UEFI boot tests time out.
+#   Two coordinated changes fix this:
+#   1. --bootappend-live gains "console=tty0 console=ttyS0,115200n8" so the
+#      kernel writes to both VGA (console=tty0, for human users at physical
+#      hardware) and serial (console=ttyS0, primary console for CI capture).
+#      Linux processes console= left-to-right; the LAST entry becomes the
+#      primary console (where getty/login attaches). ttyS0 is last so CI sees
+#      the login prompt on serial.
+#   2. --hook-files wires 0500-bootloader-serial.hook.binary into lb_binary so
+#      isolinux.cfg and grub.cfg are patched with serial directives before the
+#      ISO is assembled. This gives bootloader-stage visibility in serial logs.
+#   References: issue #30, W7-3 acceptance gate, DEC-PHASE7-020.
+#
 # This script configures the live-build system for Orion-X.
 
 set -e
@@ -31,7 +50,7 @@ lb config noauto \
     --debian-installer false \
     --debian-installer-distribution "$DISTRIBUTION" \
     --debian-installer-gui false \
-    --bootappend-live "boot=live components splash quiet persistence" \
+    --bootappend-live "boot=live components splash quiet persistence console=tty0 console=ttyS0,115200n8" \
     --bootappend-install "locales=en_US.UTF-8" \
     --bootloader "syslinux,grub-efi" \
     --iso-application "Orion-X Phoenix Edition" \
@@ -41,4 +60,5 @@ lb config noauto \
     --security true \
     --updates true \
     --win32-loader false \
+    --hook-files "hooks/normal/0500-bootloader-serial.hook.binary" \
     "${@}"

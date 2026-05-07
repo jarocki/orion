@@ -1,0 +1,96 @@
+#!/bin/sh
+# shellcheck shell=sh
+#
+# Orion-X Phoenix Edition — Bootloader Serial Console Hook
+#
+# @decision DEC-PHASE7-023
+# @title ISO bootloader serial console for CI testability (W7-3)
+# @status accepted
+# @rationale W7-3 QEMU harness captures -serial file: output. Without serial
+#   directives in isolinux.cfg/grub.cfg, bootloader output goes only to VGA
+#   framebuffer, which QEMU -nographic does not expose to the serial capture
+#   file. Without console=ttyS0 in the kernel cmdline, kernel boot messages
+#   and the login prompt are also invisible to the CI serial log reader.
+#   This hook patches both bootloader configs during the lb binary stage so
+#   CI can verify boot completion via marker detection. End-user VGA behavior
+#   is preserved: console=tty0 in --bootappend-live (iso/auto/config) ensures
+#   VGA output for human users, and terminal_input/terminal_output use --append
+#   so GRUB VGA terminal is NOT replaced, only supplemented.
+#   References: issue #30, W7-3 acceptance gate.
+#
+# Live-build binary stage context:
+#   This hook runs during lb_binary, after squashfs is built but before the
+#   final ISO is assembled. The working directory is the binary/ output tree.
+#   Bootloader configs exist at:
+#     binary/isolinux/isolinux.cfg  (BIOS/ISOLINUX)
+#     binary/boot/grub/grub.cfg     (UEFI/GRUB)
+#   Patching here modifies the configs that will be written into the ISO image.
+#
+# Wiring: iso/auto/config passes --hook-files with the path to this script so
+#   live-build picks it up regardless of whether iso/hooks/ is in the default
+#   config/hooks/ search path. The .hook.binary extension tells live-build to
+#   run this hook at the binary stage.
+#
+# Idempotency: grep guards prevent double-insertion on repeated lb build calls.
+
+set -e
+
+# ---------------------------------------------------------------------------
+# ISOLINUX (BIOS boot) — add serial directive
+# ---------------------------------------------------------------------------
+# "serial 0 115200" tells ISOLINUX to use COM1 at 115200 baud for console I/O.
+# This must appear before any MENU or LABEL directives to take effect.
+# ---------------------------------------------------------------------------
+ISOLINUX_CFG="binary/isolinux/isolinux.cfg"
+if [ -f "${ISOLINUX_CFG}" ]; then
+    if ! grep -q "^serial " "${ISOLINUX_CFG}"; then
+        echo "[bootloader-serial] Patching ${ISOLINUX_CFG} with serial directive"
+        TMP=$(mktemp)
+        {
+            printf 'serial 0 115200\n'
+            cat "${ISOLINUX_CFG}"
+        } > "${TMP}"
+        mv "${TMP}" "${ISOLINUX_CFG}"
+    else
+        echo "[bootloader-serial] ${ISOLINUX_CFG} already has serial directive — skipping"
+    fi
+else
+    echo "[bootloader-serial] WARNING: ${ISOLINUX_CFG} not found — BIOS serial patch skipped"
+fi
+
+# ---------------------------------------------------------------------------
+# GRUB (UEFI boot) — add serial + terminal directives
+# ---------------------------------------------------------------------------
+# "serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1" initialises
+# GRUB's serial module for COM1 at 115200 8N1.
+#
+# "terminal_input --append serial" adds serial to the input terminal list
+# WITHOUT removing the default console (keyboard), so human users at VGA
+# can still type at the GRUB menu.
+#
+# "terminal_output --append serial" mirrors GRUB output to serial in addition
+# to the default VGA framebuffer output.
+#
+# These three lines must appear before any menuentry blocks to take effect.
+# ---------------------------------------------------------------------------
+GRUB_CFG="binary/boot/grub/grub.cfg"
+if [ -f "${GRUB_CFG}" ]; then
+    if ! grep -q "^serial " "${GRUB_CFG}"; then
+        echo "[bootloader-serial] Patching ${GRUB_CFG} with serial directives"
+        TMP=$(mktemp)
+        {
+            printf 'serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1\n'
+            printf 'terminal_input --append serial\n'
+            printf 'terminal_output --append serial\n'
+            cat "${GRUB_CFG}"
+        } > "${TMP}"
+        mv "${TMP}" "${GRUB_CFG}"
+    else
+        echo "[bootloader-serial] ${GRUB_CFG} already has serial directive — skipping"
+    fi
+else
+    echo "[bootloader-serial] WARNING: ${GRUB_CFG} not found — UEFI serial patch skipped"
+fi
+
+echo "[bootloader-serial] Bootloader serial console patch complete"
+exit 0
