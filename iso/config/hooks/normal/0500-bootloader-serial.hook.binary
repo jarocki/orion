@@ -21,10 +21,25 @@
 # Live-build binary stage context:
 #   This hook runs during lb_binary, after squashfs is built but before the
 #   final ISO is assembled. The working directory is the binary/ output tree.
-#   Bootloader configs exist at:
-#     binary/isolinux/isolinux.cfg  (BIOS/ISOLINUX)
-#     binary/boot/grub/grub.cfg     (UEFI/GRUB)
-#   Patching here modifies the configs that will be written into the ISO image.
+#   Bootloader config paths vary by live-build version and bootloader
+#   combination — hybrid ISO mode may place isolinux.cfg under isolinux/,
+#   syslinux/, or a version-specific subdirectory. grub.cfg may live under
+#   boot/grub/, EFI/boot/, or similar. We use `find` to locate the actual
+#   files regardless of the exact path, so this hook stays correct across
+#   live-build versions and bootloader configuration variants.
+#
+#   @decision DEC-PHASE7-023-AUTODISCOVER
+#   @title Use find-based discovery for bootloader cfg paths (W7-3-FIX-14)
+#   @status accepted
+#   @rationale CI run 25649928483 showed that the previously hardcoded paths
+#     binary/isolinux/isolinux.cfg and binary/boot/grub/grub.cfg did not exist
+#     at hook execution time in the hybrid ISO build mode. The live-build path
+#     layout depends on the bootloader combination and lb version. Using `find`
+#     to locate the actual files at runtime removes the fragile hardcoded
+#     assumption and makes the hook robust to path variation. The `head -n1`
+#     ensures we pick exactly one file if multiple matches exist (prefer first).
+#     The `2>/dev/null || true` guard prevents set -e from firing when binary/
+#     contains no matching file (valid state: BIOS-only or UEFI-only build).
 #
 # Wiring: iso/auto/config passes --hook-files with the path to this script so
 #   live-build picks it up regardless of whether iso/hooks/ is in the default
@@ -36,30 +51,35 @@
 set -e
 
 # ---------------------------------------------------------------------------
-# ISOLINUX (BIOS boot) — add serial directive
+# ISOLINUX (BIOS boot) — auto-discover isolinux.cfg and add serial directive
 # ---------------------------------------------------------------------------
 # "serial 0 115200" tells ISOLINUX to use COM1 at 115200 baud for console I/O.
 # This must appear before any MENU or LABEL directives to take effect.
+#
+# We use `find` to locate isolinux.cfg anywhere under binary/ so this hook
+# stays correct regardless of live-build version or bootloader layout variant.
 # ---------------------------------------------------------------------------
-ISOLINUX_CFG="binary/isolinux/isolinux.cfg"
-if [ -f "${ISOLINUX_CFG}" ]; then
-    if ! grep -q "^serial " "${ISOLINUX_CFG}"; then
-        echo "[bootloader-serial] Patching ${ISOLINUX_CFG} with serial directive"
+ISOLINUX_CFG="$(find binary -name 'isolinux.cfg' -type f 2>/dev/null | head -n1 || true)"
+
+if [ -n "$ISOLINUX_CFG" ] && [ -f "$ISOLINUX_CFG" ]; then
+    if ! grep -q "^serial " "$ISOLINUX_CFG"; then
+        echo "[bootloader-serial] Patching $ISOLINUX_CFG with serial directive"
         TMP=$(mktemp)
         {
             printf 'serial 0 115200\n'
-            cat "${ISOLINUX_CFG}"
-        } > "${TMP}"
-        mv "${TMP}" "${ISOLINUX_CFG}"
+            cat "$ISOLINUX_CFG"
+        } > "$TMP"
+        mv "$TMP" "$ISOLINUX_CFG"
+        echo "[bootloader-serial] BIOS serial patched: $ISOLINUX_CFG"
     else
-        echo "[bootloader-serial] ${ISOLINUX_CFG} already has serial directive — skipping"
+        echo "[bootloader-serial] $ISOLINUX_CFG already has serial directive — skipping"
     fi
 else
-    echo "[bootloader-serial] WARNING: ${ISOLINUX_CFG} not found — BIOS serial patch skipped"
+    echo "[bootloader-serial] WARNING: isolinux.cfg not found anywhere under binary/ — BIOS serial patch skipped"
 fi
 
 # ---------------------------------------------------------------------------
-# GRUB (UEFI boot) — add serial + terminal directives
+# GRUB (UEFI boot) — auto-discover grub.cfg and add serial + terminal directives
 # ---------------------------------------------------------------------------
 # "serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1" initialises
 # GRUB's serial module for COM1 at 115200 8N1.
@@ -72,24 +92,29 @@ fi
 # to the default VGA framebuffer output.
 #
 # These three lines must appear before any menuentry blocks to take effect.
+#
+# We use `find` to locate grub.cfg anywhere under binary/ so this hook
+# stays correct regardless of live-build version or UEFI layout variant.
 # ---------------------------------------------------------------------------
-GRUB_CFG="binary/boot/grub/grub.cfg"
-if [ -f "${GRUB_CFG}" ]; then
-    if ! grep -q "^serial " "${GRUB_CFG}"; then
-        echo "[bootloader-serial] Patching ${GRUB_CFG} with serial directives"
+GRUB_CFG="$(find binary -name 'grub.cfg' -type f 2>/dev/null | head -n1 || true)"
+
+if [ -n "$GRUB_CFG" ] && [ -f "$GRUB_CFG" ]; then
+    if ! grep -q "^serial " "$GRUB_CFG"; then
+        echo "[bootloader-serial] Patching $GRUB_CFG with serial directives"
         TMP=$(mktemp)
         {
             printf 'serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1\n'
             printf 'terminal_input --append serial\n'
             printf 'terminal_output --append serial\n'
-            cat "${GRUB_CFG}"
-        } > "${TMP}"
-        mv "${TMP}" "${GRUB_CFG}"
+            cat "$GRUB_CFG"
+        } > "$TMP"
+        mv "$TMP" "$GRUB_CFG"
+        echo "[bootloader-serial] UEFI serial patched: $GRUB_CFG"
     else
-        echo "[bootloader-serial] ${GRUB_CFG} already has serial directive — skipping"
+        echo "[bootloader-serial] $GRUB_CFG already has serial directive — skipping"
     fi
 else
-    echo "[bootloader-serial] WARNING: ${GRUB_CFG} not found — UEFI serial patch skipped"
+    echo "[bootloader-serial] WARNING: grub.cfg not found anywhere under binary/ — UEFI serial patch skipped"
 fi
 
 echo "[bootloader-serial] Bootloader serial console patch complete"
