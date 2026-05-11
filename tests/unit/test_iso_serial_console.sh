@@ -3,7 +3,7 @@
 #
 # Unit tests for W7-3 serial console changes:
 #   iso/auto/config — console= params in --bootappend-live
-#   iso/config/hooks/binary/0500-bootloader-serial.hook.binary — bootloader patching hook
+#   iso/config/hooks/normal/0500-bootloader-serial.hook.binary — bootloader patching hook
 #
 # @decision DEC-PHASE7-023
 # @title Unit test suite for ISO bootloader serial console (W7-3)
@@ -47,7 +47,7 @@ ERRORS=()
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 AUTO_CONFIG="$REPO_ROOT/iso/auto/config"
-HOOK_SCRIPT="$REPO_ROOT/iso/config/hooks/binary/0500-bootloader-serial.hook.binary"
+HOOK_SCRIPT="$REPO_ROOT/iso/config/hooks/normal/0500-bootloader-serial.hook.binary"
 
 pass() { PASS=$((PASS + 1)); echo "  PASS: $1"; }
 fail() {
@@ -119,14 +119,14 @@ echo ""
 # T4: canonical hook location + --hook-files removed (DEC-PHASE7-024)
 # ---------------------------------------------------------------------------
 # Per DEC-PHASE7-024: live-build auto-discovers hooks under
-# iso/config/hooks/binary/. The --hook-files workaround in iso/auto/config
+# iso/config/hooks/normal/. The --hook-files workaround in iso/auto/config
 # has been removed because canonical path placement makes it redundant AND
 # keeping both would create dual-registration. This test verifies:
 #   (a) the hook file is present at its canonical binary/ path
 #   (b) --hook-files is NOT present in iso/auto/config (removal confirmed)
-echo "[T4] canonical hook at iso/config/hooks/binary/ AND --hook-files absent from auto/config"
+echo "[T4] canonical hook at iso/config/hooks/normal/ AND --hook-files absent from auto/config"
 if [[ -f "$HOOK_SCRIPT" ]]; then
-    pass "hook exists at canonical path iso/config/hooks/binary/0500-bootloader-serial.hook.binary"
+    pass "hook exists at canonical path iso/config/hooks/normal/0500-bootloader-serial.hook.binary"
 else
     fail "hook NOT found at canonical path: $HOOK_SCRIPT"
 fi
@@ -319,12 +319,12 @@ echo ""
 # T13: Production sequence — config present + hook patches both configs
 # ---------------------------------------------------------------------------
 # This test exercises the real production sequence end-to-end at the unit level:
-# 1. hook lives at canonical path iso/config/hooks/binary/ (verified in T4)
+# 1. hook lives at canonical path iso/config/hooks/normal/ (verified in T4)
 # 2. The hook is present and executable (verified in T6)
 # 3. The hook patches isolinux.cfg AND grub.cfg in a single run
 # This mirrors what lb_binary does: runs all .hook.binary scripts from CWD
 # with binary/ as the working tree. Auto-discovery finds the hook because
-# it is in iso/config/hooks/binary/ (DEC-PHASE7-024, no --hook-files needed).
+# it is in iso/config/hooks/normal/ (DEC-PHASE7-024, no --hook-files needed).
 echo "[T13] Production sequence — hook at canonical path; hook patches both configs"
 
 E2E_SCRATCH="$SCRATCH/e2e_test"
@@ -357,9 +357,9 @@ EOF
 
 # Verify hook is at canonical path — auto-discovery is the single wiring authority (DEC-PHASE7-024)
 if [[ -f "$HOOK_SCRIPT" ]]; then
-    pass "production run: hook present at canonical binary/ path"
+    pass "production run: hook present at canonical normal/ path"
 else
-    fail "production run: hook missing from canonical binary/ path — $HOOK_SCRIPT"
+    fail "production run: hook missing from canonical normal/ path — $HOOK_SCRIPT"
 fi
 
 # Run the hook (simulating lb_binary stage)
