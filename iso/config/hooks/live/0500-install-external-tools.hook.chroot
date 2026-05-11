@@ -9,17 +9,28 @@ echo "=== Installing external tools ==="
 # Volatility3 (Python package)
 pip3 install volatility3 || echo "WARNING: volatility3 install failed"
 
-# Zeek (from upstream repo)
-# Upstream OpenSUSE Bullseye repo retired (404 as of 2026-05). Wrap entire
-# block so that curl|gpg pipeline failure does not abort the hook under set -e.
-# The earlier apt-get install -y zeek || echo pattern only guarded the final
-# install step, not the earlier curl/gpg pipeline. See jarocki/orion#33 cascade.
+# Zeek (OpenSUSE Build Service repo).
+# 2026-05: Bullseye Zeek repo retired; soft-fail and clean up if 404.
+# Critical: must not leave a dangling sources.list.d entry — subsequent
+# apt-get update would fail and abort the binary stage (#30 cascade).
 {
-    echo 'deb http://download.opensuse.org/repositories/security:/zeek/Debian_11/ /' > /etc/apt/sources.list.d/zeek.list
-    curl -fsSL https://download.opensuse.org/repositories/security:zeek/Debian_11/Release.key | gpg --dearmor > /etc/apt/trusted.gpg.d/zeek.gpg
+    # Try to fetch the key first. If this fails, abort before touching
+    # apt sources at all.
+    curl -fsSL https://download.opensuse.org/repositories/security:zeek/Debian_11/Release.key \
+        | gpg --dearmor > /etc/apt/trusted.gpg.d/zeek.gpg
+    # Key fetch succeeded; now safe to add the source list and install.
+    echo 'deb http://download.opensuse.org/repositories/security:/zeek/Debian_11/ /' \
+        > /etc/apt/sources.list.d/zeek.list
     apt-get update
     apt-get install -y zeek
-} || echo "WARNING: zeek install failed — upstream Bullseye repo unavailable (#33 cascade)"
+} || {
+    echo "WARNING: zeek install failed — upstream Bullseye repo unavailable (#33 cascade)"
+    # Belt + suspenders: remove any partial config so later apt-get update
+    # doesn't fail on a dangling source list.
+    rm -f /etc/apt/sources.list.d/zeek.list /etc/apt/trusted.gpg.d/zeek.gpg
+    # Refresh apt cache to clear any error state from the failed source
+    apt-get update >/dev/null 2>&1 || true
+}
 
 # Ghidra (download binary release)
 # Upstream GitHub release URL may move or 404. Wrap entire block for soft-fail.
