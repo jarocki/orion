@@ -24,7 +24,9 @@ lightdm
 # Forensic tools
 # EXTERNAL: autopsy          — install via https://www.autopsy.com/download/
 binwalk
-bulk-extractor
+# EXTERNAL: bulk-extractor — not in Bullseye main; available in contrib or
+# via separate install. Disabled to unblock live-build. Tracked: jarocki/orion#33
+# bulk-extractor
 dc3dd
 foremost
 # EXTERNAL: ghidra           — install via https://ghidra-sre.org/
@@ -67,7 +69,9 @@ john
 lynis
 macchanger
 nftables
-nikto
+# EXTERNAL: nikto — not in Bullseye stable repos; available in backports.
+# Disabled to unblock live-build. Tracked: jarocki/orion#33
+# nikto
 rkhunter
 steghide
 
@@ -86,7 +90,8 @@ atop
 bsdmainutils
 ca-certificates
 coreutils
-ddrescue
+# ddrescue binary is provided by the gddrescue Debian package
+gddrescue
 dialog
 encfs
 file
