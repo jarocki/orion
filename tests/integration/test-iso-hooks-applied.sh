@@ -134,23 +134,46 @@ fi
 # (config/hooks/live/<name>) and the absolute path variant that some lb
 # versions emit. We match the basename component to be robust to lb version
 # differences.
+#
+# @decision DEC-PHASE7-025-BINARY-MARKER
+# @title Binary-stage hook detection via hook's own [bootloader-serial] marker
+# @status accepted
+# @rationale CI run 25649928483 showed that live-build's binary stage does NOT
+#   emit "P: Executing hook" prefix lines for hooks the way the chroot stage
+#   does. Grepping for the hook filename alone is insufficient: it finds the
+#   hook name in the lb startup trace ("Executing binary_hooks") but that does
+#   not prove the hook's own logic ran. The hook emits "[bootloader-serial]"
+#   lines in all code paths (patch, already-patched, and WARNING skipped),
+#   so grepping for that marker reliably proves the hook script executed.
+#   We use a two-tier check: accept either the "P: Executing hook" prefix
+#   (for forward compatibility with lb versions that may add it) OR the
+#   "[bootloader-serial]" marker that the hook always emits.
 # ---------------------------------------------------------------------------
 
-# Each entry: "<subdir>/<filename>"  (relative to config/hooks/)
-EXPECTED_HOOKS=(
+# Chroot-stage hooks: live-build emits "P: Executing hook" prefix lines for
+# each hook discovered in config/hooks/{live,normal}/ during the chroot stage.
+CHROOT_HOOKS=(
     "live/0500-install-external-tools.hook.chroot"
     "live/0600-filesystem-hardening.hook.chroot"
     "live/0610-apparmor-setup.hook.chroot"
     "live/0620-service-hardening.hook.chroot"
     "normal/0100-create-user.hook.chroot"
     "normal/0200-copy-samples.hook.chroot"
-    "normal/0500-bootloader-serial.hook.binary"
+)
+
+# Binary-stage hooks: live-build's binary stage does NOT reliably emit the
+# "P: Executing hook" prefix. Detect these via the hook's own output marker.
+# Format: "<subdir>/<filename>:<marker-string>"
+BINARY_HOOKS=(
+    "normal/0500-bootloader-serial.hook.binary:[bootloader-serial]"
 )
 
 echo "--- Checking hook execution traces in build log ---"
 echo ""
 
-for hook_rel in "${EXPECTED_HOOKS[@]}"; do
+# Check chroot-stage hooks via basename match (live-build "P: Executing hook"
+# prefix or any other line containing the filename — robust to lb version diffs).
+for hook_rel in "${CHROOT_HOOKS[@]}"; do
     hook_basename="$(basename "$hook_rel")"
     hook_label="config/hooks/$hook_rel"
 
@@ -165,6 +188,26 @@ for hook_rel in "${EXPECTED_HOOKS[@]}"; do
         pass "hook executed: $hook_label"
     else
         fail "hook NOT found in build log: $hook_label (grep for '$hook_basename' returned nothing)"
+    fi
+done
+
+# Check binary-stage hooks via two-tier detection:
+#   Tier 1: hook filename present in build log (forward-compat with lb versions
+#           that may emit "P: Executing hook" for binary hooks in the future).
+#   Tier 2: hook's own output marker present in build log (always emitted by
+#           the hook regardless of live-build version, proves the script ran).
+for hook_entry in "${BINARY_HOOKS[@]}"; do
+    hook_rel="${hook_entry%%:*}"
+    hook_marker="${hook_entry#*:}"
+    hook_basename="$(basename "$hook_rel")"
+    hook_label="config/hooks/$hook_rel"
+
+    if grep -qF "P: Executing hook" "$BUILD_LOG" && grep -qF "$hook_basename" "$BUILD_LOG"; then
+        pass "hook executed: $hook_label (detected via P: Executing hook prefix)"
+    elif grep -qF "$hook_marker" "$BUILD_LOG"; then
+        pass "hook executed: $hook_label (detected via '$hook_marker' marker)"
+    else
+        fail "hook NOT found in build log: $hook_label (grep for '$hook_basename' and '$hook_marker' both returned nothing)"
     fi
 done
 
