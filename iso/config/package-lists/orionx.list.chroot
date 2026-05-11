@@ -118,6 +118,10 @@ usbutils
 vim
 whois
 zip
+# Phase 5 hook dependency — 0500-install-external-tools.hook.chroot uses unzip
+# to extract the Ghidra release archive. Without this the hook aborts and blocks
+# all Phase 6 hooks and the W7-3 binary stage. See jarocki/orion#33.
+unzip
 
 # Libraries and dependencies
 libimage-exiftool-perl
