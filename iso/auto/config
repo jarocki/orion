@@ -14,17 +14,28 @@
 #   via QEMU's -serial file: option. Without console=ttyS0,115200n8 in the
 #   kernel cmdline, the kernel sends all output to the VGA framebuffer and the
 #   serial capture log stays empty — both BIOS and UEFI boot tests time out.
-#   Two coordinated changes fix this:
-#   1. --bootappend-live gains "console=tty0 console=ttyS0,115200n8" so the
-#      kernel writes to both VGA (console=tty0, for human users at physical
-#      hardware) and serial (console=ttyS0, primary console for CI capture).
-#      Linux processes console= left-to-right; the LAST entry becomes the
-#      primary console (where getty/login attaches). ttyS0 is last so CI sees
-#      the login prompt on serial.
-#   2. --hook-files wires 0500-bootloader-serial.hook.binary into lb_binary so
-#      isolinux.cfg and grub.cfg are patched with serial directives before the
-#      ISO is assembled. This gives bootloader-stage visibility in serial logs.
+#   --bootappend-live gains "console=tty0 console=ttyS0,115200n8" so the
+#   kernel writes to both VGA (console=tty0, for human users at physical
+#   hardware) and serial (console=ttyS0, primary console for CI capture).
+#   Linux processes console= left-to-right; the LAST entry becomes the
+#   primary console (where getty/login attaches). ttyS0 is last so CI sees
+#   the login prompt on serial.
+#   0500-bootloader-serial.hook.binary patches isolinux.cfg and grub.cfg
+#   with serial directives during the binary stage for bootloader visibility.
 #   References: issue #30, W7-3 acceptance gate, DEC-PHASE7-020.
+#
+# @decision DEC-PHASE7-024 (supersedes DEC-PHASE7-023 wiring paragraph)
+# @title Canonical hook discovery via iso/config/hooks/{live,normal,binary}/
+# @status accepted
+# @rationale CI run 25475860825 proved that --hook-files did NOT produce an
+#   'Executing hook' line in the build log — the workaround never worked.
+#   Live-build auto-discovers executables under config/hooks/{normal,live,binary}/
+#   relative to the lb config root (iso/). All project hooks now live at
+#   iso/config/hooks/{live,normal,binary}/ so live-build finds them without
+#   explicit registration. The --hook-files argument has been REMOVED from
+#   this file because canonical auto-discovery makes it redundant AND keeping
+#   both would create dual-registration (live-build would attempt the hook
+#   twice). References: issue #32, W7-3-enabler, DEC-PHASE7-024.
 #
 # This script configures the live-build system for Orion-X.
 
@@ -60,5 +71,4 @@ lb config noauto \
     --security true \
     --updates true \
     --win32-loader false \
-    --hook-files "hooks/normal/0500-bootloader-serial.hook.binary" \
     "${@}"

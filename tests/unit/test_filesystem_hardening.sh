@@ -5,7 +5,7 @@
 #
 # Tests the hook file structurally (no root/chroot needed):
 # validates file existence, permissions, shebang, strict mode,
-# shellcheck directive, @decision annotation, and all hardening
+# sc directive, @decision annotation, and all hardening
 # content (tmpfs mounts, core dump disable, umask, sticky bit).
 #
 # @decision DEC-SEC-FS-TEST-001
@@ -71,7 +71,7 @@ assert_contains() {
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-HOOK_FILE="$REPO_ROOT/iso/hooks/live/0600-filesystem-hardening.hook.chroot"
+HOOK_FILE="$REPO_ROOT/iso/config/hooks/live/0600-filesystem-hardening.hook.chroot"
 
 echo "=== Filesystem Hardening Hook — Structural Tests ==="
 echo ""

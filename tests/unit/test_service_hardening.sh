@@ -71,7 +71,7 @@ assert_contains() {
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-HOOK_FILE="$REPO_ROOT/iso/hooks/live/0620-service-hardening.hook.chroot"
+HOOK_FILE="$REPO_ROOT/iso/config/hooks/live/0620-service-hardening.hook.chroot"
 
 echo "=== Service Hardening Hook — Structural Tests ==="
 echo ""

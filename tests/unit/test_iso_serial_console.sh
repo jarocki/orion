@@ -3,7 +3,7 @@
 #
 # Unit tests for W7-3 serial console changes:
 #   iso/auto/config — console= params in --bootappend-live
-#   iso/hooks/normal/0500-bootloader-serial.hook.binary — bootloader patching hook
+#   iso/config/hooks/binary/0500-bootloader-serial.hook.binary — bootloader patching hook
 #
 # @decision DEC-PHASE7-023
 # @title Unit test suite for ISO bootloader serial console (W7-3)
@@ -47,7 +47,7 @@ ERRORS=()
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 AUTO_CONFIG="$REPO_ROOT/iso/auto/config"
-HOOK_SCRIPT="$REPO_ROOT/iso/hooks/normal/0500-bootloader-serial.hook.binary"
+HOOK_SCRIPT="$REPO_ROOT/iso/config/hooks/binary/0500-bootloader-serial.hook.binary"
 
 pass() { PASS=$((PASS + 1)); echo "  PASS: $1"; }
 fail() {
@@ -116,11 +116,25 @@ contains "persistence still in --bootappend-live" "persistence" "$BOOTAPPEND_LIN
 echo ""
 
 # ---------------------------------------------------------------------------
-# T4: --hook-files wires the bootloader serial hook
+# T4: canonical hook location + --hook-files removed (DEC-PHASE7-024)
 # ---------------------------------------------------------------------------
-echo "[T4] --hook-files wires 0500-bootloader-serial.hook.binary"
-contains "--hook-files present in auto/config" "--hook-files" "$AUTO_CONFIG_CONTENT"
-contains "hook filename in --hook-files" "0500-bootloader-serial.hook.binary" "$AUTO_CONFIG_CONTENT"
+# Per DEC-PHASE7-024: live-build auto-discovers hooks under
+# iso/config/hooks/binary/. The --hook-files workaround in iso/auto/config
+# has been removed because canonical path placement makes it redundant AND
+# keeping both would create dual-registration. This test verifies:
+#   (a) the hook file is present at its canonical binary/ path
+#   (b) --hook-files is NOT present in iso/auto/config (removal confirmed)
+echo "[T4] canonical hook at iso/config/hooks/binary/ AND --hook-files absent from auto/config"
+if [[ -f "$HOOK_SCRIPT" ]]; then
+    pass "hook exists at canonical path iso/config/hooks/binary/0500-bootloader-serial.hook.binary"
+else
+    fail "hook NOT found at canonical path: $HOOK_SCRIPT"
+fi
+# Strip comment lines (sh comments start with #) before checking for --hook-files
+# so explanatory comments referencing the removed flag don't trigger a false
+# positive. Intent: no FUNCTIONAL --hook-files in the lb config invocation.
+AUTO_CONFIG_NOCOMMENTS="$(echo "$AUTO_CONFIG_CONTENT" | grep -vE '^[[:space:]]*#')"
+not_contains "--hook-files absent from auto/config (DEC-PHASE7-024)" "--hook-files" "$AUTO_CONFIG_NOCOMMENTS"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -305,12 +319,13 @@ echo ""
 # T13: Production sequence — config present + hook patches both configs
 # ---------------------------------------------------------------------------
 # This test exercises the real production sequence end-to-end at the unit level:
-# 1. auto/config references the hook via --hook-files (verified in T4)
+# 1. hook lives at canonical path iso/config/hooks/binary/ (verified in T4)
 # 2. The hook is present and executable (verified in T6)
 # 3. The hook patches isolinux.cfg AND grub.cfg in a single run
 # This mirrors what lb_binary does: runs all .hook.binary scripts from CWD
-# with binary/ as the working tree.
-echo "[T13] Production sequence — auto/config wires hook; hook patches both configs"
+# with binary/ as the working tree. Auto-discovery finds the hook because
+# it is in iso/config/hooks/binary/ (DEC-PHASE7-024, no --hook-files needed).
+echo "[T13] Production sequence — hook at canonical path; hook patches both configs"
 
 E2E_SCRATCH="$SCRATCH/e2e_test"
 mkdir -p "$E2E_SCRATCH/binary/isolinux"
@@ -340,9 +355,12 @@ menuentry "Orion-X Live" {
 }
 EOF
 
-# Verify auto/config references the hook (single source of truth — no inline patching elsewhere)
-contains "auto/config is single authority for hook wiring" \
-    "0500-bootloader-serial.hook.binary" "$AUTO_CONFIG_CONTENT"
+# Verify hook is at canonical path — auto-discovery is the single wiring authority (DEC-PHASE7-024)
+if [[ -f "$HOOK_SCRIPT" ]]; then
+    pass "production run: hook present at canonical binary/ path"
+else
+    fail "production run: hook missing from canonical binary/ path — $HOOK_SCRIPT"
+fi
 
 # Run the hook (simulating lb_binary stage)
 E2E_OUTPUT="$( (cd "$E2E_SCRATCH" && bash "$HOOK_SCRIPT") 2>&1)"
