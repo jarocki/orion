@@ -151,14 +151,15 @@ runtime, hardware validates USB boot.
 | W7-3-enabler | Wire iso/hooks/ to canonical live-build paths (#32 — enables real Phase 6 runtime) | Linux/Docker | 2 | W7-1 | M | review | ACCEPTED 2026-05-11 (DEC-PHASE7-024..026, DEC-PHASE7-028) |
 | W7-CI-FIX-4 | mesh/matrix docker tests assert bookworm base | Docker | 1 | W7-CI-FIX-3 | XS | review | ACCEPTED 2026-05-11 (rolled into DEC-PHASE7-015 cascade; satisfied retroactively) |
 | W7-4-A | systemd unit installation hook (#9, #13 pre-W7-4 enabler) | Linux/Docker | 3 | W7-1, W7-3-enabler | M | review | ACCEPTED 2026-05-11 CI run 25682796113 @ `0424b7e` (merge of `feature/phase7-w7-4-a-systemd-units` — DEC-PHASE7-031). Closes #9, #13. |
-| W7-4-A-bis | apparmor packages in canonical list + test path correction (closes #37) | Linux/Docker | 3 | W7-4-A | XS | review | interleaved CI-FIX between W7-4-A and W7-4-B; unblocks AppArmor runtime verification (DEC-PHASE7-032) |
-| W7-4-B | QEMU runtime verification (mesh-discover + Matrix smoke + AppArmor enforcing) | Linux/QEMU | 3 | W7-3, W7-4-A, W7-4-A-bis | L | review |
+| W7-4-A-bis | apparmor packages in canonical list + test path correction (closes #37) | Linux/Docker | 3 | W7-4-A | XS | review | ACCEPTED 2026-05-11 merge `da66fee` (`feature/phase7-w7-4-a-bis-apparmor-pkgs`); 3 hardening tests now reference the canonical `iso/config/package-lists/` path with all 4 AppArmor packages present (DEC-PHASE7-033). Closes #37. |
+| W7-4-A-tris | canonical hook path in serial console test (closes #38) | Linux/Docker | 3 | W7-4-A-bis | XS | review | ACCEPTED 2026-05-11 merge `68b9097` (`feature/phase7-w7-4-a-tris-serial-console-test`); `test_iso_serial_console.sh` migrated from legacy `iso/config/hooks/binary/` to canonical `iso/config/hooks/normal/` (DEC-PHASE7-034). Closes #38. All three CI workflows green for the first time since the #33 cascade. |
+| W7-4-B | QEMU runtime verification (mesh-discover + Matrix smoke + AppArmor enforcing) | Linux/QEMU | 3 | W7-3, W7-4-A, W7-4-A-bis, W7-4-A-tris | L | review | IN PROGRESS 2026-05-11; in-guest systemd oneshot writes sentinel-tagged assertion results to serial; host-side post-boot-script parses for PASS/FAIL (DEC-PHASE7-035). |
 | W7-5 | Performance benchmark suite | Linux/QEMU | 4 | W7-3, W7-4 | M | review |
 | W7-6 | Failure-mode recovery tests | Docker + QEMU | 4 | W7-2, W7-4 | M | review |
 | W7-7 | Physical USB boot validation | Hardware | 5 | W7-3 | S | approve |
 | W7-8 | Phase 7 closure + Phase 8 activation | Repo | 6 | W7-1..W7-7 | S | review |
 
-**Critical path:** W7-1 -> W7-3 -> W7-4-A -> W7-4-A-bis -> W7-4-B -> W7-6 -> W7-8 (6 waves).
+**Critical path:** W7-1 -> W7-3 -> W7-4-A -> W7-4-A-bis -> W7-4-A-tris -> W7-4-B -> W7-6 -> W7-8 (6 waves).
 W7-3-enabler ran parallel to W7-3 in wave 2; both accepted 2026-05-11 at
 `ed4ffaf` via CI run 25679831402 (build + hook-applied validator 7/7 PASS +
 QEMU BIOS + QEMU UEFI). W7-4 is split into W7-4-A (systemd unit installation
@@ -187,6 +188,43 @@ hooks PASS in `test-iso-hooks-applied.sh` — 5 live + 2 normal chroot + 1
 binary; QEMU BIOS + UEFI boot green). Issues #9 and #13 are closed. The
 ProtectSystem injection in `0620-service-hardening` now operates on real unit
 files. See DEC-PHASE7-031.
+
+**Path-cleanup arc (W7-4-A-bis + W7-4-A-tris, 2026-05-11):** Once W7-4-A
+landed, two pre-existing test-path drifts surfaced from the #32/#33 canonical
+live-build paths reorganization that had only been partially propagated to
+the test suite. **W7-4-A-bis** (#37, merge `da66fee`) eradicated the legacy
+`iso/package-lists/` reference class from three hardening tests
+(`test_apparmor_profiles.sh` 44/0, `test_firewall_config.sh` 29/0,
+`test-security-hardening.sh` 38/0/1) and ensured the canonical
+`iso/config/package-lists/orionx.list.chroot` actually lists the four AppArmor
+packages — without these, W7-4-B's runtime AppArmor verification would have
+asserted against profiles that have no real binaries to enforce. The slice
+scope was amended v1 → v2 mid-cycle to bundle all three test files in a single
+landing, reducing the legacy-path class to zero in one revert boundary
+(DEC-PHASE7-033). **W7-4-A-tris** (#38, merge `68b9097`) corrected the last
+legacy reference — `iso/config/hooks/binary/` → canonical
+`iso/config/hooks/normal/` in `test_iso_serial_console.sh` (31/0)
+(DEC-PHASE7-034). After tris merged, **all three CI workflows are green
+simultaneously for the first time since the #33 cascade**: lint.yml, qemu-test.yml,
+e2e-test.yml. The legacy `iso/package-lists/` and `iso/config/hooks/binary/`
+reference classes are now both zero across `tests/`, `scripts/`, `Makefile`,
+and `.github/`. Anti-drift controls:
+`grep -rn 'iso/package-lists/' tests/ scripts/ Makefile .github/` and
+`grep -rn 'iso/config/hooks/binary/' tests/ scripts/ Makefile .github/`
+both return zero matches at HEAD `68b9097`. W7-4-B can now proceed against a
+fully clean Phase 7 baseline.
+
+**Observed-but-not-scheduled findings (2026-05-11):** Three issues surfaced
+during the bis/tris arc that are intentionally NOT seeded as slices: (a) 10
+pre-existing Python test failures (`test_artifact_archive.py` needs archive
+dirs, `test_mesh_cli.py` needs `/etc/wireguard` root) — environment-bound,
+not introduced by Phase 7 work; tracked as backlog candidates. (b) Push of
+`develop` is classified `high_risk` by the runtime policy classifier,
+requiring lease `allowed_ops` to include `high_risk`; this is a runtime
+control-plane improvement, not a source slice. (c) The `workflow_scope` vs
+`work_item_scope` drift pattern was observed twice — Guardian noted scope-sync
+must follow any scope amendment landing; this is a runtime-discipline
+reminder, not a slice. None of these block W7-4-B.
 **Max parallel width:** 3 in wave 2 (now historical: W7-3 + W7-3-enabler shared
 wave 2; both accepted). Wave 1 still had 2 (W7-1, W7-2).
 **Hardware gate:** W7-7 requires physical USB and human-in-the-loop and is the
@@ -196,6 +234,184 @@ Detailed Scope Manifests and Evaluation Contracts for each work item live in
 `reckonings/2026-04-28-phase7-plan.md` (this section is the index; the
 expanded contracts are produced per-dispatch by the planner trailer when each
 W7-N item is provisioned).
+
+**W7-4-B Scope Manifest and Evaluation Contract (seeded 2026-05-11):**
+
+*Mission.* Verify the booted Orion-X ISO actually starts the WireGuard mesh,
+exchanges a Matrix smoke signal, and enforces AppArmor — by running these
+assertions from inside a QEMU-booted instance via the W7-3 attach contract
+(`--post-boot-script` + the new in-guest verification systemd unit). This is
+the runtime authority that closes the structural-vs-runtime boundary
+acknowledged in DEC-PHASE7-024 and made operative by DEC-PHASE7-031.
+
+*Verification channel decision (DEC-PHASE7-035).* The W7-3 attach contract
+runs the post-boot-script **on the host** with only `RUN_ID` and `SERIAL_LOG`
+as inputs — it does NOT provide an SSH/QEMU-monitor handle. Rejected
+alternatives: (i) hostfwd SSH (adds attack surface, ssh-keygen wiring, and a
+parallel authority alongside the existing serial-log marker pattern);
+(ii) QEMU monitor socket commands (couples host-side test to QEMU-internal
+control plane, breaks if the harness switches to libvirt later); (iii) guest
+agent (adds qemu-guest-agent dep to the ISO). Chosen approach: an in-guest
+oneshot systemd unit `orionx-runtime-verify.service` (oneshot,
+`After=multi-user.target`) runs the verification assertions inside the guest
+and writes sentinel-tagged lines to `/dev/ttyS0` (the serial console). The
+host-side post-boot-script greps `SERIAL_LOG` for those sentinels and decides
+PASS/FAIL. This reuses the existing serial-marker authority (DEC-PHASE7-020) —
+no new control plane.
+
+*Sentinel format.* `ORIONX_VERIFY_BEGIN`, then one
+`ORIONX_VERIFY: <check>=<pass|fail|skip>` line per assertion, then
+`ORIONX_VERIFY_END: <overall>=<pass|fail>`. The host-side script asserts (a)
+both BEGIN and END are present, (b) END's overall verdict is `pass`, (c) every
+expected check name is present. Missing BEGIN/END → FAIL (the unit may have
+crashed before emitting; we never silently pass).
+
+*Assertions inside the guest.* Five real-state checks, no
+service-file-exists-only shortcuts:
+1. `mesh_iface_up` — `wg show wg0` exit 0 AND `ip -br link show wg0` reports `UP`
+2. `mesh_beacon_active` — `systemctl is-active orionx-mesh-beacon.service` returns `active` OR `activating`
+3. `mesh_discover_enabled` — `systemctl is-enabled orionx-mesh-discover.timer` returns `enabled`
+4. `matrix_synapse_state` — `systemctl is-active matrix-synapse-orionx.service` returns `active` OR `activating` (single-node QEMU has no peer; service-up state is sufficient)
+5. `apparmor_enforcing` — `aa-status --enabled` exit 0 AND `aa-status --enforced` reports at least the documented profile count (`usr.bin.tshark`, `usr.bin.bulk_extractor`, `usr.lib.synapse`, `usr.lib.wireguard`, `usr.bin.volatility3`)
+
+*Sub-slice decomposition.* W7-4-B is large but coherent. Recommended split if
+implementer prefers smaller revert boundaries (planner's call to keep as ONE
+slice — single coherent verification harness is also fine; do NOT split if
+implementer feels confident on one landing):
+- **W7-4-B-a (harness wiring):** the in-guest unit + staging + hook
+  registration + host-side post-boot-script skeleton (sentinels, BEGIN/END
+  parsing). Adds the new CI step but with a stub verifier that asserts only
+  BEGIN/END are present.
+- **W7-4-B-b (mesh assertions):** checks 1-3 wired into the unit.
+- **W7-4-B-c (Matrix + AppArmor assertions):** checks 4-5 wired into the unit.
+
+Default unless implementer pushes back: ship as ONE slice (W7-4-B), single
+revert boundary, single CI feedback. Decompose only if scope grows beyond ~6
+files or revert risk warrants.
+
+*Scope Manifest.*
+
+Allowed paths (the implementer may touch these and only these without
+re-approval):
+- `iso/config/includes.chroot/usr/lib/orionx/runtime-verify.sh` (new — the in-guest verifier script)
+- `iso/config/includes.chroot/usr/share/orionx/systemd/orionx-runtime-verify.service` (new — staging path for the unit; the existing 0615 install hook will pick it up automatically because it iterates `*.service` already)
+- `tests/integration/test-w7-4-b-runtime-verify.sh` (new — host-side post-boot-script, invoked by qemu-boot-test.sh via `--post-boot-script`)
+- `tests/unit/test_runtime_verify_unit.sh` (new — content/syntax authority for the unit + verifier script; mirrors the W7-4-A `test_systemd_units_hook.sh` discipline)
+- `tests/integration/test-iso-hooks-applied.sh` (modify — append `orionx-runtime-verify.service` to the autostart-enabled set OR mark it as install-only/non-autostart; see "Authority invariants" below)
+- `.github/workflows/qemu-test.yml` (modify — add `--post-boot-script tests/integration/test-w7-4-b-runtime-verify.sh` to the existing QEMU boot step, NOT a new workflow file)
+- `docs/qemu-boot-test.md` (modify — append a brief "W7-4-B runtime verifier" subsection documenting the sentinel contract; pointer only, not a duplicate)
+
+Required paths (must be touched in this slice — non-touch is a scope violation):
+- `tests/integration/test-w7-4-b-runtime-verify.sh`
+- `iso/config/includes.chroot/usr/lib/orionx/runtime-verify.sh`
+- `iso/config/includes.chroot/usr/share/orionx/systemd/orionx-runtime-verify.service`
+- `.github/workflows/qemu-test.yml`
+
+Forbidden paths (any touch requires explicit planner re-approval):
+- `iso/config/hooks/live/0615-install-systemd-units.hook.chroot` (the existing install hook iterates `*.service` and `*.timer` patterns and will pick up the new unit automatically; modifying it would create a dual authority for "which units autostart")
+- Any other `iso/config/hooks/**` file (the runtime verifier is a STAGED unit, not a hook)
+- `iso/config/hooks/live/0620-service-hardening.hook.chroot` (Phase 6 authority; runtime verifier is read-only against hardened services)
+- `iso/config/hooks/live/0610-apparmor-setup.hook.chroot` (Phase 6 AppArmor authority; runtime verifier ASSERTS state, never relaxes profiles)
+- `iso/config/hooks/live/0600-filesystem-hardening.hook.chroot`
+- `scripts/mesh/mesh-discover.sh`, `scripts/mesh/mesh-health.sh`, `scripts/mesh/orionx-mesh` (do NOT modify mesh runtime to make assertions pass)
+- `scripts/setup-matrix.sh`, `docker/matrix/homeserver.yaml`, `docker/Dockerfile.matrix-node` (Matrix authorities; runtime verifier asserts service state, not configuration)
+- `systemd/*.service`, `systemd/*.timer` (existing service/timer files; W7-4-B adds a NEW unit alongside, never modifies existing)
+- `scripts/qemu-boot-test.sh`, `docs/qemu-boot-test.md` other than the documented W7-3 contract section (the harness is frozen per DEC-PHASE7-022)
+- `iso/config/package-lists/orionx.list.chroot` (Phase 6 + W7-4-A-bis authority; new packages are out of scope — if `aa-status` is unavailable that's a real Phase 6 gap, not a W7-4-B fix)
+- `docker/**`, `Makefile` (per source dispatch context)
+- `MASTER_PLAN.md` (planner-owned; W7-4-B closure will be recorded by a separate planner pass)
+
+Expected state authorities touched:
+- `runtime_verify_authority` (NEW): the single authority for in-guest runtime assertion results. Owner: `iso/config/includes.chroot/usr/lib/orionx/runtime-verify.sh`. Output: serial-console sentinels parsed by the host-side post-boot-script.
+- `qemu_harness_attach_authority`: extends via the existing `--post-boot-script` contract (DEC-PHASE7-022). NO modification to `qemu-boot-test.sh`.
+- `hook_applied_authority`: `test-iso-hooks-applied.sh`'s EXPECTED_HOOKS is unchanged — runtime-verify is a UNIT, not a HOOK. The unit's installation is gated by the existing 0615 hook's auto-pickup pattern.
+
+*Evaluation Contract.*
+
+Required tests (all must pass on the W7-4-B feature branch HEAD; reviewer
+verifies):
+- `bash tests/unit/test_runtime_verify_unit.sh` — PASS (new unit test; asserts unit file syntax-clean, verifier script shellcheck-clean, sentinel format documented in script header)
+- `bash tests/unit/test_systemd_units_hook.sh` — PASS (existing; must still pass because the new unit is now in the staging pattern)
+- `bash tests/integration/test-iso-hooks-applied.sh` — PASS (existing; must still pass because no new hooks were added)
+- CI run on the W7-4-B branch: ALL THREE workflows green (lint.yml, qemu-test.yml, e2e-test.yml) — same bar W7-4-A-tris cleared
+- The new QEMU boot step with `--post-boot-script` attached MUST report `ORIONX_VERIFY_END: pass` for both BIOS and UEFI modes
+
+Required real-path checks (asserted by `test-w7-4-b-runtime-verify.sh`
+reading the serial log produced inside the guest):
+- `ORIONX_VERIFY_BEGIN` line present in `SERIAL_LOG`
+- `ORIONX_VERIFY: mesh_iface_up=pass` present
+- `ORIONX_VERIFY: mesh_beacon_active=pass` present
+- `ORIONX_VERIFY: mesh_discover_enabled=pass` present
+- `ORIONX_VERIFY: matrix_synapse_state=pass` present
+- `ORIONX_VERIFY: apparmor_enforcing=pass` present
+- `ORIONX_VERIFY_END: pass` present
+- Every expected check name appears exactly once (no duplicate sentinels)
+- No `ORIONX_VERIFY: *=fail` lines (any fail → host-side FAIL)
+- No "missing" sentinels (the host-side parser must distinguish missing-check from explicit-fail-check; missing → FAIL with diagnostic)
+
+Required authority invariants:
+- The in-guest verifier is the SINGLE authority for runtime assertion truth.
+  Adding a parallel Docker-compose-based runtime test that duplicates these
+  checks is FORBIDDEN (re-introduces the Phase 4 SKIP #21/#22 anti-pattern).
+- The verifier never modifies system state — it reads `wg show`,
+  `systemctl is-*`, `aa-status` only. No service restarts, no `ip` add, no
+  AppArmor profile reloads.
+- The sentinel format lives in EXACTLY ONE place — the verifier script's
+  header comment block — and the host-side parser references it by literal
+  pattern match. Two-place definition is a scope violation.
+
+Required integration points (must still work after W7-4-B lands):
+- W7-4-A: all 8 unit files still install; existing 0615 hook still PASS in
+  hook-applied validator.
+- W7-4-A-bis: AppArmor packages still present in canonical package list;
+  `aa-status` available in the booted guest.
+- W7-3: BIOS+UEFI boots still complete within --timeout 900; serial-marker
+  detection still triggers post-boot-script invocation.
+- E2E test (`tests/integration/test-e2e-scenario.sh`): unchanged; the Docker
+  E2E remains the multi-node orchestration authority; W7-4-B is single-node
+  in-guest runtime verification.
+
+Forbidden shortcuts (any of these is a slice-fail at reviewer time):
+- Asserting only "unit file exists in /lib/systemd/system/" — that's the
+  W7-4-A bar, not the W7-4-B bar.
+- Asserting only `systemctl status` exit codes without parsing
+  `is-active`/`is-enabled` — these have different semantics for `oneshot`
+  units.
+- Re-introducing Docker-compose mesh/Matrix tests as a substitute for in-guest
+  verification (the SKIP #21/#22 anti-pattern).
+- Adding `qemu-guest-agent`, `openssh-server` hostfwd, or QEMU monitor
+  socket coupling to drive commands into the guest (rejected channels per
+  DEC-PHASE7-035).
+- Modifying any mesh/Matrix/AppArmor runtime authority file to make
+  assertions pass — if a real assertion fails, that is the bug to fix in a
+  separate slice, not paper over here.
+- Relaxing the assertion set ("just check service is enabled") — service-up
+  state is the deliverable.
+- Silent SKIP on a missing tool (`wg`, `aa-status`) — emit
+  `ORIONX_VERIFY: <name>=skip` with a diagnostic line, but END verdict is
+  `fail` if any required check is skip. Skip is a real signal, not a
+  silent-pass.
+
+Ready-for-guardian definition: reviewer may declare readiness when all of the
+following are true on the W7-4-B feature branch HEAD:
+1. All three GitHub Actions workflows are green (lint, qemu-test, e2e-test).
+2. The qemu-test workflow's "Run QEMU boot test (BIOS + UEFI)" step shows the
+   sentinel lines `ORIONX_VERIFY_BEGIN`, all 5 individual check sentinels with
+   `=pass`, and `ORIONX_VERIFY_END: pass` for BOTH bios and uefi modes in the
+   uploaded `qemu-artifacts-<run-id>/` serial logs.
+3. The new unit test `test_runtime_verify_unit.sh` passes locally and in CI
+   lint.yml.
+4. `grep -rn 'qemu-guest-agent\|openssh-server' iso/` returns zero matches
+   (rejected channel confirmation).
+5. The Scope Manifest forbidden-paths list shows zero touches in the diff
+   against `develop`.
+6. Decision Log gains a `DEC-PHASE7-036` (closure) entry citing the CI run
+   id, head SHA, and the sentinel evidence from the artifacts.
+
+Rollback boundary: single feature branch (`feature/phase7-w7-4-b-runtime-verify`),
+single squash merge into `develop`. If W7-4-B regresses runtime verification
+on a future ISO change, the verifier can be disabled (mask the unit) without
+reverting the systemd unit installation infrastructure W7-4-A established.
 
 ---
 
@@ -348,6 +564,9 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | DEC-PHASE7-030 | 2026-05-11 | [W7-4-A] Single chroot hook `0700-install-systemd-units.hook.chroot` is the squashfs authority for orionx units; `0620-service-hardening` MUST sort lexically AFTER it | The proposed binary-stage variant (issue #13 option A) was rejected because (a) the live-build chroot stage is where systemd units canonically live in `/lib/systemd/system/`, (b) the binary stage runs after the squashfs is sealed so `systemctl enable` would not persist, and (c) the existing service-hardening hook already runs in the chroot stage and depends on the units being present. Canonical sequence: 0700-install-systemd-units (cp + enable) runs before 0620-service-hardening (ProtectSystem additions). Note: lexical ordering of `0620` < `0700` would put hardening first; therefore the install hook is renamed/renumbered as `0615-install-systemd-units.hook.chroot` so it sorts between apparmor-setup (0610) and service-hardening (0620). The hook copies `systemd/*.service` and `systemd/*.timer` from a chroot-included staging path (`/usr/share/orionx/systemd/`) into `/lib/systemd/system/` then runs `systemctl enable` per a single explicit array (one authority for "which units autostart"). The EXPECTED_HOOKS array in `tests/integration/test-iso-hooks-applied.sh` MUST gain the new hook so the hook-applied validator gates on its execution. A new unit test `tests/unit/test_systemd_units_hook.sh` is the content authority (asserts hook exists, syntax-clean, lists every unit in `systemd/*.service` plus expected timers, enables only the documented autostart set). Code: `iso/config/hooks/live/0615-install-systemd-units.hook.chroot` (new), `iso/config/includes.chroot/usr/share/orionx/systemd/` (new staging), `tests/integration/test-iso-hooks-applied.sh` (EXPECTED_HOOKS append), `tests/unit/test_systemd_units_hook.sh` (new). |
 | DEC-PHASE7-031 | 2026-05-11 | [W7-4-A closure] W7-4-A accepted at `0424b7e` (CI run 25682796113); closes #9 and #13, makes Phase 6 service-hardening operative, enables W7-4-B runtime verification | The W7-4-A acceptance bar — "systemd units installed into `/lib/systemd/system/` during lb chroot stage, autostart units enabled, hook-applied validator gates on the new hook's execution" — is met. CI run 25682796113 on commit `0424b7e` (merge of `feature/phase7-w7-4-a-systemd-units` into `develop`) showed: `Executing hook config/hooks/live/0615-install-systemd-units.hook.chroot` in the lb chroot_hooks pass; 8 unit files installed (`matrix-synapse-orionx.service`, `orionx-mesh-{health,discover}.{service,timer}`, `orionx-mesh-beacon.service`, `orionx-firewall.service`, `orionx-first-boot.service`); 6 autostart units enabled with `multi-user.target.wants` + `timers.target.wants` symlinks present in chroot; completion marker logged; all 8 hooks PASS in `tests/integration/test-iso-hooks-applied.sh` (5 live + 2 normal chroot + 1 binary marker); QEMU BIOS and UEFI both boot green. With units in the squashfs, `0620-service-hardening`'s ProtectSystem injection now operates on real files (Phase 6 hardening is operative end-to-end). W7-4-A closes #9 (systemd units in squashfs) and #13 (chroot-stage vs binary-stage placement). W7-4-B (runtime verification) becomes meaningful next, gated by W7-4-A-bis (#37) for AppArmor packages. Code: `iso/config/hooks/live/0615-install-systemd-units.hook.chroot`, `iso/config/includes.chroot/usr/share/orionx/systemd/`, `tests/integration/test-iso-hooks-applied.sh`, `tests/unit/test_systemd_units_hook.sh`, merge commit `0424b7e` on `develop`. |
 | DEC-PHASE7-032 | 2026-05-11 | [W7-4-A-bis] Interleave #37 apparmor-package fix between W7-4-A and W7-4-B; canonical package-list path is the single authority | `lint.yml` remains red on a pre-existing failure (filed as #37) that surfaced once W7-4-A landed: `tests/unit/test_apparmor_profiles.sh` Test Group 8 (Package List) references `iso/package-lists/orionx.list.chroot` — the pre-#33 path that is no longer the live-build search path — and asserts presence of 4 apparmor packages (`apparmor`, `apparmor-utils`, `apparmor-profiles`, `apparmor-profiles-extra`). The canonical path post-#33 is `iso/config/package-lists/orionx.list.chroot`, which currently lacks those 4 packages. Either fix alone leaves the test red and W7-4-B's runtime AppArmor verification ungrounded (packages must actually install during chroot_package-lists for the AppArmor profiles to enforce against real binaries). The W7-4-A-bis slice does both atomically: (a) add the 4 packages to the canonical list; (b) correct the test's Test Group 8 to reference the canonical path. Rejected alternatives: adding apparmor to `docker/Dockerfile*` (out of scope — container builds diverge from ISO authority); modifying `0610-apparmor-setup.hook.chroot` to install packages at hook time (would create a parallel authority alongside `chroot_package-lists`, violating Single Source of Truth); leaving lint.yml red and proceeding to W7-4-B (would mask the regression and fail W7-4-B for the wrong reason). Anti-drift control: the Evaluation Contract requires `grep -rn 'iso/package-lists/' tests/ scripts/ Makefile .github/` to return zero matches after the fix — same shape as DEC-PHASE7-025's "test path moves with the file" discipline. Single-commit revert boundary. Code: `iso/config/package-lists/orionx.list.chroot`, `tests/unit/test_apparmor_profiles.sh`. |
+| DEC-PHASE7-033 | 2026-05-11 | [W7-4-A-bis closure] W7-4-A-bis accepted at merge `da66fee` (closes #37); scope amended v1→v2 mid-cycle to bundle three hardening tests in a single landing | The original W7-4-A-bis scope (v1, DEC-PHASE7-032) covered `test_apparmor_profiles.sh` Test Group 8 plus the canonical package-list addition. Reviewer surfaced two additional tests with the same `iso/package-lists/` legacy reference class: `test_firewall_config.sh` (29 assertions) and `tests/integration/test-security-hardening.sh` (38 assertions, one SKIP for runtime-only systemd). Scope was amended v1→v2 to include all three test files in one slice so the legacy reference class collapses to zero in a single revert boundary, matching DEC-PHASE7-025's "test path moves with the file" discipline. Acceptance evidence on `da66fee` (`feature/phase7-w7-4-a-bis-apparmor-pkgs` → develop): `tests/unit/test_apparmor_profiles.sh` 44/0; `tests/unit/test_firewall_config.sh` 29/0; `tests/integration/test-security-hardening.sh` 38/0 plus 1 documented SKIP (runtime AppArmor enforcement — runs in W7-4-B inside QEMU); canonical `iso/config/package-lists/orionx.list.chroot` lists `apparmor`, `apparmor-utils`, `apparmor-profiles`, `apparmor-profiles-extra`. Anti-drift control verified: `grep -rn 'iso/package-lists/' tests/ scripts/ Makefile .github/` returns zero matches at HEAD `da66fee`. lint.yml turned green for the first time since #33. W7-4-A-bis closes #37. Code: `iso/config/package-lists/orionx.list.chroot`, `tests/unit/test_apparmor_profiles.sh`, `tests/unit/test_firewall_config.sh`, `tests/integration/test-security-hardening.sh`, merge commit `da66fee` on `develop`. |
+| DEC-PHASE7-034 | 2026-05-11 | [W7-4-A-tris closure] W7-4-A-tris accepted at merge `68b9097` (closes #38); same path-correction class as W7-4-A-bis applied to `iso/config/hooks/binary/` → canonical `iso/config/hooks/normal/` | W7-4-A-bis cleared the `iso/package-lists/` legacy reference class but a second class survived: `tests/unit/test_iso_serial_console.sh` referenced `iso/config/hooks/binary/` for the bootloader serial hook. Post-#32 canonical placement is `iso/config/hooks/normal/0500-bootloader-serial.hook.binary` (the hook is a `.binary` extension running in the live-build `normal` stage, not in a `binary/` directory). Single test file, mechanical fix — but landed as its own slice for a clean revert boundary because the failure manifested in qemu-test.yml (not lint.yml like #37) and proving the test passes on the canonical path is its own validation. Rejected alternative: bundling into W7-4-A-bis post hoc — would have required reopening the merged feature branch and re-running CI; cheaper to land as a sibling slice. Acceptance evidence on `68b9097` (`feature/phase7-w7-4-a-tris-serial-console-test` → develop): `tests/unit/test_iso_serial_console.sh` 31/0 (was 0/31 at start). Anti-drift control verified: `grep -rn 'iso/config/hooks/binary/' tests/ scripts/ Makefile .github/` returns zero matches at HEAD `68b9097`. **All three CI workflows green simultaneously for the first time since the #33 cascade** (lint.yml, qemu-test.yml, e2e-test.yml) — this is the clean Phase 7 baseline that unblocks W7-4-B. W7-4-A-tris closes #38. Code: `tests/unit/test_iso_serial_console.sh`, merge commit `68b9097` on `develop`. |
+| DEC-PHASE7-035 | 2026-05-11 | [W7-4-B seeding] In-guest verification channel: systemd oneshot emits serial-console sentinels parsed by host-side post-boot-script; SSH/monitor/guest-agent channels rejected | W7-3's `--post-boot-script` attach contract (DEC-PHASE7-022) hands the post-boot-script only `RUN_ID` and `SERIAL_LOG` — it does NOT provide an SSH/QEMU-monitor handle into the guest. To verify mesh + Matrix + AppArmor enforcement at runtime, W7-4-B must establish a verification channel. Rejected alternatives: (i) SSH via hostfwd (`-netdev user,hostfwd=tcp::2222-:22` + `openssh-server` in the ISO) — adds attack surface, ssh-key wiring, a parallel control plane alongside the existing serial-marker authority, and is not how the production ISO will be operated; (ii) QEMU monitor socket (`-monitor unix:...`) — couples the host-side test to QEMU-internal control plane, breaks if the harness switches to libvirt later; (iii) qemu-guest-agent — adds a daemon dependency to the shipping ISO purely for testing. Chosen approach: an in-guest oneshot systemd unit `orionx-runtime-verify.service` (`After=multi-user.target`, `Type=oneshot`) runs the verification assertions inside the guest and writes sentinel-tagged lines to `/dev/ttyS0` (the serial console, which `qemu-boot-test.sh` already captures to `SERIAL_LOG`). The host-side post-boot-script greps `SERIAL_LOG` for the `ORIONX_VERIFY_BEGIN` / `ORIONX_VERIFY: <name>=<verdict>` / `ORIONX_VERIFY_END: <overall>` sentinel pattern and decides PASS/FAIL. This reuses the existing serial-marker authority (DEC-PHASE7-020) — no new control plane, no additional packages in the shipping ISO, no harness modification. The unit is auto-installed by W7-4-A's `0615-install-systemd-units.hook.chroot` because that hook already iterates `*.service` in the staging dir; W7-4-B places the new unit alongside the existing eight. Anti-drift control: `grep -rn 'qemu-guest-agent\|openssh-server' iso/` must return zero matches at W7-4-B acceptance. Single-slice revert boundary; the verifier can be masked at runtime without reverting any other Phase 7 work. Code (planned): `iso/config/includes.chroot/usr/lib/orionx/runtime-verify.sh`, `iso/config/includes.chroot/usr/share/orionx/systemd/orionx-runtime-verify.service`, `tests/integration/test-w7-4-b-runtime-verify.sh`, `tests/unit/test_runtime_verify_unit.sh`, `.github/workflows/qemu-test.yml` (`--post-boot-script` attach), `docs/qemu-boot-test.md` (sentinel contract documentation). |
 
 ## Risk Register
 
