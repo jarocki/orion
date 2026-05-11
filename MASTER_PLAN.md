@@ -153,13 +153,15 @@ runtime, hardware validates USB boot.
 | W7-4-A | systemd unit installation hook (#9, #13 pre-W7-4 enabler) | Linux/Docker | 3 | W7-1, W7-3-enabler | M | review | ACCEPTED 2026-05-11 CI run 25682796113 @ `0424b7e` (merge of `feature/phase7-w7-4-a-systemd-units` — DEC-PHASE7-031). Closes #9, #13. |
 | W7-4-A-bis | apparmor packages in canonical list + test path correction (closes #37) | Linux/Docker | 3 | W7-4-A | XS | review | ACCEPTED 2026-05-11 merge `da66fee` (`feature/phase7-w7-4-a-bis-apparmor-pkgs`); 3 hardening tests now reference the canonical `iso/config/package-lists/` path with all 4 AppArmor packages present (DEC-PHASE7-033). Closes #37. |
 | W7-4-A-tris | canonical hook path in serial console test (closes #38) | Linux/Docker | 3 | W7-4-A-bis | XS | review | ACCEPTED 2026-05-11 merge `68b9097` (`feature/phase7-w7-4-a-tris-serial-console-test`); `test_iso_serial_console.sh` migrated from legacy `iso/config/hooks/binary/` to canonical `iso/config/hooks/normal/` (DEC-PHASE7-034). Closes #38. All three CI workflows green for the first time since the #33 cascade. |
-| W7-4-B | QEMU runtime verification (mesh-discover + Matrix smoke + AppArmor enforcing) | Linux/QEMU | 3 | W7-3, W7-4-A, W7-4-A-bis, W7-4-A-tris | L | review | IN PROGRESS 2026-05-11; in-guest systemd oneshot writes sentinel-tagged assertion results to serial; host-side post-boot-script parses for PASS/FAIL (DEC-PHASE7-035). |
-| W7-5 | Performance benchmark suite | Linux/QEMU | 4 | W7-3, W7-4 | M | review |
-| W7-6 | Failure-mode recovery tests | Docker + QEMU | 4 | W7-2, W7-4 | M | review |
+| W7-4-B | QEMU runtime verification (mesh-discover + Matrix smoke + AppArmor enforcing) | Linux/QEMU | 3 | W7-3, W7-4-A, W7-4-A-bis, W7-4-A-tris | L | review | PARTIAL-ACCEPT 2026-05-11 merge `c8bce0a` (`feature/phase7-w7-4-b-runtime-verify`) CI run 25688890245 — mechanism proven (in-guest oneshot writes sentinels to /dev/ttyS0; host-side post-boot-script parses ORIONX_VERIFY_*; both BIOS and UEFI produce parseable artifacts). 3 of 5 assertions FAIL on first runtime evidence — `mesh_iface_up=FAIL`, `mesh_beacon_active=FAIL`, `apparmor_enforcing=FAIL`; `mesh_discover_enabled=PASS`, `matrix_synapse_state=PASS`. Cascade-failure findings landed as W7-4-C-a + W7-4-C-b (DEC-PHASE7-036). |
+| W7-4-C-a | AppArmor profile load fix (flip `apparmor_enforcing` FAIL→PASS) | Linux/QEMU | 3 | W7-4-B | S | review | IN PROGRESS 2026-05-11; investigate aa-status output in W7-4-B serial artifacts, fix profile load mechanism in `0610-apparmor-setup.hook.chroot` and/or profile binary-path mismatches; verify ≥5 enforced Orion-X profiles (DEC-PHASE7-037). |
+| W7-4-C-b | First-boot non-interactive mode for CI (flip mesh assertions FAIL→PASS) | Linux/QEMU | 3 | W7-4-C-a | M | review | PENDING 2026-05-11; refines the design after W7-4-C-a lands. Must produce a non-interactive first-boot path that generates a test wg0 config so wg-quick@wg0 starts and the mesh cascade runs; touches Phase 6 first-boot authority (DEC-SEC-003) under bounded scope expansion (DEC-PHASE7-038). |
+| W7-5 | Performance benchmark suite | Linux/QEMU | 4 | W7-3, W7-4-C-b | M | review |
+| W7-6 | Failure-mode recovery tests | Docker + QEMU | 4 | W7-2, W7-4-C-b | M | review |
 | W7-7 | Physical USB boot validation | Hardware | 5 | W7-3 | S | approve |
 | W7-8 | Phase 7 closure + Phase 8 activation | Repo | 6 | W7-1..W7-7 | S | review |
 
-**Critical path:** W7-1 -> W7-3 -> W7-4-A -> W7-4-A-bis -> W7-4-A-tris -> W7-4-B -> W7-6 -> W7-8 (6 waves).
+**Critical path:** W7-1 -> W7-3 -> W7-4-A -> W7-4-A-bis -> W7-4-A-tris -> W7-4-B -> W7-4-C-a -> W7-4-C-b -> W7-6 -> W7-8 (6 waves; W7-4-C-a / W7-4-C-b are runtime-cascade follow-ups inside wave 3 once W7-4-B exposed the first true runtime evidence).
 W7-3-enabler ran parallel to W7-3 in wave 2; both accepted 2026-05-11 at
 `ed4ffaf` via CI run 25679831402 (build + hook-applied validator 7/7 PASS +
 QEMU BIOS + QEMU UEFI). W7-4 is split into W7-4-A (systemd unit installation
@@ -413,6 +415,345 @@ single squash merge into `develop`. If W7-4-B regresses runtime verification
 on a future ISO change, the verifier can be disabled (mask the unit) without
 reverting the systemd unit installation infrastructure W7-4-A established.
 
+**W7-4-B partial-acceptance + runtime cascade findings (2026-05-11):** W7-4-B
+landed on `develop` at `c8bce0a` (merge of `feature/phase7-w7-4-b-runtime-verify`)
+via CI run 25688890245. **The mechanism is proven**: the in-guest oneshot unit
+`orionx-runtime-verify.service` runs `After=multi-user.target`, writes the
+documented sentinel pattern to `/dev/ttyS0`, the host-side post-boot-script
+parses `ORIONX_VERIFY_BEGIN` / `ORIONX_VERIFY: <name>=<verdict>` /
+`ORIONX_VERIFY_END: overall=<verdict>` from `SERIAL_LOG`, and both BIOS and
+UEFI modes produce a parseable artifact in `qemu-artifacts-<run-id>/`. This is
+the runtime-verification authority the project has been missing since Phase 6
+closed structurally (per DEC-PHASE7-024). However, the first real runtime
+evidence revealed **3 of 5 assertions FAIL** — see "W7-4-B serial-log
+evidence" below. This is a partial-acceptance: the W7-4-B mechanism authority
+is accepted; the runtime gaps surfaced are tracked as W7-4-C-a (AppArmor
+load mechanism) and W7-4-C-b (first-boot non-interactive for CI). The W7-4-B
+acceptance bar in its Scope Manifest/Evaluation Contract (END=pass for both
+modes) is NOT met yet; the bar moves to the W7-4-C-b closure. See
+DEC-PHASE7-036.
+
+**W7-4-B serial-log evidence (CI run 25688890245):** The booted Orion-X ISO
+emits the following sentinels:
+
+```
+ORIONX_VERIFY: mesh_iface_up=FAIL
+ORIONX_VERIFY: mesh_beacon_active=FAIL
+ORIONX_VERIFY: mesh_discover_enabled=PASS
+ORIONX_VERIFY: matrix_synapse_state=PASS
+ORIONX_VERIFY: apparmor_enforcing=FAIL
+ORIONX_VERIFY_END: overall=FAIL
+```
+
+The pre-sentinel boot log shows a first-boot-wizard cascade failure:
+
+```
+[FAILED] Failed to start Orion-X First-Boot Setup Wizard
+[FAILED] Failed to start WireGuard via wg-quick(8) for wg0
+[DEPEND] Dependency failed for Orion-X Matrix Synapse Homeserver
+[FAILED] Failed to start Orion-X Mesh Beacon Send (oneshot)
+[FAILED] Failed to start Orion-X Mesh Health Check (oneshot)
+```
+
+The cascade chain: (1) `orionx-first-boot.service` fails — the unit is
+configured with `--non-interactive`, but it binds `StandardInput=tty
+TTYPath=/dev/tty1` and in headless QEMU the tty1 path / interactive wg-key
+generation path is not reliable; (2) without first-boot, `/etc/wireguard/wg0.conf`
+is never generated; (3) `wg-quick@wg0.service` fails (no config) → `wg0`
+interface never comes up → `mesh_iface_up=FAIL`; (4) `orionx-mesh-beacon`
+(After/Requires `wg-quick@wg0`) fails by dependency → `mesh_beacon_active=FAIL`;
+(5) Matrix Synapse's "Dependency failed" suggests it transitively depends on
+the mesh chain — but `matrix_synapse_state=PASS` because the verifier's
+`is-active` accepts `active OR activating` AND the unit is installed (its
+`is-active` may also report `inactive`/`failed` but the verifier's interpretation
+of `matrix_synapse_state` is best-effort given single-node QEMU has no peer per
+W7-4-B's seeded spec). The `mesh_discover_enabled=PASS` because that
+assertion is `is-enabled` on the timer (timer is enabled in the unit-files
+authority — installed by W7-4-A's 0615 hook — independent of whether the
+service runs). The `apparmor_enforcing=FAIL` is a SEPARATE cascade-independent
+finding: AppArmor profiles do not end up in enforced mode despite
+`apparmor.service` being enabled at sysinit.target by the 0610 hook. This is
+its own load-mechanism gap (separate slice).
+
+**Cascade-fix arc (W7-4-C-a, W7-4-C-b, 2026-05-11):** Two follow-up slices,
+sequenced because they touch different authorities and have different revert
+risks. **W7-4-C-a** (AppArmor profile load fix, this dispatch's in_progress
+slice) is the mechanical/local fix: investigate aa-status output in the W7-4-B
+serial artifacts, identify why the 5 Orion profiles
+(`usr.bin.synapse`, `usr.bin.tshark`, `usr.bin.bulk_extractor`,
+`usr.bin.volatility3`, `usr.sbin.wg`) are not enforcing, and fix the load
+mechanism in `0610-apparmor-setup.hook.chroot` (likely candidates: missing
+explicit `apparmor_parser -r` invocations for each profile in the hook;
+profile-binary-path mismatch where e.g. volatility3's binary lives at
+`/usr/bin/vol.py` not `/usr/bin/vol` so the profile never attaches at runtime;
+or apparmor.service ordering relative to other sysinit units). Single revert
+boundary; small slice. Expected diagnosis to land in the closure
+DEC-PHASE7-037. **W7-4-C-b** (first-boot non-interactive mode for CI, seeded
+PENDING) is the larger slice that touches Phase 6 first-boot wizard authority
+(DEC-SEC-003): redesign the orionx-first-boot path so a CI/headless boot
+generates a valid test wg0 config without TTY input. Candidate designs
+(implementer's call, refined after W7-4-C-a lands): a `FIRST_BOOT_NONINTERACTIVE=1`
+env-var that switches the systemd unit's `StandardInput/TTYPath` lines and
+gates wg-key generation to use `/dev/urandom` deterministic seeds; a separate
+`orionx-first-boot-ci.service` that runs alongside (no — dual authority for
+the same concern); or a pre-seeded `/etc/orionx/first-boot.conf` that the
+wizard accepts as full automation input. The right answer is a Phase 6
+authority extension, not a parallel mechanism. W7-4-C-b is PENDING until
+W7-4-C-a lands so the apparmor signal is decoupled from the mesh signal —
+otherwise the implementer can't tell whether mesh fixes worked or were masked
+by the apparmor failure. The end-of-arc state: `ORIONX_VERIFY_END: overall=pass`
+in both BIOS and UEFI serial logs in a single CI run on develop. See
+DEC-PHASE7-036 / 037 / 038.
+
+**W7-4-C-a Scope Manifest and Evaluation Contract (seeded 2026-05-11):**
+
+*Mission.* Investigate the AppArmor profile load failure surfaced in W7-4-B
+run 25688890245 and flip `ORIONX_VERIFY: apparmor_enforcing=FAIL → PASS` for
+both BIOS and UEFI in a subsequent CI run. The W7-4-B verifier
+(`iso/config/includes.chroot/usr/lib/orionx/runtime-verify.sh`) is the
+runtime-truth authority and is read-only against AppArmor state — W7-4-C-a
+fixes the **load mechanism**, not the **assertion**.
+
+*Investigation gate (required first step, no scope cost).* Before editing any
+file, the implementer must:
+1. Read the W7-4-B `qemu-artifacts-<run-id>/serial-bios.log` and
+   `serial-uefi.log` from CI run 25688890245 (or rerun W7-4-B locally to
+   reproduce).
+2. Identify the aa-status diagnostic the verifier prints alongside the
+   `apparmor_enforcing=FAIL` sentinel (the verifier's design includes a
+   diagnostic line per DEC-PHASE7-035 — if missing, that is itself a finding).
+3. Decide which class of fix applies: (A) explicit `apparmor_parser -r
+   /etc/apparmor.d/<profile>` in the 0610 hook so profiles load deterministically
+   instead of relying on apparmor.service auto-discovery; (B) profile-binary-path
+   correction (a profile references a binary path that doesn't exist in the
+   installed ISO, so the profile loads but never attaches); (C) hook ordering
+   relative to apparmor.service activation; (D) profile syntax issue blocking
+   `apparmor_parser`.
+4. State the chosen class in the implementer's commit message and in the
+   planner's eventual DEC-PHASE7-037 closure entry.
+
+*Scope Manifest.*
+
+Allowed paths (the implementer may touch these and only these without
+re-approval):
+- `iso/config/hooks/live/0610-apparmor-setup.hook.chroot` (the AppArmor
+  authority; today only enables the service and adds a kernel-cmdline
+  parameter — adding explicit `apparmor_parser -r` invocations or profile
+  validation logic happens here)
+- `iso/config/includes.chroot/etc/apparmor.d/usr.bin.synapse` (profile may need
+  binary-path correction; today references `/usr/bin/python3 flags=(attach_disconnected)`
+  which is questionable for the Debian matrix-synapse-py3 install layout)
+- `iso/config/includes.chroot/etc/apparmor.d/usr.bin.tshark`
+- `iso/config/includes.chroot/etc/apparmor.d/usr.bin.bulk_extractor`
+- `iso/config/includes.chroot/etc/apparmor.d/usr.bin.volatility3` (profile
+  references `/usr/bin/vol` — verify against the actual volatility3 install
+  path; Debian volatility3 package installs to `/usr/bin/vol.py` historically)
+- `iso/config/includes.chroot/etc/apparmor.d/usr.sbin.wg` (profile references
+  `/usr/bin/wg` despite the filename `usr.sbin.wg` — verify which is the real
+  binary location)
+- `tests/unit/test_apparmor_profiles.sh` (modify — append a new Test Group
+  asserting the chosen load mechanism is encoded in the hook; e.g. assert that
+  the hook contains `apparmor_parser -r /etc/apparmor.d/usr.bin.synapse` if
+  approach A was chosen; or assert that profile X's binary path resolves to a
+  package-list-installed binary)
+- `tests/integration/test-w7-4-b-runtime-verify.sh` (modify — only if a
+  narrowly-scoped 'per-assertion gate' is needed to differentiate
+  `apparmor_enforcing=pass with overall=fail` from `apparmor_enforcing=fail`,
+  so W7-4-C-a CI can succeed while mesh assertions remain FAIL pending
+  W7-4-C-b; the modification must not silently weaken the overall
+  ORIONX_VERIFY_END contract)
+
+Required paths (must be touched in this slice — non-touch is a scope violation):
+- `iso/config/hooks/live/0610-apparmor-setup.hook.chroot`
+
+Forbidden paths (any touch requires explicit planner re-approval):
+- `iso/auto/**`, `iso/hooks/**`, `iso/package-lists/**` (legacy/non-canonical
+  paths — must remain zero references)
+- `iso/config/package-lists/**` (Phase 6 + W7-4-A-bis authority; if a profile
+  references a binary not in the package list, the fix is to correct the
+  profile path to a present binary, not add new packages — that's a separate
+  slice)
+- `iso/config/hooks/live/0600-filesystem-hardening.hook.chroot`,
+  `iso/config/hooks/live/0615-install-systemd-units.hook.chroot`,
+  `iso/config/hooks/live/0620-service-hardening.hook.chroot`,
+  `iso/config/hooks/live/0500-install-external-tools.hook.chroot` (other Phase
+  6/7 hook authorities; W7-4-C-a does not touch them)
+- `iso/config/hooks/normal/**`, `iso/config/hooks/binary/**`
+- `iso/config/includes.chroot/usr/lib/orionx/runtime-verify.sh` (W7-4-B verifier
+  is read-only against AppArmor state; W7-4-C-a fixes load mechanism, not the
+  assertion)
+- `iso/config/includes.chroot/usr/share/orionx/systemd/**` (systemd unit
+  staging — apparmor.service is debian-package-shipped, not Orion-staged)
+- `iso/config/includes.binary/**`
+- `scripts/**`, `docker/**`, `systemd/**`, `Makefile`, `.github/workflows/**`,
+  `archive/**`, `ORION-X/**`, `docs/**`
+- `MASTER_PLAN.md` (planner-owned; W7-4-C-a closure will be recorded by a
+  separate planner pass at DEC-PHASE7-037)
+- All other tests/unit/ and tests/integration/ files except the two named in
+  Allowed paths
+
+Expected state authorities touched:
+- `apparmor_profile_load_authority` (NEW canonical name; same authority as
+  DEC-SEC-002): the single owner of "which Orion-X AppArmor profiles end up
+  enforced in the booted guest" is the combination of profile files at
+  `iso/config/includes.chroot/etc/apparmor.d/` and the hook
+  `iso/config/hooks/live/0610-apparmor-setup.hook.chroot`. No parallel load
+  mechanism in any other hook or systemd unit.
+- `apparmor_test_assertion_authority`: `tests/unit/test_apparmor_profiles.sh`
+  remains the structural authority; W7-4-C-a may append a load-mechanism Test
+  Group.
+- `runtime_verify_apparmor_assertion_authority`: the W7-4-B verifier's
+  apparmor-state read remains the runtime truth; no modification unless the
+  diagnostic surface needs better failure messages.
+
+*Evaluation Contract.*
+
+Required tests (all must pass on the W7-4-C-a feature branch HEAD):
+- `bash tests/unit/test_apparmor_profiles.sh` — PASS (existing 44/0 plus any
+  new load-mechanism Test Group asserting the chosen fix is encoded in the
+  hook)
+- `bash tests/unit/test_systemd_units_hook.sh` — PASS (existing; must still
+  pass)
+- `bash tests/integration/test-iso-hooks-applied.sh` — PASS (existing; must
+  still pass)
+- CI run on W7-4-C-a branch: lint.yml + qemu-test.yml + e2e-test.yml all
+  green per the W7-4-A-tris bar, with the documented exception that
+  `qemu-test.yml`'s artifact will show `ORIONX_VERIFY_END: overall=fail`
+  because mesh assertions remain FAIL until W7-4-C-b — this is acceptable
+  as long as the `apparmor_enforcing=pass` sentinel is present in both
+  BIOS and UEFI serial logs (the W7-4-C-a-specific gate)
+
+Required real-path checks (asserted by reading the W7-4-C-a CI artifacts):
+- `ORIONX_VERIFY: apparmor_enforcing=pass` present in
+  `qemu-artifacts-<run-id>/serial-bios.log`
+- `ORIONX_VERIFY: apparmor_enforcing=pass` present in
+  `qemu-artifacts-<run-id>/serial-uefi.log`
+- The diagnostic line(s) surrounding the apparmor sentinel show aa-status
+  reporting at least 5 Orion-X profiles in enforced mode (synapse, tshark,
+  bulk_extractor, volatility3, wireguard)
+- No `ORIONX_VERIFY: apparmor_enforcing=fail` line in either log
+- `grep -rn 'qemu-guest-agent\|openssh-server' iso/` returns zero matches
+  (rejected channel confirmation, inherited from W7-4-B)
+- If approach A (explicit `apparmor_parser -r`) was chosen, the build log
+  shows the parser invocations during the 0610 hook execution
+
+Required authority invariants:
+- `apparmor_profile_load_authority` has exactly one owner: the combination of
+  `iso/config/includes.chroot/etc/apparmor.d/` (profile content) and
+  `iso/config/hooks/live/0610-apparmor-setup.hook.chroot` (load mechanism).
+  Adding a new hook to load profiles would create dual authority.
+- DEC-SEC-002 preserved: profiles remain in
+  `iso/config/includes.chroot/etc/apparmor.d/`, not generated at hook time,
+  not fetched at runtime.
+- Profile binary paths inside each profile match real binary locations in the
+  booted ISO. A profile attached to a non-existent binary is a packaging gap
+  (fix the path or the package list), not a load success.
+- W7-4-B verifier remains read-only against AppArmor state.
+
+Required integration points (must still work after W7-4-C-a lands):
+- W7-4-A: all 8 unit files still install; existing 0615 hook still PASS.
+- W7-4-A-bis: AppArmor packages still present; aa-status available in guest.
+- W7-4-B: ORIONX_VERIFY_BEGIN / ORIONX_VERIFY_END sentinel contract honored
+  by the same parser; the apparmor sentinel transitions FAIL→PASS without
+  changing the contract surface.
+- 0620-service-hardening: ProtectSystem injection unchanged.
+- Phase 6 acceptance: DEC-SEC-002 / DEC-SEC-004 preserved.
+
+Forbidden shortcuts (any of these is a slice-fail at reviewer time):
+- Relaxing the W7-4-B `apparmor_enforcing` assertion to require fewer than 5
+  enforced profiles — masks the gap.
+- Removing AppArmor profiles to make aa-status report 'all enforced' —
+  superseding profiles requires plan approval (DEC-SEC-002).
+- Loading profiles in `complain` mode and counting that as PASS — enforce
+  mode is the deliverable; complain is debugging-only.
+- Moving profile load logic out of `0610-apparmor-setup.hook.chroot` into a
+  new hook (e.g. `0611-apparmor-load.hook.chroot`) — dual authority.
+- Modifying `scripts/qemu-boot-test.sh` (frozen per DEC-PHASE7-022).
+- Adding `qemu-guest-agent`, `openssh-server` hostfwd, or any new control
+  plane to drive `aa-status` from the host.
+- Touching mesh authorities (`scripts/mesh/**`, `systemd/orionx-mesh-*`) —
+  AppArmor-only slice; mesh cascade is W7-4-C-b.
+- Counting loaded-but-unattached profiles. A profile attached to a
+  non-existent binary is a packaging gap, not a load success.
+
+Ready-for-guardian definition: reviewer may declare readiness when all of the
+following are true on the W7-4-C-a feature branch HEAD:
+1. lint.yml + qemu-test.yml + e2e-test.yml all green (or qemu-test.yml's
+   step-success aligned with the per-assertion gate documented in
+   acceptance_notes — see Evaluation Contract notes).
+2. `ORIONX_VERIFY: apparmor_enforcing=pass` present in BOTH bios and uefi
+   serial logs in `qemu-artifacts-<run-id>/`.
+3. At least 5 Orion-X profiles in enforced mode in the diagnostic context
+   surrounding the apparmor sentinel.
+4. `tests/unit/test_apparmor_profiles.sh` passes; any new load-mechanism
+   Test Group is documented.
+5. Scope Manifest forbidden-paths list shows zero touches in the diff vs
+   `develop`.
+6. The implementer's commit message names the root-cause class
+   (A/B/C/D from the Investigation gate) so DEC-PHASE7-037 can cite it.
+
+Rollback boundary: single feature branch
+(`feature/phase7-w7-4-c-a-apparmor-load`), single squash merge into `develop`.
+Reverting this slice leaves W7-4-A, W7-4-A-bis, and W7-4-B intact. Note: in
+the W7-4-C-a CI artifacts the overall `ORIONX_VERIFY_END: overall=fail` is
+EXPECTED because mesh assertions remain FAIL pending W7-4-C-b. The
+W7-4-C-a acceptance bar is the apparmor sentinel specifically.
+
+**W7-4-C-b Scope stub (seeded PENDING 2026-05-11):**
+
+*Mission (refined after W7-4-C-a lands).* Produce a non-interactive
+first-boot path that runs cleanly under headless QEMU boot, generates a valid
+test `wg0.conf`, lets `wg-quick@wg0.service` come up, and unblocks the mesh
+cascade — flipping `mesh_iface_up`, `mesh_beacon_active` from FAIL to PASS
+and consequently driving `ORIONX_VERIFY_END: overall=pass` for both BIOS and
+UEFI in a single CI run.
+
+*Open design decisions (resolve in the W7-4-C-b planning pass, NOT now).*
+- `FIRST_BOOT_NONINTERACTIVE=1` env-var that the unit reads via
+  `EnvironmentFile=-/etc/default/orionx-first-boot` and that the script
+  branches on; vs `--auto-defaults` CLI flag; vs pre-seeded
+  `/etc/orionx/first-boot.conf` that the wizard accepts as full automation.
+- Should the same wg keypair be used for every CI boot (deterministic, but
+  forbids any future cross-CI-run peer testing) or a fresh keypair each
+  boot via `/dev/urandom` (matches production semantics, but the test must
+  not depend on key value)?
+- Does the existing `--non-interactive` flag at line 87 of
+  `scripts/security/first-boot-wizard.sh` already do everything except the
+  `StandardInput=tty TTYPath=/dev/tty1` binding in the systemd unit? If yes,
+  the slice is much smaller (unit-only edit + a one-line wg-key generation
+  path); if no, the script needs a separate code path.
+- Does the resulting test wg0 config have any production-security risk if
+  it accidentally ships on a non-CI boot? (Should not — first-boot wizard
+  runs once and the flag file at `/var/lib/orionx/.first-boot-done` prevents
+  re-run.)
+
+*Likely allowed paths (subject to refinement):*
+- `systemd/orionx-first-boot.service` (likely — to relax the
+  `StandardInput=tty TTYPath=/dev/tty1` binding for non-interactive mode)
+- `scripts/security/first-boot-wizard.sh` (likely — to add CI-mode behavior
+  for wg-key generation and config emission, beyond the existing
+  `--non-interactive` flag's `read` skips)
+- Possibly a new `iso/config/includes.chroot/etc/default/orionx-first-boot`
+  file for env-var configuration
+
+*Known forbidden:*
+- Any modification to `scripts/mesh/**`, `scripts/setup-wireguard.sh` (mesh
+  runtime authority — DEC-MESH-* family)
+- Any modification to `iso/config/hooks/**` other than to install a new
+  default-config file via the standard chroot copy pattern
+- Any modification to the W7-4-B verifier
+- Any modification to `scripts/qemu-boot-test.sh` (frozen)
+- Any new package added to `iso/config/package-lists/orionx.list.chroot`
+  unless it is a wg-tools dep that is unexpectedly missing
+
+*Scope expansion note (DEC-PHASE7-038).* W7-4-C-b touches Phase 6 first-boot
+wizard authority (DEC-SEC-003), which is a bounded supersedence in the same
+shape as DEC-PHASE7-024's path-canonicalization: the wizard authority
+remains a single owner (DEC-SEC-003 + this slice), but it gains a documented
+non-interactive code path for CI/headless boot semantics. The Phase 6
+"first-boot wizard runs once via systemd" property is preserved — only the
+input channel changes when the env-var or seeded config is present.
+
 ---
 
 ### Phase 8: Release v2.0.0
@@ -567,6 +908,9 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | DEC-PHASE7-033 | 2026-05-11 | [W7-4-A-bis closure] W7-4-A-bis accepted at merge `da66fee` (closes #37); scope amended v1→v2 mid-cycle to bundle three hardening tests in a single landing | The original W7-4-A-bis scope (v1, DEC-PHASE7-032) covered `test_apparmor_profiles.sh` Test Group 8 plus the canonical package-list addition. Reviewer surfaced two additional tests with the same `iso/package-lists/` legacy reference class: `test_firewall_config.sh` (29 assertions) and `tests/integration/test-security-hardening.sh` (38 assertions, one SKIP for runtime-only systemd). Scope was amended v1→v2 to include all three test files in one slice so the legacy reference class collapses to zero in a single revert boundary, matching DEC-PHASE7-025's "test path moves with the file" discipline. Acceptance evidence on `da66fee` (`feature/phase7-w7-4-a-bis-apparmor-pkgs` → develop): `tests/unit/test_apparmor_profiles.sh` 44/0; `tests/unit/test_firewall_config.sh` 29/0; `tests/integration/test-security-hardening.sh` 38/0 plus 1 documented SKIP (runtime AppArmor enforcement — runs in W7-4-B inside QEMU); canonical `iso/config/package-lists/orionx.list.chroot` lists `apparmor`, `apparmor-utils`, `apparmor-profiles`, `apparmor-profiles-extra`. Anti-drift control verified: `grep -rn 'iso/package-lists/' tests/ scripts/ Makefile .github/` returns zero matches at HEAD `da66fee`. lint.yml turned green for the first time since #33. W7-4-A-bis closes #37. Code: `iso/config/package-lists/orionx.list.chroot`, `tests/unit/test_apparmor_profiles.sh`, `tests/unit/test_firewall_config.sh`, `tests/integration/test-security-hardening.sh`, merge commit `da66fee` on `develop`. |
 | DEC-PHASE7-034 | 2026-05-11 | [W7-4-A-tris closure] W7-4-A-tris accepted at merge `68b9097` (closes #38); same path-correction class as W7-4-A-bis applied to `iso/config/hooks/binary/` → canonical `iso/config/hooks/normal/` | W7-4-A-bis cleared the `iso/package-lists/` legacy reference class but a second class survived: `tests/unit/test_iso_serial_console.sh` referenced `iso/config/hooks/binary/` for the bootloader serial hook. Post-#32 canonical placement is `iso/config/hooks/normal/0500-bootloader-serial.hook.binary` (the hook is a `.binary` extension running in the live-build `normal` stage, not in a `binary/` directory). Single test file, mechanical fix — but landed as its own slice for a clean revert boundary because the failure manifested in qemu-test.yml (not lint.yml like #37) and proving the test passes on the canonical path is its own validation. Rejected alternative: bundling into W7-4-A-bis post hoc — would have required reopening the merged feature branch and re-running CI; cheaper to land as a sibling slice. Acceptance evidence on `68b9097` (`feature/phase7-w7-4-a-tris-serial-console-test` → develop): `tests/unit/test_iso_serial_console.sh` 31/0 (was 0/31 at start). Anti-drift control verified: `grep -rn 'iso/config/hooks/binary/' tests/ scripts/ Makefile .github/` returns zero matches at HEAD `68b9097`. **All three CI workflows green simultaneously for the first time since the #33 cascade** (lint.yml, qemu-test.yml, e2e-test.yml) — this is the clean Phase 7 baseline that unblocks W7-4-B. W7-4-A-tris closes #38. Code: `tests/unit/test_iso_serial_console.sh`, merge commit `68b9097` on `develop`. |
 | DEC-PHASE7-035 | 2026-05-11 | [W7-4-B seeding] In-guest verification channel: systemd oneshot emits serial-console sentinels parsed by host-side post-boot-script; SSH/monitor/guest-agent channels rejected | W7-3's `--post-boot-script` attach contract (DEC-PHASE7-022) hands the post-boot-script only `RUN_ID` and `SERIAL_LOG` — it does NOT provide an SSH/QEMU-monitor handle into the guest. To verify mesh + Matrix + AppArmor enforcement at runtime, W7-4-B must establish a verification channel. Rejected alternatives: (i) SSH via hostfwd (`-netdev user,hostfwd=tcp::2222-:22` + `openssh-server` in the ISO) — adds attack surface, ssh-key wiring, a parallel control plane alongside the existing serial-marker authority, and is not how the production ISO will be operated; (ii) QEMU monitor socket (`-monitor unix:...`) — couples the host-side test to QEMU-internal control plane, breaks if the harness switches to libvirt later; (iii) qemu-guest-agent — adds a daemon dependency to the shipping ISO purely for testing. Chosen approach: an in-guest oneshot systemd unit `orionx-runtime-verify.service` (`After=multi-user.target`, `Type=oneshot`) runs the verification assertions inside the guest and writes sentinel-tagged lines to `/dev/ttyS0` (the serial console, which `qemu-boot-test.sh` already captures to `SERIAL_LOG`). The host-side post-boot-script greps `SERIAL_LOG` for the `ORIONX_VERIFY_BEGIN` / `ORIONX_VERIFY: <name>=<verdict>` / `ORIONX_VERIFY_END: <overall>` sentinel pattern and decides PASS/FAIL. This reuses the existing serial-marker authority (DEC-PHASE7-020) — no new control plane, no additional packages in the shipping ISO, no harness modification. The unit is auto-installed by W7-4-A's `0615-install-systemd-units.hook.chroot` because that hook already iterates `*.service` in the staging dir; W7-4-B places the new unit alongside the existing eight. Anti-drift control: `grep -rn 'qemu-guest-agent\|openssh-server' iso/` must return zero matches at W7-4-B acceptance. Single-slice revert boundary; the verifier can be masked at runtime without reverting any other Phase 7 work. Code (planned): `iso/config/includes.chroot/usr/lib/orionx/runtime-verify.sh`, `iso/config/includes.chroot/usr/share/orionx/systemd/orionx-runtime-verify.service`, `tests/integration/test-w7-4-b-runtime-verify.sh`, `tests/unit/test_runtime_verify_unit.sh`, `.github/workflows/qemu-test.yml` (`--post-boot-script` attach), `docs/qemu-boot-test.md` (sentinel contract documentation). |
+| DEC-PHASE7-036 | 2026-05-11 | [W7-4-B partial-acceptance + cascade findings] Mechanism authority accepted at `c8bce0a`; runtime cascade tracked as W7-4-C-a and W7-4-C-b | W7-4-B landed on `develop` at merge `c8bce0a` (`feature/phase7-w7-4-b-runtime-verify`) via CI run 25688890245. The in-guest verification mechanism is proven end-to-end: `orionx-runtime-verify.service` runs `After=multi-user.target`, writes the documented sentinel pattern (`ORIONX_VERIFY_BEGIN` / `ORIONX_VERIFY: <name>=<verdict>` / `ORIONX_VERIFY_END: overall=<verdict>`) to `/dev/ttyS0`, the host-side post-boot-script parses from `SERIAL_LOG`, and both BIOS and UEFI modes produce a parseable artifact in `qemu-artifacts-<run-id>/`. This is the runtime-verification authority the project has been missing since Phase 6 closed structurally (per DEC-PHASE7-024). However, **3 of 5 assertions FAIL** on the first runtime evidence: `mesh_iface_up=FAIL`, `mesh_beacon_active=FAIL`, `apparmor_enforcing=FAIL`; `mesh_discover_enabled=PASS` (timer is enabled via 0615 hook regardless of whether wg0 is up), `matrix_synapse_state=PASS` (verifier accepts `active OR activating` AND unit-installed state). Root cause analysis from the pre-sentinel boot log: a first-boot-wizard cascade — `orionx-first-boot.service` fails (the `--non-interactive` CLI flag is honored but the systemd unit binds `StandardInput=tty TTYPath=/dev/tty1` which is unreliable in headless QEMU; wg-key generation may also need a non-interactive path) → `/etc/wireguard/wg0.conf` is never generated → `wg-quick@wg0.service` fails → `wg0` interface absent → `mesh_iface_up=FAIL` → `orionx-mesh-beacon` fails by dependency. The `apparmor_enforcing=FAIL` is a separate, cascade-independent finding: AppArmor profiles do not end up in enforced mode despite `apparmor.service` being enabled by the 0610 hook — the load mechanism in the hook is incomplete (today only `systemctl enable apparmor` + a kernel-cmdline addition; no explicit `apparmor_parser -r` per profile). **Partial-acceptance rationale**: rejecting W7-4-B and reopening the slice to chase 3 independent runtime gaps would conflate scopes and produce a giant landing with mixed revert risk. Accepting the mechanism authority NOW (the sentinel-format, verifier-script-as-runtime-truth, host-side-parser-as-host-truth contract is proven) and tracking the runtime gaps as named follow-up slices (W7-4-C-a apparmor, W7-4-C-b first-boot non-interactive) gives each gap its own revert boundary and its own evaluation contract. The W7-4-B Evaluation Contract's `ready_for_guardian` bar (END=pass for both modes) was NOT met by `c8bce0a`; that bar moves to the W7-4-C-b closure (where mesh and overall=pass land together). Single-slice rule preserved: W7-4-B is the mechanism slice, W7-4-C-a is the apparmor slice, W7-4-C-b is the mesh/first-boot slice. Anti-drift control: the W7-4-B verifier remains the SINGLE authority for runtime assertion truth — neither W7-4-C-a nor W7-4-C-b adds a parallel verifier. Code: merge commit `c8bce0a` on `develop`; CI run 25688890245 artifacts (`qemu-artifacts-25688890245/serial-{bios,uefi}.log`). |
+| DEC-PHASE7-037 | 2026-05-11 | [W7-4-C-a scope] AppArmor profile load fix — fix the mechanism, not the assertion | W7-4-B's `apparmor_enforcing=FAIL` is a load-mechanism gap. The `0610-apparmor-setup.hook.chroot` today does only `systemctl enable apparmor` + a kernel-cmdline parameter; it relies on apparmor.service auto-discovery to load profiles from `/etc/apparmor.d/`. The five Orion-X profiles (`usr.bin.synapse`, `usr.bin.tshark`, `usr.bin.bulk_extractor`, `usr.bin.volatility3`, `usr.sbin.wg`) end up not enforcing in the booted guest. Candidate root causes (the implementer chooses one via the Investigation gate in the W7-4-C-a Scope Manifest): (A) the hook needs explicit `apparmor_parser -r /etc/apparmor.d/<profile>` invocations to load profiles deterministically — the canonical fix shape since it makes the load mechanism observable in the build log and stops relying on apparmor.service ordering relative to other sysinit units; (B) profile-binary-path mismatches — e.g. `usr.bin.volatility3` references `/usr/bin/vol` but the Debian volatility3 package installs to `/usr/bin/vol.py`, so the profile loads but never attaches to a running binary and aa-status `--enforced` doesn't list it; `usr.sbin.wg` references `/usr/bin/wg` despite the filename suggesting `/usr/sbin/wg` — verify against the actual install; (C) hook ordering relative to apparmor.service activation; (D) profile syntax issue blocking `apparmor_parser`. **Rejected alternatives**: (i) relaxing the W7-4-B `apparmor_enforcing` assertion threshold (e.g. 'enforce >=1 profile' instead of '>=5') — that masks the gap and breaks DEC-SEC-002's "AppArmor enforcing" Phase 6 acceptance criterion; (ii) loading profiles in `complain` mode and counting that as PASS — debugging-only; enforce is the deliverable; (iii) removing AppArmor profiles to make aa-status report 'all enforced' — supersedes DEC-SEC-002 without authority; (iv) moving profile load logic into a new hook (e.g. `0611-apparmor-load.hook.chroot`) — creates dual authority alongside 0610. **Scope discipline**: the implementer must NOT touch mesh authorities, the W7-4-B verifier (read-only against apparmor state), `scripts/qemu-boot-test.sh` (frozen), or add new control planes (`qemu-guest-agent`, `openssh-server`). The W7-4-C-a acceptance bar is narrowly the apparmor sentinel transitioning FAIL→PASS in both BIOS and UEFI serial logs; the overall `ORIONX_VERIFY_END: overall=fail` is EXPECTED in W7-4-C-a CI artifacts because mesh assertions remain FAIL pending W7-4-C-b. The closure pass for W7-4-C-a will append the chosen root-cause class (A/B/C/D) into this decision entry so future implementers see what was actually wrong. Code (planned): `iso/config/hooks/live/0610-apparmor-setup.hook.chroot`, possibly `iso/config/includes.chroot/etc/apparmor.d/<profile>` for binary-path corrections, `tests/unit/test_apparmor_profiles.sh` for the load-mechanism Test Group, and a narrow gate addition in `tests/integration/test-w7-4-b-runtime-verify.sh` only if needed to distinguish per-assertion PASS from overall PASS for the duration of the C-a/C-b arc. |
+| DEC-PHASE7-038 | 2026-05-11 | [W7-4-C-b scope] First-boot non-interactive mode for CI — bounded supersedence of DEC-SEC-003 | W7-4-B's `mesh_iface_up=FAIL` and `mesh_beacon_active=FAIL` are the runtime evidence that the first-boot wizard (Phase 6, DEC-SEC-003) does not run cleanly under headless QEMU boot, so `/etc/wireguard/wg0.conf` is never generated, `wg-quick@wg0.service` fails, and the mesh cascade collapses. The systemd unit `systemd/orionx-first-boot.service` invokes `/opt/orionx/scripts/security/first-boot-wizard.sh --non-interactive` — the script's `--non-interactive` flag (line 87 of the script) does exist and does cause `read` prompts to be skipped, but the unit's `StandardInput=tty / StandardOutput=tty / StandardError=tty / TTYPath=/dev/tty1` binding is unreliable in headless QEMU and the wg-key generation path may still depend on interactive confirmation. **Chosen direction (subject to refinement after W7-4-C-a lands)**: extend the first-boot authority to recognize a CI/headless code path that does not require tty1 and that generates a deterministic test wg0 config without user input. The implementer chooses the channel — env-var `FIRST_BOOT_NONINTERACTIVE=1` via `EnvironmentFile=`, CLI flag `--auto-defaults` beyond the existing `--non-interactive`, or pre-seeded `/etc/orionx/first-boot.conf` — in a refined W7-4-C-b planning pass. **Rejected alternatives**: (i) creating a separate `orionx-first-boot-ci.service` that runs alongside the production unit — dual authority for the same concern; (ii) generating wg0.conf in a new hook at build time — moves first-boot concerns out of the wizard authority into the build authority, breaks DEC-SEC-003; (iii) skipping wg0 startup in CI by masking `wg-quick@wg0.service` — masks the test we are trying to run; (iv) adding `qemu-guest-agent` or `openssh-server` to drive the wizard from the host — rejected channels per DEC-PHASE7-035. **Bounded supersedence shape**: DEC-SEC-003 ("First-boot wizard as shell script + systemd oneshot") remains the canonical authority for the first-boot concern. W7-4-C-b extends it with a documented non-interactive input channel for CI/headless boot semantics. The Phase 6 "first-boot wizard runs once via systemd" property is preserved (the `ConditionPathExists=!/var/lib/orionx/.first-boot-done` guard remains; only the input channel changes when the env-var or seeded config is present). Production interactive boot semantics are unchanged. **Sequencing**: W7-4-C-b is PENDING until W7-4-C-a lands so the apparmor signal is decoupled from the mesh signal in CI artifacts — otherwise the implementer cannot tell whether mesh fixes worked or were masked by the apparmor failure. **End-of-arc state**: `ORIONX_VERIFY_END: overall=pass` in both BIOS and UEFI serial logs in a single CI run on `develop`; this is the W7-4 acceptance bar that DEC-PHASE7-036 deferred from the original W7-4-B contract. Code (planned, subject to refinement): `systemd/orionx-first-boot.service` (relax tty binding for non-interactive path), `scripts/security/first-boot-wizard.sh` (add CI-mode behavior for wg-key generation and config emission beyond the existing `--non-interactive` flag's `read` skips), possibly a new `iso/config/includes.chroot/etc/default/orionx-first-boot` file for env-var configuration. |
 
 ## Risk Register
 
