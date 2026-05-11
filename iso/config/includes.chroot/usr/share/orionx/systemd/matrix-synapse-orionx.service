@@ -1,0 +1,39 @@
+# @decision DEC-MATRIX-005
+# @title systemd unit validated statically, runtime testing in Phase 7
+# @status accepted
+# @rationale Docker doesn't naturally run systemd. Unit file correctness
+#   validated via systemd-analyze verify (or structural checks). Full
+#   runtime testing deferred to Phase 7 where QEMU provides real init.
+
+[Unit]
+Description=Orion-X Matrix Synapse Homeserver
+Documentation=https://matrix-org.github.io/synapse/latest/
+After=network-online.target
+After=wg-quick@wg0.service
+Wants=network-online.target
+# Require WireGuard mesh to be up before starting Synapse
+# so that Synapse binds to the mesh IP
+Requires=wg-quick@wg0.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=matrix-synapse
+Group=matrix-synapse
+WorkingDirectory=/var/lib/matrix-synapse
+ExecStartPre=/bin/bash -c 'test -f /etc/wireguard/wg0.conf || echo "WARNING: WireGuard config missing"'
+ExecStart=/usr/bin/python3 -m synapse.app.homeserver --config-path /etc/matrix-synapse/homeserver.yaml
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=matrix-synapse
+
+# Security hardening
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/matrix-synapse /var/log/matrix-synapse
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+# @decision DEC-SEC-003
+# @title First-boot wizard runs once via systemd
+# @status accepted
+# @rationale Oneshot service with ConditionPathExists guard ensures the
+#   wizard runs exactly once on first boot, then never again. Flag file
+#   at /var/lib/orionx/.first-boot-done is both the systemd condition
+#   and the script's own idempotency check.
+
+[Unit]
+Description=Orion-X First-Boot Setup Wizard
+After=multi-user.target
+ConditionPathExists=!/var/lib/orionx/.first-boot-done
+
+[Service]
+Type=oneshot
+ExecStart=/opt/orionx/scripts/security/first-boot-wizard.sh --non-interactive
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+
+[Install]
+WantedBy=multi-user.target

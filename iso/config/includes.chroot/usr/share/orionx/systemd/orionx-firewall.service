@@ -1,0 +1,23 @@
+# @decision DEC-SEC-001
+# @title nftables firewall loaded at boot
+# @status accepted
+# @rationale Firewall must be active before any network interface comes up
+#   to prevent exposure during boot. oneshot + RemainAfterExit ensures
+#   the ruleset persists after the service unit completes.
+
+[Unit]
+Description=Orion-X Firewall (nftables)
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/nftables.conf
+ExecReload=/usr/sbin/nft -f /etc/nftables.conf
+ExecStop=/usr/sbin/nft flush ruleset
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

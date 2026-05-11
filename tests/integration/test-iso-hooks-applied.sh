@@ -54,6 +54,7 @@ EXPECTED HOOKS (iso/config/hooks/ — post-move canonical paths)
   live/0500-install-external-tools.hook.chroot
   live/0600-filesystem-hardening.hook.chroot
   live/0610-apparmor-setup.hook.chroot
+  live/0615-install-systemd-units.hook.chroot
   live/0620-service-hardening.hook.chroot
   normal/0100-create-user.hook.chroot
   normal/0200-copy-samples.hook.chroot
@@ -156,6 +157,7 @@ CHROOT_HOOKS=(
     "live/0500-install-external-tools.hook.chroot"
     "live/0600-filesystem-hardening.hook.chroot"
     "live/0610-apparmor-setup.hook.chroot"
+    "live/0615-install-systemd-units.hook.chroot"
     "live/0620-service-hardening.hook.chroot"
     "normal/0100-create-user.hook.chroot"
     "normal/0200-copy-samples.hook.chroot"

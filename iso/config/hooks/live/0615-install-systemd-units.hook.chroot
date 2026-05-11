@@ -1,0 +1,85 @@
+#!/bin/bash
+# shellcheck shell=bash
+set -euo pipefail
+#
+# Orion-X Phoenix Edition — Systemd Unit Installation Hook
+#
+# Installs all Orion-X systemd unit files into /lib/systemd/system/ and
+# enables the documented autostart set. This hook MUST run before
+# 0620-service-hardening.hook.chroot so that the ProtectSystem injection
+# in 0620 finds the installed unit files (lexical prefix 0615 < 0620
+# guarantees ordering).
+#
+# Source: /usr/share/orionx/systemd/ (staged via includes.chroot)
+# Target: /lib/systemd/system/
+#
+# @decision DEC-PHASE7-SYSTEMD-INSTALL-001
+# @title Chroot hook is single authority for installing orionx systemd units into squashfs
+# @status accepted
+# @rationale Phases 4, 3, and 6 created unit files but no hook installed them
+#   into the squashfs. As a result 0620-service-hardening.hook.chroot's
+#   ProtectSystem injection silently no-op'd because the units were missing.
+#   A dedicated chroot hook with lexical prefix 0615 is the only correct place
+#   to perform this installation: live-build runs chroot hooks in lexical order
+#   inside the chroot before sealing the squashfs, and systemctl enable inside
+#   the chroot creates the correct /etc/systemd/system/ symlinks that persist
+#   into the final image. No other mechanism (binary hook, Makefile target,
+#   scripts/build-iso.sh, Dockerfile) can replicate this behaviour. This hook
+#   is therefore THE SINGLE AUTHORITY for orionx systemd unit installation.
+
+SOURCE_DIR="/usr/share/orionx/systemd"
+TARGET_DIR="/lib/systemd/system"
+
+# ---------------------------------------------------------------------------
+# Unit files to install
+# ---------------------------------------------------------------------------
+UNIT_FILES=(
+    "matrix-synapse-orionx.service"
+    "orionx-mesh-health.service"
+    "orionx-mesh-health.timer"
+    "orionx-mesh-discover.service"
+    "orionx-mesh-discover.timer"
+    "orionx-mesh-beacon.service"
+    "orionx-firewall.service"
+    "orionx-first-boot.service"
+)
+
+# ---------------------------------------------------------------------------
+# Autostart set — enable these units at boot.
+# This array is THE SINGLE AUTHORITY for which orionx units are enabled.
+# Enable .timer (not the underlying .service) for periodic units.
+# ---------------------------------------------------------------------------
+AUTOSTART_UNITS=(
+    "matrix-synapse-orionx.service"
+    "orionx-mesh-discover.timer"
+    "orionx-mesh-health.timer"
+    "orionx-mesh-beacon.service"
+    "orionx-firewall.service"
+    "orionx-first-boot.service"
+)
+
+echo "[install-systemd-units] Installing Orion-X systemd units from $SOURCE_DIR to $TARGET_DIR"
+
+# ---------------------------------------------------------------------------
+# Install unit files
+# ---------------------------------------------------------------------------
+for unit in "${UNIT_FILES[@]}"; do
+    src="$SOURCE_DIR/$unit"
+    dst="$TARGET_DIR/$unit"
+    if [[ ! -f "$src" ]]; then
+        echo "[install-systemd-units] ERROR: source unit not found: $src" >&2
+        exit 1
+    fi
+    cp "$src" "$dst"
+    echo "[install-systemd-units] installed: $unit"
+done
+
+# ---------------------------------------------------------------------------
+# Enable autostart units
+# ---------------------------------------------------------------------------
+for unit in "${AUTOSTART_UNITS[@]}"; do
+    systemctl enable "$unit"
+    echo "[install-systemd-units] enabled: $unit"
+done
+
+echo "[install-systemd-units] systemd unit installation complete"

@@ -1,0 +1,9 @@
+[Unit]
+Description=Orion-X Mesh Beacon Send (oneshot)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/orionx/scripts/mesh/mesh-discover.sh send
+StandardOutput=journal
+StandardError=journal
