@@ -57,7 +57,7 @@ EXPECTED HOOKS (iso/config/hooks/ — post-move canonical paths)
   live/0620-service-hardening.hook.chroot
   normal/0100-create-user.hook.chroot
   normal/0200-copy-samples.hook.chroot
-  binary/0500-bootloader-serial.hook.binary
+  normal/0500-bootloader-serial.hook.binary
 EOF
     exit 0
 fi
@@ -144,7 +144,7 @@ EXPECTED_HOOKS=(
     "live/0620-service-hardening.hook.chroot"
     "normal/0100-create-user.hook.chroot"
     "normal/0200-copy-samples.hook.chroot"
-    "binary/0500-bootloader-serial.hook.binary"
+    "normal/0500-bootloader-serial.hook.binary"
 )
 
 echo "--- Checking hook execution traces in build log ---"
