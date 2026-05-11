@@ -62,8 +62,13 @@ set -e
 ISOLINUX_CFG="$(find binary -name 'isolinux.cfg' -type f 2>/dev/null | head -n1 || true)"
 
 if [ -n "$ISOLINUX_CFG" ] && [ -f "$ISOLINUX_CFG" ]; then
-    if ! grep -q "^serial " "$ISOLINUX_CFG"; then
-        echo "[bootloader-serial] Patching $ISOLINUX_CFG with serial directive"
+    if grep -q "^serial " "$ISOLINUX_CFG"; then
+        # Serial directive already present — likely from iso/config/includes.binary/
+        # (DEC-PHASE7-024: pre-baked configs land via lb_binary_local-includes).
+        # This hook is defense-in-depth and is a NOOP in that case.
+        echo "[bootloader-serial] isolinux.cfg already has serial directive (pre-baked via includes.binary) — no patch needed"
+    else
+        echo "[bootloader-serial] Patching $ISOLINUX_CFG with serial directive (runtime fallback)"
         TMP=$(mktemp)
         {
             printf 'serial 0 115200\n'
@@ -71,8 +76,6 @@ if [ -n "$ISOLINUX_CFG" ] && [ -f "$ISOLINUX_CFG" ]; then
         } > "$TMP"
         mv "$TMP" "$ISOLINUX_CFG"
         echo "[bootloader-serial] BIOS serial patched: $ISOLINUX_CFG"
-    else
-        echo "[bootloader-serial] $ISOLINUX_CFG already has serial directive — skipping"
     fi
 else
     echo "[bootloader-serial] WARNING: isolinux.cfg not found anywhere under binary/ — BIOS serial patch skipped"
@@ -99,8 +102,13 @@ fi
 GRUB_CFG="$(find binary -name 'grub.cfg' -type f 2>/dev/null | head -n1 || true)"
 
 if [ -n "$GRUB_CFG" ] && [ -f "$GRUB_CFG" ]; then
-    if ! grep -q "^serial " "$GRUB_CFG"; then
-        echo "[bootloader-serial] Patching $GRUB_CFG with serial directives"
+    if grep -q "^serial " "$GRUB_CFG"; then
+        # Serial directive already present — likely from iso/config/includes.binary/
+        # (DEC-PHASE7-024: pre-baked configs land via lb_binary_local-includes).
+        # This hook is defense-in-depth and is a NOOP in that case.
+        echo "[bootloader-serial] grub.cfg already has serial directive (pre-baked via includes.binary) — no patch needed"
+    else
+        echo "[bootloader-serial] Patching $GRUB_CFG with serial directives (runtime fallback)"
         TMP=$(mktemp)
         {
             printf 'serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1\n'
@@ -110,8 +118,6 @@ if [ -n "$GRUB_CFG" ] && [ -f "$GRUB_CFG" ]; then
         } > "$TMP"
         mv "$TMP" "$GRUB_CFG"
         echo "[bootloader-serial] UEFI serial patched: $GRUB_CFG"
-    else
-        echo "[bootloader-serial] $GRUB_CFG already has serial directive — skipping"
     fi
 else
     echo "[bootloader-serial] WARNING: grub.cfg not found anywhere under binary/ — UEFI serial patch skipped"
