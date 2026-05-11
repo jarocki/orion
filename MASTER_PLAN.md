@@ -148,14 +148,20 @@ runtime, hardware validates USB boot.
 | W7-1 | ISO build pipeline modernization | Linux/Docker | 1 | - | M | review |
 | W7-2 | E2E scenario script (Docker, 3-node) | Docker | 1 | - | M | review |
 | W7-3 | QEMU boot test harness (UEFI + BIOS) | Linux/QEMU | 2 | W7-1 | L | review |
-| W7-4 | QEMU runtime verification (mesh + Matrix + AppArmor) | Linux/QEMU | 3 | W7-2, W7-3 | L | review |
+| W7-3-enabler | Wire iso/hooks/ to canonical live-build paths (#32 — enables real Phase 6 runtime) | Linux/Docker | 2 | W7-1 | M | review |
+| W7-4 | QEMU runtime verification (mesh + Matrix + AppArmor) | Linux/QEMU | 3 | W7-2, W7-3, W7-3-enabler | L | review |
 | W7-5 | Performance benchmark suite | Linux/QEMU | 4 | W7-3, W7-4 | M | review |
 | W7-6 | Failure-mode recovery tests | Docker + QEMU | 4 | W7-2, W7-4 | M | review |
 | W7-7 | Physical USB boot validation | Hardware | 5 | W7-3 | S | approve |
 | W7-8 | Phase 7 closure + Phase 8 activation | Repo | 6 | W7-1..W7-7 | S | review |
 
-**Critical path:** W7-1 -> W7-3 -> W7-4 -> W7-6 -> W7-8 (5 waves).
-**Max parallel width:** 2 (W7-1 and W7-2 in wave 1; W7-5 and W7-6 in wave 4).
+**Critical path:** W7-1 -> W7-3 -> W7-4 -> W7-6 -> W7-8 (5 waves). W7-3-enabler
+runs parallel to W7-3 in wave 2 and is a hard prerequisite for meaningful
+W7-4 (mesh + Matrix + AppArmor runtime verification can only succeed against an
+ISO whose hardening hooks actually executed — see CI run 25475860825 / issue
+#32 / DEC-PHASE7-024).
+**Max parallel width:** 3 in wave 2 once W7-3-enabler is added (W7-3 + W7-3-enabler
+share wave 2; both depend only on W7-1). Wave 1 still has 2 (W7-1, W7-2).
 **Hardware gate:** W7-7 requires physical USB and human-in-the-loop and is the
 only `approve` gate; runs in parallel with W7-4..W7-6 once W7-3 lands.
 
@@ -306,6 +312,9 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | DEC-PHASE7-020 | 2026-04-28 | [W7-3] Serial-file capture with single-constant boot-success marker matcher | QEMU `-nographic -serial file:tmp/qemu-artifacts/<run-id>/serial-<mode>.log -monitor none` captures the entire boot stream to disk while the harness greps for a success marker. Marker pattern lives ONCE as a named bash array `BOOT_SUCCESS_MARKERS` at the top of the script — first match wins. Default order: 'Reached target Multi-User System' (systemd canonical), 'Reached target multi-user.target' (older systemd), 'orionx login:' (orionx getty), 'debian login:' (live-build default getty). Modes share the same matcher; no per-mode duplication. This avoids the dual-authority bug where BIOS and UEFI silently diverge on what 'booted' means. Code: `scripts/qemu-boot-test.sh` |
 | DEC-PHASE7-021 | 2026-04-28 | [W7-3] KVM-when-available, TCG-fallback, 300s default timeout (covers slowest CI path) | GitHub Actions ubuntu-latest runners since 2024 expose `/dev/kvm` on larger SKUs but not on every job. The harness checks `[ -r /dev/kvm ]` at runtime: if accessible, append `-enable-kvm -cpu host` (typical boot ~30s); otherwise fall back to `-accel tcg -cpu max` (typical boot ~120-270s). Default `--timeout 300` covers the slowest realistic TCG path. Local developers with KVM can pass `--timeout 90` for the fast path. PASS is granted when the success marker appears within `--timeout`; performance gating is INFORMATIONAL only per DEC-PHASE7-004. Workflow stays green on any ubuntu-latest SKU. Code: `scripts/qemu-boot-test.sh`, `.github/workflows/qemu-test.yml` |
 | DEC-PHASE7-022 | 2026-04-28 | [W7-3] Pre-declared W7-4 attach contract: --post-boot-script + --keep-running | W7-4 (mesh + Matrix + AppArmor runtime verification) needs to drive commands inside the booted VM. Adding those drivers later inside `qemu-boot-test.sh` would cause scope creep and dual ownership of the QEMU lifecycle. W7-3 instead exposes two extension points NOW so W7-4 can attach without touching the harness: 1) `--post-boot-script <path>` runs a host-side script after marker detection with run-id and serial-log path as args (W7-4 supplies the script that pastes commands via the QEMU monitor or SSHes to a forwarded port), 2) `--keep-running` holds the QEMU process alive after marker detection so an external test driver can attach to the serial monitor or guest agent. Both flags are documented in docs/qemu-boot-test.md as the W7-4 contract. This is anti-drift: the surface W7-4 will use is fixed at W7-3 land time. Code: `scripts/qemu-boot-test.sh`, `docs/qemu-boot-test.md` |
+| DEC-PHASE7-024 | 2026-04-28 | [W7-3-enabler] Canonical live-build hook discovery via iso/config/hooks/{live,normal,binary}/; delete iso/hooks/ tree and remove --hook-files workaround | CI run 25475860825 surfaced a latent Phase 1-6 architectural gap (issue #32): the build log shows only 24 hooks executed during lb build — all 24 are live-build BUILT-IN hooks. ZERO project hooks ran. Live-build searches `config/hooks/{normal,live,binary}/` relative to the lb config root (`iso/`). Project hooks lived at `iso/hooks/{live,binary_rootfs,normal}/` — paths live-build does NOT search. The `--hook-files "hooks/normal/0500-bootloader-serial.hook.binary"` workaround in `iso/auto/config` also did not produce an 'Executing hook' line. Phase 6 hardening was therefore structurally validated but never runtime-validated. Option A (git mv into canonical `iso/config/hooks/`) is the chosen end-state. Option B (symlink layer) and Option C (build-time copy in scripts/build-iso.sh) were rejected because each introduces dual-authority drift (Architecture Preservation). The `--hook-files` line is removed because canonical auto-discovery makes it redundant; keeping both would produce dual registration. Bounded supersedence of DEC-PHASE7-023's wiring paragraph (the kernel cmdline `console=` contribution still stands; only the `--hook-files` mechanism is superseded). Code: `iso/config/hooks/**`, `iso/auto/config` |
+| DEC-PHASE7-025 | 2026-04-28 | [W7-3-enabler] Test path authority MUST move with the hook files; six tests updated atomically | Five unit tests (`test_filesystem_hardening.sh`, `test_apparmor_profiles.sh`, `test_service_hardening.sh`, `test_iso_serial_console.sh`, `test_phase2_build_system.py`) and one integration test (`test-security-hardening.sh`) hard-code paths under `iso/hooks/*`. Leaving them pointing at the old paths after the file move would silently break `make test-unit` AND create a dual-authority bug where one test asserts a hook 'exists at the canonical path' while another asserts it 'exists at the legacy path' — exactly the failure mode that hid the Phase 6 runtime gap. The reviewer enforces this by running `grep -rn 'iso/hooks/' tests/ scripts/ Makefile .github/` and demanding zero matches. The post-move state of `test_iso_serial_console.sh` also replaces its T4 ('--hook-files wires the binary hook') with a negative assertion that --hook-files is NOT in iso/auto/config — preserving the test's coverage of the wiring authority while inverting its expected truth. Code: `tests/unit/test_*.sh`, `tests/unit/test_phase2_build_system.py`, `tests/integration/test-security-hardening.sh` |
+| DEC-PHASE7-026 | 2026-04-28 | [W7-3-enabler] tests/integration/test-iso-hooks-applied.sh as the new runtime-execution authority; CI gates on it before qemu-boot | Structural tests (file exists, content correct) are necessary but not sufficient — that's the gap #32 exposed. The new integration test consumes a build log (BUILD_LOG=<path>) and asserts an `Executing hook config/hooks/.../<name>` line is present for each of the 7 project hooks: 0500-install-external-tools, 0600-filesystem-hardening, 0610-apparmor-setup, 0620-service-hardening (config/hooks/live/), 0100-create-user, 0200-copy-samples (config/hooks/normal/), 0500-bootloader-serial (config/hooks/binary/). The single bash array EXPECTED_HOOKS is the project-wide authority for 'which hooks exist'; any new hook MUST be added there AND to a content unit test (no orphan hooks). `.github/workflows/qemu-test.yml` gains a step BEFORE `qemu-boot-test` that tees the docker build stdout to `tmp/build-iso.log` and invokes this test — so a hook-wiring regression fails at the hook-applied step, NOT misdiagnosed inside qemu-boot. This is the anti-drift control: a future change that breaks hook discovery breaks CI loudly, in the right step, with a per-hook MISS row pointing at exactly which hook is misregistered. Code: `tests/integration/test-iso-hooks-applied.sh` (new), `.github/workflows/qemu-test.yml` |
 
 ## Risk Register
 
@@ -400,3 +409,22 @@ Platform security hardening for hostile environments. 8 work items across 3 wave
 - Integration test suite (36 checks across all 8 components)
 
 Decisions: DEC-SEC-001 (nftables), DEC-SEC-002 (static AppArmor), DEC-SEC-003 (first-boot wizard), DEC-SEC-004 (structural validation), DEC-SEC-005 (single Lynis)
+
+**Runtime-validation boundary (acknowledged 2026-04-28 via DEC-PHASE7-024):**
+Phase 6 closed with all hook files present at `iso/hooks/live/*.hook.chroot`,
+shellcheck-clean and content-verified by the 36-check structural suite. CI run
+25475860825 (Phase 7 qemu-boot validation) revealed that NONE of the project
+hooks at `iso/hooks/**` were on any live-build search path — `config/hooks/`
+auto-discovery looks under `config/hooks/{normal,live,binary}/` relative to
+the lb config root (`iso/`), so canonical paths are `iso/config/hooks/...`,
+not `iso/hooks/...`. Phase 6 hardening was therefore structurally complete
+but never executed during the actual build. The Phase 6 deliverables (hooks,
+profiles, firewall rules, wizard) are correct in content; only their wiring
+was on a non-canonical path. The Phase 7 enabler `W7-3-enabler` (issue #32)
+moves the seven project hooks into the canonical tree and adds
+`tests/integration/test-iso-hooks-applied.sh` as the new runtime-execution
+authority gated in CI. After that enabler lands, Phase 6 hardening will
+actually take effect at ISO build time and Phase 7's W7-4 (mesh + Matrix +
+AppArmor runtime verification) becomes meaningful. DEC-SEC-001..005 stand;
+this note documents the structural-vs-runtime boundary that Phase 6's
+"completed" status implicitly assumed.
