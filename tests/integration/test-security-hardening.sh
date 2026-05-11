@@ -133,7 +133,7 @@ fi
 echo ""
 echo "--- 3. Filesystem Hardening Hook ---"
 
-FS_HOOK="$REPO_ROOT/iso/hooks/live/0600-filesystem-hardening.hook.chroot"
+FS_HOOK="$REPO_ROOT/iso/config/hooks/live/0600-filesystem-hardening.hook.chroot"
 if [[ -f "$FS_HOOK" ]]; then
     pass "filesystem hardening hook exists"
 
@@ -207,7 +207,7 @@ else
 fi
 
 # Check AppArmor setup hook
-APPARMOR_HOOK="$REPO_ROOT/iso/hooks/live/0610-apparmor-setup.hook.chroot"
+APPARMOR_HOOK="$REPO_ROOT/iso/config/hooks/live/0610-apparmor-setup.hook.chroot"
 if [[ -f "$APPARMOR_HOOK" ]]; then
     pass "AppArmor setup hook exists"
 else
@@ -269,7 +269,7 @@ fi
 echo ""
 echo "--- 7. Service Hardening Hook ---"
 
-SERVICE_HOOK="$REPO_ROOT/iso/hooks/live/0620-service-hardening.hook.chroot"
+SERVICE_HOOK="$REPO_ROOT/iso/config/hooks/live/0620-service-hardening.hook.chroot"
 
 if [[ -f "$SERVICE_HOOK" ]]; then
     pass "service hardening hook exists"

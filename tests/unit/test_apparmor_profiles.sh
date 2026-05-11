@@ -82,7 +82,7 @@ WIREGUARD_PROFILE="$PROFILES_DIR/usr.sbin.wg"
 VOLATILITY_PROFILE="$PROFILES_DIR/usr.bin.volatility3"
 BULKEXT_PROFILE="$PROFILES_DIR/usr.bin.bulk_extractor"
 TSHARK_PROFILE="$PROFILES_DIR/usr.bin.tshark"
-HOOK_FILE="iso/hooks/live/0610-apparmor-setup.hook.chroot"
+HOOK_FILE="iso/config/hooks/live/0610-apparmor-setup.hook.chroot"
 PACKAGE_LIST="iso/package-lists/orionx.list.chroot"
 
 # ============================================================

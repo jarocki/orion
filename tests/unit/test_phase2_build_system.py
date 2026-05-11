@@ -6,7 +6,7 @@ Tests verify:
 - ShellCheck passes on all shell scripts (no errors)
 - Python scripts compile without error
 - Required build files are present and correctly configured
-- iso/hooks/live hook exists and is executable
+- iso/config/hooks/live hook exists and is executable (canonical live-build path, DEC-PHASE7-024)
 - requirements.txt exists
 - GitHub Actions workflow is valid YAML and has expected structure
 """
@@ -23,7 +23,7 @@ MAKEFILE = os.path.join(WORKTREE, "Makefile")
 SCRIPTS_DIR = os.path.join(WORKTREE, "scripts")
 HOOK_PATH = os.path.join(
     WORKTREE,
-    "iso/hooks/live/0500-install-external-tools.hook.chroot",
+    "iso/config/hooks/live/0500-install-external-tools.hook.chroot",
 )
 REQUIREMENTS_TXT = os.path.join(WORKTREE, "requirements.txt")
 WORKFLOW_PATH = os.path.join(WORKTREE, ".github/workflows/lint.yml")
@@ -160,7 +160,7 @@ def test_requirements_txt_exists():
 
 
 def test_external_tools_hook_exists():
-    """iso/hooks/live/0500-install-external-tools.hook.chroot must exist."""
+    """iso/config/hooks/live/0500-install-external-tools.hook.chroot must exist (canonical path, DEC-PHASE7-024)."""
     assert os.path.isfile(HOOK_PATH), (
         f"External tools hook not found at {HOOK_PATH}"
     )
