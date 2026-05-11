@@ -103,7 +103,7 @@ jobs:
               apt-get install -y -q --no-install-recommends \
                 live-build debootstrap xorriso isolinux \
                 ca-certificates wget gnupg python3 \
-                squashfs-tools rsync
+                squashfs-tools rsync cpio
               bash scripts/build-iso.sh
             ' 2>&1 | tee tmp/build-iso.log
 
