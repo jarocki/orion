@@ -290,7 +290,7 @@ fi
 echo ""
 echo "--- 8. Package List ---"
 
-PKG_LIST="$REPO_ROOT/iso/package-lists/orionx.list.chroot"
+PKG_LIST="$REPO_ROOT/iso/config/package-lists/orionx.list.chroot"
 if [[ -f "$PKG_LIST" ]]; then
     pass "package list exists"
 

@@ -194,7 +194,7 @@ assert_file_contains "$SYSTEMD_UNIT" "@decision DEC-SEC-001" \
 echo ""
 echo "=== Test Group 7: Package List ==="
 
-PACKAGE_LIST="iso/package-lists/orionx.list.chroot"
+PACKAGE_LIST="iso/config/package-lists/orionx.list.chroot"
 
 assert_file_contains "$PACKAGE_LIST" "^nftables$" \
     "nftables is in package list"

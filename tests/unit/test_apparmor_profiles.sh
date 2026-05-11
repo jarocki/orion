@@ -65,7 +65,7 @@ assert_file_executable() {
 assert_file_contains() {
     local file="$1"
     local pattern="$2"
-    local desc="${3:-$file contains '$pattern'}"
+    local desc="${3:-$file contains \"$pattern\"}"
     if grep -qE "$pattern" "$PROJECT_ROOT/$file" 2>/dev/null; then
         pass "$desc"
     else
@@ -83,7 +83,7 @@ VOLATILITY_PROFILE="$PROFILES_DIR/usr.bin.volatility3"
 BULKEXT_PROFILE="$PROFILES_DIR/usr.bin.bulk_extractor"
 TSHARK_PROFILE="$PROFILES_DIR/usr.bin.tshark"
 HOOK_FILE="iso/config/hooks/live/0610-apparmor-setup.hook.chroot"
-PACKAGE_LIST="iso/package-lists/orionx.list.chroot"
+PACKAGE_LIST="iso/config/package-lists/orionx.list.chroot"
 
 # ============================================================
 # Test Group 1: Profile files exist
