@@ -1,0 +1,38 @@
+[Unit]
+# Orion-X Phoenix Edition — Runtime Verification Service (W7-4-B)
+#
+# Runs the in-guest runtime verification probe after multi-user.target is
+# reached. Emits ORIONX_VERIFY_* sentinel lines to /dev/ttyS0 (serial
+# console) so the host-side QEMU harness can parse PASS/FAIL without
+# SSH, QEMU monitor sockets, or qemu-guest-agent.
+#
+# @decision DEC-PHASE7-035
+# @title In-guest verification via serial-console sentinels, not SSH/sockets
+# @status accepted
+# @rationale Serial console (/dev/ttyS0) is always present under QEMU
+#   -serial. The host harness already captures the serial log for
+#   boot-success detection (DEC-PHASE7-020); reusing the same channel for
+#   verification sentinels avoids a second side-channel. See
+#   iso/config/includes.chroot/usr/lib/orionx/runtime-verify.sh for the
+#   full rationale.
+#
+# Installation note: This unit is installed directly into
+#   /lib/systemd/system/ via live-build includes.chroot (Option B), bypassing
+#   the 0615-install-systemd-units.hook.chroot hardcoded UNIT_FILES array
+#   (which is in forbidden_paths for this slice). The unit is also placed in
+#   /usr/share/orionx/systemd/ as the canonical staging path per project
+#   convention, but the /lib/systemd/system/ copy is the operative one.
+#   See DEC-PHASE7-W7-4-B-INSTALL-001 for the decision record.
+Description=Orion-X Runtime Verification (W7-4-B)
+After=multi-user.target
+Wants=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/orionx/runtime-verify.sh
+StandardOutput=tty
+TTYPath=/dev/ttyS0
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

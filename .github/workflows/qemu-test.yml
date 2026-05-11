@@ -141,10 +141,41 @@ jobs:
             --timeout 900 \
             ${OVMF_FLAG}
 
+      # W7-4-B: Run in-guest runtime verification (mesh + Matrix + AppArmor).
+      # Boots the ISO a second time in BIOS mode and waits for the
+      # orionx-runtime-verify.service sentinels on /dev/ttyS0. Uses the same
+      # --post-boot-script attach point declared in DEC-PHASE7-022. Runs
+      # after the BIOS+UEFI boot test so the ISO artefact is already proven
+      # to boot before we spend 900s verifying runtime state.
+      # timeout-minutes is set on the job (60min); this step uses --timeout 900
+      # which matches the BIOS+UEFI step and fits within the job budget.
+      - name: Run W7-4-B runtime verification (mesh + Matrix + AppArmor)
+        run: |
+          OVMF_FLAG=""
+          if [[ -n "${{ steps.ovmf.outputs.ovmf_path }}" ]]; then
+            OVMF_FLAG="--ovmf ${{ steps.ovmf.outputs.ovmf_path }}"
+          fi
+          bash tests/integration/test-w7-4-b-runtime-verify.sh \
+            --mode bios \
+            ${OVMF_FLAG}
+        env:
+          QEMU_TIMEOUT: "900"
+          VERIFY_WAIT: "120"
+
       - name: Upload QEMU artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: qemu-artifacts-${{ github.run_id }}
           path: tmp/qemu-artifacts/
+          if-no-files-found: warn
+
+      - name: Upload W7-4-B verification artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w7-4-b-verify-artifacts-${{ github.run_id }}
+          path: |
+            tmp/qemu-artifacts/
+            tmp/w7-4-b-post-boot-helper.sh
           if-no-files-found: warn
