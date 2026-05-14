@@ -189,6 +189,20 @@ jobs:
           QEMU_TIMEOUT: "900"
           PERF_WAIT: "90"
 
+      # W7-6: Run host-side failure-resilience config inspection.
+      # Reads each of the 8 Orion-X systemd unit files from systemd/ and
+      # asserts per-Type recovery configuration:
+      #   - Long-running daemons (Type=notify, Type=simple) must declare
+      #     Restart= with on-failure|always|on-abnormal.
+      #   - Oneshot units are recovery-irrelevant by design (timer-driven).
+      #   - Timer units must declare OnUnitActiveSec= or OnBootSec=.
+      # Option D (host-side static inspection) — no QEMU boot, no hang risk.
+      # NO continue-on-error: deterministic static check, active gate.
+      # Runs after W7-5 so all prior boot-dependent steps are already done.
+      - name: Run W7-6 failure-resilience config check
+        run: |
+          bash tests/integration/test-w7-6-failure-resilience.sh
+
       - name: Upload QEMU artifacts
         if: always()
         uses: actions/upload-artifact@v4
