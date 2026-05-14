@@ -163,6 +163,30 @@ jobs:
           QEMU_TIMEOUT: "900"
           VERIFY_WAIT: "120"
 
+      # W7-5: Run in-guest performance benchmark (boot <90s, ISO <4GiB, idle RAM <1GiB).
+      # Boots the ISO a third time in BIOS mode and waits for the
+      # orionx-perf-measure.service sentinels on /dev/ttyS0. Measures ISO
+      # size host-side via du -b. Uses the same --post-boot-script attach
+      # point declared in DEC-PHASE7-022. Runs after W7-4-B so the ISO is
+      # already proven to boot before we spend 900s on performance measurement.
+      #
+      # NO continue-on-error — W7-5 is the active acceptance gate. If any
+      # performance threshold is missed, CI must fail. (W7-4-B has
+      # continue-on-error:true because it depends on first-boot/mesh state
+      # that may not yet be fully wired; W7-5 metrics are independent of that.)
+      - name: Run W7-5 performance benchmark (boot/ISO/RAM thresholds)
+        run: |
+          OVMF_FLAG=""
+          if [[ -n "${{ steps.ovmf.outputs.ovmf_path }}" ]]; then
+            OVMF_FLAG="--ovmf ${{ steps.ovmf.outputs.ovmf_path }}"
+          fi
+          bash tests/integration/test-w7-5-performance.sh \
+            --mode bios \
+            ${OVMF_FLAG}
+        env:
+          QEMU_TIMEOUT: "900"
+          PERF_WAIT: "90"
+
       - name: Upload QEMU artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -179,4 +203,14 @@ jobs:
           path: |
             tmp/qemu-artifacts/
             tmp/w7-4-b-post-boot-helper.sh
+          if-no-files-found: warn
+
+      - name: Upload W7-5 performance artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: w7-5-perf-artifacts-${{ github.run_id }}
+          path: |
+            tmp/qemu-artifacts/
+            tmp/w7-5-post-boot-helper.sh
           if-no-files-found: warn

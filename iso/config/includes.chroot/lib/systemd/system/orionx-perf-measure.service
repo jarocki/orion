@@ -1,0 +1,40 @@
+[Unit]
+# Orion-X Phoenix Edition — Performance Measurement Service (W7-5)
+#
+# Runs the in-guest performance measurement probe after multi-user.target is
+# reached. Emits ORIONX_PERF_* sentinel lines to /dev/ttyS0 (serial console)
+# so the host-side QEMU harness can parse boot_time_seconds and idle_ram_bytes
+# without SSH, QEMU monitor sockets, or qemu-guest-agent.
+#
+# Independence invariant: this unit must NOT depend on first-boot-wizard,
+# wg0, mesh services, Matrix, or AppArmor. The three performance metrics
+# (boot time, ISO size, idle RAM) are measurable regardless of whether those
+# services completed successfully. See DEC-PHASE7-W7-5-001.
+#
+# @decision DEC-PHASE7-W7-5-001
+# @title In-guest performance measurement via serial-console sentinels (W7-5)
+# @status accepted
+# @rationale Mirrors the W7-4-B runtime-verify pattern (DEC-PHASE7-035) using
+#   the same serial-console channel. After=multi-user.target is sufficient —
+#   no mesh/Matrix/AppArmor After= dependencies needed because the perf
+#   metrics are independent of those services' success state.
+#
+# Installation note: This unit is installed directly into
+#   /lib/systemd/system/ via live-build includes.chroot (Option B), bypassing
+#   the 0615-install-systemd-units.hook.chroot hardcoded UNIT_FILES array
+#   (which is in forbidden_paths for this slice). The unit is also placed in
+#   /usr/share/orionx/systemd/ as the canonical staging path per project
+#   convention, but the /lib/systemd/system/ copy is the operative one.
+Description=Orion-X Performance Measurement (W7-5)
+After=multi-user.target
+Wants=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/orionx/perf-measure.sh
+StandardOutput=tty
+TTYPath=/dev/ttyS0
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
