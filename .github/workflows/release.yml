@@ -1,0 +1,236 @@
+name: Release Pipeline
+
+# @decision DEC-PHASE8-002
+# @title Release artifact pipeline: ISO + checksums + GPG signatures + DRAFT GitHub Release
+# @status accepted
+# @rationale Phase 8 W8-4/W8-5 deliverable. Tag-triggered workflow builds a
+#   reproducible ISO inside debian:bullseye (same Docker pattern as qemu-test.yml
+#   to ensure live-build sees a Debian host), generates SHA-256/SHA-512 checksums,
+#   produces detached GPG signatures with continue-on-error so an unprovisioned key
+#   does not block release prep, and creates a DRAFT GitHub Release. DRAFT mode is
+#   mandatory — the publish flip is the explicit W8-7 operator approve gate.
+#   workflow_dispatch trigger allows dry-run testing without a real tag push.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry-run mode (skip GitHub Release creation)'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+jobs:
+  release:
+    name: Build, sign, and draft release
+    runs-on: ubuntu-latest
+    # ISO build (~10-15 min) + checksums + GPG sign + release upload.
+    # Mirrors qemu-test.yml job timeout for the shared build step.
+    timeout-minutes: 60
+
+    permissions:
+      # Required for softprops/action-gh-release to create releases
+      contents: write
+
+    steps:
+      # -----------------------------------------------------------------------
+      # Step 1: Checkout
+      # -----------------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history so CHANGELOG.md is always present even for
+          # shallow clones triggered by tag events.
+          fetch-depth: 0
+
+      # -----------------------------------------------------------------------
+      # Step 2: Build ISO in debian:bullseye container
+      #
+      # Identical pattern to qemu-test.yml (W7-1 deliverable, issue #25):
+      # live-build detects the host distro; running inside debian:bullseye-slim
+      # with --privileged ensures it bootstraps from deb.debian.org/bullseye
+      # instead of the ubuntu-latest host's apt sources.
+      # -----------------------------------------------------------------------
+      - name: Build ISO in debian:bullseye container
+        run: |
+          mkdir -p tmp output
+          docker run --rm --privileged \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            debian:bullseye-slim \
+            bash -c '
+              set -e
+              apt-get update -q
+              apt-get install -y -q --no-install-recommends \
+                live-build debootstrap xorriso isolinux \
+                ca-certificates wget gnupg python3 \
+                squashfs-tools rsync cpio
+              bash scripts/build-iso.sh
+            ' 2>&1 | tee tmp/release-build-iso.log
+
+      # Container ran as root (--privileged); chown back to runner so
+      # subsequent steps can read/write output/ and tmp/ normally.
+      - name: Restore workspace ownership to runner
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" "${{ github.workspace }}"
+
+      # -----------------------------------------------------------------------
+      # Step 3: Verify ISO was produced before proceeding
+      # -----------------------------------------------------------------------
+      - name: Verify ISO artifact
+        run: |
+          ISO_COUNT=$(ls output/*.iso 2>/dev/null | wc -l)
+          if [[ "${ISO_COUNT}" -eq 0 ]]; then
+            echo "ERROR: No ISO found in output/ — build failed."
+            exit 1
+          fi
+          echo "Found ${ISO_COUNT} ISO file(s):"
+          ls -lh output/*.iso
+
+      # -----------------------------------------------------------------------
+      # Step 4: Generate SHA-256 and SHA-512 checksums
+      # -----------------------------------------------------------------------
+      - name: Generate checksums
+        run: |
+          cd output
+          sha256sum ./*.iso > SHA256SUMS
+          sha512sum ./*.iso > SHA512SUMS
+          echo "--- SHA256SUMS ---"
+          cat SHA256SUMS
+          echo "--- SHA512SUMS ---"
+          cat SHA512SUMS
+
+      # -----------------------------------------------------------------------
+      # Step 5: Import GPG key and sign artifacts
+      #
+      # continue-on-error: true — if GPG_PRIVATE_KEY is not provisioned in
+      # repository secrets, this step skips gracefully. The release draft is
+      # still created; the operator can add signatures manually before publishing.
+      # Signature files: *.iso.asc, SHA256SUMS.asc, SHA512SUMS.asc
+      # -----------------------------------------------------------------------
+      - name: Import GPG signing key
+        id: gpg-import
+        continue-on-error: true
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Sign ISO and checksum files
+        id: gpg-sign
+        continue-on-error: true
+        if: steps.gpg-import.outcome == 'success'
+        run: |
+          cd output
+          # Sign each ISO (detached, armored)
+          for iso in ./*.iso; do
+            gpg --batch --yes \
+              --pinentry-mode loopback \
+              --detach-sign --armor \
+              --output "${iso}.asc" \
+              "${iso}"
+            echo "Signed: ${iso}.asc"
+          done
+          # Sign the checksum manifests
+          for sumfile in SHA256SUMS SHA512SUMS; do
+            gpg --batch --yes \
+              --pinentry-mode loopback \
+              --detach-sign --armor \
+              --output "${sumfile}.asc" \
+              "${sumfile}"
+            echo "Signed: ${sumfile}.asc"
+          done
+          echo "GPG signing complete."
+
+      - name: Report signing status
+        run: |
+          if [[ "${{ steps.gpg-import.outcome }}" == "success" && \
+                "${{ steps.gpg-sign.outcome }}" == "success" ]]; then
+            echo "GPG_SIGNED=true" >> "${GITHUB_ENV}"
+            echo "Artifacts are GPG-signed."
+          else
+            echo "GPG_SIGNED=false" >> "${GITHUB_ENV}"
+            echo "WARNING: GPG signing skipped (key not provisioned or import failed)."
+            echo "The DRAFT release will be created without signatures."
+            echo "Provision secrets.GPG_PRIVATE_KEY and secrets.GPG_PASSPHRASE to enable signing."
+          fi
+
+      # -----------------------------------------------------------------------
+      # Step 6: Extract release notes for current tag from CHANGELOG.md
+      # -----------------------------------------------------------------------
+      - name: Extract release notes
+        id: release-notes
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME:-$(git describe --tags --abbrev=0 2>/dev/null || echo 'v2.0.0')}"
+          echo "Extracting release notes for tag: ${TAG_NAME}"
+          NOTES=$(bash scripts/release/extract-release-notes.sh "${TAG_NAME}" 2>/dev/null || true)
+          if [[ -z "${NOTES}" ]]; then
+            echo "No version-specific notes found in CHANGELOG.md; using full changelog."
+            NOTES="See CHANGELOG.md for full release history."
+          fi
+          # Write to a temp file so the release action can consume it
+          printf '%s\n' "${NOTES}" > tmp/release-notes.md
+          echo "Release notes written to tmp/release-notes.md"
+          cat tmp/release-notes.md
+
+      # -----------------------------------------------------------------------
+      # Step 7: Create DRAFT GitHub Release
+      #
+      # DRAFT mode is non-negotiable — W8-7 operator publish flip is the
+      # explicit approve gate. The operator reviews the DRAFT, attaches any
+      # missing artifacts, and publishes when ready.
+      #
+      # fail_on_unmatched_files: false — signature files may not exist if the
+      # GPG step was skipped (unprovisioned key). The ISO and checksums are
+      # always present; the release remains valid without signatures.
+      #
+      # prerelease: auto-flagged when the tag contains '-rc' (release candidate).
+      # -----------------------------------------------------------------------
+      - name: Create DRAFT GitHub Release
+        if: github.event_name == 'push' || github.event.inputs.dry_run == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-rc') }}
+          body_path: tmp/release-notes.md
+          files: |
+            output/*.iso
+            output/SHA256SUMS
+            output/SHA512SUMS
+            output/*.asc
+          fail_on_unmatched_files: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # -----------------------------------------------------------------------
+      # Step 8: Upload build artifacts (always, for debugging and dry-run)
+      # -----------------------------------------------------------------------
+      - name: Upload release artifacts to Actions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts-${{ github.run_id }}
+          path: |
+            output/*.iso
+            output/SHA256SUMS
+            output/SHA512SUMS
+            output/*.asc
+            tmp/release-build-iso.log
+            tmp/release-notes.md
+          if-no-files-found: warn
+
+      - name: Release summary
+        if: always()
+        run: |
+          echo "=== Release Pipeline Summary ==="
+          echo "Tag:         ${GITHUB_REF_NAME:-workflow_dispatch}"
+          echo "GPG signed:  ${GPG_SIGNED:-unknown}"
+          echo "Artifacts in output/:"
+          ls -lh output/ || echo "(empty)"
