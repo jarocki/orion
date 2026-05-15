@@ -14,9 +14,8 @@ RUN apt-get update && apt-get install -y \
     curl wget git sudo \
     net-tools iproute2 iputils-ping \
     tcpdump wireshark tshark \
-    binwalk bulk-extractor \
-    volatility3 sleuthkit \
-    zeek \
+    binwalk \
+    sleuthkit \
     cryptsetup \
     wireguard-tools \
     jq \
