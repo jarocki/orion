@@ -1465,22 +1465,22 @@ than speculatively up-front.
 
 | W-ID | Title | Env | Wave | Deps | Weight | Gate | Status |
 |------|-------|-----|------|------|--------|------|--------|
-| W8-1 | Version-string finalization to `v2.0.0-rc1` (single-authority) | Repo | 1 | - | S | review | IN PROGRESS 2026-05-14 (seeded — see DEC-PHASE8-001) |
-| W8-2 | CHANGELOG.md generation from git log + Decision Log | Repo | 2 | W8-1 | M | review | sketch (not yet seeded) |
-| W8-3 | Documentation audit (User Guide / README walkthrough matches reality) | Repo | 2 | W8-1 | M | review | sketch (not yet seeded) |
-| W8-4 | Release artifact pipeline (ISO + SHA-256/SHA-512 + detached GPG signatures) | Linux/CI | 3 | W8-1, W8-2 | L | review | sketch (not yet seeded) |
-| W8-5 | GitHub Release scaffolding (draft release with ISO + checksums + signatures + release notes) | Repo/CI | 4 | W8-2, W8-3, W8-4 | M | review | sketch (not yet seeded) |
-| W8-6 | Workflow rename `phase7-integration` → `phase8-release` (runtime hygiene) | Repo | * | - | XS | review | sketch (not yet seeded — opportunistic) |
-| W8-7 | `v2.0.0` release tag + final GitHub Release publish | Repo/CI | 5 | W8-5, W7-7 operator attestation | XS | approve | sketch (not yet seeded — final `approve` gate) |
-| W7-7 | Physical USB boot validation (operator track, parallel) | Hardware | * | W7-3, W8-1 | S | approve | DEFERRED 2026-05-14 (carries forward from Phase 7; remains operator attestation; W7-7 enabler `b411c47` provides the ISO artifact channel) |
+| W8-1 | Version-string finalization to `v2.0.0-rc1` (single-authority) | Repo | 1 | - | S | review | ACCEPTED 2026-05-14 merge `ee5861b` (`feature/phase8-w8-1-version-rc1`) — Dockerfile + README.md propagated `v2.0.0-dev` → `v2.0.0-rc1`; `scripts/build-iso.sh` and `iso/auto/config` unchanged (canonical authority preserved per DEC-PHASE7-002); 41/41 unit tests pass; reviewer 0 findings. See DEC-PHASE8-001. |
+| W8-2 | CHANGELOG.md generation from git log + Decision Log | Repo | 2 | W8-1 | M | review | CONSOLIDATED 2026-05-14 into `wi-w8-finish-A` (docs bundle) per DEC-PHASE8-002 cascade-consolidation |
+| W8-3 | Documentation audit (User Guide / README walkthrough matches reality) | Repo | 2 | W8-1 | M | review | CONSOLIDATED 2026-05-14 into `wi-w8-finish-A` (docs bundle) per DEC-PHASE8-002 cascade-consolidation |
+| W8-4 | Release artifact pipeline (ISO + SHA-256/SHA-512 + detached GPG signatures) | Linux/CI | 3 | W8-1, wi-w8-finish-A | L | review | CONSOLIDATED 2026-05-14 into `wi-w8-finish-B` (release pipeline bundle) per DEC-PHASE8-002 cascade-consolidation; GPG signing step uses `secrets.GPG_PRIVATE_KEY` with `continue-on-error: true` until operator provisions the key (hard human boundary, parallel) |
+| W8-5 | GitHub Release scaffolding (draft release with ISO + checksums + signatures + release notes) | Repo/CI | 3 | wi-w8-finish-A | M | review | CONSOLIDATED 2026-05-14 into `wi-w8-finish-B` (release pipeline bundle) per DEC-PHASE8-002 cascade-consolidation; DRAFT mode enforces W8-7 publish gate per DEC-PHASE7-005 |
+| W8-6 | Workflow rename `phase7-integration` → `phase8-release` (runtime hygiene) | Repo | * | - | XS | review | CONSOLIDATED 2026-05-14 into `wi-w8-finish-B` (release pipeline bundle) per DEC-PHASE8-002 cascade-consolidation; runtime-state operation via `cc-policy workflow rename`, not source-tree edit |
+| wi-w8-finish-A | Docs bundle (W8-2 CHANGELOG + W8-3 documentation audit, consolidated) | Repo | 2 | W8-1 | M-L | review | IN PROGRESS 2026-05-14 (seeded — Scope Manifest + Evaluation Contract in `tmp/scope-wi-w8-finish-A.json` and `tmp/eval-wi-w8-finish-A.json`) |
+| wi-w8-finish-B | Release pipeline bundle (W8-4 checksums + GPG signing CI plumbing + W8-5 GitHub Release draft scaffold + W8-6 workflow rename, consolidated) | Repo/CI | 3 | wi-w8-finish-A | L | review | PENDING 2026-05-14 (seeded — Scope Manifest + Evaluation Contract in `tmp/scope-wi-w8-finish-B.json` and `tmp/eval-wi-w8-finish-B.json`; awaits wi-w8-finish-A landing) |
+| W7-7 | Physical USB boot validation (operator track, parallel — HARD HUMAN BOUNDARY) | Hardware | * | W7-3, W8-1 | S | approve | DEFERRED 2026-05-14 (carries forward from Phase 7; remains operator attestation per DEC-PHASE7-005; W7-7 enabler `b411c47` provides the ISO artifact channel; wi-w8-finish-B's DRAFT-release ISO is the canonical attestation artifact channel going forward) |
+| W8-7 | `v2.0.0` release tag + final GitHub Release publish (HARD HUMAN BOUNDARY) | Repo/CI | 5 | wi-w8-finish-B, W7-7 operator attestation, operator GPG key provisioning | XS | approve | SKETCH 2026-05-14 — final `approve` gate per DEC-PHASE7-005; operator runs (a) retag `v2.0.0-rc1` → `v2.0.0` (or new `v2.0.0` tag), (b) ensures `secrets.GPG_PRIVATE_KEY` + `secrets.GPG_PASSPHRASE` are provisioned, (c) re-runs release.yml on the new tag, (d) verifies GPG signatures + W7-7 attestation complete, (e) `gh release edit v2.0.0 --draft=false`. Planner records closure DEC-PHASE8-005 (or successor). |
 
-**Critical path (planned):** W8-1 → (W8-2 ∥ W8-3) → W8-4 → W8-5 → W8-7. W8-6
-(workflow rename) is opportunistic, no W-ID dependencies. W7-7 (operator
-attestation) runs in parallel on the operator's hardware; its acceptance is a
-prerequisite to W8-7's `approve` gate.
+**Critical path (revised 2026-05-14 post-W8-1 acceptance, consolidated per DEC-PHASE8-002):**
+`W8-1 (ACCEPTED) → wi-w8-finish-A (docs bundle, in-progress) → wi-w8-finish-B (release pipeline bundle, pending) → W8-7 (approve gate, hard human boundary)`.
+Two hard human boundaries remain at phase end: W7-7 (physical USB attestation, runs in parallel on operator hardware, must complete before W8-7 publish) and W8-7 (final tag + publish, explicit `approve` gate per DEC-PHASE7-005). Three Phase 8 slices total (W8-1, wi-w8-finish-A, wi-w8-finish-B) instead of the pre-bundle six (W8-1..W8-6) per DEC-PHASE8-002 cascade-consolidation discipline (DEC-PHASE7-041 reapplied as the third operative instance after W7-4-B-exit and W7-5-exit).
 
-**Max parallel width:** 2 in wave 2 (W8-2 ∥ W8-3, independent file scopes:
-CHANGELOG generation vs documentation audit).
+**Max parallel width:** 1 in the consolidated path (each bundle has a sequencing dependency on the prior). W7-7 operator track runs in parallel on hardware, not on CI; the artifact channel is wi-w8-finish-B's DRAFT-release ISO.
 
 **Phase 8 work item authority discipline:** Detailed Scope Manifests and
 Evaluation Contracts are seeded one slice at a time at planner-dispatch time
@@ -1599,6 +1599,170 @@ version-string changes (W8-7 `v2.0.0`, future `v2.1.0-rc1`, etc.) must touch
 `scripts/build-iso.sh`'s `VERSION` constant as the authoritative source and
 re-propagate via the same surface list — a planner DEC is required for any
 version bump.
+
+**W8-1 closure (2026-05-14, merge `ee5861b`):** Dockerfile + README.md
+propagated from `v2.0.0-dev` to `v2.0.0-rc1` (six lines across the two files
+per the merge stat). `scripts/build-iso.sh` and `iso/auto/config` unchanged
+per the scope manifest (canonical authority preserved per DEC-PHASE7-002).
+Reviewer: 0 findings. Tests: `tests/unit/test_build_iso.sh` 41/41 pass on
+HEAD. The Dockerfile `LABEL version="2.0.0-rc1"` (no leading `v` per Docker
+convention) and the README dd-example `orionx-phoenix-edition-v2.0.0-rc1.iso`
+match the existing `iso/auto/config` ISO output name. Anti-drift check
+post-merge: `grep -rn 'v2\.0\.0-dev' Dockerfile README.md` returns zero
+matches. Two operator-driven Phase 8 prep landings remain folded into Phase 8
+per DEC-PHASE8-001 (`b411c47` W7-7 enabler, `44c7b25` Docker apt cleanup).
+
+**Phase 8 consolidation (2026-05-14, DEC-PHASE8-002):** Post-W8-1 the
+remaining pre-bundle W-IDs (W8-2 CHANGELOG, W8-3 Documentation audit, W8-4
+release artifact pipeline, W8-5 GitHub Release scaffolding, W8-6 workflow
+rename) are reconsidered through the DEC-PHASE7-041 cascade-consolidation
+lens. The sequencing W8-2 → W8-3 → W8-4 → W8-5 → W8-6 has no architectural
+meaning: W8-2 and W8-3 share the same docs-only forbidden-paths surface, and
+W8-4 + W8-5 + W8-6 all touch CI / runtime control plane with overlapping
+forbidden-paths surfaces and no source-code touch. Consolidating each natural
+cluster into one bundle eliminates artificial slice boundaries while
+preserving the planner's per-slice contract discipline. The two resulting
+slices are `wi-w8-finish-A` (docs bundle: W8-2 + W8-3) and `wi-w8-finish-B`
+(release pipeline bundle: W8-4 + W8-5 + W8-6). The pre-bundle W8-2..W8-6 rows
+remain in the W-ID table for traceability but their Status column points to
+their consolidated parent and they are NOT seeded as standalone work items.
+W7-7 (operator USB attestation) and W8-7 (final tag + publish) remain as hard
+human boundaries — both unaffected by the consolidation.
+
+**wi-w8-finish-A Scope Manifest and Evaluation Contract (seeded 2026-05-14):**
+
+*Mission.* Produce a human-curated `CHANGELOG.md` at repo root for the
+v2.0.0-rc1 release, sourced from the squash-merge `git log` on `develop`
+(Phase 1 through W8-1 `ee5861b` plus the two operator-driven Phase 8 prep
+landings `b411c47` and `44c7b25`) with cross-references to the DEC table
+where DEC entries provide rationale. Audit `README.md` and
+`docs/User_Guide.md` end-to-end so that every install-command, dd-command,
+mesh-up command, Matrix-up command, and forensic-toolkit command actually
+matches the behavior of the v2.0.0-rc1 ISO that builds from develop HEAD; any
+drift (wrong command name, wrong path, stale flag, removed feature, missing
+step, version-string mismatch) is corrected. The slice consolidates the
+pre-bundle W8-2 (CHANGELOG generation) and W8-3 (Documentation audit) slices
+per DEC-PHASE8-002. No runtime behavior change.
+
+*Scope Manifest.* Allowed: `CHANGELOG.md`, `README.md`, `docs/User_Guide.md`,
+`docs/CONTRIBUTING.md`, `docs/SUPPORT.md`, `docs/DEVELOPMENT_CHECKLIST.md`,
+`docs/e2e-scenario.md`. Required: `CHANGELOG.md`, `README.md`,
+`docs/User_Guide.md`. Forbidden (any touch requires planner re-approval):
+`scripts/**`, `iso/**`, `systemd/**`, `docker/**`, `Dockerfile`, `Makefile`,
+`docker-compose.yml`, `docs/qemu-boot-test.md`, `.github/workflows/**`,
+`tests/**`, `MASTER_PLAN.md`, `DECISIONS.md`, `LICENSE.md`, `archive/**`,
+`ORION-X/**`, `reckonings/**`. State authorities touched:
+`release_notes_authority` (CHANGELOG.md as single canonical changelog),
+`user_facing_documentation_authority` (README.md + docs/User_Guide.md
+canonical entrypoints). Full contract in `tmp/scope-wi-w8-finish-A.json` and
+`tmp/eval-wi-w8-finish-A.json`.
+
+*Acceptance gates (summary).* All three GitHub Actions workflows green on
+HEAD (lint.yml, qemu-test.yml, e2e-test.yml); `CHANGELOG.md` exists at repo
+root with a `## [v2.0.0-rc1]` section referencing >= 20 W-IDs and >= 10 DEC
+IDs across Phases 1-7 + W8-1; `grep -rn 'v2\.0\.0-dev' CHANGELOG.md README.md
+docs/User_Guide.md` returns zero matches (anti-drift mirror of W8-1
+discipline); every script reference in `docs/User_Guide.md` resolves to an
+existing file at develop HEAD; reviewer REVIEW_* includes per-file diff
+summary and flagged-but-not-modified findings for follow-up planner
+attention.
+
+*Rollback boundary.* Single feature branch
+`feature/phase8-w8-finish-A-docs` with one squash merge into `develop`.
+Reverting deletes `CHANGELOG.md` and restores the pre-audit `README.md` /
+`docs/User_Guide.md`. All other authorities remain at develop HEAD.
+
+**wi-w8-finish-B Scope Manifest and Evaluation Contract (seeded 2026-05-14;
+pending wi-w8-finish-A landing):**
+
+*Mission.* Produce four release-pipeline surfaces so that the only remaining
+steps to publish v2.0.0 are W7-7 operator USB attestation and W8-7 final tag
++ publish (both hard human boundaries). (1) `.github/workflows/release.yml`
+triggers on `v*` tag push or manual workflow_dispatch, builds (or downloads)
+the ISO via the canonical `scripts/build-iso.sh` authority, computes SHA-256
+and SHA-512 checksums, and produces detached GPG signatures using
+`secrets.GPG_PRIVATE_KEY` + `secrets.GPG_PASSPHRASE` with
+`continue-on-error: true` on the signing step (operator key provisioning is
+a hard human boundary; the workflow does not block on it). (2) Drafts a
+GitHub Release in DRAFT mode, attaches ISO + checksums + (optional)
+signatures, sources release-notes body from `CHANGELOG.md`. (3) Renames the
+runtime workflow identity `phase7-integration` → `phase8-release` via
+`cc-policy workflow rename` (runtime-state operation, not source-tree edit).
+(4) Optional `docs/release-process.md` operator runbook documenting the W8-7
+publish sequence. The slice consolidates pre-bundle W8-4 + W8-5 + W8-6 per
+DEC-PHASE8-002. No source-code change to scripts/build-iso.sh, no ISO
+behavior change.
+
+*Scope Manifest.* Allowed: `.github/workflows/release.yml`,
+`.github/workflows/qemu-test.yml` (only if W7-7-enabler artifact contract
+needs adjustment), `scripts/release/**` (helper scripts for the release
+pipeline), `docs/release-process.md`. Required:
+`.github/workflows/release.yml`. Forbidden (any touch requires planner
+re-approval): `scripts/build-iso.sh`, `scripts/qemu-boot-test.sh`,
+`scripts/mesh/**`, `scripts/setup-*.sh`, `scripts/security/**`,
+`scripts/artifact-analyzer.py`, `scripts/storyboard-gen.py`, `systemd/**`,
+`iso/**`, `docker/**`, `Dockerfile`, `Makefile`, `docker-compose.yml`,
+`tests/**`, `README.md`, `CHANGELOG.md`, `docs/User_Guide.md`,
+`docs/qemu-boot-test.md`, `.github/workflows/lint.yml`,
+`.github/workflows/e2e-test.yml`, `MASTER_PLAN.md`, `DECISIONS.md`,
+`LICENSE.md`, `archive/**`, `ORION-X/**`, `reckonings/**`. State authorities
+touched: `release_pipeline_authority` (release.yml as single canonical
+release pipeline), `release_artifact_signing_authority` (operator-provisioned
+GPG secrets), `github_release_authorship_authority` (DRAFT mode enforces W8-7
+publish gate per DEC-PHASE7-005), `workflow_identity_authority` (runtime
+rename phase7-integration → phase8-release). Full contract in
+`tmp/scope-wi-w8-finish-B.json` and `tmp/eval-wi-w8-finish-B.json`.
+
+*Acceptance gates (summary).* All four GitHub Actions workflows green on
+HEAD (lint.yml, qemu-test.yml, e2e-test.yml, release.yml `workflow_dispatch`
+dry-run with run id captured); release.yml triggers on `v*` tag and
+workflow_dispatch; contains SHA-256 + SHA-512 + detached GPG signing (with
+`continue-on-error: true` on the GPG step) + GitHub Release scaffold in
+DRAFT mode; references `secrets.GPG_PRIVATE_KEY` + `secrets.GPG_PASSPHRASE`;
+sources release-notes from `CHANGELOG.md` (wi-w8-finish-A output); a
+`workflow_dispatch` run on the feature branch HEAD has completed end-to-end
+with the GPG-signing step optionally failing non-blocking but all other
+steps succeeding; runtime workflow identity renamed via `cc-policy workflow
+rename phase7-integration phase8-release` (command + output captured in
+REVIEW_*); subsequent `cc-policy context role` returns
+`workflow_id: phase8-release`.
+
+*Rollback boundary.* Single feature branch
+`feature/phase8-w8-finish-B-release-pipeline` with one squash merge into
+`develop`. Reverting deletes `release.yml`, `scripts/release/**`, and
+`docs/release-process.md`. The runtime workflow-identity rename is a
+separate runtime-state operation; reverting requires `cc-policy workflow
+rename phase8-release phase7-integration` (implementer documents the
+rollback runbook in REVIEW_*).
+
+**Hard human boundaries at phase end (no software slice can close these):**
+
+- **W7-7 (Physical USB boot attestation).** Operator downloads the
+  DRAFT-release ISO + checksums (or the qemu-test.yml artifact), `dd`-writes
+  to a physical USB, boots on at least one real piece of hardware, validates
+  the User_Guide walkthrough end-to-end (mesh-up, Matrix-up, forensic
+  toolkit), and signs off. `approve` gate per DEC-PHASE7-005. The artifact
+  channel is wi-w8-finish-B's DRAFT release going forward; until then, the
+  W7-7 enabler `b411c47` qemu-test.yml artifact upload is the channel.
+- **Operator GPG key provisioning.** Before W8-7 publish, the operator
+  generates a GPG keypair, uploads the private key to
+  `secrets.GPG_PRIVATE_KEY` and the passphrase to `secrets.GPG_PASSPHRASE`
+  (or matching organization-secret equivalents), publishes the public key
+  out-of-band (keyserver, gpg.jarocki.org, or a `.well-known` URL referenced
+  from README.md and CHANGELOG.md). This is one-time work; subsequent
+  release.yml runs produce signatures automatically. No software slice can
+  generate the key — that would defeat signature verification.
+- **W8-7 (final `v2.0.0` tag + GitHub Release publish).** Operator runs
+  (a) retag `v2.0.0-rc1` → `v2.0.0` (or creates a new `v2.0.0` tag on the
+  same commit), (b) confirms `secrets.GPG_PRIVATE_KEY` and
+  `secrets.GPG_PASSPHRASE` are provisioned, (c) re-runs release.yml on the
+  new tag (signatures now produced unconditionally), (d) verifies
+  signatures + W7-7 attestation complete, (e) `gh release edit v2.0.0
+  --draft=false` to publish, (f) the planner records the closure DEC
+  (DEC-PHASE8-005 or successor; numbering depends on intermediate closure
+  DECs at wi-w8-finish-A and wi-w8-finish-B). Explicit `approve` gate per
+  DEC-PHASE7-005. The slice contract for W8-7 is intentionally minimal —
+  the slice is operator action, not implementer work.
 
 ---
 
@@ -1749,6 +1913,7 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | DEC-PHASE7-041 | 2026-05-13 | [META] When each fix slice surfaces a new cascade, consolidate under a single tracker and proceed in parallel rather than serial | General principle, not Phase 7-specific, observed during the W7-4-B → W7-4-C-a → W7-4-C-b cascade-fix arc. Pattern recognition: when a slice meant to close a partial-acceptance surfaces a deeper question that itself decomposes into more questions, the loop has reached the wrong scale — the problem class is bigger than the slice scope. **Symptoms**: (a) each fix slice's investigation gate produces multiple candidate root-cause classes, each with its own design decisions; (b) the slice scope grows to touch authorities outside the original feature (DEC-SEC-003 first-boot, DEC-SEC-002 AppArmor, DEC-MESH-* mesh runtime); (c) the seeded Scope Manifest's "rollback boundary" is tested by the second cascade fix, then the third; (d) the EOL/release clock advances faster than convergence. **Right move**: stop the serial-cascade arc, consolidate open runtime content under a single tracker, preserve the diagnostic surface (don't mask the failure signals — keep them visible in artifacts), and route the design question to the next planned design pass. **Anti-drift control**: when consolidating, the diagnostic surface MUST remain visible (artifacts uploaded, sentinels emitted, step runs) — only the workflow gate is relaxed. Removing the diagnostic surface (e.g. removing the W7-4-B step entirely) would be silent skip; keeping it with `continue-on-error: true` is loud-but-non-blocking. **Future Implementer guidance**: if a planning dispatch arrives at this principle in a different phase or feature context, prefer this pattern over continuing a cascade-fix arc. Cite this DEC when consolidating. Code: this dogma applies project-wide; the operative example is W7-4-B FULL acceptance + W7-4-C-a/b abandonment under issue #39. |
 | DEC-PHASE7-043 | 2026-05-14 | [W7-8 / Phase 7 closure] Phase 7 (Integration Testing) closed on `develop` at `05b98a3` with all three CI workflows green; Phase 8 (Release v2.0.0) activated | Acceptance basis: all three CI workflows green simultaneously on `develop` at `05b98a3` (Lint & Test, QEMU Boot Test, E2E Scenario Test) after the W7-6 failure-mode recovery slice landed (Option D config-layer assertion of systemd `Restart=` directives across 8 Orion units). Seven implementation slices accepted in arc order: W7-1, W7-3, W7-4-A (`0424b7e`, closes #9 #13), W7-4-A-bis (`da66fee`, closes #37), W7-4-A-tris (`68b9097`, closes #38), W7-4-B (`c8bce0a` — mechanism FULL ACCEPTED per DEC-PHASE7-039), W7-5 (`8bcded0` — `iso_size` PASS host-side per DEC-PHASE7-042), W7-6 (`05b98a3`). Two cascade-consolidation exit slices applied (W7-4-B-exit at `c6c42c1`, W7-5-exit at `ba3e0d1`) confirm DEC-PHASE7-041 as durable operational discipline rather than a one-off escape hatch. W7-4-C-a and W7-4-C-b ABANDONED per DEC-PHASE7-040; their seeded Scope Manifests remain valid reference material for a future #39 closure slice in Phase 8 design. W7-7 (physical USB boot) DEFERRED to operator attestation as a Phase 8 release gate per DEC-PHASE7-005 (`approve` gate was always human-in-the-loop, never a CI-runnable slice; the same hybrid ISO is already proven bootable in QEMU under BIOS and UEFI via W7-3). Open trackers carried to Phase 8 design pass: #36 (Phase 7 polish, non-blocking), #39 (W7-4-B runtime gaps — mesh cascade + AppArmor enforcement under headless QEMU), #40 (W7-5 in-guest boot_time/idle_ram measurement reliability), #41 (runtime-control-plane hygiene: `decode_work_item_contract` rejects `workflow_id` in `evaluation_json` — filed at closure 2026-05-14, non-blocking), plus older #32, #33, #23 (none blocking). The Phase 7 acceptance bar — "Full E2E scenario completes. ISO boots UEFI + BIOS. All failure scenarios recover." — is met in the canonical-authority sense: the E2E scenario passes (Docker), the ISO boots under both QEMU firmware paths (W7-3), the runtime-verification mechanism is operative (W7-4-B), the perf-measurement mechanism is operative with `iso_size` verified (W7-5), and the failure-recovery configuration is asserted across all long-running units (W7-6). The runtime-content gaps that the W7-4-B and W7-5 mechanisms surface are tracked as Phase 8 design pass inputs under #39 and #40 rather than as Phase 7 closure blockers — this is the consistent application of the single-authority discipline that runs throughout Phase 7 (the mechanism is the acceptance bar; the runtime content is a separate authority). **Phase 8 activation**: Phase 8 (Release v2.0.0) is now ACTIVE — release-gate work (version bump, documentation audit, release artifacts, GitHub Release with ISO attached, W7-7 operator attestation) begins in a fresh planning slice; the closure scope of W7-8 is deliberately limited to recording Phase 7 acceptance and activating Phase 8, not to producing detailed Phase 8 implementation content. Code: merge commit `05b98a3` on `develop` (W7-6); CI run on `05b98a3` showing all three workflows green; this Decision Log entry; the W-ID table updates (W7-6 ACCEPTED, W7-7 DEFERRED, W7-8 IN PROGRESS); the Phase 7 closure narrative (above) and Phase 8 status header (now Active). |
 | DEC-PHASE8-001 | 2026-05-14 | [PHASE 8 START / W8-1 seeding] Phase 8 (Release v2.0.0) activated; first slice is version-string finalization to `v2.0.0-rc1`, NOT `v2.0.0` | Phase 8 begins one slice at a time per DEC-PHASE7-041 cascade-consolidation discipline applied preemptively — detailed Scope Manifests and Evaluation Contracts are seeded at planner-dispatch time, not speculatively up-front, because each Phase 8 slice may surface downstream design questions (release-tagging authority, GPG signing key authority, GitHub Release authorship) that benefit from full evidence from prior slices. **First slice (W8-1) rationale**: live dual-authority bug in the tree at Phase 7 closure — `scripts/build-iso.sh` (canonical version authority per DEC-PHASE7-002) and `iso/auto/config` already default to `v2.0.0-rc1`, but `Dockerfile` (LABEL + MOTD + bashrc literals) and `README.md` (headline + dd-command example) still say `v2.0.0-dev`. A future implementer reading either surface gets a different version. W8-1 collapses the surfaces to one canonical string and matches the build-iso authority. **`v2.0.0-rc1` chosen over `v2.0.0`**: (a) the build-iso authority already defaults to `rc1` per DEC-PHASE7-002, so propagating `v2.0.0-rc1` preserves that decision; bumping to `v2.0.0` would supersede DEC-PHASE7-002 without a new DEC; (b) the actual `v2.0.0` git tag belongs at W8-7 after W7-7 operator attestation, signed-artifact pipeline (W8-4), and finalized release notes (W8-5) are in place — pre-bumping to `v2.0.0` now would claim release-candidate readiness while #39/#40 runtime gaps remain open and W7-7 attestation is pending; (c) `rc1` is the semver-conventional first release-candidate label and matches the artifact's actual state. **Rejected alternatives**: (i) bumping straight to `v2.0.0` now — claims readiness ahead of W7-7 + signed-artifact pipeline; supersedes DEC-PHASE7-002 without a new authority decision; (ii) seeding all six Phase 8 W-IDs with full Scope Manifests up-front — re-introduces the speculative-planning anti-pattern that DEC-PHASE7-041 abandons; (iii) starting with CHANGELOG generation (W8-2) — would reference version literals that have not yet been finalized to one canonical string; W8-1 must land first so W8-2 has a single version target. **Already-accepted Phase 8 prep work**: two operator-driven landings during the Phase 7 closure window are folded into Phase 8 as already-accepted prep, NOT seeded as W-IDs requiring further work: (a) **W7-7 enabler `b411c47`** — `.github/workflows/qemu-test.yml` uploads the built ISO as artifact `orionx-iso-<run_id>` so the operator can `gh run download` and dd-write to USB without a separate local build (operator track enablement plumbing, not the W7-7 attestation itself); (b) **W8 Dockerfile cleanup `44c7b25`** — removed three apt-unavailable packages from `Dockerfile` (same drift class as Phase 7 #33 — release-readiness hygiene). The pattern (apt index drift between development and release tagging) is one Phase 8 should watch for in parallel surfaces (ISO chroot list, Dockerfile, docker-compose images). **Phase 8 W-ID numbering**: DEC-PHASE8-NNN sequence is independent of DEC-PHASE7-001..043; the next entry will be DEC-PHASE8-002 at W8-1 closure (or an amendment to this entry recording the closure SHA + CI run id + per-surface diff summary, mirroring DEC-PHASE7-031/033/034 closure-DEC shape). Code: `MASTER_PLAN.md` Phase 8 section (this slice's plan-edit); `tmp/scope-wi-w8-1-version-rc1.json`; `tmp/eval-wi-w8-1-version-rc1.json`; W-ID table additions (W8-1 IN PROGRESS, W8-2..W8-7 sketch). |
+| DEC-PHASE8-002 | 2026-05-14 | [W8-1 CLOSURE + PHASE 8 CONSOLIDATION] W8-1 accepted at merge `ee5861b`; pre-bundle W8-2..W8-6 consolidated into two implementer slices `wi-w8-finish-A` (docs bundle) and `wi-w8-finish-B` (release pipeline bundle); W7-7 and W8-7 carved out as remaining hard human boundaries | **Two decisions in one DEC entry, both flowing from W8-1 acceptance.** **Part 1 — W8-1 closure record (closure-DEC amendment shape mirroring DEC-PHASE7-031/033/034)**: W8-1 landed at merge `ee5861b` on `develop` 2026-05-14 (`feature/phase8-w8-1-version-rc1`, feature HEAD `f151315`). Per-surface diff: `Dockerfile` (3 lines: LABEL + MOTD + bashrc literals updated from `v2.0.0-dev` to `v2.0.0-rc1`; LABEL value `"2.0.0-rc1"` omits leading `v` per Docker convention), `README.md` (3 lines: headline + dd-command example updated). `scripts/build-iso.sh` and `iso/auto/config` unchanged per scope manifest (canonical authority preserved per DEC-PHASE7-002). Reviewer: 0 findings. Tests: `tests/unit/test_build_iso.sh` 41/41 pass on HEAD. Anti-drift check post-merge: `grep -rn 'v2\.0\.0-dev' Dockerfile README.md` returns zero matches. **Part 2 — Phase 8 finish consolidation**: Post-W8-1, the remaining pre-bundle Phase 8 W-IDs (W8-2 CHANGELOG, W8-3 Documentation audit, W8-4 release artifact pipeline, W8-5 GitHub Release scaffolding, W8-6 workflow rename) are reconsidered through the DEC-PHASE7-041 cascade-consolidation lens. The pre-bundle sequencing W8-2 → W8-3 → W8-4 → W8-5 → W8-6 has no architectural meaning: (a) W8-2 (CHANGELOG generation from git log + DEC table) and W8-3 (Documentation audit of README.md / docs/User_Guide.md) share the identical docs-only forbidden-paths surface; both are mechanical, both are pure-docs, both touch the same operator-facing surfaces; they would land back-to-back with effectively identical Scope Manifests. (b) W8-4 (SHA-256/SHA-512 checksums + GPG signing CI plumbing), W8-5 (GitHub Release draft scaffolding), and W8-6 (runtime workflow rename `phase7-integration` → `phase8-release`) all touch the CI surface or the runtime control plane, none touch source code, all share overlapping forbidden-paths surfaces (Dockerfile/scripts/iso/systemd/tests/MASTER_PLAN.md/etc. all forbidden); they too would land back-to-back. Consolidating each natural cluster into one bundle eliminates artificial slice boundaries while preserving the planner's per-slice contract discipline (each bundle has its own Scope Manifest + Evaluation Contract written before implementer dispatch). **The two resulting slices**: `wi-w8-finish-A` (docs bundle: W8-2 + W8-3, in_progress, Scope Manifest in `tmp/scope-wi-w8-finish-A.json`, Evaluation Contract in `tmp/eval-wi-w8-finish-A.json`); `wi-w8-finish-B` (release pipeline bundle: W8-4 + W8-5 + W8-6, pending until wi-w8-finish-A lands, Scope Manifest in `tmp/scope-wi-w8-finish-B.json`, Evaluation Contract in `tmp/eval-wi-w8-finish-B.json`). The pre-bundle W8-2..W8-6 rows remain in the W-ID table for traceability but their Status column marks them CONSOLIDATED with a pointer to the consolidated parent. **W7-7 and W8-7 carve-out (the remaining hard human boundaries)**: W7-7 (physical USB boot attestation) remains operator-track per DEC-PHASE7-005 — no software slice can perform it; the artifact channel is wi-w8-finish-B's DRAFT-release ISO once landed, with the W7-7 enabler `b411c47` qemu-test.yml ISO upload as the current channel. W8-7 (final v2.0.0 retag + GitHub Release publish) remains an explicit `approve` gate per DEC-PHASE7-005, with operator GPG key provisioning (`secrets.GPG_PRIVATE_KEY` + `secrets.GPG_PASSPHRASE`) as a paired prerequisite — also a hard human boundary because committing a private key or generating one in-workflow would defeat signature verification. The release.yml workflow handles the GPG-signing step with `continue-on-error: true` until the operator provisions the key (same `continue-on-error: true` cascade-consolidation discipline DEC-PHASE7-041 established for W7-4-B-exit and W7-5-exit — keep the diagnostic surface visible, do not block the workflow on an unresolved upstream gate). **Rejected alternatives**: (i) seeding W8-2..W8-6 as five separate slices — re-introduces the speculative-planning anti-pattern DEC-PHASE7-041 abandons; each slice's scope manifest would duplicate the previous one's; the sequencing has no architectural meaning. (ii) Consolidating all five remaining W-IDs into ONE bundle — couples docs work (which only requires markdown editing tools) with CI/runtime work (which requires `cc-policy` runtime access and `workflow_dispatch` CI verification); two separable forbidden-paths surfaces are present so the bundling boundary is real, not artificial. (iii) Treating W8-6 (workflow rename) as a separate `XS` slice that runs anywhere in the sequence — the rename is most naturally paired with the release-pipeline bundle because both are runtime-control-plane surfaces and both close out the Phase 7 → Phase 8 identity transition; pairing them in one slice avoids a third small slice for one runtime command. (iv) Implementing GPG-signing CI plumbing as a deferred follow-up to W8-finish-B — leaves the release pipeline incomplete and creates a fourth Phase 8 slice that has no architectural distinction from W8-finish-B's scope; better to wire the signing step now with `continue-on-error: true` so the operator's later key provisioning is the only remaining action. **Critical path (revised post-consolidation)**: W8-1 (ACCEPTED) → wi-w8-finish-A (docs, in_progress) → wi-w8-finish-B (release pipeline, pending) → W8-7 (approve gate, hard human). W7-7 runs in parallel on operator hardware; its acceptance is a prerequisite to W8-7 publish but does not block the software track. **Meta-confirmation of DEC-PHASE7-041**: this is the third operative instance of cascade-consolidation discipline (after W7-4-B-exit per DEC-PHASE7-039 and W7-5-exit per DEC-PHASE7-042; the W7-8 Phase 7 closure narrative cites two instances; this Phase 8 consolidation is the third). The pattern is now durable operational discipline applied preemptively to plan a phase's remaining slices, not only retrospectively to exit cascades. Code: `MASTER_PLAN.md` Phase 8 section (W-ID table updates: W8-1 ACCEPTED, W8-2..W8-6 CONSOLIDATED, wi-w8-finish-A IN PROGRESS, wi-w8-finish-B PENDING, W7-7 / W8-7 hard human boundaries; this DEC entry); `tmp/scope-wi-w8-finish-A.json`; `tmp/eval-wi-w8-finish-A.json`; `tmp/scope-wi-w8-finish-B.json`; `tmp/eval-wi-w8-finish-B.json`. |
 | DEC-PHASE7-042 | 2026-05-13 | [W7-5 partial-accept + cascade-consolidation reapplication] W7-5 mechanism accepted with 1-of-3 targets verified; in-guest measurement reliability tracked under issue #40; DEC-PHASE7-041 reapplied as durable operational discipline | W7-5 (performance benchmark) landed at merge `8bcded0` and produced parseable `ORIONX_PERF: iso_size_bytes=984612864` (≈939 MiB, well under the 4 GiB threshold — **PASS**) host-side on first CI run. The other two Phase 7 performance targets from the goal-contract `desired_end_state` (`boot_time_seconds`, `idle_ram_bytes`) were UNMEASURED because `ORIONX_PERF_END` did not reach `/dev/ttyS0` within the 90s post-boot window — the same #39 first-boot cascade surface that gates W7-4-B's mesh assertions also gates W7-5's in-guest measurements (`multi-user.target` reach is unreliable on headless QEMU until non-interactive first-boot is resolved in Phase 8 design). **Partial-acceptance rationale**: rejecting W7-5 and reopening to chase the in-guest measurement reliability would be precisely the cascade-fix loop DEC-PHASE7-041 abandons. The mechanism (perf-measure unit + sentinel parser + host-side ISO-size measurement) is the value W7-5 delivers; 1 of 3 targets verified is real progress on the goal contract; the remaining two targets are blocked on the same architectural question Phase 8 design will resolve. **Exit slice (W7-5-exit, merge `ba3e0d1`)**: applied `continue-on-error: true` to the W7-5 step in `.github/workflows/qemu-test.yml` (mirror of W7-4-B-exit per DEC-PHASE7-039) and rewrote a stale comment block (caught by reviewer round 1). The step still runs, still emits sentinels, still uploads `qemu-artifacts-<run-id>/serial-{bios,uefi}.log`, but does not fail the workflow. **Issue #40 filed (2026-05-13)** as the in-guest boot_time / idle_ram measurement reliability tracker; routed as Phase 8 design pass input alongside #39. **Anti-drift control**: removing `continue-on-error: true` from the W7-5 step requires a planner DEC that explicitly closes #40 first. **Meta-confirmation of DEC-PHASE7-041**: this is the second application of the cascade-consolidation pattern in three slices (W7-4-B-exit, W7-5-exit). The pattern is durable operational discipline, not a one-off escape hatch. Both #39 and #40 share a root architectural question (headless-QEMU non-interactive boot semantics, DEC-SEC-003 bounded supersedence per DEC-PHASE7-038), and Phase 8 design will address them together rather than in serial cleanup slices. **Rejected alternative**: reopening W7-5 to chase the in-guest measurement window would have produced (a) another cascade-fix arc; (b) coupling with #39 work that belongs in Phase 8; (c) pressure to relax the 90s threshold without a real DEC — which would silently supersede the goal-contract `desired_end_state` values. **Cross-references**: DEC-PHASE7-035 (sentinel mechanism authority — preserved); DEC-PHASE7-039 (W7-4-B-exit first application); DEC-PHASE7-041 (meta-principle); DEC-PHASE7-040 (#39 cascade-consolidation precedent); issue #40 (in-guest measurement reliability tracker). Operational note: two Guardian-stewardship findings surfaced during this slice (stale `.git/index.lock` blocking the first W7-5-exit merge; workflow `base_branch=main` while merges target `develop`); both are runtime/control-plane discipline observations rather than source slices and are logged in the Phase 7 narrative for the operator's attention without a separate DEC entry. Code: merge commits `8bcded0` (W7-5 mechanism), `ba3e0d1` (W7-5-exit) on `develop`; CI run `25710069470`; issue #40 tracker; W-ID table updates marking W7-5 PARTIAL-ACCEPT and adding W7-5-exit ACCEPTED. |
 
 ## Risk Register
