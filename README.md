@@ -1,10 +1,10 @@
-# Orion-X Phoenix Edition v2.0.0-dev
+# Orion-X Phoenix Edition v2.0.0-rc1
 
 Welcome to Orion-X Phoenix Edition! This toolkit is a bootable cybersecurity platform that lets you investigate cyber incidents securely. Simply insert the USB into a target machine, boot into Orion-X, and begin analyzing memory and network traffic within minutes.
 
 ## Overview
 
-Orion-X Phoenix Edition v2.0.0-dev is a fully operational, bootable cybersecurity toolkit designed for incident response and digital forensics. It provides a hardened Linux-based live environment with an emphasis on security, privacy, and collaboration.
+Orion-X Phoenix Edition v2.0.0-rc1 is a fully operational, bootable cybersecurity toolkit designed for incident response and digital forensics. It provides a hardened Linux-based live environment with an emphasis on security, privacy, and collaboration.
 
 Key features:
 - Bootable media with hardened Linux environment
@@ -20,7 +20,7 @@ Key features:
 1. Build the ISO (see `Makefile` targets)
 2. Create a bootable USB drive:
    ```
-   sudo dd if=orionx-phoenix-edition-v2.0.0-dev.iso of=/dev/sdX bs=4M status=progress
+   sudo dd if=orionx-phoenix-edition-v2.0.0-rc1.iso of=/dev/sdX bs=4M status=progress
    ```
 3. Boot from the USB drive (you may need to change BIOS/UEFI settings)
 4. Follow on-screen instructions to set up your environment
