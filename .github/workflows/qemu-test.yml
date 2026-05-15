@@ -118,6 +118,13 @@ jobs:
         run: |
           sudo chown -R "$(id -u):$(id -g)" "${{ github.workspace }}"
 
+      - name: Upload built ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orionx-iso-${{ github.run_id }}
+          path: output/*.iso
+          if-no-files-found: error
+
       - name: Validate project hooks executed during ISO build (#32)
         run: |
           BUILD_LOG=tmp/build-iso.log bash tests/integration/test-iso-hooks-applied.sh
