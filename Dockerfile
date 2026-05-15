@@ -1,7 +1,7 @@
 FROM ubuntu:22.04
 
 LABEL maintainer="Orion-X Project"
-LABEL version="2.0.0-dev"
+LABEL version="2.0.0-rc1"
 LABEL description="Orion-X Phoenix Edition - Incident Response & Digital Forensics Toolkit"
 
 # Prevent interactive prompts during installation
@@ -73,11 +73,11 @@ RUN chmod +x /opt/orionx/scripts/*.sh /opt/orionx/scripts/*.py /opt/orionx/scrip
     ln -sf /opt/orionx/scripts/download-samples.sh /usr/bin/
 
 # Create welcome message
-RUN echo '#!/bin/bash\necho ""\necho "Welcome to Orion-X Phoenix Edition v2.0.0-dev Docker Environment"\necho "Type \"orionx-help\" for a list of available commands"\necho ""' > /etc/update-motd.d/10-orionx && \
+RUN echo '#!/bin/bash\necho ""\necho "Welcome to Orion-X Phoenix Edition v2.0.0-rc1 Docker Environment"\necho "Type \"orionx-help\" for a list of available commands"\necho ""' > /etc/update-motd.d/10-orionx && \
     chmod +x /etc/update-motd.d/10-orionx
 
 # Add bash aliases and help function for user
-RUN echo '\n# Orion-X Phoenix Edition\nexport PATH=$PATH:/opt/orionx/scripts\nalias ll="ls -la"\nalias cls="clear"\n\norionx-help() {\n  echo "Orion-X Phoenix Edition v2.0.0-dev Help"\n  echo "-----------------------------------"\n  echo "setup-wireguard.sh : Standalone WireGuard tunnel setup"\n  echo "orionx-mesh        : P2P mesh networking (join, leave, status)"\n  echo "setup-matrix.sh  : Setup secure communication"\n  echo "toggle-theme.sh  : Switch between dark and green themes"\n  echo "run-lynis.sh     : Run security audit"\n  echo "download-samples.sh : Download sample data for analysis"\n  echo ""\n  echo "Forensic Tools:"\n  echo "artifact-analyzer.py : Automate artifact analysis"\n  echo "storyboard-gen.py    : Create incident timeline"\n  echo ""\n  echo "Documentation available in /usr/share/doc/orionx/"\n}\n' >> /home/orionx/.bashrc
+RUN echo '\n# Orion-X Phoenix Edition\nexport PATH=$PATH:/opt/orionx/scripts\nalias ll="ls -la"\nalias cls="clear"\n\norionx-help() {\n  echo "Orion-X Phoenix Edition v2.0.0-rc1 Help"\n  echo "-----------------------------------"\n  echo "setup-wireguard.sh : Standalone WireGuard tunnel setup"\n  echo "orionx-mesh        : P2P mesh networking (join, leave, status)"\n  echo "setup-matrix.sh  : Setup secure communication"\n  echo "toggle-theme.sh  : Switch between dark and green themes"\n  echo "run-lynis.sh     : Run security audit"\n  echo "download-samples.sh : Download sample data for analysis"\n  echo ""\n  echo "Forensic Tools:"\n  echo "artifact-analyzer.py : Automate artifact analysis"\n  echo "storyboard-gen.py    : Create incident timeline"\n  echo ""\n  echo "Documentation available in /usr/share/doc/orionx/"\n}\n' >> /home/orionx/.bashrc
 
 # Set working directory
 WORKDIR /home/orionx
