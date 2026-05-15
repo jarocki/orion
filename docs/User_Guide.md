@@ -1,4 +1,4 @@
-# Orion-X Phoenix Edition v1.5.5 User Guide
+# Orion-X Phoenix Edition v2.0.0-rc1 User Guide
 
 ## Table of Contents
 
@@ -78,9 +78,9 @@
 
 ### About Orion-X Phoenix Edition
 
-Orion-X Phoenix Edition v1.5.5 is a comprehensive cybersecurity toolkit designed specifically for incident response and digital forensics. It provides a hardened Linux-based live environment that emphasizes security, privacy, and team collaboration.
+Orion-X Phoenix Edition v2.0.0-rc1 is a comprehensive cybersecurity toolkit designed specifically for incident response and digital forensics. It provides a hardened Linux-based live environment that emphasizes security, privacy, and team collaboration.
 
-The "Phoenix" name symbolizes the toolkit's ability to help organizations rise from the ashes of security incidents through effective investigation and response. This edition (v1.5.5) represents a significant evolution from previous versions, with enhanced security features, improved usability, and expanded capabilities.
+The "Phoenix" name symbolizes the toolkit's ability to help organizations rise from the ashes of security incidents through effective investigation and response. This edition (v2.0.0-rc1) represents a significant evolution from previous versions, with enhanced security features, improved usability, and expanded capabilities.
 
 Orion-X is designed to be booted directly from USB media, leaving no traces on the host system. It can run entirely in memory, providing a secure and isolated environment for analyzing potentially compromised systems.
 
@@ -137,7 +137,7 @@ Before you can use Orion-X, you need to create bootable media (typically a USB d
    ```
 3. Create bootable media (replace `/dev/sdX` with your device):
    ```bash
-   sudo dd if=/path/to/orionx-phoenix-edition-v1.5.5.iso of=/dev/sdX bs=4M status=progress conv=fsync
+   sudo dd if=/path/to/orionx-phoenix-edition-v2.0.0-rc1.iso of=/dev/sdX bs=4M status=progress conv=fsync
    ```
 
 #### On Windows
@@ -161,7 +161,7 @@ Before you can use Orion-X, you need to create bootable media (typically a USB d
    ```
 4. Create bootable media:
    ```bash
-   sudo dd if=/path/to/orionx-phoenix-edition-v1.5.5.iso of=/dev/rdiskN bs=1m
+   sudo dd if=/path/to/orionx-phoenix-edition-v2.0.0-rc1.iso of=/dev/rdiskN bs=1m
    ```
 5. Eject the drive when complete:
    ```bash
@@ -175,10 +175,10 @@ To verify the integrity of your bootable media:
 1. Calculate the SHA-256 hash of the ISO before writing to USB:
    ```bash
    # On Linux/macOS
-   sha256sum orionx-phoenix-edition-v1.5.5.iso
+   sha256sum orionx-phoenix-edition-v2.0.0-rc1.iso
    
    # On Windows (PowerShell)
-   Get-FileHash orionx-phoenix-edition-v1.5.5.iso -Algorithm SHA256
+   Get-FileHash orionx-phoenix-edition-v2.0.0-rc1.iso -Algorithm SHA256
    ```
 
 2. Compare the calculated hash with the one provided on the download page
@@ -194,9 +194,9 @@ To verify the integrity of your bootable media:
 
 When booting from your Orion-X USB drive, you'll be presented with several boot options:
 
-- **Orion-X Phoenix Edition v1.5.5**: Standard boot with default settings
-- **Orion-X Phoenix Edition v1.5.5 (with persistence)**: Boot with persistent storage
-- **Orion-X Phoenix Edition v1.5.5 (Safe Mode)**: Boot with minimal drivers for compatibility
+- **Orion-X Phoenix Edition v2.0.0-rc1**: Standard boot with default settings
+- **Orion-X Phoenix Edition v2.0.0-rc1 (with persistence)**: Boot with persistent storage
+- **Orion-X Phoenix Edition v2.0.0-rc1 (Safe Mode)**: Boot with minimal drivers for compatibility
 - **Memory Test**: Run a memory diagnostic
 
 Use the arrow keys to select your preferred option and press Enter to boot.
@@ -1487,4 +1487,4 @@ Ctrl+E                         # Export packet dissections
 
 ---
 
-This User Guide provides a comprehensive overview of Orion-X Phoenix Edition v1.5.5. For further assistance or to report issues, please contact the Orion-X support team or consult the official project repository.
+This User Guide provides a comprehensive overview of Orion-X Phoenix Edition v2.0.0-rc1. For further assistance or to report issues, please contact the Orion-X support team or consult the official project repository.
