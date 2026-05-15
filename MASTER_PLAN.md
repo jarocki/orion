@@ -1418,13 +1418,187 @@ not to producing detailed Phase 8 implementation content.
 ### Phase 8: Release v2.0.0
 **Env:** macOS + Linux | **Status:** Active (activated 2026-05-14 — Phase 7 closed at `05b98a3`)
 
-- Bump all version strings to v2.0.0
-- Documentation audit (User Guide matches reality)
-- Release artifacts: ISO + SHA-256/SHA-512 checksums (GPG signed)
-- Git tag `v2.0.0`, GitHub Release with ISO attached
-- Close all phase issues
+Phase 8 takes the post-Phase-7 `develop` tree to a tagged, GPG-signed,
+publicly-downloadable `v2.0.0` release. The phase has two parallel tracks:
+the software release track (version finalization, CHANGELOG, release notes,
+documentation audit, signed artifacts, GitHub Release, git tag) and the
+operator attestation track (W7-7 physical USB boot validation; runtime-content
+design pass for issues #39 / #40 if the operator validation requires those
+gaps closed before tagging). The release track is CI-runnable and is the
+focus of the planner's bounded slices; the operator track runs in parallel.
 
-**Acceptance:** `sha256sum -c` passes. User Guide walkthrough succeeds on fresh ISO.
+**Acceptance:** `sha256sum -c` passes on the published ISO. User Guide
+walkthrough succeeds on fresh ISO. Git tag `v2.0.0` exists on `main`. GitHub
+Release with ISO attached and SHA-256/SHA-512 checksums (GPG signed)
+published. Operator has attested physical-USB boot on at least one piece of
+real hardware (W7-7).
+
+**Already-accepted Phase 8 prep work (operator-driven landings during Phase 7
+closure window):**
+
+- **W7-7 enabler — ISO artifact upload (operator-driven, accepted at `b411c47`).**
+  Wired `.github/workflows/qemu-test.yml` to upload the built ISO as a GitHub
+  Actions artifact (`orionx-iso-<run_id>`) so the operator can
+  `gh run download <run_id> -n orionx-iso-<run_id>` and dd-write to USB for
+  the W7-7 physical-boot attestation without a separate local build. This is
+  enablement plumbing for the operator track, not the W7-7 attestation
+  itself. The attestation remains an `approve`-gate human-in-the-loop step.
+- **W8 Dockerfile cleanup — apt-unavailable package removal (operator-driven,
+  accepted at `44c7b25`).** Removed three packages from `Dockerfile` that
+  were no longer available in the Bookworm Debian apt index (same gap class
+  as #33 in Phase 7 ISO chroot — release-readiness hygiene). First Phase 8
+  release-readiness fix; same drift class the canonical-paths cascade
+  exposed throughout Phase 7. The pattern (apt index drift between
+  development and release tagging) is one Phase 8 should watch for in
+  parallel surfaces (ISO chroot list, Dockerfile, docker-compose images).
+
+**Work Item Breakdown (planned 2026-05-14, slices seeded one at a time):**
+
+Phase 8 is decomposed conservatively: only the next slice is seeded with a
+full Scope Manifest and Evaluation Contract; downstream slices are sketched
+as the dependency graph but not detail-planned until each predecessor lands.
+This applies DEC-PHASE7-041 cascade-consolidation discipline preemptively —
+each Phase 8 slice may surface a downstream design question (release-tagging
+authority, GPG signing key authority, GitHub Release authorship) that
+benefits from being considered with full evidence from prior slices rather
+than speculatively up-front.
+
+| W-ID | Title | Env | Wave | Deps | Weight | Gate | Status |
+|------|-------|-----|------|------|--------|------|--------|
+| W8-1 | Version-string finalization to `v2.0.0-rc1` (single-authority) | Repo | 1 | - | S | review | IN PROGRESS 2026-05-14 (seeded — see DEC-PHASE8-001) |
+| W8-2 | CHANGELOG.md generation from git log + Decision Log | Repo | 2 | W8-1 | M | review | sketch (not yet seeded) |
+| W8-3 | Documentation audit (User Guide / README walkthrough matches reality) | Repo | 2 | W8-1 | M | review | sketch (not yet seeded) |
+| W8-4 | Release artifact pipeline (ISO + SHA-256/SHA-512 + detached GPG signatures) | Linux/CI | 3 | W8-1, W8-2 | L | review | sketch (not yet seeded) |
+| W8-5 | GitHub Release scaffolding (draft release with ISO + checksums + signatures + release notes) | Repo/CI | 4 | W8-2, W8-3, W8-4 | M | review | sketch (not yet seeded) |
+| W8-6 | Workflow rename `phase7-integration` → `phase8-release` (runtime hygiene) | Repo | * | - | XS | review | sketch (not yet seeded — opportunistic) |
+| W8-7 | `v2.0.0` release tag + final GitHub Release publish | Repo/CI | 5 | W8-5, W7-7 operator attestation | XS | approve | sketch (not yet seeded — final `approve` gate) |
+| W7-7 | Physical USB boot validation (operator track, parallel) | Hardware | * | W7-3, W8-1 | S | approve | DEFERRED 2026-05-14 (carries forward from Phase 7; remains operator attestation; W7-7 enabler `b411c47` provides the ISO artifact channel) |
+
+**Critical path (planned):** W8-1 → (W8-2 ∥ W8-3) → W8-4 → W8-5 → W8-7. W8-6
+(workflow rename) is opportunistic, no W-ID dependencies. W7-7 (operator
+attestation) runs in parallel on the operator's hardware; its acceptance is a
+prerequisite to W8-7's `approve` gate.
+
+**Max parallel width:** 2 in wave 2 (W8-2 ∥ W8-3, independent file scopes:
+CHANGELOG generation vs documentation audit).
+
+**Phase 8 work item authority discipline:** Detailed Scope Manifests and
+Evaluation Contracts are seeded one slice at a time at planner-dispatch time
+(same pattern as Phase 7 W-IDs). The expanded contracts live in
+`tmp/scope-wi-<id>.json` and `tmp/eval-wi-<id>.json`, written by the planner
+before each work item's implementer dispatch.
+
+**W8-1 Scope Manifest and Evaluation Contract (seeded 2026-05-14):**
+
+*Mission.* Bring the entire `develop` tree to a single canonical version
+string of `v2.0.0-rc1` (matching `scripts/build-iso.sh`'s default and
+`iso/auto/config`'s current value per DEC-PHASE7-002 — the build-iso version
+authority). Today, four active-source surfaces disagree: `Dockerfile` LABEL
++ MOTD + bashrc still say `v2.0.0-dev`, `README.md` headline + dd
+command-line example still say `v2.0.0-dev`, while `scripts/build-iso.sh`
+and `iso/auto/config` already say `v2.0.0-rc1`. This is a live
+dual-authority bug — a future implementer reading either surface gets a
+different version. W8-1 collapses the surfaces to one, matches the ISO
+build authority, and unblocks every later Phase 8 slice (CHANGELOG range
+boundary, release notes title, GitHub Release tag name) by establishing
+which version string they should reference.
+
+*Version-string decision.* The chosen final value is `v2.0.0-rc1`, NOT
+`v2.0.0`. Rationale: (a) the build-iso authority already defaults to `rc1`
+per DEC-PHASE7-002 (changing it would supersede that decision without a new
+DEC); (b) the actual `v2.0.0` git tag belongs at W8-7 after the operator has
+attested USB boot, release notes are finalized, and the signed ISO is
+attached to the GitHub Release — pre-bumping to `v2.0.0` now would claim
+release-candidate readiness while #39 / #40 runtime gaps remain open and
+W7-7 attestation is pending. `rc1` accurately describes the artifact's
+current state and matches semver release-candidate conventions.
+
+*Scope Manifest.*
+
+Allowed paths (the implementer may touch these and only these without
+re-approval):
+- `Dockerfile` — modify `LABEL version="2.0.0-dev"` and the two `v2.0.0-dev` literal references in the MOTD block and the bashrc help block
+- `README.md` — modify the `v2.0.0-dev` headline and the `orionx-phoenix-edition-v2.0.0-dev.iso` dd-command example
+- `tests/unit/test_build_iso.sh` — modify any test assertion that asserts a specific version literal (verify by `grep -n 'v2\.0\.0' tests/unit/test_build_iso.sh`) so the test still passes against `v2.0.0-rc1`. If the test asserts the version via the `VERSION` constant authority rather than a literal, no change is required — the implementer must check before editing
+- `MASTER_PLAN.md` — FORBIDDEN to implementer (planner-owned; the W8-1 closure entry is recorded by a separate planner pass)
+
+Required paths (must be touched in this slice — non-touch is a scope
+violation):
+- `Dockerfile` (LABEL + MOTD + bashrc literals)
+- `README.md` (headline + dd example)
+
+Forbidden paths (any touch requires explicit planner re-approval):
+- `scripts/build-iso.sh` — the canonical version authority per DEC-PHASE7-002; modifying the `VERSION="${ORIONX_VERSION:-v2.0.0-rc1}"` line is out of scope (the default value is ALREADY `v2.0.0-rc1` — no change needed)
+- `iso/auto/config` — already at `v2.0.0-rc1` (ORIONX_VERSION default); modifying would create version drift
+- `scripts/qemu-boot-test.sh`, `docs/qemu-boot-test.md` — Phase 7 harness contains version references in the W7-3 attach contract section; modifying would re-open Phase 7 scope
+- `iso/config/hooks/**`, `iso/config/includes.chroot/**`, `iso/config/package-lists/**` — Phase 6/7 ISO authority; no version references expected, any touch is a scope violation
+- `systemd/*.service`, `systemd/*.timer` — Phase 4/6/W7-4-A authority; no version references expected
+- `tests/integration/**` other than the W8-1 path-check additions if needed — Phase 7 integration test authority; version references should not exist there but if any do, the implementer must flag rather than edit
+- `.github/workflows/**` — release workflow changes are W8-4 scope, NOT W8-1
+- `docker/**` (mesh-node, matrix-node Dockerfiles, compose files) — those are Phase 3/4/7 Docker test infrastructure; if any contain version strings they are part of a future Docker version-sync slice, not W8-1
+- `Makefile` — no version literals expected; any touch is a scope violation
+- `MASTER_PLAN.md` — planner-owned per general Phase 7/8 discipline
+- `archive/**`, `ORION-X/**` — frozen historical content per DEC-012
+
+Expected state authorities touched:
+- `version_string_authority`: single canonical value `v2.0.0-rc1` across all
+  active-source surfaces. Owner: `scripts/build-iso.sh`'s `VERSION` constant
+  (DEC-PHASE7-002, unchanged by W8-1). All other surfaces become
+  derived/consistent rather than independent authorities.
+
+*Evaluation Contract — required tests.*
+- `bash tests/unit/test_build_iso.sh` passes locally and in lint.yml CI on the W8-1 feature branch HEAD (asserts build-iso emits the expected version literal; whether the test changes depends on whether it asserts via constant or literal — implementer must verify)
+- `grep -rn 'v2\.0\.0-dev' Dockerfile README.md tests/ scripts/ docs/ Makefile .github/ docker/ iso/` returns ZERO matches after the slice lands (anti-drift control: the legacy `v2.0.0-dev` string class collapses to zero across active-source surfaces)
+- `grep -rn 'v2\.0\.0-rc1' Dockerfile README.md scripts/build-iso.sh iso/auto/config` returns at least one match in each of the four named files (positive: the canonical string appears in every surface that should have it)
+- All three GitHub Actions workflows green on W8-1 feature branch HEAD (lint.yml, qemu-test.yml, e2e-test.yml) — version-string changes should not perturb any runtime path
+
+*Evaluation Contract — required real-path checks.*
+- After the slice lands, building the Docker image with `make docker-build` (or the equivalent build command) produces an image whose `LABEL version` is `2.0.0-rc1` — verifiable via `docker inspect --format='{{ index .Config.Labels "version" }}' <image>` (note: the LABEL value omits the `v` prefix per Docker convention; the README and shell-visible MOTD strings retain the `v` prefix per release-notes convention; the implementer documents this convention in the Dockerfile header comment if not already present)
+- `grep -c 'v2\.0\.0-rc1' README.md` returns >= 2 (the headline plus the dd-command example, plus any additional references the implementer adds for clarity — at minimum the headline must change)
+
+*Evaluation Contract — required authority invariants.*
+- `version_string_authority` is single-source: `scripts/build-iso.sh`'s `VERSION="${ORIONX_VERSION:-v2.0.0-rc1}"` constant remains the canonical authority. No file may hard-code a different version literal that disagrees with this constant. All `v2.0.0-rc1` literals in `Dockerfile`, `README.md`, and other surfaces are derived/consistent rather than independent — they MUST match the build-iso authority's default
+- The `v2.0.0-dev` legacy string class is COMPLETELY ERADICATED from active-source surfaces (the anti-drift control mirrors DEC-PHASE7-025's "test path moves with the file" discipline and DEC-PHASE7-033's "legacy reference class collapses to zero" pattern)
+- DEC-PHASE7-002 (build-iso as single version authority) is PRESERVED, not superseded — W8-1 is a propagation slice that aligns the derived surfaces with the existing authority, not a new authority decision
+- No new `*.version` file, no new `VERSION` env var, no new version-emission script — propagation is by literal edit only
+
+*Evaluation Contract — required integration points.*
+- W7-1 (ISO build pipeline modernization): `scripts/build-iso.sh` unchanged; the build authority's default value is the truth source
+- W7-3 (QEMU boot harness): `scripts/qemu-boot-test.sh` references the version in the W7-3 attach contract section; W8-1 leaves it untouched per scope discipline. If a version mismatch surfaces in qemu-test.yml CI, it is a Phase 7 follow-up, not a W8-1 fix
+- W7-7 enabler (`b411c47`): ISO artifact upload remains operative; the uploaded ISO filename becomes `orionx-phoenix-edition-v2.0.0-rc1.iso` (already true since `iso/auto/config` was already at `rc1`)
+- Phase 4 Matrix Docker compose: `docker/docker-compose.matrix-test.yml`, `docker/Dockerfile.matrix-node`, `docker/Dockerfile.mesh-node` — if any contain `v2.0.0-dev` strings they are flagged in the implementer's discovery pass but NOT modified in W8-1 (those are Phase 3/4/7 Docker authority; a follow-up Phase 8 slice may sync them if drift is found, but W8-1's scope is the primary user-facing surfaces only). The implementer reports any findings in the slice's REVIEW_* completion
+
+*Forbidden shortcuts.*
+- Bumping to `v2.0.0` (no `-rc1` suffix) — that is W8-7's scope, not W8-1's, and would claim release readiness without the operator attestation and signed artifacts
+- Bumping to `v2.0.0-rc2` or higher — there is no `rc1` to date in the project; the first release-candidate is `rc1` by definition
+- Modifying `scripts/build-iso.sh`'s `VERSION` constant — that is the canonical authority per DEC-PHASE7-002; the default is already `v2.0.0-rc1`
+- Modifying `iso/auto/config`'s `ORIONX_VERSION` default — already `v2.0.0-rc1`; touching it would invert the propagation direction (authority follows derived, not derived follows authority)
+- Touching `MASTER_PLAN.md` from the implementer seat — planner-owned per general Phase 7/8 discipline
+- Touching any file in the forbidden-paths list, including the Phase 7 frozen authorities (W7-3 harness, systemd/, iso/config/, etc.)
+- Adding a CI lint step that asserts version-string consistency — that is W8-4 release-pipeline scope, not W8-1
+- Generating a CHANGELOG entry in this slice — that is W8-2 scope
+- Adding a release-notes section to README.md — that is W8-5 scope
+
+*Ready-for-guardian definition.*
+- All three GitHub Actions workflows green on W8-1 feature branch HEAD (lint.yml, qemu-test.yml, e2e-test.yml)
+- `grep -rn 'v2\.0\.0-dev' Dockerfile README.md tests/ scripts/ docs/ Makefile .github/ docker/ iso/` returns zero matches at HEAD
+- `grep -rn 'v2\.0\.0-rc1' Dockerfile` returns at least one match (LABEL or shell literal)
+- `grep -rn 'v2\.0\.0-rc1' README.md` returns at least two matches (headline + dd example)
+- `scripts/build-iso.sh` and `iso/auto/config` show no diff from develop HEAD (single-authority preserved)
+- `tests/unit/test_build_iso.sh` passes locally and in lint.yml CI
+- Scope Manifest forbidden-paths list shows zero touches in the diff against develop — most critically, no touches to `scripts/build-iso.sh`, `iso/auto/config`, `systemd/**`, `iso/config/**`, `.github/workflows/**`, `MASTER_PLAN.md`
+- Reviewer's REVIEW_* completion includes the per-surface diff summary (which line in Dockerfile, which line in README.md, what the test_build_iso.sh change was if any) so a future implementer reading the closure DEC sees exactly what was edited
+- Planner closure entry (DEC-PHASE8-002 or DEC-PHASE8-001 amendment at closure time) can be authored citing CI run id, head SHA, and the per-surface diff summary
+
+*Rollback boundary.* Single feature branch `feature/phase8-w8-1-version-rc1`
+with one squash merge into `develop`. Reverting this slice restores
+`v2.0.0-dev` in `Dockerfile` and `README.md` (and the test if it was
+modified); `scripts/build-iso.sh` and `iso/auto/config` remain at
+`v2.0.0-rc1` because W8-1 does not touch them. Anti-drift: future
+version-string changes (W8-7 `v2.0.0`, future `v2.1.0-rc1`, etc.) must touch
+`scripts/build-iso.sh`'s `VERSION` constant as the authoritative source and
+re-propagate via the same surface list — a planner DEC is required for any
+version bump.
 
 ---
 
@@ -1574,6 +1748,7 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | DEC-PHASE7-040 | 2026-05-13 | [W7-4-C-a / W7-4-C-b abandonment] Cascade-fix slices folded into issue #39; non-interactive first-boot is a Phase 8 design question | Both W7-4-C-a (AppArmor profile load fix) and W7-4-C-b (first-boot non-interactive for CI) are ABANDONED inside Phase 7. The seeded Scope Manifests and Evaluation Contracts (DEC-PHASE7-037, DEC-PHASE7-038) remain valid reference material — they document the investigation paths and the candidate root-cause classes — but the slices are not scheduled inside Phase 7 because: (a) non-interactive first-boot under headless QEMU is a DEC-SEC-003 bounded-supersedence question that belongs in a Phase 8 design pass, not a reactive Phase 7 patch; (b) AppArmor profile enforcement under headless QEMU intersects the same design surface (which binaries are present at boot, which profiles attach, which load mechanism the hook uses) and benefits from being considered together with the first-boot question; (c) the cascade-fix loop was consuming Bullseye-EOL clock without converging — each fix slice surfaced a new cascade. **Rejected alternative**: continuing the cascade-fix arc serially would have produced multiple small slices each with its own incomplete Scope Manifest, multiple revert boundaries with mixed risk, and a Phase 7 timeline that drifts past the Bullseye EOL window. **Consolidation rationale**: a single tracker (#39) preserves the diagnostic surface (the W7-4-B step still emits sentinels on every CI run; the runtime FAIL signals are visible in artifacts), makes the open work visible in one place, and lets Phase 7 proceed to W7-5 (performance) and W7-6 (failure modes) in parallel rather than serial with cascade cleanup. **Cross-references**: issue #39 (consolidated runtime gaps tracker); DEC-PHASE7-035 (sentinel mechanism authority — preserved); DEC-PHASE7-036 (W7-4-B partial-acceptance — superseded by DEC-PHASE7-039 FULL acceptance); DEC-PHASE7-037 (W7-4-C-a Scope reference material); DEC-PHASE7-038 (W7-4-C-b bounded supersedence framing — preserved as Phase 8 design input). Code: issue #39 tracker; W-ID table updates marking W7-4-C-a and W7-4-C-b ABANDONED 2026-05-13. |
 | DEC-PHASE7-041 | 2026-05-13 | [META] When each fix slice surfaces a new cascade, consolidate under a single tracker and proceed in parallel rather than serial | General principle, not Phase 7-specific, observed during the W7-4-B → W7-4-C-a → W7-4-C-b cascade-fix arc. Pattern recognition: when a slice meant to close a partial-acceptance surfaces a deeper question that itself decomposes into more questions, the loop has reached the wrong scale — the problem class is bigger than the slice scope. **Symptoms**: (a) each fix slice's investigation gate produces multiple candidate root-cause classes, each with its own design decisions; (b) the slice scope grows to touch authorities outside the original feature (DEC-SEC-003 first-boot, DEC-SEC-002 AppArmor, DEC-MESH-* mesh runtime); (c) the seeded Scope Manifest's "rollback boundary" is tested by the second cascade fix, then the third; (d) the EOL/release clock advances faster than convergence. **Right move**: stop the serial-cascade arc, consolidate open runtime content under a single tracker, preserve the diagnostic surface (don't mask the failure signals — keep them visible in artifacts), and route the design question to the next planned design pass. **Anti-drift control**: when consolidating, the diagnostic surface MUST remain visible (artifacts uploaded, sentinels emitted, step runs) — only the workflow gate is relaxed. Removing the diagnostic surface (e.g. removing the W7-4-B step entirely) would be silent skip; keeping it with `continue-on-error: true` is loud-but-non-blocking. **Future Implementer guidance**: if a planning dispatch arrives at this principle in a different phase or feature context, prefer this pattern over continuing a cascade-fix arc. Cite this DEC when consolidating. Code: this dogma applies project-wide; the operative example is W7-4-B FULL acceptance + W7-4-C-a/b abandonment under issue #39. |
 | DEC-PHASE7-043 | 2026-05-14 | [W7-8 / Phase 7 closure] Phase 7 (Integration Testing) closed on `develop` at `05b98a3` with all three CI workflows green; Phase 8 (Release v2.0.0) activated | Acceptance basis: all three CI workflows green simultaneously on `develop` at `05b98a3` (Lint & Test, QEMU Boot Test, E2E Scenario Test) after the W7-6 failure-mode recovery slice landed (Option D config-layer assertion of systemd `Restart=` directives across 8 Orion units). Seven implementation slices accepted in arc order: W7-1, W7-3, W7-4-A (`0424b7e`, closes #9 #13), W7-4-A-bis (`da66fee`, closes #37), W7-4-A-tris (`68b9097`, closes #38), W7-4-B (`c8bce0a` — mechanism FULL ACCEPTED per DEC-PHASE7-039), W7-5 (`8bcded0` — `iso_size` PASS host-side per DEC-PHASE7-042), W7-6 (`05b98a3`). Two cascade-consolidation exit slices applied (W7-4-B-exit at `c6c42c1`, W7-5-exit at `ba3e0d1`) confirm DEC-PHASE7-041 as durable operational discipline rather than a one-off escape hatch. W7-4-C-a and W7-4-C-b ABANDONED per DEC-PHASE7-040; their seeded Scope Manifests remain valid reference material for a future #39 closure slice in Phase 8 design. W7-7 (physical USB boot) DEFERRED to operator attestation as a Phase 8 release gate per DEC-PHASE7-005 (`approve` gate was always human-in-the-loop, never a CI-runnable slice; the same hybrid ISO is already proven bootable in QEMU under BIOS and UEFI via W7-3). Open trackers carried to Phase 8 design pass: #36 (Phase 7 polish, non-blocking), #39 (W7-4-B runtime gaps — mesh cascade + AppArmor enforcement under headless QEMU), #40 (W7-5 in-guest boot_time/idle_ram measurement reliability), #41 (runtime-control-plane hygiene: `decode_work_item_contract` rejects `workflow_id` in `evaluation_json` — filed at closure 2026-05-14, non-blocking), plus older #32, #33, #23 (none blocking). The Phase 7 acceptance bar — "Full E2E scenario completes. ISO boots UEFI + BIOS. All failure scenarios recover." — is met in the canonical-authority sense: the E2E scenario passes (Docker), the ISO boots under both QEMU firmware paths (W7-3), the runtime-verification mechanism is operative (W7-4-B), the perf-measurement mechanism is operative with `iso_size` verified (W7-5), and the failure-recovery configuration is asserted across all long-running units (W7-6). The runtime-content gaps that the W7-4-B and W7-5 mechanisms surface are tracked as Phase 8 design pass inputs under #39 and #40 rather than as Phase 7 closure blockers — this is the consistent application of the single-authority discipline that runs throughout Phase 7 (the mechanism is the acceptance bar; the runtime content is a separate authority). **Phase 8 activation**: Phase 8 (Release v2.0.0) is now ACTIVE — release-gate work (version bump, documentation audit, release artifacts, GitHub Release with ISO attached, W7-7 operator attestation) begins in a fresh planning slice; the closure scope of W7-8 is deliberately limited to recording Phase 7 acceptance and activating Phase 8, not to producing detailed Phase 8 implementation content. Code: merge commit `05b98a3` on `develop` (W7-6); CI run on `05b98a3` showing all three workflows green; this Decision Log entry; the W-ID table updates (W7-6 ACCEPTED, W7-7 DEFERRED, W7-8 IN PROGRESS); the Phase 7 closure narrative (above) and Phase 8 status header (now Active). |
+| DEC-PHASE8-001 | 2026-05-14 | [PHASE 8 START / W8-1 seeding] Phase 8 (Release v2.0.0) activated; first slice is version-string finalization to `v2.0.0-rc1`, NOT `v2.0.0` | Phase 8 begins one slice at a time per DEC-PHASE7-041 cascade-consolidation discipline applied preemptively — detailed Scope Manifests and Evaluation Contracts are seeded at planner-dispatch time, not speculatively up-front, because each Phase 8 slice may surface downstream design questions (release-tagging authority, GPG signing key authority, GitHub Release authorship) that benefit from full evidence from prior slices. **First slice (W8-1) rationale**: live dual-authority bug in the tree at Phase 7 closure — `scripts/build-iso.sh` (canonical version authority per DEC-PHASE7-002) and `iso/auto/config` already default to `v2.0.0-rc1`, but `Dockerfile` (LABEL + MOTD + bashrc literals) and `README.md` (headline + dd-command example) still say `v2.0.0-dev`. A future implementer reading either surface gets a different version. W8-1 collapses the surfaces to one canonical string and matches the build-iso authority. **`v2.0.0-rc1` chosen over `v2.0.0`**: (a) the build-iso authority already defaults to `rc1` per DEC-PHASE7-002, so propagating `v2.0.0-rc1` preserves that decision; bumping to `v2.0.0` would supersede DEC-PHASE7-002 without a new DEC; (b) the actual `v2.0.0` git tag belongs at W8-7 after W7-7 operator attestation, signed-artifact pipeline (W8-4), and finalized release notes (W8-5) are in place — pre-bumping to `v2.0.0` now would claim release-candidate readiness while #39/#40 runtime gaps remain open and W7-7 attestation is pending; (c) `rc1` is the semver-conventional first release-candidate label and matches the artifact's actual state. **Rejected alternatives**: (i) bumping straight to `v2.0.0` now — claims readiness ahead of W7-7 + signed-artifact pipeline; supersedes DEC-PHASE7-002 without a new authority decision; (ii) seeding all six Phase 8 W-IDs with full Scope Manifests up-front — re-introduces the speculative-planning anti-pattern that DEC-PHASE7-041 abandons; (iii) starting with CHANGELOG generation (W8-2) — would reference version literals that have not yet been finalized to one canonical string; W8-1 must land first so W8-2 has a single version target. **Already-accepted Phase 8 prep work**: two operator-driven landings during the Phase 7 closure window are folded into Phase 8 as already-accepted prep, NOT seeded as W-IDs requiring further work: (a) **W7-7 enabler `b411c47`** — `.github/workflows/qemu-test.yml` uploads the built ISO as artifact `orionx-iso-<run_id>` so the operator can `gh run download` and dd-write to USB without a separate local build (operator track enablement plumbing, not the W7-7 attestation itself); (b) **W8 Dockerfile cleanup `44c7b25`** — removed three apt-unavailable packages from `Dockerfile` (same drift class as Phase 7 #33 — release-readiness hygiene). The pattern (apt index drift between development and release tagging) is one Phase 8 should watch for in parallel surfaces (ISO chroot list, Dockerfile, docker-compose images). **Phase 8 W-ID numbering**: DEC-PHASE8-NNN sequence is independent of DEC-PHASE7-001..043; the next entry will be DEC-PHASE8-002 at W8-1 closure (or an amendment to this entry recording the closure SHA + CI run id + per-surface diff summary, mirroring DEC-PHASE7-031/033/034 closure-DEC shape). Code: `MASTER_PLAN.md` Phase 8 section (this slice's plan-edit); `tmp/scope-wi-w8-1-version-rc1.json`; `tmp/eval-wi-w8-1-version-rc1.json`; W-ID table additions (W8-1 IN PROGRESS, W8-2..W8-7 sketch). |
 | DEC-PHASE7-042 | 2026-05-13 | [W7-5 partial-accept + cascade-consolidation reapplication] W7-5 mechanism accepted with 1-of-3 targets verified; in-guest measurement reliability tracked under issue #40; DEC-PHASE7-041 reapplied as durable operational discipline | W7-5 (performance benchmark) landed at merge `8bcded0` and produced parseable `ORIONX_PERF: iso_size_bytes=984612864` (≈939 MiB, well under the 4 GiB threshold — **PASS**) host-side on first CI run. The other two Phase 7 performance targets from the goal-contract `desired_end_state` (`boot_time_seconds`, `idle_ram_bytes`) were UNMEASURED because `ORIONX_PERF_END` did not reach `/dev/ttyS0` within the 90s post-boot window — the same #39 first-boot cascade surface that gates W7-4-B's mesh assertions also gates W7-5's in-guest measurements (`multi-user.target` reach is unreliable on headless QEMU until non-interactive first-boot is resolved in Phase 8 design). **Partial-acceptance rationale**: rejecting W7-5 and reopening to chase the in-guest measurement reliability would be precisely the cascade-fix loop DEC-PHASE7-041 abandons. The mechanism (perf-measure unit + sentinel parser + host-side ISO-size measurement) is the value W7-5 delivers; 1 of 3 targets verified is real progress on the goal contract; the remaining two targets are blocked on the same architectural question Phase 8 design will resolve. **Exit slice (W7-5-exit, merge `ba3e0d1`)**: applied `continue-on-error: true` to the W7-5 step in `.github/workflows/qemu-test.yml` (mirror of W7-4-B-exit per DEC-PHASE7-039) and rewrote a stale comment block (caught by reviewer round 1). The step still runs, still emits sentinels, still uploads `qemu-artifacts-<run-id>/serial-{bios,uefi}.log`, but does not fail the workflow. **Issue #40 filed (2026-05-13)** as the in-guest boot_time / idle_ram measurement reliability tracker; routed as Phase 8 design pass input alongside #39. **Anti-drift control**: removing `continue-on-error: true` from the W7-5 step requires a planner DEC that explicitly closes #40 first. **Meta-confirmation of DEC-PHASE7-041**: this is the second application of the cascade-consolidation pattern in three slices (W7-4-B-exit, W7-5-exit). The pattern is durable operational discipline, not a one-off escape hatch. Both #39 and #40 share a root architectural question (headless-QEMU non-interactive boot semantics, DEC-SEC-003 bounded supersedence per DEC-PHASE7-038), and Phase 8 design will address them together rather than in serial cleanup slices. **Rejected alternative**: reopening W7-5 to chase the in-guest measurement window would have produced (a) another cascade-fix arc; (b) coupling with #39 work that belongs in Phase 8; (c) pressure to relax the 90s threshold without a real DEC — which would silently supersede the goal-contract `desired_end_state` values. **Cross-references**: DEC-PHASE7-035 (sentinel mechanism authority — preserved); DEC-PHASE7-039 (W7-4-B-exit first application); DEC-PHASE7-041 (meta-principle); DEC-PHASE7-040 (#39 cascade-consolidation precedent); issue #40 (in-guest measurement reliability tracker). Operational note: two Guardian-stewardship findings surfaced during this slice (stale `.git/index.lock` blocking the first W7-5-exit merge; workflow `base_branch=main` while merges target `develop`); both are runtime/control-plane discipline observations rather than source slices and are logged in the Phase 7 narrative for the operator's attention without a separate DEC entry. Code: merge commits `8bcded0` (W7-5 mechanism), `ba3e0d1` (W7-5-exit) on `develop`; CI run `25710069470`; issue #40 tracker; W-ID table updates marking W7-5 PARTIAL-ACCEPT and adding W7-5-exit ACCEPTED. |
 
 ## Risk Register
