@@ -129,6 +129,16 @@ jobs:
         run: |
           BUILD_LOG=tmp/build-iso.log bash tests/integration/test-iso-hooks-applied.sh
 
+      # W8-content-staging: Active gate — verify Orion-X application content
+      # is present in the built ISO before spending time on QEMU boot tests.
+      # Fixes issue #43: booted ISO was missing the entire application layer.
+      # No continue-on-error: if content is absent the QEMU boot is meaningless.
+      - name: Verify Orion-X content present in ISO (fix #43)
+        run: |
+          sudo apt-get install -y squashfs-tools xorriso
+          bash tests/integration/test-iso-content-presence.sh \
+              "${{ github.workspace }}/output/orionx-phoenix-edition-v2.0.0-rc1.iso"
+
       # Issue #27: ubuntu-latest runners typically don't expose /dev/kvm.
       # TCG emulation of full ISO boot to multi-user.target is much slower
       # than KVM (~5-10 min vs ~30s). Bumping --timeout to 900 gives TCG
