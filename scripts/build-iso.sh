@@ -149,6 +149,63 @@ check_prerequisites() {
 }
 
 # ---------------------------------------------------------------------------
+# Stage Orion-X application content into iso/config/includes.chroot/
+#
+# @decision DEC-PHASE8-004
+# @title Stage v2.0.0 application content from repo root into includes.chroot
+# @status accepted
+# @rationale Issue #43 identified that booted ISOs were missing the entire
+#   Orion-X application layer. The root cause was no rsync step between
+#   repo-root source dirs and the live-build staging area. This function is
+#   the single authority for content staging: it copies scripts/, theme/,
+#   data/, and docs/ into includes.chroot so live-build picks them up during
+#   the chroot phase. The v2.0.0 source (repo root) is the authoritative
+#   content; archive/ is reference-only and is never staged. The
+#   wallpapers/ directory is intentionally empty at v2.0.0-rc1 (no branded
+#   assets yet); a README.txt is created so the empty dir is preserved and
+#   the omission is self-documenting. Staged content is .gitignored to keep
+#   the worktree clean — the repo root is the single source of truth.
+# ---------------------------------------------------------------------------
+stage_application_content() {
+    log "Staging Orion-X application content into iso/config/includes.chroot/..."
+    local stage_dir="$ISO_DIR/config/includes.chroot"
+
+    # Application scripts -> /opt/orionx/scripts/
+    mkdir -p "$stage_dir/opt/orionx/scripts"
+    rsync -a --delete \
+        --exclude='__pycache__' --exclude='*.pyc' \
+        --exclude='build-iso.sh' --exclude='qemu-boot-test.sh' \
+        --exclude='release/' --exclude='security/' \
+        "$REPO_ROOT/scripts/" "$stage_dir/opt/orionx/scripts/"
+
+    # Theme -> /opt/orionx/theme/  (wallpapers dir is empty; create README)
+    mkdir -p "$stage_dir/opt/orionx/theme/wallpapers"
+    rsync -a --delete "$REPO_ROOT/theme/" "$stage_dir/opt/orionx/theme/"
+    if [[ ! "$(ls -A "$stage_dir/opt/orionx/theme/wallpapers" 2>/dev/null)" ]]; then
+        cat > "$stage_dir/opt/orionx/theme/wallpapers/README.txt" <<'WALLPAPER_EOF'
+Orion-X Phoenix Edition Wallpapers
+This directory is intended for branded desktop wallpapers.
+At v2.0.0-rc1, wallpaper assets are TBD (see issue #43 follow-up).
+Default Debian wallpapers are used at runtime.
+WALLPAPER_EOF
+    fi
+
+    # Sample data -> /opt/orionx/data/
+    mkdir -p "$stage_dir/opt/orionx/data"
+    rsync -a --delete "$REPO_ROOT/data/" "$stage_dir/opt/orionx/data/"
+
+    # Documentation -> /usr/share/doc/orionx/
+    mkdir -p "$stage_dir/usr/share/doc/orionx"
+    rsync -a --delete "$REPO_ROOT/docs/" "$stage_dir/usr/share/doc/orionx/"
+
+    # Also stage CHANGELOG.md + README.md at /usr/share/doc/orionx/ for visibility
+    cp "$REPO_ROOT/CHANGELOG.md" "$stage_dir/usr/share/doc/orionx/CHANGELOG.md" 2>/dev/null || true
+    cp "$REPO_ROOT/README.md" "$stage_dir/usr/share/doc/orionx/README.md" 2>/dev/null || true
+
+    log "Application content staged: $(find "$stage_dir/opt/orionx" "$stage_dir/usr/share/doc/orionx" -type f 2>/dev/null | wc -l) files"
+}
+
+# ---------------------------------------------------------------------------
 # Prepare build environment
 # ---------------------------------------------------------------------------
 prepare_build_env() {
@@ -229,6 +286,7 @@ if "$DRY_RUN"; then
 fi
 
 prepare_build_env
+stage_application_content       # DEC-PHASE8-004: stage v2.0.0 app content (fix #43)
 configure_live_build
 build_iso
 cleanup

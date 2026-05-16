@@ -56,3 +56,9 @@ analysis_results/
 # Use archive/* (not archive/) so git enters the directory and the negation works
 archive/*
 !archive/INVENTORY.md
+
+# Build-time-staged application content (single-authority: source is repo root)
+# stage_application_content() rsyncs these from repo root at ISO build time.
+# Do NOT commit staged content — the repo root dirs are the source of truth.
+iso/config/includes.chroot/opt/orionx/
+iso/config/includes.chroot/usr/share/doc/orionx/

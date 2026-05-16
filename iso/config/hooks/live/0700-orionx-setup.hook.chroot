@@ -1,0 +1,198 @@
+#!/bin/bash
+# shellcheck shell=bash
+set -euo pipefail
+#
+# Orion-X Phoenix Edition — Application Layer Setup Hook
+#
+# @decision DEC-PHASE8-005
+# @title Chroot hook: PATH symlinks, XDG desktop entries, MOTD, permissions
+# @status accepted
+# @rationale This hook is the single authority for wiring the staged
+#   /opt/orionx/scripts/ content into the live system. It runs after
+#   stage_application_content() has placed content into includes.chroot
+#   (which live-build copies into the chroot before hooks execute).
+#   Responsibilities:
+#     1. PATH symlinks in /usr/bin/ so scripts are available system-wide.
+#     2. XDG .desktop entries so the LXDE/Openbox launcher shows Orion-X apps.
+#     3. MOTD / welcome message referencing the orionx-help function.
+#     4. Permissions: 755 on scripts, 644 on data/docs.
+#   No other hook creates symlinks in /usr/bin/ for Orion-X tools (single
+#   authority). Lexical position 0700 ensures this runs after all service
+#   hooks (0500–0620) and after the application content is in place.
+#   Idempotent: ln -sf overwrites existing symlinks safely.
+#
+# Production sequence:
+#   1. stage_application_content (build host) rsyncs source into includes.chroot/
+#   2. live-build copies includes.chroot/ into the chroot filesystem
+#   3. live-build runs hooks 0500–0620 (external tools, hardening, systemd)
+#   4. THIS HOOK (0700) runs: wires scripts into PATH, creates .desktop entries
+#   5. live-build compresses the chroot into filesystem.squashfs
+
+echo "[orionx-setup] Starting application layer setup..."
+
+# ---------------------------------------------------------------------------
+# 1. PATH symlinks in /usr/bin/
+#    Each Orion-X script gets a symlink in /usr/bin/ for zero-prefix access.
+#    The mesh CLI lives in scripts/mesh/orionx-mesh; all others are at the
+#    scripts/ root.
+# ---------------------------------------------------------------------------
+echo "[orionx-setup] Creating PATH symlinks..."
+
+declare -A SCRIPT_MAP=(
+    ["orionx-mesh"]="/opt/orionx/scripts/mesh/orionx-mesh"
+    ["setup-wireguard.sh"]="/opt/orionx/scripts/setup-wireguard.sh"
+    ["setup-matrix.sh"]="/opt/orionx/scripts/setup-matrix.sh"
+    ["artifact-analyzer.py"]="/opt/orionx/scripts/artifact-analyzer.py"
+    ["storyboard-gen.py"]="/opt/orionx/scripts/storyboard-gen.py"
+    ["toggle-theme.sh"]="/opt/orionx/scripts/toggle-theme.sh"
+    ["run-lynis.sh"]="/opt/orionx/scripts/run-lynis.sh"
+    ["download-samples.sh"]="/opt/orionx/scripts/download-samples.sh"
+)
+
+for name in "${!SCRIPT_MAP[@]}"; do
+    src="${SCRIPT_MAP[$name]}"
+    if [[ -f "$src" ]]; then
+        chmod +x "$src"
+        ln -sf "$src" "/usr/bin/${name}"
+        echo "  [orionx-setup] symlinked: /usr/bin/${name} -> $src"
+    else
+        echo "  [orionx-setup] WARNING: source not found, skipping symlink for ${name}: $src"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# 2. XDG Desktop entries in /usr/share/applications/
+#    Each major Orion-X tool gets a .desktop entry so it appears in the
+#    application menu. We use lxterminal as the terminal emulator because
+#    it is included in the Orion-X ISO base package list.
+# ---------------------------------------------------------------------------
+echo "[orionx-setup] Creating XDG desktop entries..."
+mkdir -p /usr/share/applications
+
+cat > /usr/share/applications/orionx-mesh.desktop << 'DESKTOP_EOF'
+[Desktop Entry]
+Type=Application
+Name=Orion-X Mesh
+Comment=WireGuard P2P mesh management
+Exec=lxterminal -e "orionx-mesh; bash"
+Icon=network-workgroup
+Categories=Network;
+DESKTOP_EOF
+
+cat > /usr/share/applications/orionx-setup-matrix.desktop << 'DESKTOP_EOF'
+[Desktop Entry]
+Type=Application
+Name=Orion-X Matrix Setup
+Comment=Set up Matrix/Synapse communication server
+Exec=lxterminal -e "setup-matrix.sh; bash"
+Icon=internet-chat
+Categories=Network;
+DESKTOP_EOF
+
+cat > /usr/share/applications/orionx-artifact-analyzer.desktop << 'DESKTOP_EOF'
+[Desktop Entry]
+Type=Application
+Name=Orion-X Artifact Analyzer
+Comment=Forensic artifact analysis tool
+Exec=lxterminal -e "artifact-analyzer.py; bash"
+Icon=utilities-file-archiver
+Categories=Utility;
+DESKTOP_EOF
+
+cat > /usr/share/applications/orionx-storyboard-gen.desktop << 'DESKTOP_EOF'
+[Desktop Entry]
+Type=Application
+Name=Orion-X Storyboard Generator
+Comment=Generate intelligence storyboards from forensic data
+Exec=lxterminal -e "storyboard-gen.py; bash"
+Icon=text-editor
+Categories=Utility;
+DESKTOP_EOF
+
+# ---------------------------------------------------------------------------
+# 3. MOTD / welcome message
+#    References orionx-help so users know the entry point.
+#    Mirrors the Dockerfile ENV/RUN pattern for the dev container.
+# ---------------------------------------------------------------------------
+echo "[orionx-setup] Installing MOTD..."
+mkdir -p /etc/update-motd.d/
+
+cat > /etc/update-motd.d/10-orionx-welcome << 'MOTD_EOF'
+#!/bin/bash
+cat << 'EOF'
+  ___      _               __  __
+ / _ \ _ _(_)___ _ _      \ \/ /
+| (_) | '_| / _ \ ' \      >  <
+ \___/|_| |_\___/_||_|    /_/\_\
+Orion-X Phoenix Edition v2.0.0-rc1
+
+Quick start:
+  orionx-mesh       — WireGuard P2P mesh management
+  setup-matrix.sh   — Matrix/Synapse setup
+  artifact-analyzer.py — Forensic artifact analysis
+  storyboard-gen.py — Generate storyboards
+
+Type 'orionx-help' for the full command reference.
+Docs: /usr/share/doc/orionx/User_Guide.md
+EOF
+MOTD_EOF
+chmod 755 /etc/update-motd.d/10-orionx-welcome
+
+# Provide the orionx-help bashrc function (matches Dockerfile pattern)
+cat > /etc/profile.d/orionx-help.sh << 'HELP_EOF'
+# Orion-X help function — available in all interactive shells
+orionx-help() {
+    echo ""
+    echo "Orion-X Phoenix Edition — Command Reference"
+    echo "==========================================="
+    echo "  orionx-mesh          WireGuard P2P mesh (join/leave/status/discover)"
+    echo "  setup-wireguard.sh   WireGuard interface setup"
+    echo "  setup-matrix.sh      Matrix/Synapse server setup"
+    echo "  artifact-analyzer.py Forensic artifact analysis"
+    echo "  storyboard-gen.py    Intelligence storyboard generation"
+    echo "  toggle-theme.sh      Toggle light/dark desktop theme"
+    echo "  run-lynis.sh         Run Lynis security audit"
+    echo "  download-samples.sh  Download forensic sample datasets"
+    echo ""
+    echo "Docs:   /usr/share/doc/orionx/User_Guide.md"
+    echo "Data:   /opt/orionx/data/samples/"
+    echo "Theme:  /opt/orionx/theme/"
+    echo ""
+}
+export -f orionx-help 2>/dev/null || true
+HELP_EOF
+chmod 644 /etc/profile.d/orionx-help.sh
+
+# ---------------------------------------------------------------------------
+# 4. Set permissions
+#    Scripts: 755 (executable), data and docs: 644
+#    If the orionx user exists (created by 0100-create-user), set ownership.
+# ---------------------------------------------------------------------------
+echo "[orionx-setup] Setting permissions..."
+
+if [[ -d /opt/orionx/scripts ]]; then
+    find /opt/orionx/scripts -type f -exec chmod 755 {} \;
+fi
+
+if [[ -d /opt/orionx/data ]]; then
+    find /opt/orionx/data -type f -exec chmod 644 {} \;
+fi
+
+if [[ -d /usr/share/doc/orionx ]]; then
+    find /usr/share/doc/orionx -type f -exec chmod 644 {} \;
+fi
+
+if [[ -d /opt/orionx/theme ]]; then
+    find /opt/orionx/theme -type f -exec chmod 644 {} \;
+fi
+
+# Set orionx user ownership when the user exists
+if id orionx &>/dev/null; then
+    chown -R orionx:orionx /opt/orionx
+    echo "  [orionx-setup] /opt/orionx ownership set to orionx:orionx"
+fi
+
+# ---------------------------------------------------------------------------
+# Completion marker (greppable from CI log)
+# ---------------------------------------------------------------------------
+echo "[orionx-setup] application layer setup complete"
