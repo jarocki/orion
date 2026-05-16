@@ -281,6 +281,74 @@ else
 fi
 
 # ===========================================================================
+# 10. Defensive rsync guards (DEC-PHASE8-005)
+#   CI run 25953342666 died with rsync exit 23 because theme/ was absent.
+#   Verify each of the 4 rsync calls is guarded by an existence check that
+#   warns-and-skips rather than crashing under set -euo pipefail.
+# ===========================================================================
+section "Defensive rsync guards for missing source dirs (DEC-PHASE8-005)"
+
+# The guard pattern: "if [[ -d \"\$REPO_ROOT/<dir>\" ]]" wrapping each rsync.
+for src_dir in scripts theme data docs; do
+    if echo "$FUNC_BODY" | grep -q "if \[\[ -d \"\\\$REPO_ROOT/${src_dir}\""; then
+        pass "existence guard present for ${src_dir}/ rsync"
+    else
+        fail "existence guard present for ${src_dir}/ rsync" \
+             "Expected: if [[ -d \"\$REPO_ROOT/${src_dir}\" ]]; in stage_application_content (DEC-PHASE8-005)"
+    fi
+done
+
+# WARN log for missing source dirs present
+if echo "$FUNC_BODY" | grep -q "WARN:.*source missing"; then
+    pass "WARN log emitted for missing source dir (script warns rather than crashes)"
+else
+    fail "WARN log emitted for missing source dir (script warns rather than crashes)" \
+         "Expected a log line containing 'WARN:' and 'source missing' for each skipped dir"
+fi
+
+# Early summary diagnostic (bulk missing_sources report)
+if echo "$FUNC_BODY" | grep -q "missing_sources"; then
+    pass "early missing-source-dirs diagnostic present (bulk WARN before per-dir rsync)"
+else
+    fail "early missing-source-dirs diagnostic present (bulk WARN before per-dir rsync)" \
+         "Expected a missing_sources array and early log in stage_application_content"
+fi
+
+# DEC-PHASE8-005 annotation present
+if [[ "$BUILD_CONTENT" == *"@decision DEC-PHASE8-005"* ]]; then
+    pass "@decision DEC-PHASE8-005 annotation present"
+else
+    fail "@decision DEC-PHASE8-005 annotation present" \
+         "Decision annotation missing or wrong ID in build-iso.sh"
+fi
+
+# theme/wallpapers/.gitkeep tracked by git (confirms git tracks theme/ post-checkout)
+section "theme/wallpapers/.gitkeep committed to git"
+
+THEME_GITKEEP="$REPO_ROOT/theme/wallpapers/.gitkeep"
+if [[ -f "$THEME_GITKEEP" ]]; then
+    pass "theme/wallpapers/.gitkeep file exists on disk"
+else
+    fail "theme/wallpapers/.gitkeep file exists on disk" \
+         "File missing: $THEME_GITKEEP — git will not track theme/ without it"
+fi
+
+# Simulate the original CI failure: confirm the theme/ rsync is preceded by its
+# existence guard on the line immediately before it.  We do this by checking that
+# "if [[ -d \"$REPO_ROOT/theme\" ]]" and "rsync.*REPO_ROOT/theme" appear together
+# in the function body (already proved above by the per-dir guard check), and that
+# the guard pattern appears strictly BEFORE the rsync line in the function body.
+# shellcheck disable=SC2016  # single quotes intentional: searching for literal $REPO_ROOT in source text
+THEME_GUARD_LINE="$(echo "$FUNC_BODY" | grep -n 'if \[\[ -d "\$REPO_ROOT/theme"' | head -1 | cut -d: -f1 || true)"
+THEME_RSYNC_LINE="$(echo "$FUNC_BODY" | grep -n 'rsync.*REPO_ROOT/theme' | head -1 | cut -d: -f1 || true)"
+if [[ -n "$THEME_GUARD_LINE" && -n "$THEME_RSYNC_LINE" && "$THEME_GUARD_LINE" -lt "$THEME_RSYNC_LINE" ]]; then
+    pass "theme/ rsync is preceded by existence guard (CI exit-23 scenario eliminated)"
+else
+    fail "theme/ rsync is preceded by existence guard (CI exit-23 scenario eliminated)" \
+         "guard_line=${THEME_GUARD_LINE:-missing} rsync_line=${THEME_RSYNC_LINE:-missing} — guard must come before rsync"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

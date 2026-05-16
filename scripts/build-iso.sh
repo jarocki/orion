@@ -165,22 +165,53 @@ check_prerequisites() {
 #   assets yet); a README.txt is created so the empty dir is preserved and
 #   the omission is self-documenting. Staged content is .gitignored to keep
 #   the worktree clean — the repo root is the single source of truth.
+#
+# @decision DEC-PHASE8-005
+# @title Defensive rsync guards for missing source dirs in stage_application_content
+# @status accepted
+# @rationale CI run 25953342666 failed because theme/ was not tracked by git
+#   (git does not track empty dirs), so rsync exited 23 under set -euo pipefail,
+#   killing build-iso.sh before lb build ran. Fix: (a) commit theme/wallpapers/.gitkeep
+#   so the directory exists post-checkout, and (b) guard every rsync with an
+#   existence check so a missing source dir emits a WARN and skips rather than
+#   crashing. Option A (explicit if-guard) was chosen over --ignore-missing-args
+#   because it is explicit, logs the warning, and does not depend on rsync >= 3.0.
+#   Applied to all 4 rsync calls for symmetry — any missing source dir warns,
+#   never crashes.
 # ---------------------------------------------------------------------------
 stage_application_content() {
     log "Staging Orion-X application content into iso/config/includes.chroot/..."
     local stage_dir="$ISO_DIR/config/includes.chroot"
 
+    # Early diagnostic: report any missing source dirs up front so the log
+    # is actionable without hunting through per-dir WARN lines.
+    local missing_sources=()
+    for src in scripts theme data docs; do
+        [[ -d "$REPO_ROOT/$src" ]] || missing_sources+=("$src")
+    done
+    if [[ ${#missing_sources[@]} -gt 0 ]]; then
+        log "  WARN: missing source dirs (staging will skip): ${missing_sources[*]}"
+    fi
+
     # Application scripts -> /opt/orionx/scripts/
     mkdir -p "$stage_dir/opt/orionx/scripts"
-    rsync -a --delete \
-        --exclude='__pycache__' --exclude='*.pyc' \
-        --exclude='build-iso.sh' --exclude='qemu-boot-test.sh' \
-        --exclude='release/' --exclude='security/' \
-        "$REPO_ROOT/scripts/" "$stage_dir/opt/orionx/scripts/"
+    if [[ -d "$REPO_ROOT/scripts" ]]; then
+        rsync -a --delete \
+            --exclude='__pycache__' --exclude='*.pyc' \
+            --exclude='build-iso.sh' --exclude='qemu-boot-test.sh' \
+            --exclude='release/' --exclude='security/' \
+            "$REPO_ROOT/scripts/" "$stage_dir/opt/orionx/scripts/"
+    else
+        log "  WARN: scripts/ source missing; skipping scripts staging"
+    fi
 
     # Theme -> /opt/orionx/theme/  (wallpapers dir is empty; create README)
     mkdir -p "$stage_dir/opt/orionx/theme/wallpapers"
-    rsync -a --delete "$REPO_ROOT/theme/" "$stage_dir/opt/orionx/theme/"
+    if [[ -d "$REPO_ROOT/theme" ]]; then
+        rsync -a --delete "$REPO_ROOT/theme/" "$stage_dir/opt/orionx/theme/"
+    else
+        log "  WARN: theme/ source missing; skipping theme staging"
+    fi
     if [[ ! "$(ls -A "$stage_dir/opt/orionx/theme/wallpapers" 2>/dev/null)" ]]; then
         cat > "$stage_dir/opt/orionx/theme/wallpapers/README.txt" <<'WALLPAPER_EOF'
 Orion-X Phoenix Edition Wallpapers
@@ -192,11 +223,19 @@ WALLPAPER_EOF
 
     # Sample data -> /opt/orionx/data/
     mkdir -p "$stage_dir/opt/orionx/data"
-    rsync -a --delete "$REPO_ROOT/data/" "$stage_dir/opt/orionx/data/"
+    if [[ -d "$REPO_ROOT/data" ]]; then
+        rsync -a --delete "$REPO_ROOT/data/" "$stage_dir/opt/orionx/data/"
+    else
+        log "  WARN: data/ source missing; skipping data staging"
+    fi
 
     # Documentation -> /usr/share/doc/orionx/
     mkdir -p "$stage_dir/usr/share/doc/orionx"
-    rsync -a --delete "$REPO_ROOT/docs/" "$stage_dir/usr/share/doc/orionx/"
+    if [[ -d "$REPO_ROOT/docs" ]]; then
+        rsync -a --delete "$REPO_ROOT/docs/" "$stage_dir/usr/share/doc/orionx/"
+    else
+        log "  WARN: docs/ source missing; skipping docs staging"
+    fi
 
     # Also stage CHANGELOG.md + README.md at /usr/share/doc/orionx/ for visibility
     cp "$REPO_ROOT/CHANGELOG.md" "$stage_dir/usr/share/doc/orionx/CHANGELOG.md" 2>/dev/null || true
