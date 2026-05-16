@@ -174,7 +174,7 @@ else
 fi
 
 # ===========================================================================
-# 3. Theme directory (wallpapers README expected, no images required)
+# 3. Theme directory (wallpapers dir must exist and be non-empty)
 # ===========================================================================
 section "Theme: /opt/orionx/theme/"
 
@@ -184,11 +184,16 @@ else
     fail "/opt/orionx/theme/ directory present" "stage_application_content did not stage theme/"
 fi
 
-if [[ -f "$SQF/opt/orionx/theme/wallpapers/README.txt" ]]; then
-    pass "/opt/orionx/theme/wallpapers/README.txt present (empty wallpapers documented)"
+# Assert the wallpapers dir exists and contains at least one entry (.gitkeep,
+# README.txt, or future wallpaper assets all satisfy this).  The specific
+# placeholder file varies depending on whether the wallpapers dir was empty at
+# rsync time, so we check presence + non-emptiness rather than a specific name.
+if [[ -d "$SQF/opt/orionx/theme/wallpapers" ]] && \
+   [[ -n "$(ls -A "$SQF/opt/orionx/theme/wallpapers" 2>/dev/null)" ]]; then
+    pass "/opt/orionx/theme/wallpapers/ exists and is non-empty (placeholder or assets)"
 else
-    fail "/opt/orionx/theme/wallpapers/README.txt present" \
-         "Wallpapers README.txt missing — stage_application_content should create it"
+    fail "/opt/orionx/theme/wallpapers/ missing or empty" \
+         "Wallpapers dir absent or empty — stage_application_content did not stage theme/wallpapers/"
 fi
 
 # ===========================================================================
