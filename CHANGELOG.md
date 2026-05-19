@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.0.0-rc3] - 2026-05-17
+
+Third release candidate. Supersedes v2.0.0-rc2 which had two cosmetic
+defects discovered during the release pipeline shake-out:
+
+- The released ISO was named `orionx-phoenix-edition-v2.0.0-rc1.iso`
+  instead of matching the rc2 tag (build-iso.sh used its hardcoded
+  default version literal because release.yml never passed
+  ORIONX_VERSION from the tag).
+- The DRAFT release body was the fallback string `See CHANGELOG.md for
+  full release history.` because extract-release-notes.sh found no
+  `## [v2.0.0-rc2]` heading.
+
+Fixes in rc3 (commits between f3027f7 and the rc3 tag commit):
+
+- `.github/workflows/release.yml` — passes `ORIONX_VERSION` from
+  `github.ref_name` into the docker build container, so the ISO
+  filename matches the tag. workflow_dispatch (manual) runs fall back
+  to the build-iso.sh default.
+- `CHANGELOG.md` — added v2.0.0-rc2 retrospective and this v2.0.0-rc3
+  section so extract-release-notes.sh finds proper release notes.
+
+Content guarantees (unchanged from rc2 — same ISO contents):
+- All Orion-X application content present (closes #43 four-iteration
+  arc)
+- 8 systemd units installed and enabled
+- AppArmor profiles, sample data, docs, branding wallpaper
+
+W7-7 second-attempt operator hardware re-attestation: SKIPPED per
+DEC-PHASE8-008.
+
+### Fixed
+- release.yml: ISO filename now matches tag name (no more rc2-tagged
+  release shipping rc1-named ISO)
+- CHANGELOG.md: rc2 retrospective + rc3 sections so release notes
+  body is populated, not the fallback
+
+### Cross-references
+- DEC-PHASE8-009 Option B (chosen)
+- v2.0.0-rc2 tag retained as historical record (was DRAFT only, never
+  published)
+
+---
+
+## [v2.0.0-rc2] - 2026-05-17 (RETROSPECTIVE — superseded by rc3)
+
+Second release candidate. Tagged at `f3027f7` on develop after the
+#43 cascade four-iteration arc (W7-7 finding) landed. **DRAFT
+release was created but NEVER PUBLISHED** because the cut had two
+cosmetic defects (see rc3 section). Superseded by v2.0.0-rc3.
+
+ISO content was correct (full Orion-X application layer + branding
+wallpaper + systemd units + AppArmor profiles), but the release
+artifacts were mis-named/mis-described. Tag retained as historical
+record.
+
+### Cross-references
+- DEC-PHASE8-008 (W7-7 skip authorization)
+- DEC-PHASE8-009 Option B (rc3 supersedes)
+- Issue #43 four-iteration fix arc: e725895, 40416d6, fde6771, fb100f8
+
+---
+
 ## [v2.0.0-rc1] — In Progress (Phase 8)
 
 Release candidate prepared from the Phase 7 integration-tested foundation.
