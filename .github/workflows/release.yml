@@ -58,11 +58,20 @@ jobs:
       # instead of the ubuntu-latest host's apt sources.
       # -----------------------------------------------------------------------
       - name: Build ISO in debian:bullseye container
+        env:
+          # Derive ORIONX_VERSION from the tag name when triggered by a tag push
+          # (github.ref_name = "v2.0.0-rc3" for refs/tags/v2.0.0-rc3).
+          # For workflow_dispatch on a branch, ref_name is the branch name (e.g.
+          # "develop"), which is not a valid version. Emit an empty string so
+          # the container sees ORIONX_VERSION unset and build-iso.sh falls back
+          # to its hardcoded default (${ORIONX_VERSION:-v2.0.0-rc1}).
+          ORIONX_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
         run: |
           mkdir -p tmp output
           docker run --rm --privileged \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
+            -e "ORIONX_VERSION=${ORIONX_VERSION}" \
             debian:bullseye-slim \
             bash -c '
               set -e
