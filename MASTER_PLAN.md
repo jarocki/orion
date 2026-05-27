@@ -2006,6 +2006,184 @@ forensic-orchestration pair per DEC-005). The slice includes both; if the
 operator's intent is a different/hypothetical SIFT-AI script not yet in the
 tree, that requires a separate planner pass and DEC to specify.
 
+### Phase 9: Operator Cyberdeck UX (post-rc3 hardware-usability remediation)
+**Env:** Linux (live-build) + QEMU + physical hardware | **Status:** Active — planned 2026-05-25; **W9-1 (rc4 broken-basics) LANDED @ `1c6c87c` (FF to develop, pushed to origin/develop).** rc4 now awaits the **W9-4 operator tag/publish gate** + the operator's hardware re-test before W9-2/W9-3 are detail-planned. Definitive ISO content-presence and GUI Wi-Fi bring-up are CI/hardware-gated (qemu-test.yml builds the ISO on the develop push). W9-2 / W9-3 remain sketched and tracked as GitHub issues, **not detail-planned until rc4 is hardware-validated** (operator's chosen sequencing). | **Workflow:** `phase9-cyberdeck-ux`
+
+Phase 9 responds to the operator's real-hardware boot report of `v2.0.0-rc3`: the
+ISO boots but is **not usable as a field tool**. The phase realizes the vision
+"Cyberdeck for the Good Guys" — an environment simple enough to wield as leverage
+against a skilled adversary under hostile conditions and untrustworthy networks,
+with incident-response tools and responder comms (Matrix / mesh) made obvious and
+intuitively accessible. The phase is sequenced **fast-basics-first** (DEC-PHASE9-003):
+W9-1 fixes the broken basics and re-cuts a testable `v2.0.0-rc4` within one build
+cycle so the operator can re-test on hardware; richer cyberdeck UX (panel widgets,
+GTK Control Center) and the tiered threat-posture/deception subsystem land in
+later slices toward rc5 / `v2.0.0` final.
+
+**Confirmed root-cause diagnosis (verified against the tree 2026-05-25):**
+The ISO is XFCE4 + LightDM; default live user `orionx` (passwordless), home built
+directly at build time by `iso/config/hooks/normal/0100-create-user.hook.chroot`
+(not via `/etc/skel`).
+1. **Wallpaper never set.** Asset `theme/wallpapers/orionx-phoenix-wallpaper.png`
+   exists and is staged to `/opt/orionx/theme/wallpapers/` by
+   `stage_application_content()` in `scripts/build-iso.sh`, but nothing sets it as
+   the XFCE backdrop. `stage_application_content()` still carries a stale
+   "wallpapers dir is empty / TBD" README-fallback branch (build-iso.sh:208-220).
+   The xfconf mechanism already exists in `scripts/toggle-theme.sh:124-127`
+   (property `/backdrop/screen0/monitor0/workspace0/last-image`) — but
+   toggle-theme points at non-existent `orionx-green/dark-wallpaper.png`, not the
+   real phoenix asset.
+2. **Menu launchers dead.** Four `.desktop` Exec lines in
+   `iso/config/hooks/live/0700-orionx-setup.hook.chroot` (lines 77/87/97/107) use
+   `lxterminal`, which is **not installed** — only `xfce4-terminal`
+   (`iso/config/package-lists/orionx.list.chroot:21`). The line-66 and line-16
+   ("LXDE/Openbox") comments are also stale. PATH symlinks are correct.
+3. **No way to start networking (largest gap).** No NetworkManager, nm-applet,
+   wpa_supplicant, iw, or wireless firmware in the image — the operator cannot
+   bring up Wi-Fi by GUI or even installed CLI.
+4. **Mesh undiscoverable + latent unit bug.** Mesh is CLI-only
+   (`sudo orionx-mesh join`) with no GUI pointer. Worse, the canonical
+   `iso/config/includes.chroot/usr/share/orionx/systemd/matrix-synapse-orionx.service`
+   has a hard `Requires=wg-quick@wg0.service` (line 16), but
+   `scripts/mesh/mesh-join.sh` brings up `wg0` via raw `ip`/`wg`
+   (`mesh_interface_up`), not `wg-quick@`, so the hard Requires can never be
+   satisfied. The unit is also duplicated at repo-root `systemd/` (NOT consumed by
+   the 0615 install hook, `SOURCE_DIR=/usr/share/orionx/systemd`) — dual-authority
+   drift to reconcile. The 0615 hook **enables** the matrix unit, so this fires on
+   every boot.
+5. **No autologin.** LightDM shows a login prompt; no `lightdm.conf` override
+   exists. A field cyberdeck expects autologin of `orionx` (tradeoff captured in
+   DEC-PHASE9-004).
+6. **No situational awareness.** No passive monitoring (arpwatch/arp-scan/
+   netdiscover), no IDS. Deferred to W9-3 (threat-posture tiers).
+
+**Three product decisions (made by the operator — planned to, not re-asked):**
+- **UI surface = XFCE panel widgets + GTK "Orion-X Control Center"** (DEC-PHASE9-001):
+  always-on panel with live genmon status widgets (clients / scans / mesh peers /
+  net state, click-to-open) plus a one-click GTK window of big labeled buttons
+  (Connect Wi-Fi, Start Mesh, Team Chat, Net Watch, Analyze Artifact, Build
+  Timeline, …); nm-applet lives in the panel. → W9-2.
+- **Threat detection = operator-selectable "Threat Posture / Paranoia Level" tiers**
+  (DEC-PHASE9-002): Tier 0 Passive (client census via arp-scan/netdiscover,
+  ARP-spoof watch, SYN/port-scan heuristics over tcpdump); Tier 1 IDS (Suricata +
+  ruleset, opt-in); Tier 2 Deception (canarytokens, honeytokens, contained
+  honeypot/tarpit). One authority owns current tier + alert surface feeding the
+  panel widget. → W9-3.
+- **Sequencing = fast basics first** (DEC-PHASE9-003): W9-1 = broken-basics only,
+  cut as `v2.0.0-rc4`; widgets/Control Center (W9-2) and threat-posture/deception
+  (W9-3) follow toward rc5 / `v2.0.0` final.
+
+**Integration surface context (transmitted to implementers each slice):**
+- *State domains:* ISO chroot content (`includes.chroot`), package selection
+  (`package-lists`), live-build hook execution order, XFCE per-user config
+  (xfconf), systemd unit enablement, nftables ruleset, mesh/Matrix runtime, and a
+  NEW domain (W9-3): threat-posture tier authority + alert/event surface.
+- *Canonical authorities:* package set = `iso/config/package-lists/*.list.chroot`;
+  build-time staging = `stage_application_content()` in `scripts/build-iso.sh`
+  (DEC-PHASE8-005/007 — single staging path, do not fork); per-user desktop
+  defaults = `0100-create-user.hook.chroot` (direct `/home/orionx`) and the 0700
+  hook (pick ONE for xfconf/autostart); systemd install/enable = `0615` hook with
+  units under `iso/config/includes.chroot/usr/share/orionx/systemd/` (canonical
+  `SOURCE_DIR`); firewall = `iso/config/includes.chroot/etc/nftables.conf`;
+  operator tools = `scripts/` symlinked by 0700; theme assets = `theme/`.
+- *Removal targets:* all `lxterminal` references (replace, do not coexist); the
+  stale empty-wallpapers README branch in `stage_application_content()`; the
+  repo-root `systemd/matrix-synapse-orionx.service` duplicate reconciled to the
+  canonical copy.
+- *Adjacent components that must not silently diverge:*
+  `tests/integration/test-iso-content-presence.sh` + `test-iso-hooks-applied.sh`
+  (extend assertions); `scripts/toggle-theme.sh` (reuse its xfconf mechanism, do
+  not fork); the QEMU/serial runtime-verify harness.
+
+**Work Item Breakdown (slices seeded one at a time, per Phase 7/8 discipline):**
+
+| W-ID | Title | Env | Wave | Deps | Weight | Gate | Status |
+|------|-------|-----|------|------|--------|------|--------|
+| W9-1 | Broken-basics fix, re-cut as `v2.0.0-rc4` (wallpaper backdrop, xfce4-terminal launchers, NetworkManager+nm-applet+wifi firmware, autologin, one-click mesh launcher, matrix/wg-quick unit fix) | Linux/CI | 1 | - | L | review | **LANDED 2026-05-25 @ `1c6c87c`** (FF to develop `86dd6ee..1c6c87c`: `a2843d0` feat + `1c6c87c` review-round-1 fix; pushed to origin/develop). Reviewer `ready_for_guardian` @ `1c6c87c` — 0 blockers / 0 major / 2 notes; 855 unit tests green / 0 failed. Definitive ISO content-presence + GUI Wi-Fi bring-up are CI/hardware-gated (qemu-test.yml on develop push + operator re-test). The 2 reviewer notes captured as minor follow-ups (toggle-theme.sh scope-manifest accuracy; stale rc1 header comment at `test-iso-content-presence.sh:22`). See DEC-PHASE9-003, -004, -005, -006, -007, -009. GitHub issue #44. |
+| W9-2 | XFCE panel status widgets + GTK "Orion-X Control Center" | Linux/CI | 2 | W9-1 | XL | review | SKETCHED — tracked as GitHub issue; detail-planned after W9-1 lands. DEC-PHASE9-001. |
+| W9-3 | Threat-posture / Paranoia-Level subsystem: Tier 0 passive monitors → Tier 1 Suricata IDS → Tier 2 contained deception (canarytokens/honeytokens/honeypot/tarpit), single tier+alert authority feeding the panel | Linux/CI | 3 | W9-1, W9-2 | XL | review | SKETCHED — tracked as GitHub issue(s); detail-planned after W9-2. DEC-PHASE9-002, -008 (deception containment boundary). |
+| W9-4 | `v2.0.0-rc4` tag + GitHub Release publish (operator boundary, mirrors W8-7) | Repo/CI | * | W9-1 | XS | approve | DEFERRED — operator-decision boundary at slice end; not an implementer slice. |
+
+**Critical path:** `W9-1 (rc4 basics) → operator hardware re-test → W9-2 (panel + Control Center) → W9-3 (threat-posture tiers) → rc5 / v2.0.0 final`. W9-4 (rc4 tag/publish) runs as an operator boundary right after W9-1 lands and re-tests green.
+
+**Max parallel width:** 1 (each slice depends on its predecessor's landed UX surface). W9-3's three tiers may sub-parallelize once W9-3 is detail-planned.
+
+**Phase 9 work-item authority discipline:** Detailed Scope Manifests and
+Evaluation Contracts are seeded one slice at a time at planner-dispatch time
+(Phase 7/8 pattern). W9-1's expanded contracts live in
+`tmp/scope-wi-w9-1-rc4-basics.json` and `tmp/eval-wi-w9-1-rc4-basics.json`,
+written by the planner before the implementer dispatch and synced via
+`cc-policy workflow scope-sync` at provision.
+
+**W9-1 Scope Manifest and Evaluation Contract (seeded 2026-05-25):**
+
+*Mission.* Make the booted Orion-X Phoenix live ISO usable on real hardware and
+re-cut a testable `v2.0.0-rc4` within one build cycle. Six broken basics: (1)
+Phoenix wallpaper set as the XFCE backdrop (reuse `toggle-theme.sh`'s xfconf
+mechanism; retire the stale empty-wallpapers README branch); (2) the four 0700
+`.desktop` launchers switched from `lxterminal` to `xfce4-terminal` (remove all
+lxterminal references, comments included); (3) GUI networking — add
+`network-manager` + `network-manager-gnome` (nm-applet) + `wpa_supplicant` + `iw`
++ wireless firmware (`firmware-iwlwifi`/`-realtek`/`-atheros`, enabling the
+non-free apt component per DEC-PHASE9-005), enable `NetworkManager.service`,
+autostart nm-applet in the panel; (4) a one-click mesh `.desktop` launcher
+invoking the existing `orionx-mesh` via `xfce4-terminal` (UX only, no new mesh
+source), plus fix the matrix unit's unsatisfiable `Requires=wg-quick@wg0.service`
+(DEC-PHASE9-007); (5) LightDM autologin for `orionx` (DEC-PHASE9-004); confirm
+nftables does not block NM/DHCP. Ruthlessly scoped: NO panel widgets, NO Control
+Center, NO SA/deception tooling.
+
+*Version handling.* `v2.0.0-rc4` is produced by the tag-driven `ORIONX_VERSION`
+override in `release.yml` (Option B mechanism per `53e93d7`), NOT by forking the
+build-time default. The in-tree defaults (`scripts/build-iso.sh:41`,
+`iso/auto/config:45`) currently still read `v2.0.0-rc1` and may be reconciled to
+remove drift, but the single-authority coherence between the two must be
+preserved (DEC-PHASE7-002).
+
+*Scope Manifest.* Authoritative JSON: `tmp/scope-wi-w9-1-rc4-basics.json`.
+Allowed: `iso/config/package-lists/orionx.list.chroot`, the 0700 / 0100 / 0615
+hooks, the canonical matrix unit (+ repo-root duplicate for reconciliation),
+`iso/config/includes.chroot/etc/lightdm/**`, `…/etc/skel/**`, `…/usr/share/orionx/**`,
+`…/etc/xdg/**`, `…/etc/apt/**`, `iso/auto/config`, `scripts/build-iso.sh`
+(staging only), the two integration tests, and `tests/unit/**`. Forbidden: all
+control-plane files (`runtime/**`, `hooks/**`, `agents/**`, `CLAUDE.md`,
+`settings.json`, `MASTER_PLAN.md`), `.github/workflows/release.yml`, the
+0500/0600/0610/0620 hardening hooks, `scripts/mesh/**`, and the analyzer/storyboard
+sources. Authorities touched: package set, content-staging (extend only),
+per-user desktop defaults (pick ONE), systemd-unit-install, NEW lightdm-autologin,
+NEW apt non-free component.
+
+*Evaluation Contract.* Authoritative JSON: `tmp/eval-wi-w9-1-rc4-basics.json`.
+- *Required tests:* extended `test-iso-content-presence.sh` (asserts NM/wifi
+  packages, lightdm autologin, staged wallpaper + xfconf backdrop config, zero
+  lxterminal Exec refs); extended `test-iso-hooks-applied.sh` (0700 uses
+  xfce4-terminal, nm-applet autostart wired); updated affected `tests/unit/**`;
+  full unit suite green, no staging-test regressions.
+- *Required real-path checks:* `grep -rn 'lxterminal' iso/config/ scripts/` →
+  zero functional refs; matrix unit no longer hard-Requires an unsatisfiable
+  `wg-quick@wg0` (downgraded to `Wants=`/`After=` or removed, with comment;
+  repo-root duplicate reconciled); one-click mesh `.desktop` present invoking
+  `orionx-mesh` via xfce4-terminal; lightdm `autologin-user=orionx` present at the
+  chosen single authority; `stage_application_content()` stages the phoenix
+  wallpaper and the stale empty-dir README branch is retired; nm-applet autostart
+  present.
+- *Required authority invariants:* single staging path preserved; 0615 single
+  unit-install authority preserved; exactly one live-user desktop-default
+  authority (state which); coherent version literals.
+- *Required integration points:* both integration CI gates green with extensions;
+  `toggle-theme.sh` xfconf reused not forked; nftables confirmed non-blocking for
+  NM/DHCP.
+- *Forbidden shortcuts:* installing `lxterminal` to satisfy launchers; adding any
+  W9-2/W9-3 surface (panel widgets, Control Center, arp-scan/suricata/
+  canarytokens/honeypots); a second staging path or second desktop-default
+  authority; disabling the matrix unit to hide the failure; one-file version
+  literal edits that break authority coherence; leaving lxterminal in comments.
+- *ready_for_guardian when:* all required tests pass, all real-path checks
+  verified, all authority invariants hold, nftables confirmed non-blocking, and
+  the reviewer emits `REVIEW_VERDICT=ready_for_guardian` on the implementer HEAD
+  with the content/hook gates demonstrated GREEN in live output — and no W9-2/W9-3
+  surface present in the diff.
+
 ---
 
 ## Initiative 2: Autonomous Forensic Platform (v2.1 -> v3.x)
@@ -2165,6 +2343,16 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | DEC-PHASE8-009 | 2026-05-17 | [W8-7 PUBLISH PREP / TAG-STRATEGY USER-DECISION BOUNDARY] Develop → main merge proceeds as canonical Guardian landing; tag strategy for the merged-main HEAD is a reserved user-decision with three explicit options | **Operator directive**: "We are ready to merge and check in." This authorizes the Guardian merge develop → main + push origin main as normal canonical landing (the operator's "ready to merge" directive is sufficient authority for the merge itself — no additional approval token required). The Guardian merge is NOT a user-decision boundary; the TAG STRATEGY for the merged-main HEAD IS. **Why the tag is a real boundary, not pre-decidable by the planner**: the existing `v2.0.0-rc1` tag (local + on remote `origin`) points at commit `20504826` (the Phase 8 software-track closure commit from 2026-05-14, BEFORE the four-iteration #43 cascade landed). That commit produced an ISO MISSING the entire Orion-X application layer — anyone tracking `v2.0.0-rc1` from the remote has a tag pointing at the broken state. The operator must choose between three mutually-exclusive resolutions, each with different historical-record + destructive-action + version-semantic tradeoffs that are NOT planner-decidable: **Option A — DESTRUCTIVE force-update `v2.0.0-rc1` to merged-main HEAD**. Mechanics: `git tag -f v2.0.0-rc1 <main-head>` + `git push --force origin refs/tags/v2.0.0-rc1`. Rewrites a published tag; anyone who pulled rc1 since 2026-05-14 has it cached pointing at `20504826`. Smallest semver impact (no new version label); maximum auditability cost. Requires explicit destructive-action approval beyond the merge directive (per CLAUDE.md "Approval Gates" — force/history-rewrite is a hard user boundary). **Option B — additive `v2.0.0-rc2` at merged-main HEAD; leave `v2.0.0-rc1` pointing at `20504826`**. Mechanics: `git tag -a v2.0.0-rc2 <main-head> -m "..."` + `git push origin v2.0.0-rc2`. Preserves history (rc1 documents the first software-track closure with #43 still open; rc2 documents the post-cascade closure with #43 closed + W7-7 operator-authorized skip per DEC-PHASE8-008). Triggers `release.yml` on the `v*` tag pattern (GPG signing step remains `continue-on-error: true` until operator provisions `secrets.GPG_PRIVATE_KEY` + `secrets.GPG_PASSPHRASE`). Most conservative path; minor semver bloat (two rc labels for one release-candidate state). **Option C — skip rc, promote to `v2.0.0` final**. Requires a PRIOR version-literal bump slice across the canonical surfaces from `v2.0.0-rc1` → `v2.0.0`: Dockerfile (LABEL + MOTD + bashrc), README.md (headline + dd-example), docs/User_Guide.md, scripts/build-iso.sh (`VERSION` constant), iso/auto/config (`ORIONX_VERSION`), CHANGELOG.md (section header), .github/workflows/release.yml (release-name template if literal). Landed via planner → implementer → reviewer → guardian as a small bounded slice (no new functionality; pure version-literal propagation; mirror of W8-1's pattern). Then `git tag -a v2.0.0 <main-head>` + `git push origin v2.0.0`. Cleanest publishing semantics (release.yml emits `orionx-phoenix-edition-v2.0.0.iso`, GitHub Release titled `v2.0.0`, no "rc" suffix in user-facing artifacts). Largest work surface; SUPERSEDES DEC-PHASE7-002 + DEC-PHASE8-001 (which established `v2.0.0-rc1` as the canonical version-string default — a new DEC for the `v2.0.0` promotion would be required). The `v2.0.0-rc1` tag at `20504826` remains in place (preserved historical record). **Operator-decision rationale**: tag strategy spans (a) destructive-action policy (Option A is explicitly a CLAUDE.md "Approval Gates" hard boundary — force/history-rewrite); (b) historical-record discipline (Option B preserves rc1, Option A erases it, Option C makes rc1 a permanent historical pointer); (c) release-readiness semantics (Option C requires the operator to accept that all hardware-validation evidence is via the SKIPPED W7-7 attempt + the rc1 first-attestation + CI gates, not a fresh hardware attestation against the final-named v2.0.0 artifact). None of these tradeoffs is planner-resolvable from project-state alone; they require operator judgment on what historical record + release-naming + remote-state-policy the v2.0.0 release should embody. **Sequencing**: the Guardian merge develop → main proceeds FIRST (canonical landing, no user decision required); the tag decision is the immediate next operator interaction AFTER the merge lands. The planner does NOT pre-seed any tag-strategy slice; the next planner pass after the operator's tag decision will seed either the destructive-action approval token (Option A), the additive tag dispatch (Option B, may be operator-direct), or the version-literal bump slice (Option C, requires implementer dispatch). **GPG provisioning** is INDEPENDENT of the tag decision and can proceed in parallel — release.yml's signing step has `continue-on-error: true` per wi-w8-finish-B, so the merge + tag can land without GPG; signed artifacts emerge once the secrets are provisioned and release.yml is re-run. **Anti-drift control**: this DEC is the ONLY authority for the v2.0.0 tag-strategy choice. The planner MUST NOT pre-decide the option; the operator MUST choose explicitly; the chosen option's mechanics are recorded in a follow-on closure DEC at publish time. **Cross-references**: DEC-PHASE7-002 (build-iso single canonical version authority — Option C supersedes); DEC-PHASE8-001 (W8-1 version-string finalization to `v2.0.0-rc1` — Option C supersedes); DEC-PHASE7-005 (W8-7 `approve` gate — preserved across all three options); DEC-PHASE8-008 (W7-7 operator-authorized skip — the substrate of evidence under all three options); the existing `v2.0.0-rc1` tag at `20504826` (state at decision-boundary entry); develop HEAD `fb100f8` (the candidate merged-main HEAD). Code: this DEC entry; W-ID table update to W8-7 row reflecting the three-option boundary; handoff summary in Phase 8 narrative (Step 2). |
 | DEC-PHASE7-042 | 2026-05-13 | [W7-5 partial-accept + cascade-consolidation reapplication] W7-5 mechanism accepted with 1-of-3 targets verified; in-guest measurement reliability tracked under issue #40; DEC-PHASE7-041 reapplied as durable operational discipline | W7-5 (performance benchmark) landed at merge `8bcded0` and produced parseable `ORIONX_PERF: iso_size_bytes=984612864` (≈939 MiB, well under the 4 GiB threshold — **PASS**) host-side on first CI run. The other two Phase 7 performance targets from the goal-contract `desired_end_state` (`boot_time_seconds`, `idle_ram_bytes`) were UNMEASURED because `ORIONX_PERF_END` did not reach `/dev/ttyS0` within the 90s post-boot window — the same #39 first-boot cascade surface that gates W7-4-B's mesh assertions also gates W7-5's in-guest measurements (`multi-user.target` reach is unreliable on headless QEMU until non-interactive first-boot is resolved in Phase 8 design). **Partial-acceptance rationale**: rejecting W7-5 and reopening to chase the in-guest measurement reliability would be precisely the cascade-fix loop DEC-PHASE7-041 abandons. The mechanism (perf-measure unit + sentinel parser + host-side ISO-size measurement) is the value W7-5 delivers; 1 of 3 targets verified is real progress on the goal contract; the remaining two targets are blocked on the same architectural question Phase 8 design will resolve. **Exit slice (W7-5-exit, merge `ba3e0d1`)**: applied `continue-on-error: true` to the W7-5 step in `.github/workflows/qemu-test.yml` (mirror of W7-4-B-exit per DEC-PHASE7-039) and rewrote a stale comment block (caught by reviewer round 1). The step still runs, still emits sentinels, still uploads `qemu-artifacts-<run-id>/serial-{bios,uefi}.log`, but does not fail the workflow. **Issue #40 filed (2026-05-13)** as the in-guest boot_time / idle_ram measurement reliability tracker; routed as Phase 8 design pass input alongside #39. **Anti-drift control**: removing `continue-on-error: true` from the W7-5 step requires a planner DEC that explicitly closes #40 first. **Meta-confirmation of DEC-PHASE7-041**: this is the second application of the cascade-consolidation pattern in three slices (W7-4-B-exit, W7-5-exit). The pattern is durable operational discipline, not a one-off escape hatch. Both #39 and #40 share a root architectural question (headless-QEMU non-interactive boot semantics, DEC-SEC-003 bounded supersedence per DEC-PHASE7-038), and Phase 8 design will address them together rather than in serial cleanup slices. **Rejected alternative**: reopening W7-5 to chase the in-guest measurement window would have produced (a) another cascade-fix arc; (b) coupling with #39 work that belongs in Phase 8; (c) pressure to relax the 90s threshold without a real DEC — which would silently supersede the goal-contract `desired_end_state` values. **Cross-references**: DEC-PHASE7-035 (sentinel mechanism authority — preserved); DEC-PHASE7-039 (W7-4-B-exit first application); DEC-PHASE7-041 (meta-principle); DEC-PHASE7-040 (#39 cascade-consolidation precedent); issue #40 (in-guest measurement reliability tracker). Operational note: two Guardian-stewardship findings surfaced during this slice (stale `.git/index.lock` blocking the first W7-5-exit merge; workflow `base_branch=main` while merges target `develop`); both are runtime/control-plane discipline observations rather than source slices and are logged in the Phase 7 narrative for the operator's attention without a separate DEC entry. Code: merge commits `8bcded0` (W7-5 mechanism), `ba3e0d1` (W7-5-exit) on `develop`; CI run `25710069470`; issue #40 tracker; W-ID table updates marking W7-5 PARTIAL-ACCEPT and adding W7-5-exit ACCEPTED. |
 
+| DEC-PHASE9-001 | 2026-05-25 | [PHASE 9 PRODUCT — UI SURFACE] Operator UX = always-on XFCE panel widgets + a GTK "Orion-X Control Center" window. | Operator decision (not re-asked). Panel carries live genmon status widgets (clients / scans / mesh peers / net state, click-to-open) plus nm-applet; the Control Center is a one-click window of big labeled buttons (Connect Wi-Fi, Start Mesh, Team Chat, Net Watch, Analyze Artifact, Build Timeline, …) so incident-response tools and responder comms are obvious under stress. Realizes the "Cyberdeck for the Good Guys" vision: don't be afraid of widgets/buttons; intuitive leverage against a skilled adversary. Scoped to **W9-2**, deferred behind W9-1's broken-basics fix (DEC-PHASE9-003). Tracked as a GitHub issue; detail-planned after W9-1 lands. |
+| DEC-PHASE9-002 | 2026-05-25 | [PHASE 9 PRODUCT — THREAT DETECTION] Threat detection is an operator-selectable "Threat Posture / Paranoia Level" tier subsystem, NOT a single mode. | Operator decision (not re-asked). Escalating, easily selectable from the Control Center: **Tier 0 Passive** (lightweight monitors over present + small added tools — client census via arp-scan/netdiscover, ARP-spoof watch, SYN/port-scan heuristics over tcpdump); **Tier 1 IDS** (Suricata + ruleset, opt-in); **Tier 2 Deception** (canarytokens, honeytokens, contained honeypot/tarpit that detect+alert on adversary interaction). Designed as one coherent subsystem with a **single authority for the current tier + a single alert/event surface** that feeds the panel widget — no parallel tier-state mechanisms (Single Source of Truth). Scoped to **W9-3**, deferred behind W9-1/W9-2. Tracked as GitHub issue(s); detail-planned after W9-2. See DEC-PHASE9-008 for the deception containment boundary. |
+| DEC-PHASE9-003 | 2026-05-25 | [PHASE 9 SEQUENCING] Fast-basics-first: W9-1 = broken-basics only, cut as `v2.0.0-rc4` for a within-one-build-cycle operator hardware re-test; richer cyberdeck UX (W9-2) and threat-posture/deception (W9-3) follow toward rc5 / `v2.0.0` final. | The operator booted rc3 on real hardware and reported it unusable; the highest-leverage action is to hand back a working artifact fast, not to build the full cyberdeck before the basics work. W9-1 is ruthlessly scoped to items 1–5 of the root-cause diagnosis (wallpaper backdrop, xfce4-terminal launchers, GUI networking, autologin, one-click mesh launcher) + the matrix/wg-quick unit bug; SA/IDS/deception richness is real but explicitly out of W9-1 scope. Mirrors the Phase 7/8 one-slice-at-a-time seeding discipline (DEC-PHASE7-041 cascade-consolidation, Phase 8 work-item authority discipline). |
+| DEC-PHASE9-004 | 2026-05-25 | [PHASE 9 — AUTOLOGIN TRADEOFF] W9-1 enables LightDM autologin for the live `orionx` user as the cyberdeck default; the physical-capture risk is accepted and documented rather than over-engineered. | A field cyberdeck booted from USB under hostile conditions expects to land on a usable desktop without a login prompt; the `orionx` user is already passwordless by design (live-build default user). Autologin adds no new secret-exposure beyond the existing passwordless account. The countervailing threat — physical device capture exposing an auto-unlocked session — is real for a field tool, but mitigating it (full-disk encryption, login gating, panic-wipe) is a separate hardening initiative, not a broken-basics fix. Decision: ship autologin as the rc4 default; record the tradeoff here; defer any capture-hardening to a future DEC if the operator requests it. Authority: NEW `iso/config/includes.chroot/etc/lightdm/lightdm.conf.d/` override (none exists today) — single autologin authority. |
+| DEC-PHASE9-005 | 2026-05-25 | [PHASE 9 — NON-FREE FIRMWARE] W9-1 enables the Debian `non-free` apt component to install wireless firmware (`firmware-iwlwifi`/`-realtek`/`-atheros`) alongside `network-manager` + `network-manager-gnome` + `wpa_supplicant` + `iw`. | Without wireless firmware in the squashfs the operator cannot bring up Wi-Fi at all — the single largest functional gap in rc3. Debian wireless firmware lives in `non-free`/`non-free-firmware`; enabling it at build time is required and proportionate for a field tool whose primary transport is untrusted Wi-Fi. The component is enabled via the build-time apt config in scope (`iso/config/includes.chroot/etc/apt/**` and/or `iso/auto/config`), keeping the package set authority single (`iso/config/package-lists/*.list.chroot`). NetworkManager.service is enabled so GUI networking works on boot; nm-applet autostarts in the panel. |
+| DEC-PHASE9-006 | 2026-05-25 | [PHASE 9 — lxterminal REMOVAL] The four `lxterminal` `.desktop` Exec references (0700 hook lines 77/87/97/107) plus the stale lxterminal/LXDE-Openbox comments are REPLACED with `xfce4-terminal`, not left alongside. | `lxterminal` is not installed (only `xfce4-terminal`, package-lists line 21), so every menu launcher is dead. Single Source of Truth: the fix removes the lxterminal authority entirely rather than installing lxterminal (forbidden shortcut) or keeping both. The one-click mesh launcher (UX for diagnosis item 4) is a new `.desktop` entry invoking the existing `orionx-mesh` via `xfce4-terminal` — no new mesh source. The stale `stage_application_content()` empty-wallpapers README branch is likewise retired since `theme/wallpapers/orionx-phoenix-wallpaper.png` now exists; the xfconf backdrop reuses `scripts/toggle-theme.sh`'s mechanism rather than forking it. |
+| DEC-PHASE9-007 | 2026-05-25 | [PHASE 9 — MATRIX/wg-quick UNIT BUG] The canonical `matrix-synapse-orionx.service` hard `Requires=wg-quick@wg0.service` (line 16) is corrected because `scripts/mesh/mesh-join.sh` brings up `wg0` via raw `ip`/`wg` (`mesh_interface_up`), not `wg-quick@`, so the hard Requires can never be satisfied — and the 0615 hook enables the unit on every boot. | The mismatch is a real correctness bug: the matrix unit depends on a systemd unit (`wg-quick@wg0`) that the mesh subsystem never starts, so the dependency is permanently unsatisfiable. Resolution in W9-1: downgrade `Requires=` to a soft `Wants=`/`After=` consistent with mesh-join's raw bring-up (or remove it with a comment naming the mesh-join mechanism), so matrix degrades gracefully rather than failing hard. The unit is duplicated at repo-root `systemd/matrix-synapse-orionx.service` (NOT consumed by 0615; canonical `SOURCE_DIR=/usr/share/orionx/systemd`) — the duplicate is reconciled to the canonical copy to remove dual-authority drift (Single Source of Truth). Do NOT mask the failure by disabling the unit. |
+| DEC-PHASE9-008 | 2026-05-25 | [PHASE 9 — DECEPTION CONTAINMENT BOUNDARY] The Tier 2 deception layer (canarytokens, honeytokens, honeypots, tarpits) MUST be contained so it never endangers the operator, never exfiltrates operator data, and never exceeds the field-tool's lawful scope of observation. | Active deception that detects+alerts on adversary interaction is valuable, but honeypots/tarpits are an attack surface and a legal/safety hazard if uncontained: they must (a) run sandboxed/namespaced with no path to the operator's evidence or session, (b) emit alerts only to the local single alert surface (DEC-PHASE9-002), not to third parties, (c) be off by default and require explicit operator tier selection, and (d) interact only with traffic/actors already engaging the operator's deck — no active scanning-back or offensive action. This boundary is recorded now so the W9-3 detail-planning slice and its implementer inherit the safety constraint as a hard invariant, not an afterthought. Scoped to W9-3; tracked as a GitHub issue. |
+| DEC-PHASE9-009 | 2026-05-25 | [PHASE 9 — W9-1 LANDING CLOSURE + RUNTIME-HYGIENE OBSERVATION] W9-1 (rc4 broken-basics) landed @ `1c6c87c` (FF to develop, pushed) with reviewer `ready_for_guardian` (0 blockers / 0 major / 2 notes) and 855 unit tests green; rc4 publish (W9-4) and the hardware re-test remain operator boundaries before W9-2/W9-3 detail-planning. | What landed: Phoenix wallpaper set as the XFCE backdrop via xfconf in `0100-create-user` (single authority, reusing toggle-theme's mechanism); all menu launchers switched `lxterminal`→`xfce4-terminal` (zero functional lxterminal refs remain); NetworkManager + network-manager-gnome (nm-applet) + wpasupplicant + iw + non-free wifi firmware added, non-free archive area enabled, NM auto-enabled; LightDM autologin for `orionx`; one-click "Start Mesh" launcher; `matrix-synapse-orionx.service` `Requires=wg-quick`→`Wants=` in both copies (DEC-PHASE9-007); qemu-test.yml ISO path globbed; version default bumped to `v2.0.0-rc4`. Content-presence + GUI Wi-Fi bring-up are CI/hardware-gated. **Runtime-hygiene observation (backlog #41/#42 relevance):** closing this slice required manual `evaluation`/`test-state` projection and a workflow rebind after worktree cleanup, because the `cc-policy` contract builder's no-delta and stale-worktree guards blocked the automatic reviewer-verdict projection / scope re-bind — a control-plane friction point worth hardening so verdict projection survives worktree teardown without manual intervention. The 2 reviewer notes (toggle-theme.sh scope-manifest accuracy; stale rc1 header comment `test-iso-content-presence.sh:22`) are minor follow-ups, not blockers. |
+
 ## Risk Register
 
 | Risk | Mitigation |
@@ -2178,6 +2366,10 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | LLM hallucination in forensic analysis | Inference Constraint Layer, tool-output-only conclusions |
 | AI stack as attack surface | Air-gap capable, model integrity verification, audit logging |
 | Post-quantum transition urgency | Hybrid crypto from v3.0; classical remains secure for now |
+| Wireless firmware in `non-free` bloats ISO / licensing | Add only the three common chipset firmware packages (iwlwifi/realtek/atheros); ISO-size gate already monitors (Phase 7 perf); non-free required for any field Wi-Fi (DEC-PHASE9-005) |
+| Autologin exposes an unlocked session on physical capture | Accepted tradeoff for a field cyberdeck default (DEC-PHASE9-004); capture-hardening (FDE/panic-wipe) deferred to a future DEC if operator requests |
+| Tier 2 deception (honeypots/tarpits) is itself an attack surface / legal hazard | Hard containment boundary (DEC-PHASE9-008): sandboxed, off-by-default, local-only alerts, no scan-back; W9-3 inherits as invariant |
+| rc4 fixes the basics but operator can't re-test fast | W9-1 ruthlessly scoped + tag-driven rc4 cut (DEC-PHASE9-003) so the build cycle is one CI run; W9-4 publish is a thin operator boundary |
 
 ## References
 
