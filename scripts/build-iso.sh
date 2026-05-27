@@ -5,8 +5,8 @@
 # @title ISO build pipeline modernization for Phase 7 integration testing
 # @status accepted
 # @rationale W7-1 introduced --dry-run mode for path-resolution validation on
-#   non-Linux hosts, standardized the version string to v2.0.0-rc1 (Phase 7
-#   pre-release), fixed the directory reference from legacy uppercase ISO/ to
+#   non-Linux hosts, standardized the version string to v2.0.0-rc4 (Phase 9
+#   rc4 release), fixed the directory reference from legacy uppercase ISO/ to
 #   lowercase iso/ (the actual live-build tree), and moved the logfile from a
 #   repo-root litter path to tmp/ per Sacred Practice 3. A single version
 #   constant (VERSION) is the sole authority — never duplicated. The script
@@ -20,7 +20,7 @@
 #                Exits 0 on success or non-zero on validation failure.
 #                Required for non-Linux hosts and CI path-resolution checks.
 #
-#   --version    Override VERSION (default: v2.0.0-rc1). Must start with 'v'.
+#   --version    Override VERSION (default: v2.0.0-rc4). Must start with 'v'.
 #
 # Output:
 #   output/orionx-phoenix-edition-<VERSION>.iso (full build only)
@@ -38,7 +38,7 @@ set -euo pipefail
 # Downstream consumers (iso/auto/config, iso-volume label) read ORIONX_VERSION
 # from the environment when this script exports it.
 # ---------------------------------------------------------------------------
-VERSION="${ORIONX_VERSION:-v2.0.0-rc1}"
+VERSION="${ORIONX_VERSION:-v2.0.0-rc4}"
 
 # ---------------------------------------------------------------------------
 # Path setup
@@ -74,7 +74,7 @@ parse_args() {
                 # consumers that expect the canonical 'vMAJOR.MINOR.PATCH-...' form.
                 if [[ "$VERSION" != v* ]]; then
                     echo "ERROR: --version value must start with 'v' (got: '$VERSION')" >&2
-                    echo "       Example: --version v2.0.0-rc1" >&2
+                    echo "       Example: --version v2.0.0-rc4" >&2
                     exit 1
                 fi
                 shift 2
@@ -161,7 +161,7 @@ check_prerequisites() {
 #   data/, and docs/ into includes.chroot so live-build picks them up during
 #   the chroot phase. The v2.0.0 source (repo root) is the authoritative
 #   content; archive/ is reference-only and is never staged. The
-#   wallpapers/ directory is intentionally empty at v2.0.0-rc1 (no branded
+#   wallpapers/ directory is intentionally empty at v2.0.0-rc4 (no branded
 #   assets yet); a README.txt is created so the empty dir is preserved and
 #   the omission is self-documenting. Staged content is .gitignored to keep
 #   the worktree clean — the repo root is the single source of truth.
@@ -216,7 +216,7 @@ stage_application_content() {
         cat > "$stage_dir/opt/orionx/theme/wallpapers/README.txt" <<'WALLPAPER_EOF'
 Orion-X Phoenix Edition Wallpapers
 This directory is intended for branded desktop wallpapers.
-At v2.0.0-rc1, wallpaper assets are TBD (see issue #43 follow-up).
+At v2.0.0-rc4, the phoenix wallpaper asset is staged from theme/wallpapers/.
 Default Debian wallpapers are used at runtime.
 WALLPAPER_EOF
     fi

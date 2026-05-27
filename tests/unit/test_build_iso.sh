@@ -127,12 +127,14 @@ run_test "build-iso.sh is executable" "[[ -x '$BUILD_SCRIPT' ]]"
 echo ""
 
 # ---------------------------------------------------------------------------
-# T2: Version flag — script must contain v2.0.0-rc1, not v1.5.5
+# T2: Version flag — script must contain v2.0.0-rc4, not v1.5.5 or rc1
+# rc4: version literal bumped to v2.0.0-rc4 (DEC-PHASE9 version coherence)
 # ---------------------------------------------------------------------------
 echo "[T2] Version string"
 SCRIPT_CONTENT="$(cat "$BUILD_SCRIPT")"
 not_contains "script does not hardcode v1.5.5" "v1.5.5" "$SCRIPT_CONTENT"
-contains "script contains v2.0.0-rc1 default" "v2.0.0-rc1" "$SCRIPT_CONTENT"
+not_contains "script does not use stale v2.0.0-rc1 default" "v2.0.0-rc1" "$SCRIPT_CONTENT"
+contains "script contains v2.0.0-rc4 default" "v2.0.0-rc4" "$SCRIPT_CONTENT"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -171,7 +173,7 @@ run_test "--dry-run exits 0 with iso/ present" \
     "(cd '$FAKE_REPO_OK' && bash scripts/build-iso.sh --dry-run)"
 contains "--dry-run emits 'iso/ directory found'" "iso/ directory found" "$DRY_OUTPUT"
 contains "--dry-run emits 'dry-run] All path'" "[dry-run] All path" "$DRY_OUTPUT"
-contains "--dry-run emits version v2.0.0-rc1" "v2.0.0-rc1" "$DRY_OUTPUT"
+contains "--dry-run emits version v2.0.0-rc4" "v2.0.0-rc4" "$DRY_OUTPUT"
 contains "--dry-run reports iso_dir path" "iso_dir" "$DRY_OUTPUT"
 not_contains "--dry-run does not invoke lb build" "lb build" "$DRY_OUTPUT"
 echo ""
@@ -202,7 +204,7 @@ VER_OUTPUT="$((cd "$FAKE_REPO_VER" && bash scripts/build-iso.sh --dry-run --vers
 run_test "--version override exits 0" \
     "(cd '$FAKE_REPO_VER' && bash scripts/build-iso.sh --dry-run --version v99.0.0-test)"
 contains "--version appears in output" "v99.0.0-test" "$VER_OUTPUT"
-not_contains "default version v2.0.0-rc1 not in overridden output" "v2.0.0-rc1" "$VER_OUTPUT"
+not_contains "default version v2.0.0-rc4 not in overridden output" "v2.0.0-rc4" "$VER_OUTPUT"
 echo ""
 
 # ---------------------------------------------------------------------------

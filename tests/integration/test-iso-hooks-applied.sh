@@ -216,6 +216,71 @@ done
 echo ""
 
 # ---------------------------------------------------------------------------
+# rc4 broken-basics: assert .desktop entries use xfce4-terminal, not lxterminal
+# These checks are static (no build log needed) — they validate the hook file
+# content directly. They do NOT require a built ISO.
+# ---------------------------------------------------------------------------
+echo "--- rc4 static checks: .desktop Exec strings in 0700 hook ---"
+echo ""
+
+HOOK_0700="$REPO_ROOT/iso/config/hooks/live/0700-orionx-setup.hook.chroot"
+if [[ -f "$HOOK_0700" ]]; then
+    # Must have xfce4-terminal in Exec lines
+    if grep -q "xfce4-terminal" "$HOOK_0700"; then
+        pass "rc4: 0700 hook uses xfce4-terminal in .desktop Exec lines"
+    else
+        fail "rc4: 0700 hook uses xfce4-terminal in .desktop Exec lines"
+    fi
+    # Must have zero lxterminal references
+    LXTERM_COUNT="$(grep -c "lxterminal" "$HOOK_0700" 2>/dev/null || true)"
+    if [[ "$LXTERM_COUNT" -eq 0 ]]; then
+        pass "rc4: 0700 hook has zero lxterminal references"
+    else
+        fail "rc4: 0700 hook has zero lxterminal references" \
+             "Found $LXTERM_COUNT reference(s) — switch all Exec lines to xfce4-terminal"
+    fi
+    # Must have the one-click mesh launcher
+    if grep -q "orionx-start-mesh.desktop" "$HOOK_0700"; then
+        pass "rc4: 0700 hook creates orionx-start-mesh.desktop one-click launcher"
+    else
+        fail "rc4: 0700 hook creates orionx-start-mesh.desktop one-click launcher"
+    fi
+else
+    skip "rc4: 0700 hook static checks" "hook file not found: $HOOK_0700"
+fi
+
+# nm-applet autostart: network-manager-gnome ships /etc/xdg/autostart/nm-applet.desktop
+# In the source tree (includes.chroot), this file should NOT be present (the
+# package itself installs it at build time). Verify the package is in the list.
+PKG_LIST="$REPO_ROOT/iso/config/package-lists/orionx.list.chroot"
+if [[ -f "$PKG_LIST" ]]; then
+    if grep -q "^network-manager-gnome$" "$PKG_LIST"; then
+        pass "rc4: network-manager-gnome in package list (ships nm-applet autostart)"
+    else
+        fail "rc4: network-manager-gnome in package list (ships nm-applet autostart)"
+    fi
+    if grep -q "^network-manager$" "$PKG_LIST"; then
+        pass "rc4: network-manager in package list"
+    else
+        fail "rc4: network-manager in package list"
+    fi
+    if grep -q "^wpasupplicant$" "$PKG_LIST"; then
+        pass "rc4: wpasupplicant in package list"
+    else
+        fail "rc4: wpasupplicant in package list"
+    fi
+    if grep -q "^iw$" "$PKG_LIST"; then
+        pass "rc4: iw in package list"
+    else
+        fail "rc4: iw in package list"
+    fi
+else
+    skip "rc4: package list checks" "package list not found: $PKG_LIST"
+fi
+
+echo ""
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo "================================================================"

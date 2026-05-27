@@ -1,9 +1,24 @@
 #!/bin/sh
 #
-# Orion-X Phoenix Edition v1.5.5
+# Orion-X Phoenix Edition v2.0.0-rc4
 # User creation hook for live-build
 #
 # This script creates the default live user and sets up the home directory.
+#
+# @decision DEC-PHASE9-002
+# @title XFCE wallpaper authority: 0100-create-user direct /home/orionx build
+# @status accepted
+# @rationale The established pattern in this hook is to build /home/orionx
+#   directly at ISO build time (not via /etc/skel). The XFCE backdrop is set
+#   by writing the xfconf XML config into /home/orionx/.config/xfce4/xfconf/
+#   xfce-perchannel-xml/xfce4-desktop.xml in this hook. This is the SINGLE
+#   authority for the live user's default backdrop. /etc/skel is NOT used
+#   (it would duplicate the authority). toggle-theme.sh uses xfconf-query at
+#   runtime to change the live value; this static XML is the default that
+#   xfce4-desktop reads on first login. The xfconf property path pattern is
+#   taken from toggle-theme.sh: /backdrop/screen0/monitor0/workspace0/last-image.
+#   The wallpaper asset is staged by stage_application_content() in build-iso.sh
+#   to /opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png.
 
 set -e
 
@@ -124,6 +139,29 @@ orionx-help() {
     echo ""
     echo "Documentation available in /usr/share/doc/orionx/"
 }
+EOF
+
+# Set up XFCE4 desktop wallpaper via xfconf XML (default backdrop authority).
+# The xfce4-desktop daemon reads this XML on session start to set the wallpaper.
+# Property: /backdrop/screen0/monitor0/workspace0/last-image (same path used
+# by toggle-theme.sh's xfconf-query calls at runtime).
+# Asset staged by stage_application_content() to:
+#   /opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png
+mkdir -p /home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml
+cat > /home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-desktop" version="1.0">
+  <property name="backdrop" type="empty">
+    <property name="screen0" type="empty">
+      <property name="monitor0" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="last-image" type="string" value="/opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png"/>
+          <property name="image-style" type="int" value="5"/>
+        </property>
+      </property>
+    </property>
+  </property>
+</channel>
 EOF
 
 # Set up Xfce4 terminal configuration

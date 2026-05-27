@@ -1,16 +1,27 @@
 #!/bin/bash
 #
-# Orion-X Phoenix Edition v1.5.5
+# Orion-X Phoenix Edition v2.0.0-rc4
 # Theme Toggle Script
 #
-# This script toggles between the dark (amber) and green terminal themes
-# and desktop wallpapers in Orion-X.
+# @decision DEC-PHASE9-003
+# @title toggle-theme.sh: single phoenix wallpaper asset; stale refs removed
+# @status accepted
+# @rationale rc3 shipped with references to orionx-green-wallpaper.png and
+#   orionx-dark-wallpaper.png, neither of which exists in the ISO. The only
+#   real branded wallpaper asset is orionx-phoenix-wallpaper.png (staged to
+#   /opt/orionx/theme/wallpapers/ by stage_application_content in build-iso.sh).
+#   Both theme variants now point to the same phoenix asset. A future work item
+#   can produce separate dark/green variants; until then, using the one real
+#   asset is strictly better than referencing missing files.
+#   xfconf property path: /backdrop/screen0/monitor0/workspace0/last-image
+#   (same path set statically in 0100-create-user.hook.chroot xfce4-desktop.xml).
+#   Terminal config switched from Terminator (not installed) to xfce4-terminal.
+#   Theme dir corrected from /usr/share/orionx/theme to /opt/orionx/theme (the
+#   actual staging path used by stage_application_content).
 
 # Define paths
-THEME_DIR="/usr/share/orionx/theme"
+THEME_DIR="/opt/orionx/theme"
 WALLPAPER_DIR="$THEME_DIR/wallpapers"
-TERM_CONFIG_DIR="$HOME/.config/terminator"
-XFCE_CONFIG_DIR="$HOME/.config/xfce4/xfconf/xfce-perchannel-xml"
 
 # Log file
 LOGFILE="/var/log/orionx/theme_toggle.log"
@@ -40,113 +51,63 @@ else
     log "Switching to dark theme"
 fi
 
-# Update terminal configuration (Terminator)
-if [ -d "$TERM_CONFIG_DIR" ]; then
-    log "Updating Terminator configuration"
-    
-    # Create config directory if it doesn't exist
-    mkdir -p "$TERM_CONFIG_DIR"
-    
-    # Create or update Terminator config
-    CONFIG_FILE="$TERM_CONFIG_DIR/config"
-    
-    if [ "$NEW_THEME" = "green" ]; then
-        # Green phosphor theme
-        cat > "$CONFIG_FILE" << EOF
-[global_config]
-  title_transmit_bg_color = "#12521c"
-  title_inactive_bg_color = "#142311"
-  enabled_plugins = LaunchpadBugURLHandler, LaunchpadCodeURLHandler, APTURLHandler, TerminatorThemes
-[keybindings]
-[profiles]
-  [[default]]
-    background_color = "#031a11"
-    cursor_color = "#25c3dc"
-    foreground_color = "#0cfa54"
-    palette = "#2e3436:#cc0000:#4e9a06:#c4a000:#3465a4:#75507b:#06989a:#d3d7cf:#555753:#ef2929:#8ae234:#fce94f:#729fcf:#ad7fa8:#34e2e2:#eeeeec"
-    background_image = "$THEME_DIR/term-bg-green.png"
-    background_type = image
-    background_darkness = 0.80
-[layouts]
-  [[default]]
-    [[[window0]]]
-      type = Window
-      parent = ""
-    [[[child1]]]
-      type = Terminal
-      parent = window0
-[plugins]
-EOF
-    else
-        # Dark/amber theme
-        cat > "$CONFIG_FILE" << EOF
-[global_config]
-  title_transmit_bg_color = "#501d2c"
-  title_inactive_bg_color = "#3d2121"
-  enabled_plugins = LaunchpadBugURLHandler, LaunchpadCodeURLHandler, APTURLHandler, TerminatorThemes
-[keybindings]
-[profiles]
-  [[default]]
-    background_color = "#1a1a1a"
-    cursor_color = "#aaaaaa"
-    foreground_color = "#ff9900"
-    palette = "#2e3436:#cc0000:#4e9a06:#c4a000:#3465a4:#75507b:#06989a:#d3d7cf:#555753:#ef2929:#8ae234:#fce94f:#729fcf:#ad7fa8:#34e2e2:#eeeeec"
-    background_image = "$THEME_DIR/term-bg-dark.png"
-    background_type = image
-    background_darkness = 0.85
-[layouts]
-  [[default]]
-    [[[window0]]]
-      type = Window
-      parent = ""
-    [[[child1]]]
-      type = Terminal
-      parent = window0
-[plugins]
-EOF
-    fi
-    
-    log "Terminator configuration updated"
+# Update desktop wallpaper (XFCE) using xfconf-query.
+# Both themes use the phoenix asset — the only staged branded wallpaper.
+# Stale references to orionx-green-wallpaper.png / orionx-dark-wallpaper.png
+# have been removed (DEC-PHASE9-003): those files do not exist in the ISO.
+WALLPAPER="$WALLPAPER_DIR/orionx-phoenix-wallpaper.png"
+log "Setting XFCE wallpaper to phoenix asset: $WALLPAPER"
+if command -v xfconf-query > /dev/null 2>&1; then
+    xfconf-query -c xfce4-desktop \
+        -p /backdrop/screen0/monitor0/workspace0/last-image \
+        -s "$WALLPAPER" 2>/dev/null \
+        || log "WARNING: xfconf-query failed — XFCE session may not be running"
+    log "XFCE wallpaper updated to $WALLPAPER"
 else
-    log "Terminator configuration directory not found, skipping terminal config"
+    log "xfconf-query not found, unable to update XFCE wallpaper at runtime"
 fi
 
-# Update desktop wallpaper (XFCE)
-if [ -d "$XFCE_CONFIG_DIR" ]; then
-    log "Updating XFCE desktop wallpaper"
-    
-    if [ "$NEW_THEME" = "green" ]; then
-        WALLPAPER="$WALLPAPER_DIR/orionx-green-wallpaper.png"
-    else
-        WALLPAPER="$WALLPAPER_DIR/orionx-dark-wallpaper.png"
-    fi
-    
-    # Update XFCE wallpaper using xfconf-query
-    if command -v xfconf-query &> /dev/null; then
-        xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/workspace0/last-image -s "$WALLPAPER"
-        log "XFCE wallpaper updated to $WALLPAPER"
-    else
-        log "xfconf-query not found, unable to update XFCE wallpaper"
-    fi
-else
-    log "XFCE configuration directory not found, trying alternative wallpaper setting"
-    
-    # Try generic wallpaper setting for other desktop environments
-    if command -v gsettings &> /dev/null; then
-        if [ "$NEW_THEME" = "green" ]; then
-            WALLPAPER="$WALLPAPER_DIR/orionx-green-wallpaper.png"
-        else
-            WALLPAPER="$WALLPAPER_DIR/orionx-dark-wallpaper.png"
-        fi
-        
-        gsettings set org.gnome.desktop.background picture-uri "file://$WALLPAPER"
-        log "Desktop wallpaper updated using gsettings"
-    else
-        log "No supported wallpaper setting method found"
-    fi
-fi
+# Update xfce4-terminal color theme
+XFCE_TERM_CONFIG_DIR="$HOME/.config/xfce4/terminal"
+mkdir -p "$XFCE_TERM_CONFIG_DIR"
+TERM_CONFIG_FILE="$XFCE_TERM_CONFIG_DIR/terminalrc"
 
-# Update bash prompt
+if [ "$NEW_THEME" = "green" ]; then
+    log "Applying green terminal theme"
+    cat > "$TERM_CONFIG_FILE" << 'TERMRC_EOF'
+[Configuration]
+FontName=Monospace 12
+MiscAlwaysShowTabs=FALSE
+MiscBell=FALSE
+MiscCursorBlinks=TRUE
+MiscCursorShape=TERMINAL_CURSOR_SHAPE_BLOCK
+MiscDefaultGeometry=80x24
+MiscMenubarDefault=FALSE
+ColorForeground=#0cfa54
+ColorBackground=#031a11
+ColorCursor=#25c3dc
+ColorPalette=#2e3436;#cc0000;#4e9a06;#c4a000;#3465a4;#75507b;#06989a;#d3d7cf;#555753;#ef2929;#8ae234;#fce94f;#729fcf;#ad7fa8;#34e2e2;#eeeeec
+TERMRC_EOF
+else
+    log "Applying dark/amber terminal theme"
+    cat > "$TERM_CONFIG_FILE" << 'TERMRC_EOF'
+[Configuration]
+FontName=Monospace 12
+MiscAlwaysShowTabs=FALSE
+MiscBell=FALSE
+MiscCursorBlinks=TRUE
+MiscCursorShape=TERMINAL_CURSOR_SHAPE_BLOCK
+MiscDefaultGeometry=80x24
+MiscMenubarDefault=FALSE
+ColorForeground=#ff9900
+ColorBackground=#1a1a1a
+ColorCursor=#aaaaaa
+ColorPalette=#2e3436;#cc0000;#4e9a06;#c4a000;#3465a4;#75507b;#06989a;#d3d7cf;#555753;#ef2929;#8ae234;#fce94f;#729fcf;#ad7fa8;#34e2e2;#eeeeec
+TERMRC_EOF
+fi
+log "xfce4-terminal configuration updated: $TERM_CONFIG_FILE"
+
+# Update bash prompt color
 if [ "$NEW_THEME" = "green" ]; then
     PS1_COLOR="\[\033[01;32m\]"  # Green
 else
@@ -157,15 +118,16 @@ fi
 if [ -f "$HOME/.bashrc" ]; then
     # Remove any existing Orion-X PS1 settings
     sed -i '/# Orion-X Phoenix Edition PS1/d' "$HOME/.bashrc"
-    sed -i '/PS1=/d' "$HOME/.bashrc"
-    
+    sed -i '/^PS1=/d' "$HOME/.bashrc"
+
     # Add new PS1 setting
     echo "# Orion-X Phoenix Edition PS1" >> "$HOME/.bashrc"
-    printf "PS1='%s[Orion-X]\\[\\033[00m\\] \\[\\033[01;34m\\]\\w\\[\\033[00m\\]\\\\$ '\n" "${PS1_COLOR}" >> "$HOME/.bashrc"
-    
+    printf "PS1='%s[Orion-X]\\[\\033[00m\\] \\[\\033[01;34m\\]\\w\\[\\033[00m\\]\\\\$ '\n" \
+        "${PS1_COLOR}" >> "$HOME/.bashrc"
+
     log "Bash prompt updated"
 else
-    log "/.bashrc not found, skipping bash prompt update"
+    log "$HOME/.bashrc not found, skipping bash prompt update"
 fi
 
 # Save current theme
@@ -173,16 +135,5 @@ echo "$NEW_THEME" > "$HOME/.orionx_theme"
 
 log "Theme toggle complete. New theme: $NEW_THEME"
 echo "Switched to $NEW_THEME theme. Please restart your terminal for full effect."
-
-# Optionally restart terminal if using a supported terminal
-if [ "$1" = "--restart-terminal" ]; then
-    if pgrep terminator > /dev/null; then
-        pkill terminator
-        terminator &
-        log "Restarted Terminator terminal"
-    else
-        log "Terminal restart requested but Terminator not running"
-    fi
-fi
 
 exit 0

@@ -13,13 +13,27 @@ set -euo pipefail
 #   (which live-build copies into the chroot before hooks execute).
 #   Responsibilities:
 #     1. PATH symlinks in /usr/bin/ so scripts are available system-wide.
-#     2. XDG .desktop entries so the LXDE/Openbox launcher shows Orion-X apps.
+#     2. XDG .desktop entries so the XFCE launcher shows Orion-X apps.
 #     3. MOTD / welcome message referencing the orionx-help function.
 #     4. Permissions: 755 on scripts, 644 on data/docs.
 #   No other hook creates symlinks in /usr/bin/ for Orion-X tools (single
 #   authority). Lexical position 0700 ensures this runs after all service
 #   hooks (0500–0620) and after the application content is in place.
 #   Idempotent: ln -sf overwrites existing symlinks safely.
+#
+# @decision DEC-PHASE9-001
+# @title Terminal emulator: xfce4-terminal replaces lxterminal
+# @status accepted
+# @rationale rc3 post-boot analysis showed all .desktop Exec lines used
+#   lxterminal which is NOT installed in the ISO. The ISO includes xfce4-terminal
+#   (already in the package list). Switching to xfce4-terminal with
+#   `xfce4-terminal --hold -e "bash -c '<cmd>; exec bash'"` keeps the window
+#   open after the tool exits so the user can read output. The --hold flag
+#   prevents the terminal window from closing immediately; exec bash gives
+#   a live shell when the command finishes. lxterminal is removed from ALL
+#   .desktop Exec lines and all associated stale comments. Single authority:
+#   0700 is the only hook that creates /usr/share/applications/ .desktop entries
+#   for Orion-X tools.
 #
 # Production sequence:
 #   1. stage_application_content (build host) rsyncs source into includes.chroot/
@@ -62,9 +76,12 @@ done
 
 # ---------------------------------------------------------------------------
 # 2. XDG Desktop entries in /usr/share/applications/
-#    Each major Orion-X tool gets a .desktop entry so it appears in the
-#    application menu. We use lxterminal as the terminal emulator because
-#    it is included in the Orion-X ISO base package list.
+#    Each major Orion-X tool gets a .desktop entry so it appears in the XFCE
+#    application menu. Terminal emulator: xfce4-terminal (installed in ISO).
+#    Syntax: xfce4-terminal --hold -e "bash -c '<cmd>; exec bash'"
+#    --hold: keeps window open after the command exits.
+#    exec bash: provides a live shell on completion so the user can read output.
+#    No lxterminal — it is NOT installed in the Orion-X ISO.
 # ---------------------------------------------------------------------------
 echo "[orionx-setup] Creating XDG desktop entries..."
 mkdir -p /usr/share/applications
@@ -74,7 +91,7 @@ cat > /usr/share/applications/orionx-mesh.desktop << 'DESKTOP_EOF'
 Type=Application
 Name=Orion-X Mesh
 Comment=WireGuard P2P mesh management
-Exec=lxterminal -e "orionx-mesh; bash"
+Exec=xfce4-terminal --hold -e "bash -c 'orionx-mesh; exec bash'"
 Icon=network-workgroup
 Categories=Network;
 DESKTOP_EOF
@@ -84,7 +101,7 @@ cat > /usr/share/applications/orionx-setup-matrix.desktop << 'DESKTOP_EOF'
 Type=Application
 Name=Orion-X Matrix Setup
 Comment=Set up Matrix/Synapse communication server
-Exec=lxterminal -e "setup-matrix.sh; bash"
+Exec=xfce4-terminal --hold -e "bash -c 'setup-matrix.sh; exec bash'"
 Icon=internet-chat
 Categories=Network;
 DESKTOP_EOF
@@ -94,7 +111,7 @@ cat > /usr/share/applications/orionx-artifact-analyzer.desktop << 'DESKTOP_EOF'
 Type=Application
 Name=Orion-X Artifact Analyzer
 Comment=Forensic artifact analysis tool
-Exec=lxterminal -e "artifact-analyzer.py; bash"
+Exec=xfce4-terminal --hold -e "bash -c 'artifact-analyzer.py; exec bash'"
 Icon=utilities-file-archiver
 Categories=Utility;
 DESKTOP_EOF
@@ -104,9 +121,22 @@ cat > /usr/share/applications/orionx-storyboard-gen.desktop << 'DESKTOP_EOF'
 Type=Application
 Name=Orion-X Storyboard Generator
 Comment=Generate intelligence storyboards from forensic data
-Exec=lxterminal -e "storyboard-gen.py; bash"
+Exec=xfce4-terminal --hold -e "bash -c 'storyboard-gen.py; exec bash'"
 Icon=text-editor
 Categories=Utility;
+DESKTOP_EOF
+
+# One-click mesh launcher — invokes the existing orionx-mesh entrypoint with sudo.
+# orionx user is in the sudo group (passwordless), so sudo works without a prompt.
+# The 'join' subcommand is the primary production use-case: bring up the mesh.
+cat > /usr/share/applications/orionx-start-mesh.desktop << 'DESKTOP_EOF'
+[Desktop Entry]
+Type=Application
+Name=Orion-X — Start Mesh
+Comment=Start Orion-X WireGuard mesh (one-click)
+Exec=xfce4-terminal --hold -e "bash -c 'sudo orionx-mesh join; exec bash'"
+Icon=network-wireless
+Categories=Network;
 DESKTOP_EOF
 
 # ---------------------------------------------------------------------------
@@ -124,7 +154,7 @@ cat << 'EOF'
  / _ \ _ _(_)___ _ _      \ \/ /
 | (_) | '_| / _ \ ' \      >  <
  \___/|_| |_\___/_||_|    /_/\_\
-Orion-X Phoenix Edition v2.0.0-rc1
+Orion-X Phoenix Edition v2.0.0-rc4
 
 Quick start:
   orionx-mesh       — WireGuard P2P mesh management

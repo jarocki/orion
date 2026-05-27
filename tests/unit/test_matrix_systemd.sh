@@ -48,7 +48,7 @@ assert_file_exists() {
 assert_file_contains() {
     local file="$1"
     local pattern="$2"
-    local desc="${3:-$file contains '$pattern'}"
+    local desc="${3:-$file contains \"$pattern\"}"
     if grep -qE "$pattern" "$PROJECT_ROOT/$file" 2>/dev/null; then
         pass "$desc"
     else
@@ -82,13 +82,44 @@ assert_file_contains "$UNIT_FILE" 'After=network-online\.target' \
     "Has After=network-online.target"
 
 assert_file_contains "$UNIT_FILE" 'After=wg-quick@wg0\.service' \
-    "Has After=wg-quick@wg0.service (WireGuard dependency)"
+    "Has After=wg-quick@wg0.service (ordering preserved)"
 
 assert_file_contains "$UNIT_FILE" 'Wants=network-online\.target' \
     "Has Wants=network-online.target"
 
-assert_file_contains "$UNIT_FILE" 'Requires=wg-quick@wg0\.service' \
-    "Has Requires=wg-quick@wg0.service"
+# rc4 fix (DEC-PHASE9-006): wg-quick dependency downgraded from Requires= to Wants=
+# mesh-join.sh uses raw ip/wg (not wg-quick), so wg-quick@wg0 never activates.
+# Hard Requires= caused Matrix to fail to start. Wants= is the correct soft dep.
+assert_file_contains "$UNIT_FILE" 'Wants=wg-quick@wg0\.service' \
+    "rc4: Has Wants=wg-quick@wg0.service (soft dependency, DEC-PHASE9-006)"
+
+# Verify hard Requires= on wg-quick is gone (would block Matrix when mesh-join is used)
+if grep -qE '^Requires=wg-quick@wg0' "$PROJECT_ROOT/$UNIT_FILE" 2>/dev/null; then
+    fail "rc4: no hard Requires=wg-quick@wg0.service (DEC-PHASE9-006)" \
+         "Hard Requires= still present — downgrade to Wants= so Matrix starts when mesh-join manages wg0"
+else
+    pass "rc4: no hard Requires=wg-quick@wg0.service (soft Wants= only)"
+fi
+
+# Both the canonical includes.chroot copy and the repo-root reference copy must agree
+CANONICAL_UNIT="iso/config/includes.chroot/usr/share/orionx/systemd/matrix-synapse-orionx.service"
+if [[ -f "$PROJECT_ROOT/$CANONICAL_UNIT" ]]; then
+    if grep -qE '^Wants=wg-quick@wg0' "$PROJECT_ROOT/$CANONICAL_UNIT" 2>/dev/null; then
+        pass "rc4: canonical includes.chroot copy also uses Wants=wg-quick@wg0"
+    else
+        fail "rc4: canonical includes.chroot copy also uses Wants=wg-quick@wg0" \
+             "Sync $CANONICAL_UNIT with $UNIT_FILE"
+    fi
+    if grep -qE '^Requires=wg-quick@wg0' "$PROJECT_ROOT/$CANONICAL_UNIT" 2>/dev/null; then
+        fail "rc4: canonical copy has no hard Requires=wg-quick@wg0" \
+             "Hard Requires= still in $CANONICAL_UNIT"
+    else
+        pass "rc4: canonical includes.chroot copy has no hard Requires=wg-quick@wg0"
+    fi
+else
+    fail "rc4: canonical includes.chroot unit file exists" \
+         "Missing: $CANONICAL_UNIT"
+fi
 
 # ============================================================
 # Test Group 3: Service Section

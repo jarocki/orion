@@ -180,9 +180,9 @@ else
 fi
 
 # ===========================================================================
-# 5. XDG desktop entries
+# 5. XDG desktop entries — rc4: xfce4-terminal, no lxterminal, mesh launcher
 # ===========================================================================
-section "XDG desktop entries"
+section "XDG desktop entries (rc4)"
 
 EXPECTED_DESKTOP_APPS=(
     "orionx-mesh"
@@ -213,6 +213,35 @@ if [[ "$HOOK_CONTENT" == *"[Desktop Entry]"* ]]; then
 else
     fail "XDG [Desktop Entry] section present" \
          "No [Desktop Entry] header found — entries are not valid XDG format"
+fi
+
+# rc4: terminal must be xfce4-terminal (lxterminal is NOT installed in the ISO)
+if [[ "$HOOK_CONTENT" == *"xfce4-terminal"* ]]; then
+    pass "rc4: .desktop Exec lines use xfce4-terminal"
+else
+    fail "rc4: .desktop Exec lines use xfce4-terminal" \
+         "lxterminal is not installed; all Exec lines must use xfce4-terminal"
+fi
+
+# rc4: zero lxterminal references in FUNCTIONAL (non-comment) lines (DEC-PHASE9-001).
+# Comment-only occurrences (e.g. @decision/@title lines documenting the migration)
+# are informative and acceptable. The invariant is that no Exec= or executable
+# command line invokes lxterminal — that would cause boot-time failures because
+# lxterminal is NOT installed in the ISO.
+LXTERM_FUNC_COUNT="$(grep -v '^\s*#' "$HOOK_FILE" | grep -c "lxterminal" 2>/dev/null || true)"
+if [[ "$LXTERM_FUNC_COUNT" -eq 0 ]]; then
+    pass "rc4: zero lxterminal references in functional lines (DEC-PHASE9-001)"
+else
+    fail "rc4: zero lxterminal references in functional lines" \
+         "Found $LXTERM_FUNC_COUNT functional reference(s) — remove all non-comment lxterminal (not installed)"
+fi
+
+# rc4: one-click mesh launcher present (DEC-PHASE9-001)
+if [[ "$HOOK_CONTENT" == *"orionx-start-mesh.desktop"* ]]; then
+    pass "rc4: orionx-start-mesh.desktop one-click launcher present"
+else
+    fail "rc4: orionx-start-mesh.desktop one-click launcher present" \
+         "Task 5 requires a Start Mesh desktop entry (sudo orionx-mesh join)"
 fi
 
 # ===========================================================================

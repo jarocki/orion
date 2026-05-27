@@ -5,15 +5,34 @@
 #   validated via systemd-analyze verify (or structural checks). Full
 #   runtime testing deferred to Phase 7 where QEMU provides real init.
 
+# @decision DEC-PHASE9-006
+# @title Downgrade wg-quick dependency from Requires= to Wants=/After=
+# @status accepted
+# @rationale scripts/mesh/mesh-join.sh brings up wg0 using raw ip/wg commands
+#   via mesh_interface_up() — it does NOT use wg-quick. As a result
+#   wg-quick@wg0.service never runs, and the hard Requires= caused Matrix to
+#   refuse to start (systemd propagates failure from a required unit that
+#   never activates). Downgrading to Wants= makes the dependency soft: systemd
+#   will attempt wg-quick@wg0.service but will not block or fail Matrix if it
+#   does not activate. After= is retained so that if wg-quick IS used in a
+#   future deployment, Matrix still waits for it. Operators who use wg-quick
+#   instead of mesh-join.sh retain correct ordering without a hard dependency.
+#   NOTE: this file (repo-root systemd/) is a reference copy kept in sync with
+#   the canonical consumed copy at
+#   iso/config/includes.chroot/usr/share/orionx/systemd/matrix-synapse-orionx.service
+#   which is installed into the ISO by 0615-install-systemd-units.hook.chroot.
+
 [Unit]
 Description=Orion-X Matrix Synapse Homeserver
 Documentation=https://matrix-org.github.io/synapse/latest/
 After=network-online.target
 After=wg-quick@wg0.service
 Wants=network-online.target
-# Require WireGuard mesh to be up before starting Synapse
-# so that Synapse binds to the mesh IP
-Requires=wg-quick@wg0.service
+# Soft dependency on wg-quick@wg0 (DEC-PHASE9-006): mesh-join.sh uses raw
+# ip/wg to bring up wg0, not wg-quick, so wg-quick@wg0.service never activates.
+# Wants= + After= gives correct ordering when wg-quick IS used, without
+# blocking Matrix startup when the mesh is managed by mesh-join.sh instead.
+Wants=wg-quick@wg0.service
 
 [Service]
 Type=notify

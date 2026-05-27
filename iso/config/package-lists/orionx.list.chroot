@@ -1,5 +1,23 @@
-# Orion-X Phoenix Edition v2.0.0-dev
+# Orion-X Phoenix Edition v2.0.0-rc4
 # Package list for live-build (Debian Bullseye)
+#
+# @decision DEC-PHASE9-004
+# @title GUI networking stack: NetworkManager + nm-applet + firmware
+# @status accepted
+# @rationale rc3 had no GUI networking — the live user could not connect to
+#   Wi-Fi via the desktop. Fix: add network-manager (daemon + CLI), network-
+#   manager-gnome (nm-applet tray icon, ships /etc/xdg/autostart/nm-applet.desktop
+#   so it starts with any XDG-compliant session), wpasupplicant (WPA2/WPA3
+#   supplicant for Wi-Fi), iw (nl80211 wireless CLI), and non-free firmware
+#   packages for the most common Wi-Fi chipsets (Intel iwlwifi, Realtek r8188eu/
+#   rtl8xxxu, Atheros/QCA ath9k/ath10k, and misc-nonfree covering many others).
+#   non-free is already enabled in iso/auto/config via --archive-areas
+#   "main contrib non-free" — no additional apt source config is needed.
+#   NM's own postinst enables NetworkManager.service; the 0615 hook does not
+#   need to enable it separately (NM handles its own systemd integration).
+#   nm-applet autostart: network-manager-gnome ships
+#   /etc/xdg/autostart/nm-applet.desktop which live-build copies into the
+#   image verbatim — no explicit staging required.
 #
 # Packages marked EXTERNAL are NOT in the standard Debian Bullseye repos.
 # They must be installed via separate mechanisms (custom .deb, pip, or
@@ -37,6 +55,28 @@ testdisk
 # EXTERNAL: volatility3      — install via: pip3 install volatility3
 wireshark
 # EXTERNAL: zeek             — install via https://zeek.org/get-zeek/
+
+# GUI Networking (rc4: Wi-Fi and wired connectivity via NetworkManager)
+# NM daemon + CLI; postinst enables NetworkManager.service automatically.
+network-manager
+# nm-applet tray icon; ships /etc/xdg/autostart/nm-applet.desktop for
+# automatic startup in XFCE and any other XDG-compliant desktop session.
+network-manager-gnome
+# WPA2/WPA3 supplicant (Debian package name is wpasupplicant, not wpa_supplicant)
+wpasupplicant
+# nl80211 wireless configuration CLI (iw, not wireless-tools/iwconfig)
+iw
+# Non-free Wi-Fi firmware for common chipsets:
+#   firmware-iwlwifi   — Intel Wireless (iwlwifi driver, most Intel laptops)
+#   firmware-realtek   — Realtek Wi-Fi (r8188eu, rtl8xxxu, rtw88, etc.)
+#   firmware-atheros   — Atheros/QCA (ath9k, ath10k)
+#   firmware-misc-nonfree — Broadcom, MediaTek, and many other chipsets
+# These require --archive-areas "main contrib non-free" in iso/auto/config
+# (already set, see DEC-PHASE9-004).
+firmware-iwlwifi
+firmware-realtek
+firmware-atheros
+firmware-misc-nonfree
 
 # Networking tools
 curl

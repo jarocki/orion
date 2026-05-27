@@ -29,7 +29,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-ISO_PATH="${1:-$REPO_ROOT/output/orionx-phoenix-edition-v2.0.0-rc1.iso}"
+ISO_PATH="${1:-$REPO_ROOT/output/orionx-phoenix-edition-v2.0.0-rc4.iso}"
 WORK=""
 
 # ---------------------------------------------------------------------------
@@ -270,7 +270,151 @@ else
 fi
 
 # ===========================================================================
-# 8. File count sanity check
+# 8. rc4 broken-basics: GUI networking packages in chroot package set
+#    These assertions verify that NM/nm-applet/wpasupplicant/iw/firmware
+#    packages were installed into the squashfs by the live-build package step.
+#    We check for the dpkg status database or installed binary/lib paths.
+# ===========================================================================
+section "rc4: GUI networking packages (NM, nm-applet, wpasupplicant, iw, firmware)"
+
+# Extract additional paths needed for network checks.
+# unsquashfs the dpkg status file and key binaries if not already present.
+if [[ ! -f "$SQF/var/lib/dpkg/status" ]]; then
+    unsquashfs -d "$SQF" "$WORK/squashfs.img" \
+        "/var/lib/dpkg/status" \
+        "/usr/sbin/NetworkManager" \
+        "/usr/bin/nm-applet" \
+        "/usr/sbin/wpa_supplicant" \
+        "/usr/sbin/iw" \
+        "/etc/xdg/autostart/nm-applet.desktop" \
+        "/lib/firmware/iwlwifi-so-a0-gf-a0.pnvm" \
+        2>/dev/null || true
+fi
+
+DPKG_STATUS="$SQF/var/lib/dpkg/status"
+
+for pkg in network-manager network-manager-gnome wpasupplicant iw \
+           firmware-iwlwifi firmware-realtek firmware-atheros firmware-misc-nonfree; do
+    if [[ -f "$DPKG_STATUS" ]] && grep -q "^Package: $pkg$" "$DPKG_STATUS" 2>/dev/null; then
+        pass "package installed in chroot: $pkg"
+    elif [[ -f "$SQF/usr/sbin/NetworkManager" && "$pkg" == "network-manager" ]]; then
+        pass "package installed in chroot: $pkg (binary present)"
+    elif [[ -f "$SQF/usr/bin/nm-applet" && "$pkg" == "network-manager-gnome" ]]; then
+        pass "package installed in chroot: $pkg (binary present)"
+    elif [[ -f "$SQF/usr/sbin/wpa_supplicant" && "$pkg" == "wpasupplicant" ]]; then
+        pass "package installed in chroot: $pkg (binary present)"
+    elif [[ -f "$SQF/usr/sbin/iw" && "$pkg" == "iw" ]]; then
+        pass "package installed in chroot: $pkg (binary present)"
+    else
+        fail "package installed in chroot: $pkg" \
+             "Check orionx.list.chroot includes $pkg and non-free archive area is enabled"
+    fi
+done
+
+# nm-applet autostart desktop file (shipped by network-manager-gnome)
+if [[ -f "$SQF/etc/xdg/autostart/nm-applet.desktop" ]]; then
+    pass "/etc/xdg/autostart/nm-applet.desktop present (nm-applet autostarts in XFCE)"
+else
+    fail "/etc/xdg/autostart/nm-applet.desktop present" \
+         "network-manager-gnome should ship this file; XFCE uses it to autostart nm-applet"
+fi
+
+# ===========================================================================
+# 9. rc4 broken-basics: LightDM autologin config present
+# ===========================================================================
+section "rc4: LightDM autologin configuration"
+
+if [[ ! -f "$SQF/etc/lightdm/lightdm.conf.d/10-orionx-autologin.conf" ]]; then
+    unsquashfs -d "$SQF" "$WORK/squashfs.img" \
+        "/etc/lightdm" 2>/dev/null || true
+fi
+
+AUTOLOGIN_CONF="$SQF/etc/lightdm/lightdm.conf.d/10-orionx-autologin.conf"
+if [[ -f "$AUTOLOGIN_CONF" ]]; then
+    pass "/etc/lightdm/lightdm.conf.d/10-orionx-autologin.conf present"
+    if grep -q "autologin-user=orionx" "$AUTOLOGIN_CONF" 2>/dev/null; then
+        pass "autologin-user=orionx set in LightDM config"
+    else
+        fail "autologin-user=orionx set in LightDM config" \
+             "Check 10-orionx-autologin.conf contains autologin-user=orionx"
+    fi
+    if grep -q "autologin-user-timeout=0" "$AUTOLOGIN_CONF" 2>/dev/null; then
+        pass "autologin-user-timeout=0 set in LightDM config"
+    else
+        fail "autologin-user-timeout=0 set in LightDM config" \
+             "Check 10-orionx-autologin.conf contains autologin-user-timeout=0"
+    fi
+else
+    fail "/etc/lightdm/lightdm.conf.d/10-orionx-autologin.conf present" \
+         "Autologin config missing — includes.chroot/etc/lightdm/ not staged"
+fi
+
+# ===========================================================================
+# 10. rc4 broken-basics: Phoenix wallpaper staged + xfconf backdrop config
+# ===========================================================================
+section "rc4: Phoenix wallpaper staged and xfconf backdrop configured"
+
+# Wallpaper asset (staged by stage_application_content from theme/wallpapers/)
+if [[ -f "$SQF/opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png" ]]; then
+    pass "/opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png staged"
+else
+    fail "/opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png staged" \
+         "Phoenix wallpaper asset missing — check theme/wallpapers/ in repo and stage_application_content"
+fi
+
+# xfconf desktop XML set by 0100-create-user.hook.chroot in /home/orionx
+XFCONF_XML="$SQF/home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
+if [[ ! -f "$XFCONF_XML" ]]; then
+    unsquashfs -d "$SQF" "$WORK/squashfs.img" \
+        "/home/orionx" 2>/dev/null || true
+fi
+if [[ -f "$XFCONF_XML" ]]; then
+    pass "/home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml present"
+    if grep -q "orionx-phoenix-wallpaper.png" "$XFCONF_XML" 2>/dev/null; then
+        pass "xfce4-desktop.xml references orionx-phoenix-wallpaper.png as backdrop"
+    else
+        fail "xfce4-desktop.xml references orionx-phoenix-wallpaper.png as backdrop" \
+             "Check 0100-create-user.hook.chroot xfconf XML block"
+    fi
+else
+    fail "/home/orionx xfce4-desktop.xml present" \
+         "XFCE backdrop config missing — 0100-create-user.hook.chroot did not create it"
+fi
+
+# ===========================================================================
+# 11. rc4 broken-basics: zero lxterminal in .desktop Exec lines
+# ===========================================================================
+section "rc4: no lxterminal in .desktop Exec lines"
+
+# Extract applications dir if not already present
+if [[ ! -d "$SQF/usr/share/applications" ]]; then
+    unsquashfs -d "$SQF" "$WORK/squashfs.img" \
+        "/usr/share/applications" 2>/dev/null || true
+fi
+
+if [[ -d "$SQF/usr/share/applications" ]]; then
+    LXTERMINAL_REFS=$(grep -rl "lxterminal" "$SQF/usr/share/applications/" 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$LXTERMINAL_REFS" -eq 0 ]]; then
+        pass "zero .desktop files in /usr/share/applications/ reference lxterminal"
+    else
+        fail "zero .desktop files in /usr/share/applications/ reference lxterminal" \
+             "Found $LXTERMINAL_REFS .desktop file(s) still using lxterminal — fix 0700 hook"
+    fi
+    # Positive check: orionx .desktop files use xfce4-terminal
+    XFCE_TERM_REFS=$(grep -rl "xfce4-terminal" "$SQF/usr/share/applications/" 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$XFCE_TERM_REFS" -gt 0 ]]; then
+        pass "orionx .desktop files use xfce4-terminal ($XFCE_TERM_REFS file(s))"
+    else
+        fail "orionx .desktop files use xfce4-terminal" \
+             "No xfce4-terminal Exec lines found in /usr/share/applications/"
+    fi
+else
+    fail "/usr/share/applications/ present for lxterminal check" \
+         "applications dir missing from squashfs"
+fi
+
+# ===========================================================================
+# 12. File count sanity check (renumbered from 8)
 # ===========================================================================
 section "File count sanity"
 
