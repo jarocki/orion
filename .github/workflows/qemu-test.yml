@@ -136,8 +136,15 @@ jobs:
       - name: Verify Orion-X content present in ISO (fix #43)
         run: |
           sudo apt-get install -y squashfs-tools xorriso
-          bash tests/integration/test-iso-content-presence.sh \
-              "${{ github.workspace }}/output/orionx-phoenix-edition-v2.0.0-rc1.iso"
+          # Resolve ISO by glob so this step never drifts when the version
+          # string changes (e.g. rc4, rc5, …). build-iso.sh produces exactly
+          # one orionx-phoenix-edition-*.iso in output/; head -1 is defensive.
+          ISO_PATH="$(ls -1 "${{ github.workspace }}"/output/orionx-phoenix-edition-*.iso | head -1)"
+          if [[ -z "$ISO_PATH" ]]; then
+            echo "ERROR: no orionx-phoenix-edition-*.iso found in output/" >&2
+            exit 1
+          fi
+          bash tests/integration/test-iso-content-presence.sh "$ISO_PATH"
 
       # Issue #27: ubuntu-latest runners typically don't expose /dev/kvm.
       # TCG emulation of full ISO boot to multi-user.target is much slower

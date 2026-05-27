@@ -231,13 +231,16 @@ if [[ -f "$HOOK_0700" ]]; then
     else
         fail "rc4: 0700 hook uses xfce4-terminal in .desktop Exec lines"
     fi
-    # Must have zero lxterminal references
-    LXTERM_COUNT="$(grep -c "lxterminal" "$HOOK_0700" 2>/dev/null || true)"
+    # Must have zero FUNCTIONAL lxterminal references.
+    # Filter comments first so @decision documentation that mentions lxterminal
+    # (explaining that xfce4-terminal replaced it) does not trigger a false fail.
+    # Matches the approach in tests/unit/test_orionx_setup_hook_unit.sh.
+    LXTERM_COUNT="$(grep -v '^\s*#' "$HOOK_0700" | grep -c "lxterminal" || true)"
     if [[ "$LXTERM_COUNT" -eq 0 ]]; then
-        pass "rc4: 0700 hook has zero lxterminal references"
+        pass "rc4: 0700 hook has zero functional lxterminal references"
     else
-        fail "rc4: 0700 hook has zero lxterminal references" \
-             "Found $LXTERM_COUNT reference(s) — switch all Exec lines to xfce4-terminal"
+        fail "rc4: 0700 hook has zero functional lxterminal references" \
+             "Found $LXTERM_COUNT functional reference(s) — switch all Exec lines to xfce4-terminal"
     fi
     # Must have the one-click mesh launcher
     if grep -q "orionx-start-mesh.desktop" "$HOOK_0700"; then

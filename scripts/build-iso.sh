@@ -161,9 +161,10 @@ check_prerequisites() {
 #   data/, and docs/ into includes.chroot so live-build picks them up during
 #   the chroot phase. The v2.0.0 source (repo root) is the authoritative
 #   content; archive/ is reference-only and is never staged. The
-#   wallpapers/ directory is intentionally empty at v2.0.0-rc4 (no branded
-#   assets yet); a README.txt is created so the empty dir is preserved and
-#   the omission is self-documenting. Staged content is .gitignored to keep
+#   wallpapers/ directory carries the Orion-X Phoenix branded wallpaper
+#   (orionx-phoenix-wallpaper.png) staged in Phase 8. A defensive README.txt
+#   is created only if the directory ends up empty after rsync (e.g. theme/
+#   source was missing). Staged content is .gitignored to keep
 #   the worktree clean — the repo root is the single source of truth.
 #
 # @decision DEC-PHASE8-005
@@ -205,7 +206,7 @@ stage_application_content() {
         log "  WARN: scripts/ source missing; skipping scripts staging"
     fi
 
-    # Theme -> /opt/orionx/theme/  (wallpapers dir is empty; create README)
+    # Theme -> /opt/orionx/theme/  (wallpapers dir has phoenix wallpaper; README is defensive fallback)
     mkdir -p "$stage_dir/opt/orionx/theme/wallpapers"
     if [[ -d "$REPO_ROOT/theme" ]]; then
         rsync -a --delete "$REPO_ROOT/theme/" "$stage_dir/opt/orionx/theme/"
