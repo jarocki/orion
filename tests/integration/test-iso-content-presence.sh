@@ -364,10 +364,23 @@ fi
 # ===========================================================================
 # 11. rc4 broken-basics: zero lxterminal in .desktop Exec lines
 # ===========================================================================
+# @decision DEC-PHASE9-014
+# @title Neutralise set-e + pipefail silent-exit on zero-match grep in count pipelines
+# @status accepted
+# @rationale grep exits 1 when it finds no matches. In a `set -euo pipefail`
+#   script, a command substitution of the form $(grep ... | wc -l | tr -d ' ')
+#   inherits the grep non-zero exit via pipefail, killing the script silently
+#   *before* the count variable is ever tested. Zero matches is the DESIRED rc4
+#   state for lxterminal — the fix is `|| true` at the end of the pipeline, not
+#   disabling pipefail globally. Applied to any grep-count pipeline where a
+#   no-match outcome is a legitimate, assertable state. DEC-PHASE9-014.
 section "rc4: no lxterminal in .desktop Exec lines"
 
 if [[ -d "$SQF/usr/share/applications" ]]; then
-    LXTERMINAL_REFS=$(grep -rl "lxterminal" "$SQF/usr/share/applications/" 2>/dev/null | wc -l | tr -d ' ')
+    # || true: grep returns 1 when no matches; in `set -euo pipefail` that kills
+    # the script silently before the count is even checked. Zero matches is the
+    # desired rc4 state for lxterminal — we WANT the no-match path. DEC-PHASE9-014.
+    LXTERMINAL_REFS=$(grep -rl "lxterminal" "$SQF/usr/share/applications/" 2>/dev/null | wc -l | tr -d ' ' || true)
     if [[ "$LXTERMINAL_REFS" -eq 0 ]]; then
         pass "zero .desktop files in /usr/share/applications/ reference lxterminal"
     else
@@ -375,7 +388,9 @@ if [[ -d "$SQF/usr/share/applications" ]]; then
              "Found $LXTERMINAL_REFS .desktop file(s) still using lxterminal — fix 0700 hook"
     fi
     # Positive check: orionx .desktop files use xfce4-terminal
-    XFCE_TERM_REFS=$(grep -rl "xfce4-terminal" "$SQF/usr/share/applications/" 2>/dev/null | wc -l | tr -d ' ')
+    # || true: same pipefail guard — zero xfce4-terminal refs is a fail-case
+    # assertion, but we must let the variable populate before we can test it. DEC-PHASE9-014.
+    XFCE_TERM_REFS=$(grep -rl "xfce4-terminal" "$SQF/usr/share/applications/" 2>/dev/null | wc -l | tr -d ' ' || true)
     if [[ "$XFCE_TERM_REFS" -gt 0 ]]; then
         pass "orionx .desktop files use xfce4-terminal ($XFCE_TERM_REFS file(s))"
     else
