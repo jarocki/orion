@@ -325,6 +325,144 @@ contains "v-prefix version appears in output" "v99.0.0-test" "$VPREFIX_OK_OUTPUT
 echo ""
 
 # ---------------------------------------------------------------------------
+# T16: iso/config/archives/debian-nonfree.list.chroot — W9-1b (#48)
+#
+# This file is the explicit chroot apt archives augmentation that makes
+# non-free firmware packages (firmware-iwlwifi, firmware-realtek, etc.)
+# resolvable during lb chroot_install-packages.  It must exist and contain
+# a deb line that includes 'non-free'.
+# ---------------------------------------------------------------------------
+echo "[T16] iso/config/archives/debian-nonfree.list.chroot (W9-1b #48)"
+NONFREE_LIST="$REPO_ROOT/iso/config/archives/debian-nonfree.list.chroot"
+run_test "debian-nonfree.list.chroot exists" "[[ -f '$NONFREE_LIST' ]]"
+if [[ -f "$NONFREE_LIST" ]]; then
+    NONFREE_CONTENT="$(cat "$NONFREE_LIST")"
+    # Must contain at least one deb line (not just a comment)
+    if grep -qE '^deb ' "$NONFREE_LIST"; then
+        pass "debian-nonfree.list.chroot has at least one deb line"
+    else
+        fail "debian-nonfree.list.chroot has no 'deb ' line — apt will not use it"
+    fi
+    # The deb line must include 'non-free' in the component list
+    if grep -E '^deb ' "$NONFREE_LIST" | grep -q 'non-free'; then
+        pass "debian-nonfree.list.chroot deb line includes 'non-free' component"
+    else
+        fail "debian-nonfree.list.chroot deb line does not include 'non-free'"
+    fi
+    # Must reference the Debian mirror (deb.debian.org)
+    if grep -E '^deb ' "$NONFREE_LIST" | grep -q 'debian'; then
+        pass "debian-nonfree.list.chroot deb line references a debian mirror"
+    else
+        fail "debian-nonfree.list.chroot deb line does not reference a debian mirror"
+    fi
+    # Decision annotation must be present
+    contains "DEC-PHASE9-010 annotation present in nonfree list" "DEC-PHASE9-010" "$NONFREE_CONTENT"
+else
+    fail "debian-nonfree.list.chroot missing — skipping content assertions"
+    fail "debian-nonfree.list.chroot deb line includes 'non-free' component"
+    fail "debian-nonfree.list.chroot deb line references a debian mirror"
+    fail "DEC-PHASE9-010 annotation present in nonfree list"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# T17: build-iso.sh fail-loud gate — explicit exit 1 after "ISO not found"
+#
+# W9-1b: the build-iso.sh script must exit non-zero when no ISO is produced.
+# Assert that the script source contains an explicit 'exit 1' after the
+# "ISO not found" / "lb build exited" error log, so the fail-loud gate is
+# static-verifiable without running a full live-build.
+# ---------------------------------------------------------------------------
+echo "[T17] build-iso.sh fail-loud exit 1 after ISO-not-found error (W9-1b)"
+# Check that the script contains 'exit 1' in the build_iso function context,
+# associated with the ISO-not-found error path.
+if grep -A2 'ERROR.*lb build exited' "$BUILD_SCRIPT" | grep -q 'exit 1'; then
+    pass "build-iso.sh exits 1 after 'lb build exited' error log"
+else
+    fail "build-iso.sh does NOT exit 1 after 'lb build exited' error — fail-loud gate missing"
+fi
+if grep -A2 'ERROR.*lb build exited 0' "$BUILD_SCRIPT" | grep -q 'exit 1'; then
+    pass "build-iso.sh exits 1 after 'lb build exited 0 but ISO not found' error"
+else
+    fail "build-iso.sh does NOT exit 1 after silent-success ISO-not-found error"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# T18: build-iso.sh captures lb build exit code explicitly (W9-1b)
+#
+# Assert that the script does NOT use '|| true' on lb build, and DOES use
+# an explicit exit-code capture pattern (lb_exit variable), so a non-zero
+# lb build exit is never silently swallowed.
+# ---------------------------------------------------------------------------
+echo "[T18] build-iso.sh lb build exit code not swallowed (W9-1b)"
+# Must NOT have a non-comment 'lb build' line followed by '|| true'
+# (strip comment lines first so the check does not trigger on explanatory comments)
+if ! grep -v '^\s*#' "$BUILD_SCRIPT" | grep -q 'lb build.*|| true'; then
+    pass "lb build is not masked with '|| true'"
+else
+    fail "lb build is masked with '|| true' — exit code swallowed"
+fi
+# Must have explicit exit-code capture variable for lb build
+if grep -q 'lb_exit' "$BUILD_SCRIPT"; then
+    pass "build-iso.sh uses explicit lb_exit variable to capture lb build exit code"
+else
+    fail "build-iso.sh does NOT capture lb build exit code explicitly (no lb_exit variable)"
+fi
+# Must check lb_exit against 0
+if grep -q 'lb_exit -ne 0' "$BUILD_SCRIPT"; then
+    pass "build-iso.sh checks lb_exit -ne 0 (fail-loud on non-zero lb build)"
+else
+    fail "build-iso.sh does NOT check lb_exit -ne 0"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# T19: iso/auto/config preserves --archive-areas "main contrib non-free"
+#
+# Belt-and-suspenders: the archive-areas flag in iso/auto/config must remain
+# intact alongside the new .list.chroot file (DEC-PHASE9-010, W9-1b).
+# ---------------------------------------------------------------------------
+echo "[T19] iso/auto/config --archive-areas includes non-free (W9-1b belt-and-suspenders)"
+AUTO_CONFIG_FILE="$REPO_ROOT/iso/auto/config"
+if [[ -f "$AUTO_CONFIG_FILE" ]]; then
+    if grep -q 'archive-areas.*non-free' "$AUTO_CONFIG_FILE"; then
+        pass "iso/auto/config --archive-areas includes 'non-free'"
+    else
+        fail "iso/auto/config --archive-areas does NOT include 'non-free'"
+    fi
+    if grep -q 'archive-areas.*contrib' "$AUTO_CONFIG_FILE"; then
+        pass "iso/auto/config --archive-areas includes 'contrib'"
+    else
+        fail "iso/auto/config --archive-areas does NOT include 'contrib'"
+    fi
+else
+    fail "iso/auto/config missing — cannot verify archive-areas"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# T20: firmware packages still listed in orionx.list.chroot (W9-1b invariant)
+#
+# Forbidden shortcut: do NOT remove firmware packages from the package list
+# to dodge the resolution issue.  All four must remain.
+# ---------------------------------------------------------------------------
+echo "[T20] firmware-* packages still in orionx.list.chroot (W9-1b invariant)"
+PKG_LIST="$REPO_ROOT/iso/config/package-lists/orionx.list.chroot"
+if [[ -f "$PKG_LIST" ]]; then
+    for fw_pkg in firmware-iwlwifi firmware-realtek firmware-atheros firmware-misc-nonfree; do
+        if grep -qE "^${fw_pkg}$" "$PKG_LIST"; then
+            pass "$fw_pkg present in orionx.list.chroot"
+        else
+            fail "$fw_pkg REMOVED from orionx.list.chroot — forbidden shortcut"
+        fi
+    done
+else
+    fail "orionx.list.chroot missing at $PKG_LIST"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo "================================================================"
