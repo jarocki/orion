@@ -66,7 +66,7 @@
 #
 # Options:
 #   --mode bios|uefi|both   Boot mode(s) to test (default: both)
-#   --iso <path>            Path to ISO image (default: output/orionx-phoenix-edition-v2.0.0-rc1.iso)
+#   --iso <path>            Path to ISO image (default: first matching output/orionx-phoenix-edition-*.iso)
 #   --ovmf <path>           Override OVMF_CODE.fd path for UEFI mode
 #   --timeout <sec>         Boot timeout per mode in seconds (default: 300)
 #   --post-boot-script <p>  W7-4 attach point: host-side script run after boot marker
@@ -116,8 +116,18 @@ OVMF_VARS_SEARCH_PATHS=(
 
 # =========================================================================
 # Defaults (overridable via flags)
+#
+# @decision DEC-PHASE9-015
+# @title Version-literal drift consolidation: ISO default resolved via glob
+# @status accepted
+# @rationale Hardcoding a literal rc-version string (e.g. rc1, rc4) in
+#   DEFAULT_ISO caused CI failures every time a new rc was cut: the build
+#   produced output/orionx-phoenix-edition-v2.0.0-rc4.iso but this script
+#   looked for rc1.iso and reported [FAIL] ISO not found. The fix replaces
+#   the literal with a runtime glob that resolves to whatever iso build-iso.sh
+#   produced. The --iso flag and ISO env var remain authoritative overrides.
+#   Glob resolution is done at runtime in main() after REPO_ROOT is set.
 # =========================================================================
-DEFAULT_ISO="output/orionx-phoenix-edition-v2.0.0-rc1.iso"
 DEFAULT_MODE="both"
 DEFAULT_TIMEOUT=300
 HARNESS_VERSION="1.0.0"
@@ -193,7 +203,7 @@ Usage:
 
 Options:
   --mode bios|uefi|both   Boot mode(s) to test (default: both)
-  --iso <path>            Path to ISO image (default: output/orionx-phoenix-edition-v2.0.0-rc1.iso)
+  --iso <path>            Path to ISO image (default: first matching output/orionx-phoenix-edition-*.iso)
   --ovmf <path>           Override OVMF_CODE.fd path for UEFI mode
   --timeout <sec>         Boot timeout per mode in seconds (default: 300)
   --post-boot-script <p>  W7-4 attach point: host-side script run after boot marker
@@ -683,13 +693,23 @@ main() {
     MODE="${ARG_MODE:-${DEFAULT_MODE}}"
     TIMEOUT="${ARG_TIMEOUT:-${DEFAULT_TIMEOUT}}"
 
-    # ISO: --iso flag > ISO env var > default path
+    # ISO: --iso flag > ISO env var > glob-resolved default (DEC-PHASE9-015)
+    # Runtime find() resolves whatever rc-version build-iso.sh produced so this
+    # script never embeds a literal version string that drifts from the build.
     if [[ -n "${ARG_ISO}" ]]; then
         ISO_PATH="${ARG_ISO}"
     elif [[ -n "${ISO:-}" ]]; then
         ISO_PATH="${ISO}"
     else
-        ISO_PATH="${REPO_ROOT}/${DEFAULT_ISO}"
+        # Glob resolve from repo root; head -1 is defensive (build-iso.sh produces one).
+        local _resolved_iso
+        _resolved_iso="$(find "${REPO_ROOT}/output" -maxdepth 1 -name 'orionx-phoenix-edition-*.iso' 2>/dev/null | sort | head -1 || true)"
+        if [[ -n "${_resolved_iso}" ]]; then
+            ISO_PATH="${_resolved_iso}"
+        else
+            # Preserve explicit-failure path: preflight will report [FAIL] ISO not found.
+            ISO_PATH="${REPO_ROOT}/output/orionx-phoenix-edition-no-build.iso"
+        fi
     fi
 
     # Validate mode

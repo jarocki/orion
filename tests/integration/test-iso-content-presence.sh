@@ -19,7 +19,7 @@
 # Usage:
 #   bash tests/integration/test-iso-content-presence.sh [path/to/orionx.iso]
 #
-# Default ISO path: output/orionx-phoenix-edition-v2.0.0-rc1.iso
+# Default ISO path: output/orionx-phoenix-edition-v2.0.0-rc4.iso (positional arg $1 overrides)
 # Exit codes:
 #   0  all assertions passed
 #   1  one or more assertions failed or prerequisites missing
