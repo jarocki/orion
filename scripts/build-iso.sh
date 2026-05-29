@@ -275,14 +275,42 @@ configure_live_build() {
 
 # ---------------------------------------------------------------------------
 # Build ISO
+#
+# @decision DEC-PHASE9-011
+# @title Explicit lb build exit-code capture + fail-loud ISO presence gate
+# @status accepted
+# @rationale W9-1b (#48): CI run 26492487114 showed build-iso.sh exiting 0
+#   even though lb build did not produce an ISO (firmware-* packages failed
+#   to resolve; live-build may exit 0 on some package-install failures).
+#   Fix: capture lb build's exit code explicitly (not relying solely on
+#   set -e propagation through the subshell), log a fatal error, and exit 1
+#   immediately if lb_exit != 0. Then perform a belt-and-suspenders check
+#   on the expected built_iso path. Finally, after the copy to OUTPUT_DIR,
+#   verify the final output ISO glob resolves (the path CI upload-artifact
+#   looks for). This function is the single authority for build exit code
+#   (iso_build_exit_code_authority). No other caller should mask or ignore
+#   these exit codes. References: issue #48, DEC-PHASE9-010, W9-1b.
 # ---------------------------------------------------------------------------
 build_iso() {
     log "Running lb build (this may take 30-90 minutes on first run)..."
-    (cd "$ISO_DIR" && lb build)
+
+    # Capture lb build's exit code explicitly.  We do NOT use '|| true' or
+    # swallow the code through set -e subshell propagation alone — we check
+    # it ourselves so the error message is actionable.
+    local lb_exit=0
+    (cd "$ISO_DIR" && lb build) || lb_exit=$?
+    if [[ $lb_exit -ne 0 ]]; then
+        log "ERROR: lb build exited with code $lb_exit — no ISO was produced."
+        log "       Check the live-build log above for package resolution errors."
+        log "       Common cause: non-free firmware packages not resolvable."
+        log "       Ensure iso/config/archives/debian-nonfree.list.chroot exists."
+        exit 1
+    fi
 
     local built_iso="$ISO_DIR/live-image-amd64.hybrid.iso"
     if [[ ! -f "$built_iso" ]]; then
-        log "ERROR: lb build completed but ISO not found at $built_iso"
+        log "ERROR: lb build exited 0 but ISO not found at $built_iso"
+        log "       lb build may have silently failed. Check the live-build log."
         exit 1
     fi
 
@@ -290,6 +318,13 @@ build_iso() {
     cp "$built_iso" "$OUTPUT_DIR/$iso_name"
 
     (cd "$OUTPUT_DIR" && sha256sum "$iso_name" > "${iso_name}.sha256")
+
+    # Belt-and-suspenders: verify the final output ISO exists before declaring
+    # success.  This is the gate that CI's upload-artifact step also checks.
+    if [[ ! -f "$OUTPUT_DIR/$iso_name" ]]; then
+        log "ERROR: ISO copy to output/ failed — $OUTPUT_DIR/$iso_name not found."
+        exit 1
+    fi
 
     log "ISO created: $OUTPUT_DIR/$iso_name"
     log "SHA-256:     $(cat "$OUTPUT_DIR/${iso_name}.sha256")"

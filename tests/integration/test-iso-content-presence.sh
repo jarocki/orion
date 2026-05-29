@@ -19,7 +19,7 @@
 # Usage:
 #   bash tests/integration/test-iso-content-presence.sh [path/to/orionx.iso]
 #
-# Default ISO path: output/orionx-phoenix-edition-v2.0.0-rc1.iso
+# Default ISO path: output/orionx-phoenix-edition-v2.0.0-rc4.iso (positional arg $1 overrides)
 # Exit codes:
 #   0  all assertions passed
 #   1  one or more assertions failed or prerequisites missing
@@ -118,23 +118,26 @@ if [[ ! -f "$WORK/squashfs.img" ]]; then
 fi
 echo "  squashfs.img extracted: $(du -sh "$WORK/squashfs.img" | cut -f1)"
 
-echo "  Mounting squashfs (extracting selected paths)..."
-# Extract only the paths we need to keep this fast
+echo "  Extracting full squashfs filesystem..."
+# @decision DEC-PHASE9-012
+# @title Full squashfs extraction replaces selective path extraction
+# @status accepted
+# @rationale W9-1b iter-2: the previous selective extraction listed only a handful of
+#   paths at build time. As rc4 added new assertions (dpkg/status for package checks,
+#   /etc/lightdm for autologin config) without adding those paths to the extraction
+#   list, the fallback per-assertion re-extractions (unsquashfs into an already-existing
+#   destination) silently produced incomplete trees because unsquashfs refuses to
+#   extract into a pre-existing directory without --force. Result: every new assertion
+#   beyond the original list produced a spurious FAIL even though the packages and files
+#   ARE present in the squashfs (proven by nm-applet.desktop PASS in CI run 26554366937).
+#   Full extraction eliminates the entire class of "path not in extract list" bugs.
+#   GitHub Actions ubuntu-latest runners have ~20 GB free; a 2-3 GB uncompressed
+#   squashfs adds ~25s of extraction time, which is acceptable for test correctness.
+#   Every future assertion automatically works without a matching extraction list entry.
 unsquashfs -d "$WORK/sqfs" "$WORK/squashfs.img" \
-    "/opt/orionx" \
-    "/usr/share/doc/orionx" \
-    "/usr/bin/orionx-mesh" \
-    "/usr/bin/setup-matrix.sh" \
-    "/usr/bin/setup-wireguard.sh" \
-    "/usr/bin/artifact-analyzer.py" \
-    "/usr/bin/storyboard-gen.py" \
-    "/usr/bin/toggle-theme.sh" \
-    "/usr/bin/run-lynis.sh" \
-    "/usr/bin/download-samples.sh" \
-    "/usr/share/applications" \
-    2>/dev/null || true  # unsquashfs exits non-zero if some paths absent; we assert individually
+    2>/dev/null || true  # unsquashfs may exit non-zero on minor warnings; we assert individually
 
-echo "  Extraction complete."
+echo "  Full extraction complete."
 
 SQF="$WORK/sqfs"
 
@@ -277,20 +280,6 @@ fi
 # ===========================================================================
 section "rc4: GUI networking packages (NM, nm-applet, wpasupplicant, iw, firmware)"
 
-# Extract additional paths needed for network checks.
-# unsquashfs the dpkg status file and key binaries if not already present.
-if [[ ! -f "$SQF/var/lib/dpkg/status" ]]; then
-    unsquashfs -d "$SQF" "$WORK/squashfs.img" \
-        "/var/lib/dpkg/status" \
-        "/usr/sbin/NetworkManager" \
-        "/usr/bin/nm-applet" \
-        "/usr/sbin/wpa_supplicant" \
-        "/usr/sbin/iw" \
-        "/etc/xdg/autostart/nm-applet.desktop" \
-        "/lib/firmware/iwlwifi-so-a0-gf-a0.pnvm" \
-        2>/dev/null || true
-fi
-
 DPKG_STATUS="$SQF/var/lib/dpkg/status"
 
 for pkg in network-manager network-manager-gnome wpasupplicant iw \
@@ -323,11 +312,6 @@ fi
 # 9. rc4 broken-basics: LightDM autologin config present
 # ===========================================================================
 section "rc4: LightDM autologin configuration"
-
-if [[ ! -f "$SQF/etc/lightdm/lightdm.conf.d/10-orionx-autologin.conf" ]]; then
-    unsquashfs -d "$SQF" "$WORK/squashfs.img" \
-        "/etc/lightdm" 2>/dev/null || true
-fi
 
 AUTOLOGIN_CONF="$SQF/etc/lightdm/lightdm.conf.d/10-orionx-autologin.conf"
 if [[ -f "$AUTOLOGIN_CONF" ]]; then
@@ -364,10 +348,6 @@ fi
 
 # xfconf desktop XML set by 0100-create-user.hook.chroot in /home/orionx
 XFCONF_XML="$SQF/home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
-if [[ ! -f "$XFCONF_XML" ]]; then
-    unsquashfs -d "$SQF" "$WORK/squashfs.img" \
-        "/home/orionx" 2>/dev/null || true
-fi
 if [[ -f "$XFCONF_XML" ]]; then
     pass "/home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml present"
     if grep -q "orionx-phoenix-wallpaper.png" "$XFCONF_XML" 2>/dev/null; then
@@ -384,16 +364,23 @@ fi
 # ===========================================================================
 # 11. rc4 broken-basics: zero lxterminal in .desktop Exec lines
 # ===========================================================================
+# @decision DEC-PHASE9-014
+# @title Neutralise set-e + pipefail silent-exit on zero-match grep in count pipelines
+# @status accepted
+# @rationale grep exits 1 when it finds no matches. In a `set -euo pipefail`
+#   script, a command substitution of the form $(grep ... | wc -l | tr -d ' ')
+#   inherits the grep non-zero exit via pipefail, killing the script silently
+#   *before* the count variable is ever tested. Zero matches is the DESIRED rc4
+#   state for lxterminal — the fix is `|| true` at the end of the pipeline, not
+#   disabling pipefail globally. Applied to any grep-count pipeline where a
+#   no-match outcome is a legitimate, assertable state. DEC-PHASE9-014.
 section "rc4: no lxterminal in .desktop Exec lines"
 
-# Extract applications dir if not already present
-if [[ ! -d "$SQF/usr/share/applications" ]]; then
-    unsquashfs -d "$SQF" "$WORK/squashfs.img" \
-        "/usr/share/applications" 2>/dev/null || true
-fi
-
 if [[ -d "$SQF/usr/share/applications" ]]; then
-    LXTERMINAL_REFS=$(grep -rl "lxterminal" "$SQF/usr/share/applications/" 2>/dev/null | wc -l | tr -d ' ')
+    # || true: grep returns 1 when no matches; in `set -euo pipefail` that kills
+    # the script silently before the count is even checked. Zero matches is the
+    # desired rc4 state for lxterminal — we WANT the no-match path. DEC-PHASE9-014.
+    LXTERMINAL_REFS=$(grep -rl "lxterminal" "$SQF/usr/share/applications/" 2>/dev/null | wc -l | tr -d ' ' || true)
     if [[ "$LXTERMINAL_REFS" -eq 0 ]]; then
         pass "zero .desktop files in /usr/share/applications/ reference lxterminal"
     else
@@ -401,7 +388,9 @@ if [[ -d "$SQF/usr/share/applications" ]]; then
              "Found $LXTERMINAL_REFS .desktop file(s) still using lxterminal — fix 0700 hook"
     fi
     # Positive check: orionx .desktop files use xfce4-terminal
-    XFCE_TERM_REFS=$(grep -rl "xfce4-terminal" "$SQF/usr/share/applications/" 2>/dev/null | wc -l | tr -d ' ')
+    # || true: same pipefail guard — zero xfce4-terminal refs is a fail-case
+    # assertion, but we must let the variable populate before we can test it. DEC-PHASE9-014.
+    XFCE_TERM_REFS=$(grep -rl "xfce4-terminal" "$SQF/usr/share/applications/" 2>/dev/null | wc -l | tr -d ' ' || true)
     if [[ "$XFCE_TERM_REFS" -gt 0 ]]; then
         pass "orionx .desktop files use xfce4-terminal ($XFCE_TERM_REFS file(s))"
     else

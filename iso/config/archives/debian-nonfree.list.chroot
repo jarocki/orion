@@ -1,0 +1,18 @@
+# @decision DEC-PHASE9-010
+# @title Explicit chroot apt archives entry for non-free firmware resolution
+# @status accepted
+# @rationale Issue #48: --archive-areas "main contrib non-free" in iso/auto/config
+#   sets the live-build archive area flags but did NOT propagate a non-free apt
+#   source line into the chroot's /etc/apt/sources.list.d/ before
+#   chroot_install-packages runs. As a result, firmware-iwlwifi / firmware-realtek
+#   / firmware-atheros / firmware-misc-nonfree resolved 'E: Unable to locate
+#   package' during lb chroot, aborting the build and producing no ISO.
+#   This .list.chroot file is the canonical live-build mechanism for injecting
+#   an apt sources line into the chroot at build time (live-build copies *.list.chroot
+#   files into the chroot's /etc/apt/sources.list.d/ before package install).
+#   It complements (does not replace) --archive-areas in iso/auto/config —
+#   both are kept as belt-and-suspenders. This file is the SINGLE explicit
+#   chroot apt archives augmentation; no parallel mechanism under
+#   includes.chroot/etc/apt/ should be added (iso_apt_archives_authority).
+#   References: issue #48, CI run 26492487114, DEC-PHASE9-004, W9-1b.
+deb http://deb.debian.org/debian bullseye main contrib non-free
