@@ -155,8 +155,8 @@ def discover_tools() -> dict:
         tools[name] = path
     if tools[_TOOL_TSHARK] is None:
         print(
-            f"ERROR: tshark not found on PATH. "
-            f"Install wireshark-common (tshark) to use pcap-analyzer.",
+            "ERROR: tshark not found on PATH. "
+            "Install wireshark-common (tshark) to use pcap-analyzer.",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -245,7 +245,7 @@ def run_phases(
         filepath = output_dir / filename
         filepath.write_text(custody_header + content, encoding="utf-8")
         # Excerpt: first 15 non-empty lines for the summary
-        meaningful = [l for l in content.splitlines() if l.strip()][:15]
+        meaningful = [ln for ln in content.splitlines() if ln.strip()][:15]
         excerpt = "\n".join(meaningful)
         print(f"  [phase] {label} -> {filename}")
         return label, filename, excerpt

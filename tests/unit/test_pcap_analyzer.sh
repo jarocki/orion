@@ -392,6 +392,35 @@ else
 fi
 
 # ===========================================================================
+# 11. ruff lint check (F541 / E741 regression guard)
+#
+# @decision DEC-PHASE9-020
+# @title iter-3: ruff F541/E741 check added to unit suite
+# @status accepted
+# @rationale iter-3 added ruff F541 check to catch f-string-without-placeholder
+#   defects before the CI lint stage. E741 (ambiguous variable name) is also
+#   detected by ruff and was the third error in the same batch. If ruff is not
+#   installed locally (macOS dev box), the assertion is skipped gracefully so
+#   the test suite does not fail on machines that lack ruff. CI always has ruff
+#   via make lint-python, so the gate is enforced there unconditionally.
+# ===========================================================================
+section "ruff lint check (F541/E741 regression guard)"
+
+if command -v ruff >/dev/null 2>&1; then
+    RUFF_OUTPUT=""
+    RUFF_EXIT=0
+    RUFF_OUTPUT="$( ruff check "$TOOL" 2>&1 )" || RUFF_EXIT=$?
+    if [[ "$RUFF_EXIT" -eq 0 ]]; then
+        pass "T11: ruff check exits 0 (no F541/E741 or other ruff errors)"
+    else
+        fail "T11: ruff check exits 0" \
+             "ruff found errors: $RUFF_OUTPUT"
+    fi
+else
+    skip "T11: ruff lint check" "ruff not on PATH — install via 'pip install ruff' or 'brew install ruff'"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
