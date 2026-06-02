@@ -61,6 +61,11 @@ declare -A SCRIPT_MAP=(
     ["toggle-theme.sh"]="/opt/orionx/scripts/toggle-theme.sh"
     ["run-lynis.sh"]="/opt/orionx/scripts/run-lynis.sh"
     ["download-samples.sh"]="/opt/orionx/scripts/download-samples.sh"
+    # W9-2a: pcap-analyzer.py — modernized STA PCAP analysis tool (DEC-PHASE9-017)
+    # Replaces gecko/bin/analyze-pcap.sh with a clean Python 3 tool wrapping
+    # tshark (already installed) + optional tcpdump. CLI-only; no .desktop
+    # launcher here — that is deferred to the W9-2 Control Center slice.
+    ["pcap-analyzer.py"]="/opt/orionx/scripts/pcap-analyzer.py"
 )
 
 for name in "${!SCRIPT_MAP[@]}"; do
@@ -160,6 +165,7 @@ Quick start:
   orionx-mesh       — WireGuard P2P mesh management
   setup-matrix.sh   — Matrix/Synapse setup
   artifact-analyzer.py — Forensic artifact analysis
+  pcap-analyzer.py  — Structured PCAP traffic analysis (STA)
   storyboard-gen.py — Generate storyboards
 
 Type 'orionx-help' for the full command reference.
@@ -179,6 +185,7 @@ orionx-help() {
     echo "  setup-wireguard.sh   WireGuard interface setup"
     echo "  setup-matrix.sh      Matrix/Synapse server setup"
     echo "  artifact-analyzer.py Forensic artifact analysis"
+    echo "  pcap-analyzer.py     Structured PCAP traffic analysis (STA, Bejtlich method)"
     echo "  storyboard-gen.py    Intelligence storyboard generation"
     echo "  toggle-theme.sh      Toggle light/dark desktop theme"
     echo "  run-lynis.sh         Run Lynis security audit"

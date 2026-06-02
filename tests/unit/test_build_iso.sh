@@ -463,6 +463,64 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
+# T21: fail2ban present as uncommented entry in orionx.list.chroot (W9-2a)
+#
+# @decision DEC-PHASE9-018: fail2ban replaces gecko/bin/start-denyhosts.sh.
+# The package must appear as a bare uncommented line so live-build installs it.
+# ---------------------------------------------------------------------------
+echo "[T21] fail2ban in orionx.list.chroot (W9-2a DEC-PHASE9-018)"
+PKG_LIST_F2B="$REPO_ROOT/iso/config/package-lists/orionx.list.chroot"
+if [[ -f "$PKG_LIST_F2B" ]]; then
+    if grep -qE '^fail2ban$' "$PKG_LIST_F2B"; then
+        pass "fail2ban present as uncommented entry in orionx.list.chroot"
+    else
+        fail "fail2ban present as uncommented entry in orionx.list.chroot" \
+             "Expected a bare 'fail2ban' line (no leading #) in $PKG_LIST_F2B"
+    fi
+    # Confirm DEC-PHASE9-018 annotation accompanies the entry
+    if grep -q "DEC-PHASE9-018" "$PKG_LIST_F2B"; then
+        pass "DEC-PHASE9-018 annotation present alongside fail2ban entry"
+    else
+        fail "DEC-PHASE9-018 annotation present alongside fail2ban entry" \
+             "W9-2a requires @decision DEC-PHASE9-018 comment near the fail2ban line"
+    fi
+else
+    fail "fail2ban check: orionx.list.chroot not found at $PKG_LIST_F2B"
+    fail "DEC-PHASE9-018 annotation check: orionx.list.chroot missing"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# T22: pcap-analyzer.py present in scripts/ (W9-2a)
+#
+# The build pipeline (stage_application_content in build-iso.sh) rsyncs
+# scripts/ into includes.chroot — pcap-analyzer.py must exist at the source
+# path so it gets staged into the ISO automatically.
+# ---------------------------------------------------------------------------
+echo "[T22] scripts/pcap-analyzer.py exists and is executable (W9-2a)"
+PCAP_SCRIPT="$REPO_ROOT/scripts/pcap-analyzer.py"
+run_test "scripts/pcap-analyzer.py exists" "[[ -f '$PCAP_SCRIPT' ]]"
+run_test "scripts/pcap-analyzer.py is executable" "[[ -x '$PCAP_SCRIPT' ]]"
+# Shebang check
+if [[ -f "$PCAP_SCRIPT" ]]; then
+    PCAP_SHEBANG="$(head -n1 "$PCAP_SCRIPT")"
+    if [[ "$PCAP_SHEBANG" == "#!/usr/bin/env python3" ]]; then
+        pass "scripts/pcap-analyzer.py shebang is #!/usr/bin/env python3"
+    else
+        fail "scripts/pcap-analyzer.py shebang is #!/usr/bin/env python3" \
+             "Got: $PCAP_SHEBANG"
+    fi
+    PCAP_CONTENT="$(cat "$PCAP_SCRIPT")"
+    if [[ "$PCAP_CONTENT" == *"DEC-PHASE9-017"* ]]; then
+        pass "scripts/pcap-analyzer.py has @decision DEC-PHASE9-017"
+    else
+        fail "scripts/pcap-analyzer.py has @decision DEC-PHASE9-017" \
+             "W9-2a requires @decision DEC-PHASE9-017 annotation in the module"
+    fi
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo "================================================================"

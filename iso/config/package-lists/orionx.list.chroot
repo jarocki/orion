@@ -103,6 +103,18 @@ aircrack-ng
 chntpw
 clamav
 cryptsetup
+# fail2ban — SSH brute-force defense; modernized replacement for the obsolete
+# denyhosts concept in gecko/bin/start-denyhosts.sh. The package postinst
+# enables fail2ban-server.service via dh_installsystemd (same pattern as
+# network-manager in W9-1 DEC-PHASE9-004 — no custom systemd unit needed).
+# @decision DEC-PHASE9-018
+# @title fail2ban replaces gecko/bin/start-denyhosts.sh
+# @status accepted
+# @rationale denyhosts is unmaintained and not in Debian Bullseye. fail2ban
+#   provides equivalent SSH brute-force defense with active Debian packaging
+#   and systemd integration. Daemon is enabled by the package's own postinst
+#   (dh_installsystemd); no custom hook or unit file required (same as NM).
+fail2ban
 hashcat
 hydra
 john

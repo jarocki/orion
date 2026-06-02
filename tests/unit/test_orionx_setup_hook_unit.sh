@@ -138,10 +138,18 @@ else
     fail "has @status accepted"
 fi
 
+# W9-2a: DEC-PHASE9-017 annotation must be present (pcap-analyzer.py entry)
+if [[ "$HOOK_CONTENT" == *"DEC-PHASE9-017"* ]]; then
+    pass "has DEC-PHASE9-017 annotation (W9-2a pcap-analyzer.py entry)"
+else
+    fail "has DEC-PHASE9-017 annotation (W9-2a pcap-analyzer.py entry)" \
+         "W9-2a requires DEC-PHASE9-017 comment in the SCRIPT_MAP block"
+fi
+
 # ===========================================================================
-# 4. PATH symlinks for all 8 Orion-X scripts
+# 4. PATH symlinks for all 9 Orion-X scripts (W9-2a: +pcap-analyzer.py)
 # ===========================================================================
-section "PATH symlinks for all 8 scripts"
+section "PATH symlinks for all 9 scripts (W9-2a: pcap-analyzer.py added)"
 
 EXPECTED_SCRIPTS=(
     "orionx-mesh"
@@ -152,6 +160,7 @@ EXPECTED_SCRIPTS=(
     "toggle-theme.sh"
     "run-lynis.sh"
     "download-samples.sh"
+    "pcap-analyzer.py"
 )
 
 for script in "${EXPECTED_SCRIPTS[@]}"; do
@@ -169,6 +178,14 @@ if [[ "$HOOK_CONTENT" == *"mesh/orionx-mesh"* ]]; then
 else
     fail "orionx-mesh uses mesh/ subpath (not flat scripts/ root)" \
          "Expected /opt/orionx/scripts/mesh/orionx-mesh path"
+fi
+
+# W9-2a: pcap-analyzer.py maps to the correct target path
+if [[ "$HOOK_CONTENT" == *'["pcap-analyzer.py"]="/opt/orionx/scripts/pcap-analyzer.py"'* ]]; then
+    pass "pcap-analyzer.py maps to /opt/orionx/scripts/pcap-analyzer.py (DEC-PHASE9-017)"
+else
+    fail "pcap-analyzer.py maps to /opt/orionx/scripts/pcap-analyzer.py" \
+         "SCRIPT_MAP entry missing or wrong target for pcap-analyzer.py"
 fi
 
 # Verify /usr/bin/ is the symlink target directory
