@@ -403,7 +403,58 @@ else
 fi
 
 # ===========================================================================
-# 12. File count sanity check (renumbered from 8)
+# 12. W9-2a: pcap-analyzer.py staged + symlinked; fail2ban installed
+#
+# @decision DEC-PHASE9-017: pcap-analyzer.py is the modernized STA PCAP tool
+#   staged via the existing scripts/ rsync path (stage_application_content).
+# @decision DEC-PHASE9-018: fail2ban replaces gecko/bin/start-denyhosts.sh;
+#   enabled by its own package postinst (no custom unit needed).
+# ===========================================================================
+section "W9-2a: pcap-analyzer.py staged, symlinked; fail2ban installed"
+
+# (a) /opt/orionx/scripts/pcap-analyzer.py staged in chroot
+if [[ -f "$SQF/opt/orionx/scripts/pcap-analyzer.py" ]]; then
+    pass "/opt/orionx/scripts/pcap-analyzer.py staged in chroot (DEC-PHASE9-017)"
+else
+    fail "/opt/orionx/scripts/pcap-analyzer.py staged in chroot" \
+         "stage_application_content rsyncs scripts/ — ensure pcap-analyzer.py exists in repo scripts/"
+fi
+
+# Check executable bit on the staged copy
+if [[ -f "$SQF/opt/orionx/scripts/pcap-analyzer.py" ]] && \
+   [[ -x "$SQF/opt/orionx/scripts/pcap-analyzer.py" ]]; then
+    pass "/opt/orionx/scripts/pcap-analyzer.py is executable in chroot"
+else
+    fail "/opt/orionx/scripts/pcap-analyzer.py is executable in chroot" \
+         "0700 hook sets chmod 755 on all scripts/ files — check hook execution"
+fi
+
+# (b) /usr/bin/pcap-analyzer.py symlink present (created by 0700 hook)
+if [[ -L "$SQF/usr/bin/pcap-analyzer.py" ]]; then
+    pass "/usr/bin/pcap-analyzer.py symlink present in chroot (0700 hook)"
+elif [[ -f "$SQF/usr/bin/pcap-analyzer.py" ]]; then
+    pass "/usr/bin/pcap-analyzer.py present in chroot (as regular file)"
+else
+    fail "/usr/bin/pcap-analyzer.py symlink present in chroot" \
+         "0700-orionx-setup.hook.chroot SCRIPT_MAP must include pcap-analyzer.py"
+fi
+
+# (c) fail2ban installed in chroot (dpkg status or binary fallback)
+# || true: grep returns 1 on no-match; under pipefail that kills the script
+# before the if-branch is reached. Same guard pattern as section 8. DEC-PHASE9-014.
+if [[ -f "$DPKG_STATUS" ]] && grep -q "^Package: fail2ban$" "$DPKG_STATUS" 2>/dev/null; then
+    pass "package installed in chroot: fail2ban (dpkg status)"
+elif [[ -f "$SQF/usr/bin/fail2ban-client" ]]; then
+    pass "package installed in chroot: fail2ban (binary present: fail2ban-client)"
+elif [[ -f "$SQF/usr/sbin/fail2ban-server" ]]; then
+    pass "package installed in chroot: fail2ban (binary present: fail2ban-server)"
+else
+    fail "package installed in chroot: fail2ban" \
+         "fail2ban not found in dpkg/status or as binary — check orionx.list.chroot includes fail2ban"
+fi
+
+# ===========================================================================
+# 13. File count sanity check (renumbered from 12)
 # ===========================================================================
 section "File count sanity"
 
