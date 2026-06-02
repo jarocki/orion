@@ -193,7 +193,7 @@ done
 # ===========================================================================
 section "stdlib-only imports (no extra pip deps)"
 
-STDLIB_MODULES="argparse datetime hashlib os pathlib shutil socket subprocess sys textwrap"
+STDLIB_MODULES="__future__ argparse datetime hashlib os pathlib shutil socket subprocess sys textwrap"
 # Extract import lines and check none are non-stdlib
 IMPORT_LINES="$(grep -E '^import |^from ' "$TOOL" 2>/dev/null || true)"
 UNEXPECTED_IMPORTS=""
@@ -328,6 +328,61 @@ fi
 #    Static check: no bash is embedded in the Python file
 # ===========================================================================
 section "No embedded bash in Python file"
+
+# ===========================================================================
+# 10. PEP 563 future-annotations guard (F-W9-2a-001 / DEC-PHASE9-019)
+#     Ensures the module is importable on Debian Bullseye Python 3.9 which
+#     evaluates annotations at definition time and rejects PEP 604 X|None
+#     syntax. The `from __future__ import annotations` must appear before any
+#     other import and be accompanied by the @decision DEC-PHASE9-019 comment.
+#
+#     Additionally, a module-import simulation test drives the ACTUAL Python
+#     import path to confirm the file loads clean — the compound interaction
+#     that would have caught F-W9-2a-001 at CI time if it had existed earlier.
+# ===========================================================================
+section "PEP 563 future-annotations guard (F-W9-2a-001, DEC-PHASE9-019)"
+
+# T10-a: `from __future__ import annotations` is present AND appears before
+#         `import argparse` (i.e. it is the first real import after the docstring,
+#         as required by Python — __future__ imports must precede all other imports)
+FUTURE_LINE="$(grep -n "from __future__ import annotations" "$TOOL" | head -1 | cut -d: -f1)"
+ARGPARSE_LINE="$(grep -n "^import argparse" "$TOOL" | head -1 | cut -d: -f1)"
+if [[ -n "$FUTURE_LINE" && -n "$ARGPARSE_LINE" && "$FUTURE_LINE" -lt "$ARGPARSE_LINE" ]]; then
+    pass "T10-a: 'from __future__ import annotations' present and precedes stdlib imports (line $FUTURE_LINE < $ARGPARSE_LINE)"
+else
+    fail "T10-a: 'from __future__ import annotations' present and precedes stdlib imports" \
+         "PEP 563 guard missing or mis-ordered — module will crash on Python 3.9 (Bullseye). future_line=${FUTURE_LINE:-MISSING} argparse_line=${ARGPARSE_LINE:-MISSING}"
+fi
+
+# T10-b: @decision DEC-PHASE9-019 annotation present in the file (near the future import)
+if grep -q "DEC-PHASE9-019" "$TOOL"; then
+    pass "T10-b: @decision DEC-PHASE9-019 annotation present in pcap-analyzer.py"
+else
+    fail "T10-b: @decision DEC-PHASE9-019 annotation present in pcap-analyzer.py" \
+         "Missing decision annotation — add '@decision DEC-PHASE9-019' comment above the future import"
+fi
+
+# T10-c: module import simulation — proves the file actually loads clean
+#        (catches PEP 604 / annotation eval errors that py_compile misses)
+if command -v python3 >/dev/null 2>&1; then
+    IMPORT_EXIT=0
+    IMPORT_OUTPUT=""
+    IMPORT_OUTPUT="$(python3 -W error::DeprecationWarning -c "
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('pcap_analyzer', '$TOOL')
+m = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(m)
+" 2>&1)" || IMPORT_EXIT=$?
+
+    if [[ "$IMPORT_EXIT" -eq 0 ]]; then
+        pass "T10-c: module import simulation exits 0 (clean load on this Python)"
+    else
+        fail "T10-c: module import simulation exits 0" \
+             "Import failed (exit $IMPORT_EXIT): $IMPORT_OUTPUT"
+    fi
+else
+    skip "T10-c: module import simulation" "python3 not on PATH"
+fi
 
 if grep -q '#!/bin/bash' "$TOOL"; then
     fail "Python file does not embed a bash shebang" \

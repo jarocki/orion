@@ -56,6 +56,10 @@ Exit codes:
     is reference-only and is NOT staged into the ISO.
 """
 
+# PEP 563: defer annotation evaluation so PEP 604 union syntax (X | None) works
+# on Debian Bullseye Python 3.9 without `Optional[X]`. @decision DEC-PHASE9-019.
+from __future__ import annotations
+
 import argparse
 import datetime
 import hashlib
