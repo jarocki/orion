@@ -7,6 +7,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.0.0-rc4] - 2026-06-02
+
+Fourth release candidate. The operator booted v2.0.0-rc3 from USB on real
+hardware and reported it unusable: wallpaper not set, custom menu
+launchers dead, no way to start networking (Wi-Fi firmware + GUI
+networking entirely missing), mesh undiscoverable. Phase 9 (Operator
+Cyberdeck UX) was opened to fix the basics first, then build the
+"Cyberdeck for the Good Guys" UX layer.
+
+rc4 is the **fast-basics-first** release: the cyberdeck is usable
+out-of-the-box on standard hardware, plus a first round of
+gecko-legacy operator tooling ported in. Panel widgets / GTK Control
+Center / threat-posture tiers + deception remain deferred (issues
+#45 / #46) until rc4 hardware re-validation closes.
+
+### Added
+
+- **GUI networking**: NetworkManager + network-manager-gnome (nm-applet
+  tray) + wpasupplicant + iw + non-free wireless firmware
+  (firmware-iwlwifi / firmware-realtek / firmware-atheros /
+  firmware-misc-nonfree) so the operator can join Wi-Fi networks from
+  the panel on most laptops. Non-free apt component enabled via
+  `iso/auto/config --archive-areas "main contrib non-free"` AND an
+  explicit `iso/config/archives/debian-nonfree.list.chroot` (the
+  belt-and-suspenders fix in DEC-PHASE9-010 after `--archive-areas`
+  alone proved insufficient at chroot install time).
+- **LightDM autologin** for the `orionx` live user — boots directly to
+  XFCE desktop, no greeter prompt (DEC-PHASE9-005). The orionx user is
+  passwordless by design; physical-capture tradeoff accepted for a
+  field cyberdeck.
+- **One-click mesh launcher** — new `.desktop` entry "Orion-X Mesh —
+  Start" invoking `sudo orionx-mesh join` via xfce4-terminal.
+- **Phoenix wallpaper** wired as the active XFCE backdrop via xfconf
+  XML in the orionx home (DEC-PHASE9-001 reuses
+  `scripts/toggle-theme.sh`'s xfconf mechanism, single authority).
+- **`scripts/pcap-analyzer.py`** — new Python 3 PCAP analysis tool
+  implementing the Bejtlich Structured Traffic Analysis (STA) 6-phase
+  methodology: metadata, protocol hierarchy, conversations,
+  endpoints, HTTP/DNS/TLS overview, readable summary. Standard-library
+  only, chain-of-custody header with SHA-256 + hostname + tool
+  versions on every output file. argparse interface
+  (`--output-dir`, `--quick`, `--report`). Fail-loud on missing
+  tshark. Modernized from gecko legacy `analyze-pcap.sh` (DEC-PHASE9-017).
+- **fail2ban** in the package list for persistent SSH brute-force
+  defense (DEC-PHASE9-018). Daemon enabled via Debian postinst, same
+  pattern as NetworkManager — no custom systemd unit.
+
+### Fixed
+
+- **lxterminal → xfce4-terminal** — all five `.desktop` Exec lines in
+  the 0700 hook switched from the never-installed `lxterminal` to
+  `xfce4-terminal --hold -e "bash -c '<cmd>; exec bash'"`, fixing the
+  rc3-reported "menu items don't work" complaint (DEC-PHASE9-006).
+- **Matrix/wg-quick unit bug** — `matrix-synapse-orionx.service` had
+  `Requires=wg-quick@wg0.service` but `scripts/mesh/mesh-join.sh`
+  brings up `wg0` via raw `ip`/`wg`, not `wg-quick@`. The hard
+  Requires was permanently unsatisfiable. Downgraded to `Wants=`/
+  `After=` in BOTH copies (canonical includes.chroot + repo-root
+  systemd/ duplicate reconciled to match) so Matrix degrades
+  gracefully (DEC-PHASE9-007).
+- **`scripts/build-iso.sh` fail-loud** — was silently exiting 0 when
+  `lb build` failed and produced no ISO. Now captures `lb_exit`
+  explicitly and exits non-zero on build failure OR missing ISO
+  (DEC-PHASE9-011).
+- **`scripts/qemu-boot-test.sh` rc1 version-drift** — `DEFAULT_ISO`
+  was hardcoded to `output/orionx-phoenix-edition-v2.0.0-rc1.iso`.
+  Replaced with glob-based runtime resolver
+  (`output/orionx-phoenix-edition-*.iso`) so CI/dev tooling tracks
+  the actual produced ISO without per-rc version-string edits
+  (DEC-PHASE9-015 — consolidated version-literal-drift lesson:
+  CI-facing scripts MUST resolve ISO paths via glob, not literal
+  version strings).
+- **Content-presence test extraction gap** — `test-iso-content-
+  presence.sh` did selective `unsquashfs` that missed `/var/lib/dpkg`
+  and `/etc/lightdm` paths needed by new rc4 assertions. Replaced
+  selective extraction with full unsquashfs (DEC-PHASE9-012).
+- **`set -e + pipefail + grep`-no-match silent death** — content-
+  presence test exited 1 silently when zero lxterminal matches (the
+  desired state). Added `|| true` on no-match grep pipelines
+  (DEC-PHASE9-014).
+- **PEP 604 / Bullseye Python 3.9 incompatibility** — `pcap-analyzer.py`
+  used `str | None` (PEP 604, 3.10+) which `TypeError`s at import on
+  Bullseye Python 3.9. Fixed with `from __future__ import annotations`
+  (PEP 563 deferred evaluation, single-line future-proof fix) plus a
+  T10 `importlib.util` module-load regression guard (DEC-PHASE9-019).
+- **ruff F541/E741 lint** — `pcap-analyzer.py` had three cosmetic
+  defects (2× f-string-without-placeholder, 1× ambiguous variable `l`).
+  Fixed + added T11 ruff regression guard so local-test catches this
+  class before CI (DEC-PHASE9-020).
+
+### CI hardening (W9-1b cascade closure)
+
+- Explicit `iso/config/archives/debian-nonfree.list.chroot` injects
+  non-free into the chroot's apt sources at build time, complementing
+  `--archive-areas` (DEC-PHASE9-010).
+- Two durable meta-lessons recorded in DEC-PHASE9-021 as hard
+  invariants for successors: (a) every ISO-shipped Python module
+  needs `from __future__ import annotations` for Bullseye Python 3.9
+  compatibility; (b) the local-test contract MUST run `ruff` when
+  available so lint defects don't cost ~25-minute CI cycles.
+
+### Cross-references
+
+- Phase 9 (Operator Cyberdeck UX): W9-1 (rc4 broken-basics) +
+  W9-1b (#48 firmware build-break + dependent test cascade) + W9-2a
+  (#50 gecko legacy port: pcap-analyzer + fail2ban).
+- DEC-PHASE9-001 … -021 cover the full rc4 decision arc.
+- W9-2 (XFCE panel + GTK Control Center, #45) and W9-3
+  (threat-posture tiers + deception, #46) detail-planning deferred
+  until rc4 hardware re-validation closes.
+
+---
+
 ## [v2.0.0-rc3] - 2026-05-17
 
 Third release candidate. Supersedes v2.0.0-rc2 which had two cosmetic
