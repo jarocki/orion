@@ -187,6 +187,18 @@ python3-dev
 python3-numpy
 python3-scapy
 
+# Phase 9 W9-2: GTK Control Center + XFCE panel widgets (Python + GTK 3 + genmon)
+# @decision DEC-PHASE10-005 — Control Center ships ahead of Phase 10 Nebula AI;
+# Phase 10 slices plug into the placeholder sections (Nebula, Auto-Healing).
+# python3-gi: PyGObject GLib/GTK bindings (Python 3, Debian Bullseye package)
+python3-gi
+# gir1.2-gtk-3.0: GObject introspection data for GTK 3
+gir1.2-gtk-3.0
+# gir1.2-glib-2.0: GObject introspection data for GLib 2
+gir1.2-glib-2.0
+# xfce4-genmon-plugin: generic monitor plugin for XFCE panel (drives panel widgets)
+xfce4-genmon-plugin
+
 # Custom packages (will be installed from config/packages.chroot/)
 # orionx-custom-tools
 # orionx-theme

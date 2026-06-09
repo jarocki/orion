@@ -284,6 +284,75 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
+# rc5 W9-2 static checks: orionx-control-center .desktop + symlink in 0700 hook
+#
+# @decision DEC-PHASE10-005
+# @title Control Center ships ahead of Phase 10 Nebula AI; hook wiring
+#        is asserted here as a static gate that does not require a built ISO.
+# @status accepted
+# @rationale The 0700 hook is the single authority for /usr/bin symlinks
+#   (0700_hook_path_symlinks_authority) and .desktop launchers
+#   (0700_hook_desktop_launcher_authority). These checks confirm both wires
+#   are present in the hook source so a future refactor cannot silently
+#   remove them. DEC-PHASE9-006 invariant: no lxterminal in any Exec line
+#   of the orionx-control-center .desktop (GTK app, no terminal wrapper).
+#   Comment-filtering matches the approach in the rc4 static checks above:
+#   `grep -v '^\s*#' | grep -c lxterminal` so @decision documentation that
+#   mentions lxterminal does not false-positive.
+# ---------------------------------------------------------------------------
+echo "--- rc5 W9-2 static checks: orionx-control-center hook wiring ---"
+echo ""
+
+if [[ -f "$HOOK_0700" ]]; then
+    # (a) .desktop launcher present: /usr/share/applications/orionx-control-center.desktop
+    if grep -q "orionx-control-center.desktop" "$HOOK_0700"; then
+        pass "W9-2: 0700 hook creates /usr/share/applications/orionx-control-center.desktop"
+    else
+        fail "W9-2: 0700 hook creates /usr/share/applications/orionx-control-center.desktop"
+    fi
+
+    # (b) .desktop Exec line is NOT lxterminal (DEC-PHASE9-006 invariant).
+    #     Filter comment lines first to avoid false-positives from @decision
+    #     documentation that mentions lxterminal for historical context.
+    LXTERM_CONTROL="$(grep -v '^\s*#' "$HOOK_0700" | grep -c "lxterminal" || true)"
+    if [[ "$LXTERM_CONTROL" -eq 0 ]]; then
+        pass "W9-2: orionx-control-center .desktop does NOT use lxterminal (DEC-PHASE9-006)"
+    else
+        fail "W9-2: orionx-control-center .desktop does NOT use lxterminal" \
+             "Found $LXTERM_CONTROL functional lxterminal reference(s) — DEC-PHASE9-006 violated"
+    fi
+
+    # (c) Exec line for orionx-control-center.desktop uses absolute path
+    if grep -q "Exec=/usr/bin/orionx-control-center" "$HOOK_0700" 2>/dev/null; then
+        pass "W9-2: orionx-control-center.desktop Exec=/usr/bin/orionx-control-center (DEC-PHASE9-006)"
+    else
+        fail "W9-2: orionx-control-center.desktop Exec=/usr/bin/orionx-control-center" \
+             "0700 hook must emit Exec=/usr/bin/orionx-control-center in the .desktop block"
+    fi
+
+    # (d) /usr/bin/orionx-control-center symlink entry present in SCRIPT_MAP
+    if grep -q '"orionx-control-center"' "$HOOK_0700" 2>/dev/null; then
+        pass "W9-2: orionx-control-center present in SCRIPT_MAP symlink loop"
+    else
+        fail "W9-2: orionx-control-center present in SCRIPT_MAP symlink loop" \
+             "0700 hook SCRIPT_MAP must include orionx-control-center → /opt/orionx/scripts/control_center/"
+    fi
+
+    # (e) .desktop file staged in includes.chroot (source-tree presence check)
+    DESKTOP_SRC="$REPO_ROOT/iso/config/includes.chroot/usr/share/applications/orionx-control-center.desktop"
+    if [[ -f "$DESKTOP_SRC" ]]; then
+        pass "W9-2: iso/config/includes.chroot/usr/share/applications/orionx-control-center.desktop staged"
+    else
+        fail "W9-2: iso/config/includes.chroot/usr/share/applications/orionx-control-center.desktop staged" \
+             "Static .desktop file must be present in includes.chroot for live-build to copy into chroot"
+    fi
+else
+    skip "W9-2: orionx-control-center hook wiring checks" "hook file not found: $HOOK_0700"
+fi
+
+echo ""
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo "================================================================"

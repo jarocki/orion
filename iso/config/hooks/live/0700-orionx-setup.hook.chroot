@@ -66,6 +66,11 @@ declare -A SCRIPT_MAP=(
     # tshark (already installed) + optional tcpdump. CLI-only; no .desktop
     # launcher here — that is deferred to the W9-2 Control Center slice.
     ["pcap-analyzer.py"]="/opt/orionx/scripts/pcap-analyzer.py"
+    # W9-2: GTK Orion-X Control Center — one-click cyberdeck control surface.
+    # Launches directly as a GTK window (no xfce4-terminal wrapper needed).
+    # Phase 10 slices (W10-1 through W10-6) plug into its placeholder sections.
+    # @decision DEC-PHASE10-005: Control Center ships ahead of Nebula AI runtime.
+    ["orionx-control-center"]="/opt/orionx/scripts/control_center/orionx-control-center"
 )
 
 for name in "${!SCRIPT_MAP[@]}"; do
@@ -142,6 +147,20 @@ Comment=Start Orion-X WireGuard mesh (one-click)
 Exec=xfce4-terminal --hold -e "bash -c 'sudo orionx-mesh join; exec bash'"
 Icon=network-wireless
 Categories=Network;
+DESKTOP_EOF
+
+# GTK Control Center — launches directly as a GTK window, NOT via xfce4-terminal.
+# DEC-PHASE9-006: no lxterminal in any Exec line (lxterminal is NOT installed).
+# DEC-PHASE10-005: Control Center ships ahead of Phase 10 Nebula AI; Nebula
+# and Auto-Healing sections are placeholders that W10-1..W10-6 populate.
+cat > /usr/share/applications/orionx-control-center.desktop << 'DESKTOP_EOF'
+[Desktop Entry]
+Type=Application
+Name=Orion-X Control Center
+Comment=Orion-X cyberdeck control surface (Network, Mesh, Comms, IR, Nebula AI)
+Exec=/usr/bin/orionx-control-center
+Icon=preferences-desktop
+Categories=System;Security;
 DESKTOP_EOF
 
 # ---------------------------------------------------------------------------

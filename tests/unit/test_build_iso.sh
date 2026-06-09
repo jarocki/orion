@@ -521,6 +521,56 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
+# T23: GTK / PyGObject / genmon packages in orionx.list.chroot (W9-2)
+#
+# @decision DEC-PHASE10-005: Control Center ships ahead of Phase 10 Nebula AI;
+# these packages must be present before any Phase 10 slice lands.
+# ---------------------------------------------------------------------------
+echo "[T23] GTK / PyGObject / genmon packages in orionx.list.chroot (W9-2)"
+PKG_LIST_GTK="$REPO_ROOT/iso/config/package-lists/orionx.list.chroot"
+if [[ -f "$PKG_LIST_GTK" ]]; then
+    for gtk_pkg in python3-gi gir1.2-gtk-3.0 gir1.2-glib-2.0 xfce4-genmon-plugin; do
+        if grep -qE "^${gtk_pkg}$" "$PKG_LIST_GTK"; then
+            pass "$gtk_pkg present as uncommented entry in orionx.list.chroot (W9-2)"
+        else
+            fail "$gtk_pkg present as uncommented entry in orionx.list.chroot" \
+                 "W9-2 requires $gtk_pkg for the GTK Control Center and panel widgets"
+        fi
+    done
+    # Decision annotation must be present
+    if grep -q "DEC-PHASE10-005" "$PKG_LIST_GTK"; then
+        pass "DEC-PHASE10-005 annotation present alongside GTK packages in orionx.list.chroot"
+    else
+        fail "DEC-PHASE10-005 annotation present alongside GTK packages" \
+             "W9-2 requires @decision DEC-PHASE10-005 comment near the GTK package block"
+    fi
+else
+    fail "GTK package check: orionx.list.chroot not found at $PKG_LIST_GTK"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
+# T24: scripts/control_center/orionx-control-center entry script exists (W9-2)
+#
+# stage_application_content rsyncs scripts/ — the entry script must exist
+# in the source tree so it gets staged into the ISO automatically.
+# ---------------------------------------------------------------------------
+echo "[T24] scripts/control_center/orionx-control-center exists and is executable (W9-2)"
+CC_ENTRY="$REPO_ROOT/scripts/control_center/orionx-control-center"
+run_test "scripts/control_center/orionx-control-center exists" "[[ -f '$CC_ENTRY' ]]"
+run_test "scripts/control_center/orionx-control-center is executable" "[[ -x '$CC_ENTRY' ]]"
+if [[ -f "$CC_ENTRY" ]]; then
+    CC_SHEBANG="$(head -n1 "$CC_ENTRY")"
+    if [[ "$CC_SHEBANG" == "#!/usr/bin/env python3" ]]; then
+        pass "scripts/control_center/orionx-control-center shebang is #!/usr/bin/env python3"
+    else
+        fail "scripts/control_center/orionx-control-center shebang is #!/usr/bin/env python3" \
+             "Got: $CC_SHEBANG"
+    fi
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo "================================================================"
