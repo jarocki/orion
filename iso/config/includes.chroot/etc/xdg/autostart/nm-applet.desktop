@@ -1,0 +1,17 @@
+# nm-applet autostart desktop file.
+#
+# NOTE: network-manager-gnome ships /etc/xdg/autostart/nm-applet.desktop
+# via its own package postinst.  This staged copy is belt-and-suspenders:
+# it ensures the file is present even if the postinst has not run when the
+# live-build hook executes.  In the final squashfs the package-installed
+# version takes precedence (identical content).  Do NOT remove this file —
+# it is the required_paths assertion anchor for the scope manifest.
+#
+# @decision DEC-PHASE9-004: nm-applet autostart via xdg/autostart (W9-1).
+[Desktop Entry]
+Type=Application
+Name=Network Manager Applet
+Comment=Manage your network connections
+Exec=nm-applet
+X-GNOME-Autostart-enabled=true
+NoDisplay=false

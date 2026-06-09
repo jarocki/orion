@@ -147,9 +147,9 @@ else
 fi
 
 # ===========================================================================
-# 4. PATH symlinks for all 9 Orion-X scripts (W9-2a: +pcap-analyzer.py)
+# 4. PATH symlinks for all 10 Orion-X scripts (W9-2: +orionx-control-center)
 # ===========================================================================
-section "PATH symlinks for all 9 scripts (W9-2a: pcap-analyzer.py added)"
+section "PATH symlinks for all 10 scripts (W9-2: orionx-control-center added)"
 
 EXPECTED_SCRIPTS=(
     "orionx-mesh"
@@ -161,6 +161,7 @@ EXPECTED_SCRIPTS=(
     "run-lynis.sh"
     "download-samples.sh"
     "pcap-analyzer.py"
+    "orionx-control-center"
 )
 
 for script in "${EXPECTED_SCRIPTS[@]}"; do
@@ -188,12 +189,30 @@ else
          "SCRIPT_MAP entry missing or wrong target for pcap-analyzer.py"
 fi
 
+# W9-2: orionx-control-center maps to the correct target path (10th entry)
+if [[ "$HOOK_CONTENT" == *'["orionx-control-center"]="/opt/orionx/scripts/control_center/orionx-control-center"'* ]]; then
+    pass "orionx-control-center maps to /opt/orionx/scripts/control_center/orionx-control-center (W9-2)"
+else
+    fail "orionx-control-center maps to /opt/orionx/scripts/control_center/orionx-control-center" \
+         "W9-2: SCRIPT_MAP entry missing or wrong target for orionx-control-center"
+fi
+
 # Verify /usr/bin/ is the symlink target directory
 if [[ "$HOOK_CONTENT" == *"/usr/bin/"* ]]; then
     pass "PATH symlinks target /usr/bin/"
 else
     fail "PATH symlinks target /usr/bin/" \
          "Expected ln -sf ... /usr/bin/<script>"
+fi
+
+# W9-2: SCRIPT_MAP should have 10 entries (assert associative array has 10 keys).
+# Count lines matching the SCRIPT_MAP key=value pattern: ["name"]="path"
+SCRIPT_MAP_ENTRIES="$(grep -c '^\s*\["[^"]*"\]="[^"]*"' "$HOOK_FILE" 2>/dev/null || true)"
+if [[ "$SCRIPT_MAP_ENTRIES" -ge 10 ]]; then
+    pass "SCRIPT_MAP has >= 10 entries (W9-2: orionx-control-center is 10th entry)"
+else
+    fail "SCRIPT_MAP has >= 10 entries" \
+         "Found only $SCRIPT_MAP_ENTRIES — W9-2 requires orionx-control-center as the 10th entry"
 fi
 
 # ===========================================================================
@@ -251,6 +270,31 @@ if [[ "$LXTERM_FUNC_COUNT" -eq 0 ]]; then
 else
     fail "rc4: zero lxterminal references in functional lines" \
          "Found $LXTERM_FUNC_COUNT functional reference(s) — remove all non-comment lxterminal (not installed)"
+fi
+
+# W9-2: orionx-control-center.desktop created by the hook
+if [[ "$HOOK_CONTENT" == *"orionx-control-center.desktop"* ]]; then
+    pass "W9-2: orionx-control-center.desktop .desktop launcher present in hook"
+else
+    fail "W9-2: orionx-control-center.desktop .desktop launcher present in hook" \
+         "The 0700 hook must create /usr/share/applications/orionx-control-center.desktop"
+fi
+
+# W9-2: Control Center Exec uses /usr/bin/orionx-control-center (NO lxterminal — GTK app)
+if grep -q "Exec=/usr/bin/orionx-control-center" "$HOOK_FILE" 2>/dev/null; then
+    pass "W9-2: Control Center .desktop Exec=/usr/bin/orionx-control-center (DEC-PHASE9-006)"
+else
+    fail "W9-2: Control Center .desktop Exec=/usr/bin/orionx-control-center" \
+         "Control Center is a GTK app — Exec must be the direct binary, not xfce4-terminal wrapper"
+fi
+
+# W9-2: Control Center .desktop must NOT contain lxterminal in any Exec line
+# (functional check — DEC-PHASE9-006 invariant)
+if ! grep -v '^\s*#' "$HOOK_FILE" | grep "orionx-control-center" | grep -q "lxterminal"; then
+    pass "W9-2: orionx-control-center .desktop does NOT use lxterminal (DEC-PHASE9-006)"
+else
+    fail "W9-2: orionx-control-center .desktop does NOT use lxterminal" \
+         "Found lxterminal in functional orionx-control-center lines — must be direct GTK Exec"
 fi
 
 # rc4: one-click mesh launcher present (DEC-PHASE9-001)

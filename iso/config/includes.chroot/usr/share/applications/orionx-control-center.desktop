@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Orion-X Control Center
+Comment=Orion-X cyberdeck control surface (Network, Mesh, Comms, IR, Nebula AI)
+Exec=/usr/bin/orionx-control-center
+Icon=preferences-desktop
+Categories=System;Security;

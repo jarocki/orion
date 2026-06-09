@@ -468,6 +468,104 @@ else
 fi
 
 # ===========================================================================
+# 14. W9-2: Orion-X Control Center — GTK app + GTK/genmon packages staged
+#
+# @decision DEC-PHASE10-005
+# @title Control Center ships ahead of Phase 10 Nebula AI; placeholder
+#        sections define the plug-in surfaces for W10-1 through W10-6.
+# @status accepted
+# @rationale stage_application_content rsyncs scripts/ → /opt/orionx/scripts/
+#   so the control_center/ module lands in the ISO automatically. The 0700
+#   hook creates the /usr/bin/orionx-control-center symlink and copies the
+#   .desktop launcher. Package presence is asserted via dpkg/status (same
+#   pattern as section 8). DEC-PHASE9-014 pipefail guard applied to any
+#   grep-count pipeline.
+# ===========================================================================
+section "14. W9-2: Control Center — GTK app + GTK/genmon packages staged"
+
+# (a) Entry script staged and executable
+if [[ -f "$SQF/opt/orionx/scripts/control_center/orionx-control-center" ]]; then
+    pass "/opt/orionx/scripts/control_center/orionx-control-center staged"
+else
+    fail "/opt/orionx/scripts/control_center/orionx-control-center staged" \
+         "stage_application_content must rsync scripts/control_center/ into the ISO"
+fi
+
+if [[ -x "$SQF/opt/orionx/scripts/control_center/orionx-control-center" ]]; then
+    pass "/opt/orionx/scripts/control_center/orionx-control-center is executable"
+else
+    fail "/opt/orionx/scripts/control_center/orionx-control-center is executable" \
+         "0700 hook sets chmod 755 on scripts/ files — check hook execution"
+fi
+
+# (b) Python module present (app.py + at least one section file)
+if [[ -f "$SQF/opt/orionx/scripts/control_center/app.py" ]]; then
+    pass "/opt/orionx/scripts/control_center/app.py staged"
+else
+    fail "/opt/orionx/scripts/control_center/app.py staged" \
+         "control_center/ Python package must be staged via stage_application_content"
+fi
+
+if [[ -f "$SQF/opt/orionx/scripts/control_center/sections/nebula.py" ]]; then
+    pass "/opt/orionx/scripts/control_center/sections/nebula.py staged"
+else
+    fail "/opt/orionx/scripts/control_center/sections/nebula.py staged" \
+         "control_center/sections/ not fully staged — check rsync in stage_application_content"
+fi
+
+# (c) /usr/bin/orionx-control-center symlink present (created by 0700 hook)
+if [[ -L "$SQF/usr/bin/orionx-control-center" ]]; then
+    pass "/usr/bin/orionx-control-center symlink present (0700 hook)"
+elif [[ -f "$SQF/usr/bin/orionx-control-center" ]]; then
+    pass "/usr/bin/orionx-control-center present (as regular file, 0700 hook)"
+else
+    fail "/usr/bin/orionx-control-center symlink present" \
+         "0700-orionx-setup.hook.chroot SCRIPT_MAP must include orionx-control-center"
+fi
+
+# (d) .desktop launcher present
+if [[ -f "$SQF/usr/share/applications/orionx-control-center.desktop" ]]; then
+    pass "/usr/share/applications/orionx-control-center.desktop present"
+else
+    fail "/usr/share/applications/orionx-control-center.desktop present" \
+         "0700 hook must create /usr/share/applications/orionx-control-center.desktop"
+fi
+
+# (e) .desktop Exec line must point to /usr/bin/orionx-control-center
+#     (DEC-PHASE9-006 invariant: no lxterminal, direct GTK executable)
+CONTROL_DESKTOP="$SQF/usr/share/applications/orionx-control-center.desktop"
+if [[ -f "$CONTROL_DESKTOP" ]]; then
+    if grep -qE "^Exec=/usr/bin/orionx-control-center" "$CONTROL_DESKTOP" 2>/dev/null; then
+        pass ".desktop Exec line is Exec=/usr/bin/orionx-control-center (DEC-PHASE9-006)"
+    else
+        fail ".desktop Exec line is Exec=/usr/bin/orionx-control-center" \
+             "Check orionx-control-center.desktop Exec line — must be direct GTK exec (no lxterminal)"
+    fi
+    # DEC-PHASE9-006: no lxterminal in the Exec line
+    # || true: DEC-PHASE9-014 — grep exits 1 on no-match; under pipefail this kills
+    # the script before the count is tested. Zero matches is the desired state.
+    LXTERM_IN_DESKTOP="$(grep -c "lxterminal" "$CONTROL_DESKTOP" 2>/dev/null || true)"
+    if [[ "$LXTERM_IN_DESKTOP" -eq 0 ]]; then
+        pass ".desktop has zero lxterminal references (DEC-PHASE9-006 invariant)"
+    else
+        fail ".desktop has zero lxterminal references" \
+             "Found $LXTERM_IN_DESKTOP lxterminal reference(s) — violates DEC-PHASE9-006"
+    fi
+fi
+
+# (f) GTK / GI / genmon packages installed in chroot dpkg
+#     Same dpkg/status + binary-fallback pattern as section 8. DEC-PHASE9-014
+#     pipefail guard not needed here because we use grep -q (no pipe).
+for gtk_pkg in python3-gi gir1.2-gtk-3.0 gir1.2-glib-2.0 xfce4-genmon-plugin; do
+    if [[ -f "$DPKG_STATUS" ]] && grep -q "^Package: ${gtk_pkg}$" "$DPKG_STATUS" 2>/dev/null; then
+        pass "package installed in chroot: $gtk_pkg (dpkg status, DEC-PHASE10-005)"
+    else
+        fail "package installed in chroot: $gtk_pkg" \
+             "Check orionx.list.chroot includes $gtk_pkg (W9-2 GTK dependency)"
+    fi
+done
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

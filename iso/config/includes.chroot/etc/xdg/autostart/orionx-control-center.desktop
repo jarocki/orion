@@ -1,0 +1,15 @@
+# Orion-X Control Center autostart entry.
+#
+# X-GNOME-Autostart-enabled=false — operator-launched per click.
+# Matches DEC-PHASE10-005 sequencing: Control Center ships as a
+# manually-launched GTK app; auto-launch on first boot is an operator
+# opt-in that future slices may enable via xfce session settings.
+# To enable auto-launch: set X-GNOME-Autostart-enabled=true here.
+[Desktop Entry]
+Type=Application
+Name=Orion-X Control Center
+Comment=Orion-X cyberdeck control surface (available as auto-launch on first boot if operator opts in)
+Exec=/usr/bin/orionx-control-center
+Icon=preferences-desktop
+X-GNOME-Autostart-enabled=false
+NoDisplay=true

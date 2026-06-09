@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""
+Orion-X Control Center — executable entry script.
+
+Usage:
+  orionx-control-center [--help] [--version]
+
+This script is symlinked to /usr/bin/orionx-control-center by
+0700-orionx-setup.hook.chroot so it is on PATH in the live system.
+
+The script launches a GTK 3 window with six sections (Network, Mesh, Comms,
+Situational Awareness, IR Tools, Nebula AI) plus an Auto-Healing tab.
+
+@decision DEC-PHASE10-005
+@title Control Center ships ahead of Phase 10 Nebula AI
+@status accepted
+@rationale Phase 9 W9-2 locks the UI surface.  Nebula AI and Auto-Healing
+  sections are discoverable placeholders in this slice; Phase 10 slices
+  plug their runtime in without inventing new windows.
+
+@decision DEC-PHASE9-019
+@title Bullseye Python 3.9 + PEP-563 (from __future__ import annotations)
+@status accepted
+@rationale All shipped Python in Phase 9 / Phase 10 must start with
+  `from __future__ import annotations` as the first import to guarantee
+  forward-compatible annotation evaluation under Python 3.9 (Debian
+  Bullseye default) and enable ruff PEP-563 enforcement (DEC-PHASE9-020).
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+
+_VERSION = "2.0.0-rc5-w9-2"
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="orionx-control-center",
+        description=(
+            "Orion-X Control Center — cyberdeck UX baseline.\n\n"
+            "Opens a GTK window with sections: Network, Mesh, Comms, "
+            "Situational Awareness, IR Tools, Nebula AI, Auto-Healing."
+        ),
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {_VERSION}",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Parse args, then launch the GTK application.
+
+    Returns
+    -------
+    int
+        Exit code (0 on success).
+    """
+    args_list = argv if argv is not None else sys.argv[1:]
+    _parse_args(args_list)
+
+    # Add the scripts/ directory to sys.path so `control_center` package
+    # is importable when the script is run directly as
+    # /usr/bin/orionx-control-center (symlink target is
+    # /opt/orionx/scripts/control_center/orionx-control-center).
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    scripts_dir = os.path.dirname(script_dir)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+
+    from control_center.app import run_app  # noqa: PLC0415
+
+    return run_app(sys.argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
