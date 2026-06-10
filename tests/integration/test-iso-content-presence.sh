@@ -607,9 +607,12 @@ done
 section "15. Phase 10 W10-1 — Nebula runtime: model + manifest + ollama + units staged"
 
 # (a) Model file present and large (> 4 GB sanity check — the real GGUF is ~4.4 GB)
-NEBULA_MODEL="$SQF/opt/orionx/nebula/models/Mistral-7B-Instruct-v0.3.Q4_K_M.gguf"
+# Filename is lowercase: single source of truth is nebula-model-manifest.json
+# model_filename field — "mistral-7b-instruct-v0.3.Q4_K_M.gguf".
+# Linux filesystem is case-sensitive; uppercase Mistral-7B would never match.
+NEBULA_MODEL="$SQF/opt/orionx/nebula/models/mistral-7b-instruct-v0.3.Q4_K_M.gguf"
 if [[ -f "$NEBULA_MODEL" ]]; then
-    pass "/opt/orionx/nebula/models/Mistral-7B-Instruct-v0.3.Q4_K_M.gguf present (DEC-PHASE10-008)"
+    pass "/opt/orionx/nebula/models/mistral-7b-instruct-v0.3.Q4_K_M.gguf present (DEC-PHASE10-008)"
     # Sanity-check: model must be > 4 000 000 000 bytes (the Q4_K_M GGUF is ~4.4 GB)
     # || true: stat exits non-zero if field extraction fails; we assert separately.
     MODEL_SIZE="$(stat -c '%s' "$NEBULA_MODEL" 2>/dev/null || stat -f '%z' "$NEBULA_MODEL" 2>/dev/null || true)"
@@ -620,7 +623,7 @@ if [[ -f "$NEBULA_MODEL" ]]; then
              "Got: ${MODEL_SIZE:-unknown} bytes — model may be a stub or download incomplete (DEC-PHASE10-008)"
     fi
 else
-    fail "/opt/orionx/nebula/models/Mistral-7B-Instruct-v0.3.Q4_K_M.gguf present" \
+    fail "/opt/orionx/nebula/models/mistral-7b-instruct-v0.3.Q4_K_M.gguf present" \
          "stage_nebula_model() in build-iso.sh must download+stage the GGUF (DEC-PHASE10-008)"
 fi
 

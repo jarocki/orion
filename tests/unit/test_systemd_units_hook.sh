@@ -6,7 +6,7 @@
 # Validates the hook file structurally — no chroot or root access needed.
 # Asserts: file existence, permissions, shebang, strict mode, single
 # autostart-array authority, correct install target, correct source path,
-# all 8 unit file references present, and that the hook does NOT write
+# all 12 unit file references present, and that the hook does NOT write
 # directly to /etc/systemd/system/ (systemctl enable owns symlinks).
 #
 # @decision DEC-PHASE7-SYSTEMD-INSTALL-TEST-001
@@ -160,7 +160,9 @@ else
 fi
 
 # ===========================================================================
-# 5. Autostart array contains exactly the documented 6 members
+# 5. Autostart array contains exactly the documented 8 members
+#    W10-1 added 2 to AUTOSTART_UNITS (only the integrity check + socket;
+#    runtime + warmup are lazy/opt-in)
 # ===========================================================================
 section "Autostart array members"
 
@@ -171,6 +173,9 @@ EXPECTED_AUTOSTART=(
     "orionx-mesh-beacon.service"
     "orionx-firewall.service"
     "orionx-first-boot.service"
+    # W10-1 added 2 Nebula units (DEC-PHASE10-009 integrity + DEC-PHASE10-010 socket lazy-start)
+    "nebula-integrity-check.service"
+    "nebula-runtime.socket"
 )
 
 for unit in "${EXPECTED_AUTOSTART[@]}"; do
@@ -182,15 +187,17 @@ for unit in "${EXPECTED_AUTOSTART[@]}"; do
 done
 
 # Count quoted unit entries inside the AUTOSTART_UNITS block to verify
-# exactly 6 members. Extract just the lines between AUTOSTART_UNITS=(
+# exactly 8 members. Extract just the lines between AUTOSTART_UNITS=(
 # and the closing ) to avoid false positives from the UNIT_FILES array.
+# W10-1 added 2 to AUTOSTART_UNITS (only the integrity check + socket;
+# runtime + warmup are lazy/opt-in)
 AUTOSTART_BLOCK="$(awk '/^AUTOSTART_UNITS=\(/{p=1} p{print} /^\)/{if(p) p=0}' "$HOOK_FILE")"
-AUTOSTART_MEMBER_COUNT="$(grep -c '".*\.service"\|".*\.timer"' <(echo "$AUTOSTART_BLOCK") || true)"
-if [[ "$AUTOSTART_MEMBER_COUNT" -eq 6 ]]; then
-    pass "AUTOSTART_UNITS array has exactly 6 members"
+AUTOSTART_MEMBER_COUNT="$(grep -c '".*\.service"\|".*\.timer"\|".*\.socket"' <(echo "$AUTOSTART_BLOCK") || true)"
+if [[ "$AUTOSTART_MEMBER_COUNT" -eq 8 ]]; then
+    pass "AUTOSTART_UNITS array has exactly 8 members"
 else
-    fail "AUTOSTART_UNITS array has exactly 6 members" \
-         "Found $AUTOSTART_MEMBER_COUNT; expected 6"
+    fail "AUTOSTART_UNITS array has exactly 8 members" \
+         "Found $AUTOSTART_MEMBER_COUNT; expected 8"
 fi
 
 # ===========================================================================
@@ -218,9 +225,11 @@ else
 fi
 
 # ===========================================================================
-# 8. All 8 expected unit file names referenced for copy
+# 8. All 12 expected unit file names referenced for copy
+#    W10-1 added 4 Nebula units (DEC-PHASE10-009 integrity + DEC-PHASE10-010
+#    socket activation)
 # ===========================================================================
-section "All 8 unit files referenced"
+section "All 12 unit files referenced"
 
 EXPECTED_UNITS=(
     "matrix-synapse-orionx.service"
@@ -231,6 +240,11 @@ EXPECTED_UNITS=(
     "orionx-mesh-beacon.service"
     "orionx-firewall.service"
     "orionx-first-boot.service"
+    # W10-1 added 4 Nebula units (DEC-PHASE10-009 integrity + DEC-PHASE10-010 socket lazy-start)
+    "nebula-integrity-check.service"
+    "nebula-runtime.service"
+    "nebula-runtime.socket"
+    "nebula-warmup.service"
 )
 
 for unit in "${EXPECTED_UNITS[@]}"; do
@@ -241,14 +255,15 @@ for unit in "${EXPECTED_UNITS[@]}"; do
     fi
 done
 
-# Count members in the UNIT_FILES array (must be exactly 8)
+# Count members in the UNIT_FILES array (must be exactly 12)
+# W10-1 added 4 Nebula units (DEC-PHASE10-009 integrity + DEC-PHASE10-010 socket lazy-start)
 UNIT_FILES_BLOCK="$(awk '/^UNIT_FILES=\(/{p=1} p{print} /^\)/{if(p) p=0}' "$HOOK_FILE")"
-UNIT_FILES_COUNT="$(grep -c '".*\.service"\|".*\.timer"' <(echo "$UNIT_FILES_BLOCK") || true)"
-if [[ "$UNIT_FILES_COUNT" -eq 8 ]]; then
-    pass "UNIT_FILES array has exactly 8 members"
+UNIT_FILES_COUNT="$(grep -c '".*\.service"\|".*\.timer"\|".*\.socket"' <(echo "$UNIT_FILES_BLOCK") || true)"
+if [[ "$UNIT_FILES_COUNT" -eq 12 ]]; then
+    pass "UNIT_FILES array has exactly 12 members"
 else
-    fail "UNIT_FILES array has exactly 8 members" \
-         "Found $UNIT_FILES_COUNT; expected 8"
+    fail "UNIT_FILES array has exactly 12 members" \
+         "Found $UNIT_FILES_COUNT; expected 12"
 fi
 
 # ===========================================================================
