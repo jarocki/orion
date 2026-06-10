@@ -1,0 +1,42 @@
+# Nebula AI — Model Integrity Check Service
+#
+# @decision DEC-PHASE10-009
+# @title nebula-integrity-check: boot-time SHA-256 gate that blocks nebula-runtime on mismatch
+# @status accepted
+# @rationale On mismatch (tampered or missing model file) this unit MUST exit non-zero.
+#   The Requires= and After= in nebula-runtime.service cause systemd to refuse to start
+#   nebula-runtime when this oneshot fails. This is a fail-LOUD design: a tampered model
+#   must never run silently under a green Control Center badge. The integrity status file
+#   (/run/orionx/nebula-integrity.status) is written by integrity.py and consumed by the
+#   Nebula section of the Control Center to show the correct badge. References:
+#   DEC-PHASE10-009 (boot gate), DEC-PHASE10-011 (AppArmor; ollama daemon is confined,
+#   not this check), DEC-PHASE10-005 (Control Center status surface).
+
+[Unit]
+Description=Nebula AI Model Integrity Check
+Documentation=file:///opt/orionx/scripts/nebula/integrity.py
+# Run before nebula-runtime so an integrity failure prevents ollama from starting.
+# nebula-runtime.service (and the socket unit) pull this in via Requires=.
+Before=nebula-runtime.service nebula-runtime.socket
+DefaultDependencies=no
+After=local-fs.target
+
+[Service]
+Type=oneshot
+# Use absolute path — no PATH dependency at boot (DEC-PHASE10-009 requirement).
+ExecStart=/usr/bin/python3 /opt/orionx/scripts/nebula/integrity.py \
+    --models-dir /opt/orionx/nebula/models \
+    --manifest   /opt/orionx/nebula/models/MANIFEST.sha256 \
+    --status-file /run/orionx/nebula-integrity.status
+# Create /run/orionx/ if absent (tmpfs at boot; dir may not exist yet).
+ExecStartPre=/bin/mkdir -p /run/orionx
+# Logging destination for the integrity check output (DEC-PHASE10-009).
+StandardOutput=append:/var/log/orionx/nebula-integrity.log
+StandardError=append:/var/log/orionx/nebula-integrity.log
+# Fail-loud: non-zero exit from integrity.py means tampered or missing model.
+# systemd will mark this unit as "failed" and nebula-runtime.service will not start.
+RemainAfterExit=no
+
+[Install]
+# Enabled by the 0615 hook (DEC-PHASE7-SYSTEMD-INSTALL-001 single authority).
+WantedBy=multi-user.target

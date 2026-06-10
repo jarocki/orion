@@ -149,6 +149,166 @@ check_prerequisites() {
 }
 
 # ---------------------------------------------------------------------------
+# Stage Nebula AI model into iso/config/includes.chroot/
+#
+# @decision DEC-PHASE10-008
+# @title Nebula model staging: HuggingFace download + SHA-256 verify + rsync into chroot
+# @status accepted
+# @rationale W10-1 bundles Mistral-7B-Instruct-v0.3 Q4_K_M (4.4 GB, Apache-2.0) directly
+#   into the ISO so the system works fully offline on first boot (DEC-006 LOCAL-ONLY).
+#   The model is NOT committed to git (4.4 GB would bloat every clone 10x); instead
+#   this function downloads it from HuggingFace at build time, verifies SHA-256 against
+#   the pinned manifest, and rsyncs into includes.chroot so live-build picks it up.
+#   ORIONX_MODEL_LOCAL env var provides an air-gap-builder escape hatch: when set,
+#   the file is copied from the local path instead of downloading from HF.
+#   This is a SIBLING to stage_application_content() with disjoint subtree ownership:
+#   - stage_application_content owns /opt/orionx/{scripts,theme,data,docs}
+#   - stage_nebula_model owns /opt/orionx/nebula/models/
+#   The two functions MUST NOT cross into each other's subtrees.
+#   References: DEC-PHASE10-002 (model selection), DEC-PHASE10-008 (staging path).
+# ---------------------------------------------------------------------------
+stage_nebula_model() {
+    log "Staging Nebula AI model into iso/config/includes.chroot/..."
+
+    local manifest="$ISO_DIR/config/nebula-model-manifest.json"
+    if [[ ! -f "$manifest" ]]; then
+        log "ERROR: nebula-model-manifest.json not found at $manifest"
+        log "       This file is the single authority for the bundled model URL + SHA-256."
+        exit 1
+    fi
+
+    # Parse manifest fields using python3 (available in the build env).
+    # We use python3 rather than jq to avoid a jq dependency gate on the build host.
+    local model_filename model_url_primary model_url_fallback model_sha256 model_size_bytes
+    model_filename="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['model_filename'])" "$manifest")"
+    model_url_primary="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['model_url_primary'])" "$manifest")"
+    model_url_fallback="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['model_url_fallback'])" "$manifest")"
+    model_sha256="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['model_sha256'])" "$manifest")"
+    model_size_bytes="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['model_size_bytes'])" "$manifest")"
+
+    local models_dir="$ISO_DIR/config/includes.chroot/opt/orionx/nebula/models"
+    mkdir -p "$models_dir"
+
+    local dest_file="$models_dir/$model_filename"
+
+    # ---------------------------------------------------------------------------
+    # Air-gap builder path: ORIONX_MODEL_LOCAL overrides the HF download.
+    # When set, the local file is SHA-256 verified (if the manifest has a pinned
+    # hash) then copied into the chroot. If model_sha256 is the sentinel
+    # TBD-VERIFY-AT-DOWNLOAD, the hash is computed from the local file and
+    # used directly (trust-on-first-use; operator should pin after first build).
+    # ---------------------------------------------------------------------------
+    if [[ -n "${ORIONX_MODEL_LOCAL:-}" ]]; then
+        if [[ ! -f "$ORIONX_MODEL_LOCAL" ]]; then
+            log "ERROR: ORIONX_MODEL_LOCAL is set but file not found: $ORIONX_MODEL_LOCAL"
+            exit 1
+        fi
+        log "  [air-gap] ORIONX_MODEL_LOCAL=$ORIONX_MODEL_LOCAL — skipping HF download."
+
+        if [[ "$model_sha256" == "TBD-VERIFY-AT-DOWNLOAD" ]]; then
+            log "  [air-gap] manifest SHA-256 is TBD; computing from local file..."
+            local computed_sha
+            computed_sha="$(sha256sum "$ORIONX_MODEL_LOCAL" | awk '{print $1}')"
+            log "  [air-gap] computed SHA-256: $computed_sha"
+            log "  [air-gap] WARN: Pin model_sha256 in $manifest after verifying this hash."
+        else
+            log "  [air-gap] Verifying SHA-256 of local file against manifest..."
+            local computed_sha
+            computed_sha="$(sha256sum "$ORIONX_MODEL_LOCAL" | awk '{print $1}')"
+            if [[ "$computed_sha" != "$model_sha256" ]]; then
+                log "ERROR: SHA-256 mismatch for $ORIONX_MODEL_LOCAL"
+                log "       Expected: $model_sha256"
+                log "       Got:      $computed_sha"
+                log "       Update the manifest or supply the correct file (DEC-PHASE10-008)."
+                exit 1
+            fi
+            log "  [air-gap] SHA-256 verified: $computed_sha"
+        fi
+
+        log "  [air-gap] Copying $ORIONX_MODEL_LOCAL -> $dest_file"
+        cp "$ORIONX_MODEL_LOCAL" "$dest_file"
+
+    # ---------------------------------------------------------------------------
+    # Network download path: curl with retry, primary URL then fallback.
+    # SHA-256 is verified after download. On mismatch the build FAILS LOUDLY.
+    # ---------------------------------------------------------------------------
+    else
+        local tmp_model="$TMP_DIR/${model_filename}.download.$$"
+        log "  Downloading model from HuggingFace (primary URL)..."
+        log "  URL: $model_url_primary"
+        log "  Expected size: approximately $(( model_size_bytes / 1024 / 1024 )) MB"
+
+        local download_ok=false
+        # Primary URL: 3 attempts with curl (--retry 3 handles transient failures)
+        if curl --fail --location --retry 3 --retry-delay 5 \
+                --progress-bar \
+                -o "$tmp_model" \
+                "$model_url_primary"; then
+            download_ok=true
+        else
+            log "  WARN: Primary URL failed; trying fallback URL..."
+            log "  URL: $model_url_fallback"
+            if curl --fail --location --retry 3 --retry-delay 5 \
+                    --progress-bar \
+                    -o "$tmp_model" \
+                    "$model_url_fallback"; then
+                download_ok=true
+            fi
+        fi
+
+        if ! "$download_ok"; then
+            log "ERROR: Model download failed from both primary and fallback URLs."
+            log "       Primary:  $model_url_primary"
+            log "       Fallback: $model_url_fallback"
+            log "       Set ORIONX_MODEL_LOCAL=/path/to/$(basename "$model_filename") for air-gap builds."
+            rm -f "$tmp_model"
+            exit 1
+        fi
+
+        # SHA-256 verification gate (DEC-PHASE10-008 + DEC-PHASE10-009 chain)
+        log "  Verifying SHA-256..."
+        local computed_sha
+        computed_sha="$(sha256sum "$tmp_model" | awk '{print $1}')"
+
+        if [[ "$model_sha256" == "TBD-VERIFY-AT-DOWNLOAD" ]]; then
+            log "  WARN: manifest SHA-256 is TBD-VERIFY-AT-DOWNLOAD (trust-on-first-use)."
+            log "  Computed SHA-256: $computed_sha"
+            log "  ACTION REQUIRED: Pin this hash as model_sha256 in $manifest"
+            log "                   before the next build (DEC-PHASE10-008 lockdown step)."
+        else
+            if [[ "$computed_sha" != "$model_sha256" ]]; then
+                log "ERROR: SHA-256 mismatch — possible corruption or tampered download!"
+                log "       Expected: $model_sha256"
+                log "       Got:      $computed_sha"
+                log "       Refusing to stage an integrity-unverified model (DEC-PHASE10-009)."
+                rm -f "$tmp_model"
+                exit 1
+            fi
+            log "  SHA-256 verified: $computed_sha"
+        fi
+
+        log "  Moving model to staging directory..."
+        mv "$tmp_model" "$dest_file"
+    fi
+
+    # ---------------------------------------------------------------------------
+    # Generate MANIFEST.sha256 in the models dir.
+    # Format: sha256sum compatible (sha256sum -c readable).
+    # This is the file integrity.py reads at boot time.
+    # Chain: nebula-model-manifest.json (source) ->
+    #        stage_nebula_model download+verify (build) ->
+    #        MANIFEST.sha256 (staging) ->
+    #        integrity.py verify (boot) ->
+    #        nebula-runtime.service gate (DEC-PHASE10-009)
+    # ---------------------------------------------------------------------------
+    log "  Generating MANIFEST.sha256..."
+    (cd "$models_dir" && sha256sum "$model_filename" > MANIFEST.sha256)
+    log "  MANIFEST.sha256: $(cat "$models_dir/MANIFEST.sha256")"
+
+    log "Nebula model staged: $dest_file ($(du -sh "$dest_file" | cut -f1))"
+}
+
+# ---------------------------------------------------------------------------
 # Stage Orion-X application content into iso/config/includes.chroot/
 #
 # @decision DEC-PHASE8-004
@@ -362,8 +522,33 @@ fi
 
 prepare_build_env
 stage_application_content       # DEC-PHASE8-004: stage v2.0.0 app content (fix #43)
+stage_nebula_model              # DEC-PHASE10-008: stage Mistral-7B + integrity chain
 configure_live_build
 build_iso
+
+# ---------------------------------------------------------------------------
+# ISO size sanity check (DEC-PHASE10-012)
+# WARN (not fail) when ISO > 7 GB — additive to the existing build gate in
+# build_iso(). The existing fail threshold in build_iso() is NOT modified.
+# 7 GB is the WARN threshold reflecting the ~6 GB target (DEC-PHASE10-003)
+# with headroom for model + toolchain growth. A value over 7 GB requires
+# explicit investigation before the next RC cut.
+# ---------------------------------------------------------------------------
+iso_name="orionx-phoenix-edition-${VERSION}.iso"
+if [[ -f "$OUTPUT_DIR/$iso_name" ]]; then
+    iso_size_bytes="$(stat --format="%s" "$OUTPUT_DIR/$iso_name" 2>/dev/null || stat -f "%z" "$OUTPUT_DIR/$iso_name" 2>/dev/null || echo 0)"
+    iso_size_gb="$(echo "scale=2; $iso_size_bytes / 1073741824" | bc 2>/dev/null || echo "unknown")"
+    log "ISO size: ${iso_size_gb} GB (${iso_size_bytes} bytes)"
+    # 7 GB in bytes = 7 * 1024^3 = 7516192768
+    if [[ "$iso_size_bytes" -gt 7516192768 ]]; then
+        log "WARN: ISO size ${iso_size_gb} GB exceeds 7 GB threshold (DEC-PHASE10-012)."
+        log "      This is a WARNING, not a build failure. Investigate before next RC cut."
+        log "      Target: ~6 GB (DEC-PHASE10-003). Current: ${iso_size_gb} GB."
+    else
+        log "ISO size ${iso_size_gb} GB is within the 7 GB warn threshold (DEC-PHASE10-012 OK)."
+    fi
+fi
+
 cleanup
 
 log "========================================================"

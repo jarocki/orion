@@ -1,0 +1,29 @@
+# Nebula AI — ollama Socket Activation Unit
+#
+# @decision DEC-PHASE10-010
+# @title nebula-runtime.socket: socket activation for lazy-start ollama
+# @status accepted
+# @rationale This socket unit listens on localhost:11434 (ollama default port).
+#   When a connection arrives, systemd activates nebula-runtime.service without
+#   any manual intervention. This keeps ollama off until first use, preserving
+#   both boot time and idle RAM budget (DEC-PHASE10-010).
+#   The socket is enabled by the 0615 hook (DEC-PHASE7-SYSTEMD-INSTALL-001);
+#   nebula-runtime.service is NOT directly autoenabled — the socket unit handles
+#   activation. References: DEC-PHASE10-010 (lazy-start), DEC-006 (localhost-only).
+
+[Unit]
+Description=Nebula AI Runtime Socket (ollama localhost:11434)
+Documentation=https://ollama.com
+# Ensure integrity check succeeds before we open the socket for connections.
+Requires=nebula-integrity-check.service
+After=nebula-integrity-check.service
+
+[Socket]
+# Bind only on localhost — DEC-006 LOCAL-ONLY and DEC-PHASE10-011 AppArmor.
+ListenStream=127.0.0.1:11434
+# Accept connections and pass the socket fd to nebula-runtime.service.
+Accept=no
+
+[Install]
+# Enabled by the 0615 hook — this is what triggers lazy-start.
+WantedBy=sockets.target

@@ -447,6 +447,45 @@ else
 fi
 
 # ===========================================================================
+# W10-1: Nebula PATH symlink (DEC-PHASE10-008)
+# ===========================================================================
+section "W10-1: /usr/bin/nebula symlink in SCRIPT_MAP (DEC-PHASE10-008)"
+
+# (a) nebula is in the SCRIPT_MAP with the correct target path
+if [[ "$HOOK_CONTENT" == *'["nebula"]="/opt/orionx/scripts/nebula/nebula"'* ]]; then
+    pass "W10-1: SCRIPT_MAP contains [\"nebula\"]=\"/opt/orionx/scripts/nebula/nebula\""
+else
+    fail "W10-1: SCRIPT_MAP [\"nebula\"] entry" \
+         "Expected: [\"nebula\"]=\"/opt/orionx/scripts/nebula/nebula\" in 0700 hook"
+fi
+
+# (b) No other Nebula PATH symlinks added in this slice (nebula-mcp etc. are W10-3+)
+#     Assert that no 'nebula-mcp' or 'nebula-chat' symlink was added here.
+if ! echo "$HOOK_CONTENT" | grep -qE '\["nebula-mcp"\]|\["nebula-chat"\]'; then
+    pass "W10-1: no W10-3+ nebula-mcp/chat symlinks added (out-of-scope)"
+else
+    fail "W10-1: no W10-3+ out-of-scope nebula symlinks" \
+         "nebula-mcp and nebula-chat symlinks are W10-3+ scope, not W10-1"
+fi
+
+# (c) The existing /usr/bin/orionx-control-center symlink is preserved verbatim
+if [[ "$HOOK_CONTENT" == *'["orionx-control-center"]="/opt/orionx/scripts/control_center/orionx-control-center"'* ]]; then
+    pass "W10-1: orionx-control-center symlink preserved verbatim (W9-2 invariant)"
+else
+    fail "W10-1: orionx-control-center symlink preserved" \
+         "W9-2's orionx-control-center entry was modified — must be preserved exactly"
+fi
+
+# (d) SCRIPT_MAP now has >= 11 entries (10 from W9-2 + nebula from W10-1)
+SCRIPT_MAP_ENTRIES_W10="$(grep -c '^\s*\["[^"]*"\]="[^"]*"' "$HOOK_FILE" 2>/dev/null || true)"
+if [[ "$SCRIPT_MAP_ENTRIES_W10" -ge 11 ]]; then
+    pass "W10-1: SCRIPT_MAP has >= 11 entries (W10-1 adds nebula as 11th)"
+else
+    fail "W10-1: SCRIPT_MAP has >= 11 entries" \
+         "Found $SCRIPT_MAP_ENTRIES_W10 — W10-1 should add nebula as entry 11"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

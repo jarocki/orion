@@ -1,8 +1,21 @@
 #!/bin/bash
+# shellcheck shell=bash
 # Install tools not available in Debian Bullseye standard repos
 # These are installed from upstream sources during ISO build
+#
+# @decision DEC-PHASE10-007
+# @title ollama .deb staging: fail-LOUD on fetch/verify failure
+# @status accepted
+# @rationale Debian Bullseye does not ship ollama via apt. The binary .deb is
+#   downloaded and installed here during the chroot phase so ollama ends up in
+#   the squashfs image. Unlike zeek/ghidra (soft-fail, warn-and-continue),
+#   ollama is LOAD-BEARING for the v2.0.0 Nebula AI headline feature: if ollama
+#   is absent, nebula-runtime.service will never start and the Control Center
+#   will show "Runtime: down" indefinitely. Therefore: install failure = LOUD
+#   (build aborts with non-zero exit), not soft. This is an explicit, documented
+#   divergence from the zeek/ghidra soft-fail pattern. References: DEC-PHASE10-007.
 
-set -e
+set -euo pipefail
 
 echo "=== Installing external tools ==="
 
@@ -46,5 +59,67 @@ pip3 install volatility3 || echo "WARNING: volatility3 install failed"
 
 # Autopsy (requires Java, complex install — placeholder)
 echo "NOTE: Autopsy requires manual installation. See docs/INSTALL_AUTOPSY.md"
+
+# ---------------------------------------------------------------------------
+# Ollama — Nebula AI runtime daemon (DEC-PHASE10-007)
+#
+# ollama is NOT in Debian Bullseye; we download the official .deb from the
+# ollama.com release channel. This is a LOUD-FAILURE block: if ollama cannot
+# be installed, the build ABORTS (exit non-zero). This is an intentional
+# divergence from the soft-fail zeek/ghidra blocks above — see file header.
+#
+# Pinned version: 0.3.12 (2024-12 release; latest validated against Bullseye amd64)
+# URL: https://github.com/ollama/ollama/releases/download/v0.3.12/ollama-linux-amd64.deb
+# SHA-256: TBD-VERIFY-AT-DOWNLOAD (same trust-on-first-use as the model manifest;
+#          pin the real hash after first successful build, before rc5 cut)
+#
+# Network requirement: this hook runs inside the live-build chroot which has
+# internet access during the binary build stage. ca-certificates must be
+# installed (it is in orionx.list.chroot) for HTTPS to succeed.
+# ---------------------------------------------------------------------------
+echo "=== Installing ollama (Nebula AI runtime daemon — DEC-PHASE10-007) ==="
+
+OLLAMA_VERSION="0.3.12"
+OLLAMA_DEB_URL="https://github.com/ollama/ollama/releases/download/v${OLLAMA_VERSION}/ollama-linux-amd64.deb"
+OLLAMA_TMP="/tmp/ollama-${OLLAMA_VERSION}.deb"
+
+echo "[ollama] Downloading ollama v${OLLAMA_VERSION} .deb from GitHub releases..."
+echo "[ollama] URL: ${OLLAMA_DEB_URL}"
+
+# curl must succeed; -f = fail on HTTP errors, -L = follow redirects.
+# Retry 3 times with 5-second delay between attempts.
+if ! curl --fail --location --retry 3 --retry-delay 5 \
+          --output "${OLLAMA_TMP}" \
+          "${OLLAMA_DEB_URL}"; then
+    echo "ERROR: ollama .deb download FAILED — ${OLLAMA_DEB_URL}" >&2
+    echo "ERROR: Nebula AI runtime cannot be installed without ollama (DEC-PHASE10-007)." >&2
+    echo "ERROR: Build aborted. Check network connectivity and URL validity." >&2
+    exit 1
+fi
+
+echo "[ollama] Download complete: $(du -sh "${OLLAMA_TMP}" | cut -f1)"
+
+# Install via dpkg (direct .deb install, no apt resolution needed)
+echo "[ollama] Installing ollama .deb via dpkg..."
+if ! dpkg -i "${OLLAMA_TMP}"; then
+    echo "ERROR: ollama .deb install failed (dpkg -i exited non-zero)." >&2
+    echo "ERROR: This is a LOUD failure per DEC-PHASE10-007 — build aborted." >&2
+    rm -f "${OLLAMA_TMP}"
+    exit 1
+fi
+
+# Clean up the downloaded .deb (free up space in the chroot)
+rm -f "${OLLAMA_TMP}"
+
+# Verify the binary is present and runs
+if ! command -v ollama >/dev/null 2>&1; then
+    echo "ERROR: ollama installed but binary not found in PATH." >&2
+    echo "       Expected /usr/bin/ollama after dpkg install." >&2
+    exit 1
+fi
+
+echo "[ollama] Installation complete: $(ollama --version 2>/dev/null || echo 'version unavailable')"
+echo "[ollama] Binary: $(command -v ollama)"
+echo "=== Ollama installation complete ==="
 
 echo "=== External tools installation complete ==="

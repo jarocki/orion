@@ -1,0 +1,16 @@
+{
+  "_doc": "Nebula AI bundled model manifest — single authority for the pinned HuggingFace model URL, SHA-256, filename, and metadata. Consumed at build time by stage_nebula_model() in scripts/build-iso.sh and at boot time indirectly via the MANIFEST.sha256 generated from this source. DEC-PHASE10-002 (model selection: Mistral-7B-Instruct-v0.3 Q4_K_M, Apache-2.0), DEC-PHASE10-008 (HF staging + ORIONX_MODEL_LOCAL air-gap fallback).",
+  "manifest_schema_version": 1,
+  "model_name": "mistral-7b-instruct-v0.3-Q4_K_M",
+  "model_filename": "mistral-7b-instruct-v0.3.Q4_K_M.gguf",
+  "model_url_primary": "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.3-GGUF/resolve/e8397676426a13f0da65d4e3617088ddc0d3becc/mistral-7b-instruct-v0.3.Q4_K_M.gguf",
+  "model_url_fallback": "https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/mistral-7b-instruct-v0.3.Q4_K_M.gguf",
+  "model_sha256": "TBD-VERIFY-AT-DOWNLOAD",
+  "model_size_bytes": 4368438976,
+  "model_quantization": "Q4_K_M",
+  "model_license": "Apache-2.0",
+  "ollama_model_tag": "mistral:7b-instruct-v0.3-q4_K_M",
+  "hf_commit_sha": "e8397676426a13f0da65d4e3617088ddc0d3becc",
+  "_integrity_note": "model_sha256 is 'TBD-VERIFY-AT-DOWNLOAD' — the first successful build will compute the real SHA-256 from the downloaded file and a follow-up commit will pin the verified value. This is the standard trust-on-first-use pattern with subsequent integrity lockdown (DEC-PHASE10-008). Once verified, the SHA-256 must be a 64-char lowercase hex string.",
+  "_size_note": "model_size_bytes is the expected on-disk size of the Q4_K_M GGUF (approximately 4.4 GB). The ISO size jumps from ~1.8 GB (rc4) to ~6 GB with this model bundled (DEC-PHASE10-003 target). A WARN (not fail) is emitted by build-iso.sh if the final ISO exceeds 7 GB (DEC-PHASE10-012)."
+}

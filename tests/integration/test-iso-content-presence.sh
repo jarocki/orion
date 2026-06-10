@@ -566,6 +566,176 @@ for gtk_pkg in python3-gi gir1.2-gtk-3.0 gir1.2-glib-2.0 xfce4-genmon-plugin; do
 done
 
 # ===========================================================================
+# 15. W10-1 — Nebula runtime: model + manifest + ollama + units staged
+#
+# @decision DEC-PHASE10-007
+# @title ollama .deb staging: fail-LOUD on fetch/verify failure (build-time gate)
+# @status accepted
+# @rationale ollama is installed via 0500-install-external-tools.hook.chroot during
+#   the chroot build phase. Absent = nebula-runtime.service never starts = red badge.
+#
+# @decision DEC-PHASE10-008
+# @title stage_nebula_model: HF download + SHA-256 verify + MANIFEST generation
+# @status accepted
+# @rationale stage_nebula_model() downloads the Mistral-7B-Instruct-v0.3 Q4_K_M
+#   GGUF, verifies SHA-256 against nebula-model-manifest.json, and writes
+#   MANIFEST.sha256 into the chroot /opt/orionx/nebula/models/. This section
+#   asserts that the full staged artifact set is present in the squashfs.
+#
+# @decision DEC-PHASE10-009
+# @title nebula-integrity-check: boot-time SHA-256 gate; must be autoenabled
+# @status accepted
+# @rationale nebula-integrity-check.service is the only Nebula unit in
+#   multi-user.target.wants/ — it is the boot gate that blocks nebula-runtime
+#   on mismatch. It has WantedBy=multi-user.target.
+#
+# @decision DEC-PHASE10-010
+# @title lazy-start: nebula-runtime.socket + nebula-runtime.service opt-in;
+#   nebula-warmup.service opt-in only; only integrity-check in multi-user.target.wants
+# @status accepted
+# @rationale nebula-runtime.socket (WantedBy=sockets.target) provides lazy-start.
+#   nebula-runtime.service and nebula-warmup.service are NOT in multi-user.target.wants/
+#   (keeps boot fast and RAM budget preserved for non-AI workflows).
+#
+# @decision DEC-PHASE10-011
+# @title AppArmor profile usr.bin.ollama confinement
+# @status accepted
+# @rationale /etc/apparmor.d/usr.bin.ollama is staged via includes.chroot and
+#   activated by 0610-apparmor-setup.hook.chroot. It confines the ollama daemon
+#   to /opt/orionx/nebula/models and localhost networking only.
+# ===========================================================================
+section "15. Phase 10 W10-1 — Nebula runtime: model + manifest + ollama + units staged"
+
+# (a) Model file present and large (> 4 GB sanity check — the real GGUF is ~4.4 GB)
+NEBULA_MODEL="$SQF/opt/orionx/nebula/models/Mistral-7B-Instruct-v0.3.Q4_K_M.gguf"
+if [[ -f "$NEBULA_MODEL" ]]; then
+    pass "/opt/orionx/nebula/models/Mistral-7B-Instruct-v0.3.Q4_K_M.gguf present (DEC-PHASE10-008)"
+    # Sanity-check: model must be > 4 000 000 000 bytes (the Q4_K_M GGUF is ~4.4 GB)
+    # || true: stat exits non-zero if field extraction fails; we assert separately.
+    MODEL_SIZE="$(stat -c '%s' "$NEBULA_MODEL" 2>/dev/null || stat -f '%z' "$NEBULA_MODEL" 2>/dev/null || true)"
+    if [[ -n "$MODEL_SIZE" && "$MODEL_SIZE" -gt 4000000000 ]]; then
+        pass "model file size > 4 GB ($MODEL_SIZE bytes — real GGUF, not a stub)"
+    else
+        fail "model file size > 4 GB" \
+             "Got: ${MODEL_SIZE:-unknown} bytes — model may be a stub or download incomplete (DEC-PHASE10-008)"
+    fi
+else
+    fail "/opt/orionx/nebula/models/Mistral-7B-Instruct-v0.3.Q4_K_M.gguf present" \
+         "stage_nebula_model() in build-iso.sh must download+stage the GGUF (DEC-PHASE10-008)"
+fi
+
+# (b) MANIFEST.sha256 present (written by stage_nebula_model after SHA-256 verify)
+NEBULA_MANIFEST="$SQF/opt/orionx/nebula/models/MANIFEST.sha256"
+if [[ -f "$NEBULA_MANIFEST" ]]; then
+    pass "/opt/orionx/nebula/models/MANIFEST.sha256 present (DEC-PHASE10-008 integrity chain)"
+else
+    fail "/opt/orionx/nebula/models/MANIFEST.sha256 present" \
+         "stage_nebula_model() must write MANIFEST.sha256 — integrity boot gate depends on it"
+fi
+
+# (c) nebula dispatcher present and executable
+NEBULA_DISPATCHER="$SQF/opt/orionx/scripts/nebula/nebula"
+if [[ -f "$NEBULA_DISPATCHER" ]]; then
+    pass "/opt/orionx/scripts/nebula/nebula staged"
+else
+    fail "/opt/orionx/scripts/nebula/nebula staged" \
+         "scripts/nebula/ must be rsynced by stage_application_content (DEC-PHASE10-008)"
+fi
+if [[ -x "$NEBULA_DISPATCHER" ]]; then
+    pass "/opt/orionx/scripts/nebula/nebula is executable"
+else
+    fail "/opt/orionx/scripts/nebula/nebula is executable" \
+         "0700 hook sets chmod 755 on all scripts/ files — check hook execution"
+fi
+
+# (d) integrity.py staged (invoked by nebula-integrity-check.service at boot)
+if [[ -f "$SQF/opt/orionx/scripts/nebula/integrity.py" ]]; then
+    pass "/opt/orionx/scripts/nebula/integrity.py staged (DEC-PHASE10-009)"
+else
+    fail "/opt/orionx/scripts/nebula/integrity.py staged" \
+         "scripts/nebula/integrity.py must be rsynced — it is the boot integrity check"
+fi
+
+# (e) /usr/bin/nebula symlink present (created by 0700-orionx-setup.hook.chroot)
+if [[ -L "$SQF/usr/bin/nebula" ]]; then
+    pass "/usr/bin/nebula symlink present (0700 hook — DEC-PHASE10-008)"
+elif [[ -f "$SQF/usr/bin/nebula" ]]; then
+    pass "/usr/bin/nebula present (as regular file — 0700 hook)"
+else
+    fail "/usr/bin/nebula symlink present" \
+         "0700-orionx-setup.hook.chroot SCRIPT_MAP must include [\"nebula\"]=\"/opt/orionx/scripts/nebula/nebula\""
+fi
+
+# (f) ollama package installed in chroot dpkg (installed via 0500 hook .deb — DEC-PHASE10-007)
+# grep -q exits 0 on match, 1 on no-match; || true guards pipefail (DEC-PHASE9-014 pattern).
+if [[ -f "$DPKG_STATUS" ]] && grep -q "^Package: ollama$" "$DPKG_STATUS" 2>/dev/null; then
+    pass "package installed in chroot: ollama (dpkg status — DEC-PHASE10-007)"
+elif [[ -f "$SQF/usr/bin/ollama" ]]; then
+    pass "package installed in chroot: ollama (binary at /usr/bin/ollama — DEC-PHASE10-007)"
+else
+    fail "package installed in chroot: ollama" \
+         "ollama not in dpkg/status and /usr/bin/ollama absent — 0500 hook .deb install failed (DEC-PHASE10-007)"
+fi
+
+# (g) 4 systemd unit files installed at /lib/systemd/system/
+for nebula_unit in \
+    "nebula-integrity-check.service" \
+    "nebula-runtime.service" \
+    "nebula-runtime.socket" \
+    "nebula-warmup.service"; do
+    if [[ -f "$SQF/lib/systemd/system/$nebula_unit" ]]; then
+        pass "/lib/systemd/system/$nebula_unit installed (0615 hook — DEC-PHASE10-009/010)"
+    else
+        fail "/lib/systemd/system/$nebula_unit installed" \
+             "0615-install-systemd-units.hook.chroot must copy this unit (DEC-PHASE7-SYSTEMD-INSTALL-001)"
+    fi
+done
+
+# (h) ONLY nebula-integrity-check.service in multi-user.target.wants/
+#     (the other 3 are lazy-start or opt-in — DEC-PHASE10-010)
+MULTI_USER_WANTS="$SQF/etc/systemd/system/multi-user.target.wants"
+if [[ -L "$MULTI_USER_WANTS/nebula-integrity-check.service" ]] || \
+   [[ -f "$MULTI_USER_WANTS/nebula-integrity-check.service" ]]; then
+    pass "nebula-integrity-check.service in multi-user.target.wants/ (boot gate enabled — DEC-PHASE10-009)"
+else
+    fail "nebula-integrity-check.service in multi-user.target.wants/" \
+         "systemctl enable nebula-integrity-check.service must run in 0615 hook"
+fi
+
+# nebula-runtime.service must NOT be in multi-user.target.wants/ (socket activates it)
+# || true: DEC-PHASE9-014 — ls exits non-zero on absent file; the no-match is the correct state.
+if [[ ! -e "$MULTI_USER_WANTS/nebula-runtime.service" ]]; then
+    pass "nebula-runtime.service NOT in multi-user.target.wants/ (socket lazy-start — DEC-PHASE10-010)"
+else
+    fail "nebula-runtime.service NOT in multi-user.target.wants/" \
+         "Service should be activated by socket only — direct autoenable bypasses lazy-start (DEC-PHASE10-010)"
+fi
+
+# nebula-warmup.service must NOT be in multi-user.target.wants/ (opt-in only)
+if [[ ! -e "$MULTI_USER_WANTS/nebula-warmup.service" ]]; then
+    pass "nebula-warmup.service NOT in multi-user.target.wants/ (opt-in — DEC-PHASE10-010)"
+else
+    fail "nebula-warmup.service NOT in multi-user.target.wants/" \
+         "Warmup is deliberately opt-in; autoenable would run at every boot (DEC-PHASE10-010)"
+fi
+
+# nebula-runtime.socket NOT in multi-user.target.wants/ (it goes to sockets.target.wants/)
+if [[ ! -e "$MULTI_USER_WANTS/nebula-runtime.socket" ]]; then
+    pass "nebula-runtime.socket NOT in multi-user.target.wants/ (WantedBy=sockets.target — DEC-PHASE10-010)"
+else
+    fail "nebula-runtime.socket NOT in multi-user.target.wants/" \
+         "Socket unit belongs in sockets.target.wants/, not multi-user.target.wants/"
+fi
+
+# (i) AppArmor profile usr.bin.ollama present (DEC-PHASE10-011)
+if [[ -f "$SQF/etc/apparmor.d/usr.bin.ollama" ]]; then
+    pass "/etc/apparmor.d/usr.bin.ollama AppArmor profile present (DEC-PHASE10-011)"
+else
+    fail "/etc/apparmor.d/usr.bin.ollama AppArmor profile present" \
+         "AppArmor profile missing — includes.chroot/etc/apparmor.d/usr.bin.ollama not staged (DEC-PHASE10-011)"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

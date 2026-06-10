@@ -1,0 +1,39 @@
+# Nebula AI — 1-token Warm-up Service (operator opt-in; NOT autoenabled)
+#
+# @decision DEC-PHASE10-010
+# @title nebula-warmup: opt-in 1-token inference that preloads model into RAM
+# @status accepted
+# @rationale Performing a 1-token inference at boot would preload the 4.4 GB model
+#   into RAM, shortening the first chat response latency at the cost of ~10-30s
+#   extra boot time and ~4.5 GB extra RAM. The trade-off is user-dependent (laptop
+#   vs. server use cases differ), so warm-up is opt-in via the Control Center.
+#   This unit is STAGED here (installed by the 0615 hook) but NOT autoenabled —
+#   it does not appear in the AUTOSTART_UNITS array (DEC-PHASE10-010 invariant).
+#   The Control Center (W10-2) will provide a toggle; the operator may also
+#   manually enable: systemctl enable nebula-warmup.service
+#   References: DEC-PHASE10-010 (opt-in warm-up), DEC-PHASE10-009 (integrity chain).
+
+[Unit]
+Description=Nebula AI Model Warm-up (1-token inference)
+Documentation=file:///opt/orionx/scripts/nebula/warmup.py
+# Must wait for ollama to be ready before issuing an inference.
+Requires=nebula-runtime.service
+After=nebula-runtime.service
+# Only run once — not a repeating timer.
+ConditionPathExists=/opt/orionx/nebula/models/MANIFEST.sha256
+
+[Service]
+Type=oneshot
+# Use absolute path — no PATH dependency at boot.
+ExecStart=/usr/bin/python3 /opt/orionx/scripts/nebula/warmup.py
+StandardOutput=append:/var/log/orionx/nebula-warmup.log
+StandardError=append:/var/log/orionx/nebula-warmup.log
+# Warm-up failure is non-fatal — log and continue.
+# If warm-up fails (model not yet loaded, etc.) the system still works.
+RemainAfterExit=yes
+
+[Install]
+# This unit is staged but NOT enabled by the 0615 hook.
+# Operator opts in via: systemctl enable nebula-warmup.service
+# or via the Control Center toggle (W10-2).
+WantedBy=multi-user.target

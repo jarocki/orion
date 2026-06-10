@@ -1,0 +1,48 @@
+# Nebula AI — ollama Runtime Service (lazy-start via socket activation)
+#
+# @decision DEC-PHASE10-010
+# @title nebula-runtime: lazy-start ollama via socket activation, preserves boot budget
+# @status accepted
+# @rationale The model is 4.4 GB; loading it at boot would add ~30-60s to boot time and
+#   consume ~4.5 GB RAM permanently. Socket activation solves this: systemd listens on
+#   localhost:11434 and starts this service only when the first connection arrives
+#   (typically `nebula status` or the first chat request in the Control Center).
+#   Idle RAM stays < 1.5 GB when no inference is active (DEC-PHASE10-010 budget).
+#   Type=notify: ollama supports sd_notify and signals readiness via $NOTIFY_SOCKET,
+#   so systemd waits for the daemon to report ready before passing traffic through.
+#   References: DEC-PHASE10-009 (integrity gate), DEC-PHASE10-010 (lazy-start),
+#   DEC-PHASE10-011 (AppArmor confinement in usr.bin.ollama profile).
+
+[Unit]
+Description=Nebula AI Runtime (ollama LLM server)
+Documentation=https://ollama.com
+# Integrity check MUST succeed before ollama starts.
+# Requires= means: if nebula-integrity-check fails, this unit fails too.
+# After= means: do not start ollama until integrity-check has completed.
+Requires=nebula-integrity-check.service
+After=nebula-integrity-check.service network.target
+# Also declared in nebula-runtime.socket so socket activation wires correctly.
+Wants=network.target
+
+[Service]
+Type=notify
+# ollama listens only on localhost — DEC-006 LOCAL-ONLY + DEC-PHASE10-011 AppArmor.
+Environment=OLLAMA_HOST=127.0.0.1:11434
+# Model storage location — must match where stage_nebula_model() staged the GGUF.
+Environment=OLLAMA_MODELS=/opt/orionx/nebula/models
+ExecStart=/usr/bin/ollama serve
+# Ensure log directory exists before starting.
+ExecStartPre=/bin/mkdir -p /var/log/orionx
+StandardOutput=append:/var/log/orionx/nebula-runtime.log
+StandardError=append:/var/log/orionx/nebula-runtime.log
+# Restart on failure but NOT on clean stop (avoids restart loops when operator
+# manually stops nebula for maintenance).
+Restart=on-failure
+RestartSec=5
+# Give ollama time to initialise (it may need to load the model on first request).
+TimeoutStartSec=120
+
+[Install]
+# NOT listed in AUTOSTART_UNITS — socket unit activates this on demand.
+# nebula-runtime.socket is enabled instead (DEC-PHASE10-010).
+WantedBy=multi-user.target
