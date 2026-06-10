@@ -28,8 +28,8 @@ pip3 install volatility3 || echo "WARNING: volatility3 install failed"
 # apt-get update would fail and abort the binary stage (#30 cascade).
 {
     # Try to fetch the key first. If this fails, abort before touching
-    # apt sources at all.
-    curl -fsSL https://download.opensuse.org/repositories/security:zeek/Debian_11/Release.key \
+    # apt sources at all.  wget replaces curl (curl not in build container).
+    wget -qO- https://download.opensuse.org/repositories/security:zeek/Debian_11/Release.key \
         | gpg --dearmor > /etc/apt/trusted.gpg.d/zeek.gpg
     # Key fetch succeeded; now safe to add the source list and install.
     echo 'deb http://download.opensuse.org/repositories/security:/zeek/Debian_11/ /' \
@@ -50,7 +50,7 @@ pip3 install volatility3 || echo "WARNING: volatility3 install failed"
 {
     GHIDRA_VERSION="11.3.1"
     GHIDRA_DATE="20250205"
-    curl -fsSL -o /tmp/ghidra.zip "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_DATE}.zip"
+    wget -nv -O /tmp/ghidra.zip "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_DATE}.zip"
     unzip -q /tmp/ghidra.zip -d /opt/
     ln -sf /opt/ghidra_${GHIDRA_VERSION}_PUBLIC /opt/ghidra
     rm /tmp/ghidra.zip
@@ -86,10 +86,12 @@ OLLAMA_TMP="/tmp/ollama-${OLLAMA_VERSION}.deb"
 echo "[ollama] Downloading ollama v${OLLAMA_VERSION} .deb from GitHub releases..."
 echo "[ollama] URL: ${OLLAMA_DEB_URL}"
 
-# curl must succeed; -f = fail on HTTP errors, -L = follow redirects.
-# Retry 3 times with 5-second delay between attempts.
-if ! curl --fail --location --retry 3 --retry-delay 5 \
-          --output "${OLLAMA_TMP}" \
+# wget must succeed; follows redirects automatically.
+# Retry 3 times with 5-second delay between attempts, 120s connection timeout.
+# wget replaces curl (curl is not in the debian:bullseye-slim build container).
+if ! wget -O "${OLLAMA_TMP}" \
+          --tries=3 --waitretry=5 --timeout=120 \
+          --no-verbose \
           "${OLLAMA_DEB_URL}"; then
     echo "ERROR: ollama .deb download FAILED — ${OLLAMA_DEB_URL}" >&2
     echo "ERROR: Nebula AI runtime cannot be installed without ollama (DEC-PHASE10-007)." >&2

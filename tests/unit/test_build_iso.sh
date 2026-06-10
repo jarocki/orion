@@ -730,6 +730,57 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
+# T33: W10-1 iter-3 — stage_nebula_model() must exit 1 on download failure
+#
+# @decision DEC-PHASE10-011
+# @title Fail-loud exit gate in stage_nebula_model() download path
+# @status accepted
+# @rationale CI run 27248174302 showed that when curl was not installed the
+#   build exited 0 despite the ERROR log. The fix adds an explicit `exit 1`
+#   after the "ERROR: Model download failed from both primary and fallback"
+#   log block, and this test statically asserts that pattern is present so
+#   the same regression class (silent pass-through on download failure)
+#   cannot reoccur without a test failure.
+#   The test also verifies wget is used (not curl) in stage_nebula_model(),
+#   because curl is absent from the debian:bullseye-slim build container.
+#   References: DEC-PHASE10-008, DEC-PHASE10-011, CI run 27248174302.
+# ---------------------------------------------------------------------------
+echo "[T33] W10-1 iter-3: stage_nebula_model exit 1 on failure + wget not curl (DEC-PHASE10-011)"
+
+# Assert: explicit exit 1 follows the "ERROR: Model download failed" log line.
+# The block is: ERROR log, Primary log, Fallback log, air-gap hint log, rm -f, exit 1
+# That is 5 lines after the first ERROR log, so we scan -A6 to be safe.
+if grep -A6 'ERROR: Model download failed from both primary and fallback' "$BUILD_SCRIPT" \
+        | grep -q 'exit 1'; then
+    pass "stage_nebula_model() has explicit exit 1 after 'Model download failed' ERROR block"
+else
+    fail "stage_nebula_model() has explicit exit 1 after 'Model download failed' ERROR block" \
+         "Exit 1 must appear within 6 lines of the ERROR log to ensure fail-loud behavior (DEC-PHASE10-011)"
+fi
+
+# Assert: stage_nebula_model() does NOT use curl for its download (wget required)
+# Extract only the stage_nebula_model function body (from its opening to the next
+# top-level function definition), strip comment lines, then scan for curl usage.
+NEBULA_FUNC_BODY="$(awk '/^stage_nebula_model\(\)/{found=1} found{print} /^\}$/ && found && NR>1{found=0}' "$BUILD_SCRIPT" \
+    | grep -v '^\s*#')"
+if echo "$NEBULA_FUNC_BODY" | grep -qE '\bcurl\b'; then
+    fail "stage_nebula_model() uses wget not curl (curl not in build container)" \
+         "curl found in non-comment lines of stage_nebula_model() — must be converted to wget (CI run 27248174302)"
+else
+    pass "stage_nebula_model() does not use curl (wget is the fetcher)"
+fi
+
+# Assert: stage_nebula_model() DOES use wget
+if echo "$NEBULA_FUNC_BODY" | grep -qE '\bwget\b'; then
+    pass "stage_nebula_model() uses wget as the model downloader"
+else
+    fail "stage_nebula_model() uses wget as the model downloader" \
+         "wget invocation not found in stage_nebula_model() body"
+fi
+
+echo ""
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo "================================================================"

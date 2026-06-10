@@ -229,7 +229,11 @@ stage_nebula_model() {
         cp "$ORIONX_MODEL_LOCAL" "$dest_file"
 
     # ---------------------------------------------------------------------------
-    # Network download path: curl with retry, primary URL then fallback.
+    # Network download path: wget with retry, primary URL then fallback.
+    # curl is NOT installed in the debian:bullseye-slim build container used by
+    # qemu-test.yml (only wget is pre-installed).  wget equivalents:
+    #   curl --fail --location --retry 3 --retry-delay 5 -o dest url
+    #   → wget -O dest --tries=3 --waitretry=5 --timeout=120 --no-verbose url
     # SHA-256 is verified after download. On mismatch the build FAILS LOUDLY.
     # ---------------------------------------------------------------------------
     else
@@ -239,18 +243,18 @@ stage_nebula_model() {
         log "  Expected size: approximately $(( model_size_bytes / 1024 / 1024 )) MB"
 
         local download_ok=false
-        # Primary URL: 3 attempts with curl (--retry 3 handles transient failures)
-        if curl --fail --location --retry 3 --retry-delay 5 \
-                --progress-bar \
-                -o "$tmp_model" \
+        # Primary URL: 3 attempts with wget (--tries=3 handles transient failures)
+        if wget -O "$tmp_model" \
+                --tries=3 --waitretry=5 --timeout=120 \
+                --no-verbose \
                 "$model_url_primary"; then
             download_ok=true
         else
             log "  WARN: Primary URL failed; trying fallback URL..."
             log "  URL: $model_url_fallback"
-            if curl --fail --location --retry 3 --retry-delay 5 \
-                    --progress-bar \
-                    -o "$tmp_model" \
+            if wget -O "$tmp_model" \
+                    --tries=3 --waitretry=5 --timeout=120 \
+                    --no-verbose \
                     "$model_url_fallback"; then
                 download_ok=true
             fi
