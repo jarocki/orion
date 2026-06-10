@@ -163,7 +163,7 @@ for url_label_pair in "model_url_primary:$URL_PRIMARY" "model_url_fallback:$URL_
     else
         fail "$label is a HuggingFace HTTPS URL" "Got: $url"
     fi
-    if echo "$url" | grep -q "mistral"; then
+    if echo "$url" | grep -qi "mistral"; then
         pass "$label URL references mistral model"
     else
         fail "$label URL references mistral model" "Got: $url"
@@ -201,6 +201,47 @@ for dec_ref in "DEC-PHASE10-002" "DEC-PHASE10-008"; do
              "Decision reference '$dec_ref' not found in $MANIFEST"
     fi
 done
+echo ""
+
+# ===========================================================================
+# T10: primary URL is bartowski mirror, fallback is MaziyarPanahi mirror
+#      (iter-4 mirror swap: TheBloke was gated, closes #60)
+# ===========================================================================
+echo "[T10] URL mirrors are non-gated bartowski (primary) and MaziyarPanahi (fallback)"
+URL_PRIMARY="$(python3 -c "import json; print(json.load(open('$MANIFEST'))['model_url_primary'])" 2>/dev/null)"
+URL_FALLBACK="$(python3 -c "import json; print(json.load(open('$MANIFEST'))['model_url_fallback'])" 2>/dev/null)"
+if echo "$URL_PRIMARY" | grep -q "bartowski"; then
+    pass "model_url_primary uses bartowski mirror (non-gated)"
+else
+    fail "model_url_primary uses bartowski mirror" \
+         "Got: $URL_PRIMARY — expected bartowski/Mistral-7B-Instruct-v0.3-GGUF"
+fi
+if echo "$URL_FALLBACK" | grep -q "MaziyarPanahi"; then
+    pass "model_url_fallback uses MaziyarPanahi mirror (non-gated)"
+else
+    fail "model_url_fallback uses MaziyarPanahi mirror" \
+         "Got: $URL_FALLBACK — expected MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF"
+fi
+echo ""
+
+# ===========================================================================
+# T11: TheBloke is NOT referenced in any URL (gated mirror guard, closes #60)
+# ===========================================================================
+echo "[T11] No TheBloke URL references remain in manifest (gated mirror guard)"
+if python3 -c "
+import json, sys
+d = json.load(open('$MANIFEST'))
+urls = [d.get('model_url_primary',''), d.get('model_url_fallback','')]
+for u in urls:
+    if 'TheBloke' in u:
+        sys.exit(1)
+sys.exit(0)
+" 2>/dev/null; then
+    pass "No TheBloke URL references in manifest (CI gating guard)"
+else
+    fail "No TheBloke URL references in manifest" \
+         "TheBloke/Mistral-7B-Instruct-v0.3-GGUF is gated (closes #60) — replace with bartowski/MaziyarPanahi"
+fi
 echo ""
 
 # ===========================================================================
