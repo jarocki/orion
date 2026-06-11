@@ -781,6 +781,74 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
+# T34: W10-1 iter-5 — fail-loud propagation for ALL build_iso() exit paths
+#
+# @decision DEC-PHASE10-013
+# @title Explicit T34 coverage of lb_exit, no-ISO, and copy-fail exit-1 gates
+# @status accepted
+# @rationale CI run 27253363451 (iter-4) showed build-iso.sh logging
+#   "ERROR: lb build exited with code 1 — no ISO was produced." then exiting
+#   0 anyway (GitHub Actions step showed ✓). The existing T17 assertion
+#   uses grep -A2 on 'ERROR.*lb build exited' which matches TWO log lines:
+#   the lb_exit error (where exit 1 is 4 lines away, NOT captured by -A2)
+#   and the "exited 0 but ISO not found" error (where exit 1 IS within 2
+#   lines). T17 is therefore a false positive — it passes even if the
+#   lb_exit -ne 0 branch lacks exit 1. T34 closes this gap with dedicated
+#   assertions per path, each using grep -A10 to cover the actual 4-line
+#   gap without being so wide it matches unrelated blocks.
+#   References: DEC-PHASE9-011, DEC-PHASE10-013, CI run 27253363451, #61.
+# ---------------------------------------------------------------------------
+echo "[T34] W10-1 iter-5: fail-loud exit 1 for ALL build_iso() error branches (DEC-PHASE10-013)"
+
+# T34.a: lb_exit -ne 0 branch — 'exit 1' within 10 lines of the specific
+# "lb build exited with code" log (the one that includes $lb_exit variable).
+# We anchor on the format string character — grep for the literal dash before
+# "no ISO was produced" to distinguish from the "exited 0 but ISO not found"
+# message which is a different error path.
+if grep -A10 'lb build exited with code.*no ISO was produced' "$BUILD_SCRIPT" | grep -q 'exit 1'; then
+    pass "T34.a: exit 1 within 10 lines of 'lb build exited with code' ERROR log (lb_exit branch)"
+else
+    fail "T34.a: exit 1 within 10 lines of 'lb build exited with code' ERROR log (lb_exit branch)" \
+         "DEC-PHASE10-013: exit 1 must follow the lb_exit -ne 0 ERROR log within 10 lines"
+fi
+
+# T34.b: no-ISO gate — 'exit 1' within 10 lines of the "lb build exited 0
+# but ISO not found" log.  This is the belt-and-suspenders check for when
+# lb build exits 0 but produces no ISO.
+if grep -A10 'lb build exited 0 but ISO not found' "$BUILD_SCRIPT" | grep -q 'exit 1'; then
+    pass "T34.b: exit 1 within 10 lines of 'lb build exited 0 but ISO not found' check"
+else
+    fail "T34.b: exit 1 within 10 lines of 'lb build exited 0 but ISO not found' check" \
+         "DEC-PHASE9-011 belt-and-suspenders: exit 1 must follow the no-ISO-found check"
+fi
+
+# T34.c: output copy gate — 'exit 1' within 10 lines of the "ISO copy to
+# output/ failed" log.  This gate catches a rare race where the ISO exists
+# in iso/ but the cp to output/ fails (permissions, disk-full, etc.).
+if grep -A10 'ISO copy to output.*failed' "$BUILD_SCRIPT" | grep -q 'exit 1'; then
+    pass "T34.c: exit 1 within 10 lines of 'ISO copy to output/ failed' log (copy-fail branch)"
+else
+    fail "T34.c: exit 1 within 10 lines of 'ISO copy to output/ failed' log (copy-fail branch)" \
+         "DEC-PHASE9-011: exit 1 must follow the output-copy-failed ERROR log"
+fi
+
+# T34.d: stage_application_content() does NOT mask rsync errors with '|| true'.
+# The function relies on set -euo pipefail to propagate unexpected rsync failures;
+# masking with || true would silently swallow staging errors.
+# We extract the function body (up to the next top-level function) and check
+# that no rsync call in it is followed by '|| true'.
+APP_FUNC_BODY="$(awk '/^stage_application_content\(\)/{found=1} found{print} /^\}$/ && found && NR>1{found=0}' "$BUILD_SCRIPT" \
+    | grep -v '^\s*#')"
+if echo "$APP_FUNC_BODY" | grep -qE 'rsync.*\|\| true'; then
+    fail "T34.d: stage_application_content() rsync calls not masked with '|| true'" \
+         "A masked rsync would swallow staging errors; set -euo pipefail must be able to propagate"
+else
+    pass "T34.d: no rsync call in stage_application_content() is masked with '|| true'"
+fi
+
+echo ""
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo "================================================================"
