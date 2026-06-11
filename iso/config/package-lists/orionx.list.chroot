@@ -152,6 +152,9 @@ gnupg
 gparted
 gzip
 htop
+# zstd: Zstandard decompressor; required by 0500 hook to extract the ollama
+# .tar.zst release archive (DEC-PHASE10-007, W10-1 iter-7).
+zstd
 iotop
 jq
 less
