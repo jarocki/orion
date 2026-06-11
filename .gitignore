@@ -62,3 +62,13 @@ archive/*
 # Do NOT commit staged content — the repo root dirs are the source of truth.
 iso/config/includes.chroot/opt/orionx/
 iso/config/includes.chroot/usr/share/doc/orionx/
+
+# Session-local scratch (never committed; appeared as "7 uncommitted" noise
+# in SessionStart hooks across many sessions — see hook context-lib.sh:62)
+.claude/
+.worktrees/
+reckonings/
+DECISIONS.md
+decision-config-configurator.html
+docker_gordon_ai.html
+*.iso.OLD
