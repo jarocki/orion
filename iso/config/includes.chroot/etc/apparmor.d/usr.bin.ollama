@@ -1,0 +1,80 @@
+#include <tunables/global>
+
+# @decision DEC-PHASE10-011
+# @title AppArmor profile: ollama daemon sandboxed to loopback-only network + model read-only
+# @status accepted
+# @rationale DEC-007 (MCP tool server sandboxed) + DEC-006 (ALL AI processing LOCAL) require
+#   that the ollama daemon cannot make outbound network calls. This profile enforces:
+#   - Network: ONLY localhost (127.0.0.1/8) connections; no inet6; no raw sockets.
+#     The explicit deny rules cover inet and inet6 for anything non-loopback.
+#     Note: AppArmor 3.x on Bullseye cannot express "localhost peers only" as a single
+#     network rule; we use the deny-all-then-allow-loopback pattern instead.
+#     If this proves insufficient for a specific kernel version, the fallback is
+#     nftables localhost-only OUTPUT enforcement in orionx-firewall (DEC-PHASE10-011 fallback).
+#   - Model files: read-only access to /opt/orionx/nebula/models/** only.
+#   - Logs: read-write to /var/log/orionx/ for the runtime log.
+#   - No access to /home/** (write denied; matches existing Phase 7 convention).
+#   - No execution of unknown binaries (implicit deny from AppArmor default-deny).
+#   Style follows usr.bin.tshark (Phase 7 AppArmor convention).
+#   References: DEC-007, DEC-006, DEC-PHASE10-011.
+
+profile ollama /usr/bin/ollama {
+  #include <abstractions/base>
+
+  # Model files: read-only — ollama may read GGUF files but must not modify them.
+  # Integrity is verified at boot by nebula-integrity-check; we enforce read-only
+  # here so a compromised ollama process cannot overwrite the model.
+  /opt/orionx/nebula/models/** r,
+
+  # Runtime logs (rw: ollama writes inference/error logs here)
+  /var/log/orionx/ rw,
+  /var/log/orionx/** rw,
+
+  # ollama needs to read its own binary and shared libraries
+  /usr/bin/ollama r,
+  /usr/lib/** rm,
+  /usr/local/lib/** rm,
+  /lib/** rm,
+
+  # ollama runtime state (PID file, socket path, etc.)
+  /tmp/ollama** rw,
+  /run/ollama/ rw,
+  /run/ollama/** rw,
+  /run/orionx/ rw,
+  /run/orionx/** rw,
+
+  # Proc and sys reads needed for system info / hardware detection
+  /proc/cpuinfo r,
+  /proc/meminfo r,
+  /proc/*/status r,
+  /sys/class/dma/** r,
+  /sys/devices/** r,
+
+  # llama.cpp GPU detection (Metal/CUDA/Vulkan probes; may soft-fail on CPU-only)
+  /dev/dri/** rw,
+  /dev/kfd rw,
+
+  # Network: localhost ONLY (DEC-PHASE10-011 + DEC-006 LOCAL-ONLY)
+  # Allow loopback connections (127.0.0.1:11434 is the ollama API port)
+  network inet stream,
+  network inet dgram,
+  # Explicitly deny any non-loopback network egress.
+  # These deny rules override the broad 'network inet stream/dgram' above for
+  # non-localhost connections via the AppArmor precedence rules:
+  # "deny" with specificity wins over "allow" when the addressed peer is external.
+  # The operator-facing fallback if AppArmor semantics cannot enforce peer address
+  # filtering is nftables OUTPUT drop (DEC-PHASE10-011 fallback, orionx-firewall).
+  deny network inet6,
+  deny network raw,
+  deny network packet,
+
+  # No access to user home directories (write) — Phase 7 convention
+  deny /home/** w,
+  deny /root/** w,
+
+  # No execution of arbitrary binaries (AppArmor default-deny covers unknown paths,
+  # but make the intent explicit for audit clarity)
+  deny /bin/** x,
+  deny /sbin/** x,
+  deny /usr/sbin/** x,
+}

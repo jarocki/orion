@@ -92,6 +92,11 @@ jobs:
       # the bind mount, so the host runner's QEMU step finds it normally.
       - name: Build ISO in debian:bullseye container (W7-1 deliverable, issue #25)
         run: |
+          # set -o pipefail propagates docker run's non-zero exit through the tee
+          # pipeline. Without it, the build step shows ✓ even when build-iso.sh
+          # exits 1 inside the container — tee's exit (0) masks the failure.
+          # @decision DEC-PHASE10-014 (closes #61).
+          set -o pipefail
           mkdir -p tmp
           docker run --rm --privileged \
             -v "${{ github.workspace }}:/workspace" \

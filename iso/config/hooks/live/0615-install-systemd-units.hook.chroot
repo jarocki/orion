@@ -42,6 +42,14 @@ UNIT_FILES=(
     "orionx-mesh-beacon.service"
     "orionx-firewall.service"
     "orionx-first-boot.service"
+    # W10-1: Nebula AI runtime units (DEC-PHASE10-009, DEC-PHASE10-010)
+    # nebula-integrity-check: oneshot, runs at boot before nebula-runtime
+    # nebula-runtime: ollama daemon, lazy-start via socket activation
+    # nebula-warmup: staged here but NOT in AUTOSTART_UNITS (opt-in; DEC-PHASE10-010)
+    "nebula-integrity-check.service"
+    "nebula-runtime.service"
+    "nebula-runtime.socket"
+    "nebula-warmup.service"
 )
 
 # ---------------------------------------------------------------------------
@@ -56,6 +64,15 @@ AUTOSTART_UNITS=(
     "orionx-mesh-beacon.service"
     "orionx-firewall.service"
     "orionx-first-boot.service"
+    # W10-1 Nebula: enable integrity-check (runs at boot, gates nebula-runtime)
+    # and the socket unit that provides lazy-start for nebula-runtime.
+    # DEC-PHASE10-009: integrity-check must be autoenabled — it is the boot gate.
+    # DEC-PHASE10-010: nebula-runtime.socket autoenabled (lazy-start);
+    #   nebula-runtime.service itself is started by systemd only when the socket
+    #   receives a connection, keeping boot fast.
+    # nebula-warmup.service is deliberately NOT listed here (DEC-PHASE10-010 opt-in).
+    "nebula-integrity-check.service"
+    "nebula-runtime.socket"
 )
 
 echo "[install-systemd-units] Installing Orion-X systemd units from $SOURCE_DIR to $TARGET_DIR"

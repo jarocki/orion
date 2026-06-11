@@ -71,6 +71,11 @@ declare -A SCRIPT_MAP=(
     # Phase 10 slices (W10-1 through W10-6) plug into its placeholder sections.
     # @decision DEC-PHASE10-005: Control Center ships ahead of Nebula AI runtime.
     ["orionx-control-center"]="/opt/orionx/scripts/control_center/orionx-control-center"
+    # W10-1: Nebula AI CLI dispatcher — single PATH entry for the nebula tool.
+    # @decision DEC-PHASE10-008: scripts/nebula/ is the single source tree for
+    # Nebula control-plane Python; the nebula dispatcher is the operator entrypoint.
+    # nebula-mcp and other W10-3+ tools get their own PATH entries in later slices.
+    ["nebula"]="/opt/orionx/scripts/nebula/nebula"
 )
 
 for name in "${!SCRIPT_MAP[@]}"; do

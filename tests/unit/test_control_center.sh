@@ -156,17 +156,23 @@ else
 fi
 
 # ===========================================================================
-# 5. Nebula placeholder text contains "lands in W10-1" (DEC-PHASE10-005)
+# 5. Nebula section: W10-1 live-status integration (DEC-PHASE10-005)
+#    W10-1 replaces the placeholder with live status from scripts/nebula/
+#    (DEC-PHASE10-005 plug-in surface now active).
 # ===========================================================================
-section "Nebula placeholder text (DEC-PHASE10-005)"
+section "Nebula live-status integration (DEC-PHASE10-005)"
 
 NEBULA_PY="$CC_DIR/sections/nebula.py"
 if [[ -f "$NEBULA_PY" ]]; then
-    if grep -q "lands in W10-1" "$NEBULA_PY"; then
-        pass "nebula.py contains 'lands in W10-1' placeholder (W10-1 plug-in surface)"
+    # W10-1 replaces the placeholder with live status from scripts/nebula/status.py
+    # (DEC-PHASE10-005 plug-in surface now active). Assert the live-status
+    # function/pattern is present rather than the W9-2 placeholder.
+    # grep -q "get_runtime_status\|runtime_client\|nebula_status\|_read_nebula_status"
+    if grep -q "_read_nebula_status\|get_runtime_status\|runtime_client\|nebula_status" "$NEBULA_PY"; then
+        pass "nebula.py contains live-status integration (_read_nebula_status / runtime hook)"
     else
-        fail "nebula.py contains 'lands in W10-1' placeholder" \
-             "W10-1 implementer needs this text to locate the correct section"
+        fail "nebula.py contains live-status integration" \
+             "Expected _read_nebula_status or equivalent live-status function (DEC-PHASE10-005)"
     fi
     if grep -q "coming in W10-2" "$NEBULA_PY"; then
         pass "nebula.py contains 'coming in W10-2' (W10-2 chat plug-in surface)"
@@ -257,8 +263,10 @@ while IFS= read -r -d '' pyfile; do
             continue
         fi
         top="${module%%.*}"
-        # Check against allowed prefixes
-        if ! [[ "$top" =~ ^(os|sys|subprocess|typing|argparse|gi|__future__)$ ]]; then
+        # Check against allowed prefixes.
+        # W10-1 adds JSON parsing (status.py output), logging (audit), and
+        # pathlib (cross-platform paths) — all stdlib. (DEC-PHASE10-005)
+        if ! [[ "$top" =~ ^(os|sys|subprocess|typing|argparse|gi|__future__|json|logging|pathlib)$ ]]; then
             fail "no third-party import: ${pyfile#"$REPO_ROOT/"} imports '$top'" \
                  "Only stdlib + gi.repository allowed in shipped Python"
             _found_violation=1

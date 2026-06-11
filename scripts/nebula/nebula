@@ -1,0 +1,174 @@
+#!/usr/bin/env python3
+"""
+Nebula AI — CLI dispatcher.
+
+Usage:
+    nebula --version
+    nebula --help
+    nebula status [--json]
+    nebula warmup
+
+Subcommands landing in later slices (W10-2+):
+    nebula chat [--pcap <file>]
+    nebula tools
+    nebula audit verify
+
+The dispatcher is designed to boot fast and print --version / --help
+WITHOUT importing ollama or any heavy runtime dep.  Only the subcommand
+implementations import their deps lazily.
+
+@decision DEC-PHASE10-008
+@title nebula CLI dispatcher: stdlib-only bootstrap, lazy subcommand import
+@status accepted
+@rationale The CLI must not fail with ImportError when ollama-python is absent
+  (it is optional in W10-1; mandatory only from W10-2 onward).  Lazy import
+  inside each subcommand function keeps the top-level boot path clean.
+  References: DEC-PHASE10-008, DEC-PHASE10-010, DEC-PHASE9-019.
+
+@decision DEC-PHASE9-019
+@title from __future__ import annotations required in all Phase 10 Python modules
+@status accepted
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+
+# ---------------------------------------------------------------------------
+# Version — single constant; no import needed at version-print time.
+# ---------------------------------------------------------------------------
+_VERSION = "0.1.0"
+_NEBULA_BANNER = "nebula (Orion-X Nebula AI CLI) v" + _VERSION
+
+
+def _ensure_package_on_path() -> None:
+    """Add scripts/ parent to sys.path so ``import nebula`` works when the
+    CLI is invoked via the /usr/bin/nebula symlink pointing to the file at
+    /opt/orionx/scripts/nebula/nebula (i.e. not installed as a proper package).
+    """
+    # __file__ is  .../scripts/nebula/nebula
+    # parent      is  .../scripts/nebula/
+    # parent.parent is .../scripts/
+    this_dir = os.path.dirname(os.path.realpath(__file__))
+    scripts_dir = os.path.dirname(this_dir)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+
+
+# ---------------------------------------------------------------------------
+# Subcommand handlers
+# ---------------------------------------------------------------------------
+
+def cmd_version(_args: argparse.Namespace) -> int:
+    """Print version and exit 0 — no imports needed."""
+    print(_NEBULA_BANNER)
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Print runtime status.  Imports status.py lazily."""
+    _ensure_package_on_path()
+    try:
+        from nebula.status import collect_status  # noqa: PLC0415
+    except ImportError as exc:
+        print(f"ERROR: cannot import nebula.status: {exc}", file=sys.stderr)
+        return 1
+
+    import json  # noqa: PLC0415
+    data = collect_status()
+    if getattr(args, "json", False):
+        print(json.dumps(data, indent=2))
+    else:
+        print(data["status_summary"])
+        if data["integrity_state"] not in ("OK", "UNKNOWN"):
+            print(f"  Integrity detail: {data['integrity_detail']}")
+        if data["ollama_version"]:
+            print(f"  ollama version:   {data['ollama_version']}")
+    return 0
+
+
+def cmd_warmup(_args: argparse.Namespace) -> int:
+    """Trigger a 1-token inference warm-up.  Imports warmup.py lazily."""
+    _ensure_package_on_path()
+    try:
+        from nebula.warmup import run_warmup  # noqa: PLC0415
+    except ImportError as exc:
+        print(f"ERROR: cannot import nebula.warmup: {exc}", file=sys.stderr)
+        return 1
+
+    success = run_warmup()
+    if success:
+        print("Warm-up complete.")
+        return 0
+    print("Warm-up failed — check logs at /var/log/orionx/nebula-warmup.log", file=sys.stderr)
+    return 1
+
+
+# ---------------------------------------------------------------------------
+# Argument parser
+# ---------------------------------------------------------------------------
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="nebula",
+        description="Nebula AI — Orion-X autonomous forensic intelligence CLI.",
+        epilog=(
+            "Additional subcommands (chat, tools, audit) land in W10-2+.\n"
+            "Docs: /usr/share/doc/orionx/User_Guide.md"
+        ),
+    )
+    parser.add_argument(
+        "--version",
+        action="store_true",
+        help="Print version and exit.",
+    )
+
+    subparsers = parser.add_subparsers(dest="subcommand", metavar="<subcommand>")
+
+    # nebula status
+    sp_status = subparsers.add_parser(
+        "status",
+        help="Show Nebula runtime status (ollama daemon, integrity, model).",
+    )
+    sp_status.add_argument(
+        "--json",
+        action="store_true",
+        help="Output full status as JSON.",
+    )
+
+    # nebula warmup
+    subparsers.add_parser(
+        "warmup",
+        help="Run a 1-token inference to warm the model into RAM (opt-in).",
+    )
+
+    # nebula version (as a subcommand, mirrors --version)
+    subparsers.add_parser(
+        "version",
+        help="Print version and exit.",
+    )
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    if args.version or args.subcommand == "version":
+        return cmd_version(args)
+
+    if args.subcommand == "status":
+        return cmd_status(args)
+
+    if args.subcommand == "warmup":
+        return cmd_warmup(args)
+
+    # No subcommand given — print help and exit 0
+    parser.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,8 +1,21 @@
 #!/bin/bash
+# shellcheck shell=bash
 # Install tools not available in Debian Bullseye standard repos
 # These are installed from upstream sources during ISO build
+#
+# @decision DEC-PHASE10-007
+# @title ollama .deb staging: fail-LOUD on fetch/verify failure
+# @status accepted
+# @rationale Debian Bullseye does not ship ollama via apt. The binary .deb is
+#   downloaded and installed here during the chroot phase so ollama ends up in
+#   the squashfs image. Unlike zeek/ghidra (soft-fail, warn-and-continue),
+#   ollama is LOAD-BEARING for the v2.0.0 Nebula AI headline feature: if ollama
+#   is absent, nebula-runtime.service will never start and the Control Center
+#   will show "Runtime: down" indefinitely. Therefore: install failure = LOUD
+#   (build aborts with non-zero exit), not soft. This is an explicit, documented
+#   divergence from the zeek/ghidra soft-fail pattern. References: DEC-PHASE10-007.
 
-set -e
+set -euo pipefail
 
 echo "=== Installing external tools ==="
 
@@ -15,8 +28,8 @@ pip3 install volatility3 || echo "WARNING: volatility3 install failed"
 # apt-get update would fail and abort the binary stage (#30 cascade).
 {
     # Try to fetch the key first. If this fails, abort before touching
-    # apt sources at all.
-    curl -fsSL https://download.opensuse.org/repositories/security:zeek/Debian_11/Release.key \
+    # apt sources at all.  wget replaces curl (curl not in build container).
+    wget -qO- https://download.opensuse.org/repositories/security:zeek/Debian_11/Release.key \
         | gpg --dearmor > /etc/apt/trusted.gpg.d/zeek.gpg
     # Key fetch succeeded; now safe to add the source list and install.
     echo 'deb http://download.opensuse.org/repositories/security:/zeek/Debian_11/ /' \
@@ -37,7 +50,7 @@ pip3 install volatility3 || echo "WARNING: volatility3 install failed"
 {
     GHIDRA_VERSION="11.3.1"
     GHIDRA_DATE="20250205"
-    curl -fsSL -o /tmp/ghidra.zip "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_DATE}.zip"
+    wget -nv -O /tmp/ghidra.zip "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_DATE}.zip"
     unzip -q /tmp/ghidra.zip -d /opt/
     ln -sf /opt/ghidra_${GHIDRA_VERSION}_PUBLIC /opt/ghidra
     rm /tmp/ghidra.zip
@@ -46,5 +59,121 @@ pip3 install volatility3 || echo "WARNING: volatility3 install failed"
 
 # Autopsy (requires Java, complex install — placeholder)
 echo "NOTE: Autopsy requires manual installation. See docs/INSTALL_AUTOPSY.md"
+
+# ---------------------------------------------------------------------------
+# Ollama — Nebula AI runtime daemon (DEC-PHASE10-007)
+#
+# ollama is NOT in Debian Bullseye apt repos; we download the official
+# .tar.zst release archive from the ollama GitHub releases channel and
+# extract the binary to /usr/local/bin. This is a LOUD-FAILURE block: if
+# ollama cannot be installed, the build ABORTS (exit non-zero). This is an
+# intentional divergence from the soft-fail zeek/ghidra blocks above — see
+# file header.
+#
+# NOTE: ollama never shipped a .deb for any release. The 0.3.x → 0.30.x
+# version jump (Nov 2025) also changed the distribution archive from .tgz
+# to .tar.zst. The correct asset name is ollama-linux-amd64.tar.zst for
+# v0.24.0+. This hook was updated from the non-existent .deb URL in iter-7
+# (W10-1) after CI reported a 404 on every build (closes #61 follow-up).
+#
+# Pinned version: 0.30.7 (2026-06 release; latest validated against
+#                 Bullseye amd64 at W10-1 iter-7 cut)
+# URL: https://github.com/ollama/ollama/releases/download/v0.30.7/ollama-linux-amd64.tar.zst
+# SHA-256: TBD-PIN-AT-FIRST-CI-BUILD (trust-on-first-use; re-applies #57
+#          commitment — pin the real hash after first successful build)
+#
+# Network requirement: this hook runs inside the live-build chroot which has
+# internet access during the binary build stage. ca-certificates must be
+# installed (it is in orionx.list.chroot) for HTTPS to succeed. zstd must
+# also be installed (it is in orionx.list.chroot) for .tar.zst decompression.
+# ---------------------------------------------------------------------------
+echo "=== Installing ollama (Nebula AI runtime daemon — DEC-PHASE10-007) ==="
+
+OLLAMA_VERSION="0.30.7"
+OLLAMA_TGZ_URL="https://github.com/ollama/ollama/releases/download/v${OLLAMA_VERSION}/ollama-linux-amd64.tar.zst"
+OLLAMA_TMP="/tmp/ollama-${OLLAMA_VERSION}.tar.zst"
+
+echo "[ollama] Downloading ollama v${OLLAMA_VERSION} .tar.zst from GitHub releases..."
+echo "[ollama] URL: ${OLLAMA_TGZ_URL}"
+
+# wget must succeed; follows redirects automatically.
+# Retry 3 times with 5-second delay between attempts, 120s connection timeout.
+# wget replaces curl (curl is not available in the debian:bullseye-slim
+# build container at the time this hook executes).
+if ! wget -O "${OLLAMA_TMP}" \
+          --tries=3 --waitretry=5 --timeout=120 \
+          --no-verbose \
+          "${OLLAMA_TGZ_URL}"; then
+    echo "ERROR: ollama .tar.zst download FAILED — ${OLLAMA_TGZ_URL}" >&2
+    echo "ERROR: Nebula AI runtime cannot be installed without ollama (DEC-PHASE10-007)." >&2
+    echo "ERROR: Build aborted. Check network connectivity and URL validity." >&2
+    exit 1
+fi
+
+echo "[ollama] Download complete: $(du -sh "${OLLAMA_TMP}" | cut -f1)"
+
+# ---------------------------------------------------------------------------
+# SHA-256 verification of the downloaded .tar.zst (DEC-PHASE10-007 fail-loud)
+#
+# @decision DEC-PHASE10-007
+# @title Trust-on-first-use SHA-256 sentinel for ollama .tar.zst
+# @status accepted
+# @rationale The canonical SHA-256 cannot be pinned until the first successful
+#   CI build produces a verified download. The sentinel value
+#   "TBD-PIN-AT-FIRST-CI-BUILD" skips the check on that first run (equivalent
+#   to the model manifest's TBD-VERIFY-AT-DOWNLOAD pattern — DEC-PHASE10-008).
+#   Once the real SHA-256 is known (from ollama's sha256sum.txt release
+#   asset), replace the sentinel with the 64-char lowercase hex string and
+#   the gate becomes a hard enforcement on every subsequent build. An
+#   unexpected hash is a supply-chain signal and must abort the build loudly
+#   — never soft-fail a binary integrity check. Updated from .deb to
+#   .tar.zst in W10-1 iter-7 (ollama dropped .deb entirely; .tar.zst is the
+#   canonical Linux amd64 release format for v0.24.0+).
+# ---------------------------------------------------------------------------
+OLLAMA_TGZ_SHA256="TBD-PIN-AT-FIRST-CI-BUILD"
+
+if [[ "${OLLAMA_TGZ_SHA256}" != "TBD-PIN-AT-FIRST-CI-BUILD" ]]; then
+    echo "[ollama] Verifying SHA-256 of downloaded .tar.zst..."
+    if ! echo "${OLLAMA_TGZ_SHA256}  ${OLLAMA_TMP}" | sha256sum -c -; then
+        echo "FATAL: ollama .tar.zst SHA-256 mismatch — refusing to install" >&2
+        echo "FATAL: Expected: ${OLLAMA_TGZ_SHA256}" >&2
+        echo "FATAL: Got:      $(sha256sum "${OLLAMA_TMP}" | cut -d' ' -f1)" >&2
+        echo "FATAL: This may indicate a supply-chain tampering event (DEC-PHASE10-007)." >&2
+        rm -f "${OLLAMA_TMP}"
+        exit 1
+    fi
+    echo "[ollama] SHA-256 verified OK."
+else
+    echo "WARN: ollama .tar.zst SHA-256 = TBD-PIN-AT-FIRST-CI-BUILD (trust-on-first-use — DEC-PHASE10-007)"
+    echo "WARN: Pin the real SHA-256 after first successful build before rc cut."
+fi
+
+# Extract the .tar.zst archive to /usr/local/
+# The archive contains:
+#   bin/ollama           — the main ollama binary (→ /usr/local/bin/ollama)
+#   lib/ollama/...       — CUDA and other GPU libraries (→ /usr/local/lib/ollama/)
+# zstd decompresses the .zst stream; tar -xf - unpacks the tar archive from stdin.
+# This is equivalent to what the official ollama install.sh does.
+echo "[ollama] Extracting .tar.zst to /usr/local/ ..."
+if ! zstd -d "${OLLAMA_TMP}" --stdout | tar -xf - -C /usr/local/; then
+    echo "ERROR: ollama .tar.zst extraction failed." >&2
+    echo "ERROR: This is a LOUD failure per DEC-PHASE10-007 — build aborted." >&2
+    rm -f "${OLLAMA_TMP}"
+    exit 1
+fi
+
+# Clean up the downloaded archive (free up space in the chroot)
+rm -f "${OLLAMA_TMP}"
+
+# Verify the binary is present and executable
+if ! command -v ollama >/dev/null 2>&1; then
+    echo "ERROR: ollama installed but binary not found in PATH." >&2
+    echo "       Expected /usr/local/bin/ollama after tar extraction." >&2
+    exit 1
+fi
+
+echo "[ollama] Installation complete: $(ollama --version 2>/dev/null || echo 'version unavailable')"
+echo "[ollama] Binary: $(command -v ollama)"
+echo "=== Ollama installation complete ==="
 
 echo "=== External tools installation complete ==="
