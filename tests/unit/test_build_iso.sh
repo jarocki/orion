@@ -849,6 +849,89 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
+# T35: W10-1 iter-6 — qemu-test.yml "Build ISO" step has set -o pipefail
+#
+# @decision DEC-PHASE10-014
+# @title pipefail propagates docker run's non-zero exit through the tee pipeline
+# @status accepted
+# @rationale GitHub Actions runs `run:` blocks under `bash -e` but NOT
+#   `bash -eo pipefail`. The "Build ISO in debian:bullseye container" step
+#   pipes `docker run` through `tee tmp/build-iso.log`. Without pipefail,
+#   the pipeline returns tee's exit (0), masking docker run's non-zero exit.
+#   That made CI show ✓ even when build-iso.sh exited 1 inside the container
+#   (the CI exit-0 bug tracked as #61). Adding `set -o pipefail` as the first
+#   line of the `run:` block causes the outer shell to propagate the
+#   rightmost non-zero exit from the pipeline. Closes #61.
+#   References: DEC-PHASE10-014.
+# ---------------------------------------------------------------------------
+echo "[T35] W10-1 iter-6: qemu-test.yml Build ISO step has set -o pipefail (DEC-PHASE10-014 closes #61)"
+QEMU_WORKFLOW="$REPO_ROOT/.github/workflows/qemu-test.yml"
+if [[ -f "$QEMU_WORKFLOW" ]]; then
+    pass "qemu-test.yml exists at .github/workflows/qemu-test.yml"
+
+    # Extract the "Build ISO" step's run block: from the step name line to the
+    # "Restore workspace ownership" step (which immediately follows). We look
+    # for set -o pipefail appearing before the first `docker run` line in
+    # that region, which is the requirement.
+    BUILD_STEP_REGION="$(awk '
+        /Build ISO in debian:bullseye container/ { in_step=1 }
+        in_step && /Restore workspace ownership/ { exit }
+        in_step { print }
+    ' "$QEMU_WORKFLOW")"
+
+    # T35.a: set -o pipefail must be present in the Build ISO run block
+    if echo "$BUILD_STEP_REGION" | grep -q 'set -o pipefail'; then
+        pass "T35.a: set -o pipefail present in 'Build ISO' step run block"
+    else
+        fail "T35.a: set -o pipefail present in 'Build ISO' step run block" \
+             "DEC-PHASE10-014 closes #61: pipefail must appear in the Build ISO run: block"
+    fi
+
+    # T35.b: set -o pipefail must appear BEFORE the docker run pipeline.
+    # Strip comment lines before checking so the grep for 'docker run' does not
+    # match the DEC-PHASE10-014 comment that says "propagates docker run's non-zero
+    # exit" — only the actual shell invocation should count.
+    BUILD_STEP_NOCOMMENTS="$(echo "$BUILD_STEP_REGION" | grep -v '^\s*#')"
+    PIPEFAIL_LINE="$(echo "$BUILD_STEP_NOCOMMENTS" | grep -n 'set -o pipefail' | head -1 | cut -d: -f1)"
+    DOCKER_LINE="$(echo "$BUILD_STEP_NOCOMMENTS" | grep -n 'docker run' | head -1 | cut -d: -f1)"
+    if [[ -n "$PIPEFAIL_LINE" && -n "$DOCKER_LINE" ]]; then
+        if [[ "$PIPEFAIL_LINE" -lt "$DOCKER_LINE" ]]; then
+            pass "T35.b: set -o pipefail (line $PIPEFAIL_LINE) appears before docker run (line $DOCKER_LINE) in step"
+        else
+            fail "T35.b: set -o pipefail must precede docker run" \
+                 "pipefail at region-line $PIPEFAIL_LINE is after docker run at region-line $DOCKER_LINE"
+        fi
+    else
+        fail "T35.b: both set -o pipefail and docker run must be present in Build ISO step" \
+             "pipefail_line='$PIPEFAIL_LINE' docker_line='$DOCKER_LINE'"
+    fi
+
+    # T35.c: DEC-PHASE10-014 annotation present in the workflow file
+    if grep -q 'DEC-PHASE10-014' "$QEMU_WORKFLOW"; then
+        pass "T35.c: DEC-PHASE10-014 annotation present in qemu-test.yml"
+    else
+        fail "T35.c: DEC-PHASE10-014 annotation present in qemu-test.yml" \
+             "Decision annotation required per coding standards"
+    fi
+
+    # T35.d: qemu-test.yml parses as valid YAML (structural integrity check)
+    if python3 -c "import yaml; yaml.safe_load(open('$QEMU_WORKFLOW'))" 2>/dev/null; then
+        pass "T35.d: qemu-test.yml parses as valid YAML after edit"
+    else
+        fail "T35.d: qemu-test.yml parses as valid YAML after edit" \
+             "python3 yaml.safe_load failed — syntax error introduced"
+    fi
+else
+    fail "qemu-test.yml exists at .github/workflows/qemu-test.yml" \
+         "File not found — cannot assert T35"
+    fail "T35.a: set -o pipefail present in 'Build ISO' step run block" "File missing"
+    fail "T35.b: set -o pipefail appears before docker run" "File missing"
+    fail "T35.c: DEC-PHASE10-014 annotation present in qemu-test.yml" "File missing"
+    fail "T35.d: qemu-test.yml parses as valid YAML" "File missing"
+fi
+echo ""
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo "================================================================"
