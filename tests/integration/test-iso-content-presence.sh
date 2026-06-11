@@ -669,15 +669,36 @@ else
          "0700-orionx-setup.hook.chroot SCRIPT_MAP must include [\"nebula\"]=\"/opt/orionx/scripts/nebula/nebula\""
 fi
 
-# (f) ollama package installed in chroot dpkg (installed via 0500 hook .deb — DEC-PHASE10-007)
-# grep -q exits 0 on match, 1 on no-match; || true guards pipefail (DEC-PHASE9-014 pattern).
-if [[ -f "$DPKG_STATUS" ]] && grep -q "^Package: ollama$" "$DPKG_STATUS" 2>/dev/null; then
-    pass "package installed in chroot: ollama (dpkg status — DEC-PHASE10-007)"
-elif [[ -f "$SQF/usr/bin/ollama" ]]; then
-    pass "package installed in chroot: ollama (binary at /usr/bin/ollama — DEC-PHASE10-007)"
+# (f) ollama binary present at /usr/local/bin/ollama
+#
+# @decision DEC-PHASE10-007
+# @title ollama installed via .tar.zst extraction to /usr/local/ (not dpkg)
+# @status accepted (updated iter-8)
+# @rationale ollama has never shipped a .deb in its canonical distribution;
+#   iter-7 switched from a hypothetical .deb path to .tar.zst extraction
+#   (0500-install-external-tools.hook.chroot). The tarball extracts the
+#   ollama binary to /usr/local/bin/ollama. It is NOT registered in dpkg,
+#   so dpkg/status will never contain "^Package: ollama$". The dpkg assertion
+#   inherited from the W9-1 pattern was incorrect for this distribution method.
+#   Binary-presence at /usr/local/bin/ollama is the correct and authoritative
+#   check. zstd must be dpkg-installed for the tarball decompression to succeed
+#   (asserted separately below). DEC-PHASE10-007 iter-8.
+if [[ -x "$SQF/usr/local/bin/ollama" ]]; then
+    pass "ollama binary present at /usr/local/bin/ollama (extracted from .tar.zst — DEC-PHASE10-007)"
 else
-    fail "package installed in chroot: ollama" \
-         "ollama not in dpkg/status and /usr/bin/ollama absent — 0500 hook .deb install failed (DEC-PHASE10-007)"
+    fail "ollama binary present at /usr/local/bin/ollama" \
+         "Expected 0500-install-external-tools.hook.chroot to extract ollama .tar.zst to /usr/local/bin/ (DEC-PHASE10-007)"
+fi
+
+# zstd must be dpkg-installed — it is required to decompress the ollama .tar.zst
+# in the chroot hook. Without it the tar -I zstd extraction silently fails.
+# DEC-PHASE10-007: zstd is the decompressor; its presence in dpkg proves it
+# was installed before the hook ran.
+if [[ -f "$DPKG_STATUS" ]] && grep -q "^Package: zstd$" "$DPKG_STATUS" 2>/dev/null; then
+    pass "package installed in chroot: zstd (required for ollama .tar.zst extraction — DEC-PHASE10-007)"
+else
+    fail "package installed in chroot: zstd" \
+         "zstd not found in dpkg/status — check orionx.list.chroot includes zstd (DEC-PHASE10-007)"
 fi
 
 # (g) 4 systemd unit files installed at /lib/systemd/system/
