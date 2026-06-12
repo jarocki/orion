@@ -130,7 +130,7 @@ echo "[ollama] Download complete: $(du -sh "${OLLAMA_TMP}" | cut -f1)"
 #   .tar.zst in W10-1 iter-7 (ollama dropped .deb entirely; .tar.zst is the
 #   canonical Linux amd64 release format for v0.24.0+).
 # ---------------------------------------------------------------------------
-OLLAMA_TGZ_SHA256="TBD-PIN-AT-FIRST-CI-BUILD"
+OLLAMA_TGZ_SHA256="88c110a6c9a9130e5ed0aa90f47e8ddb013cb638d834e11ddf1517615704d34c"
 
 if [[ "${OLLAMA_TGZ_SHA256}" != "TBD-PIN-AT-FIRST-CI-BUILD" ]]; then
     echo "[ollama] Verifying SHA-256 of downloaded .tar.zst..."

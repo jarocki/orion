@@ -5,7 +5,7 @@
   "model_filename": "mistral-7b-instruct-v0.3.Q4_K_M.gguf",
   "model_url_primary": "https://huggingface.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf",
   "model_url_fallback": "https://huggingface.co/MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3.Q4_K_M.gguf",
-  "model_sha256": "TBD-VERIFY-AT-DOWNLOAD",
+  "model_sha256": "1270d22c0fbb3d092fb725d4d96c457b7b687a5f5a715abe1e818da303e562b6",
   "model_size_bytes": 4368438976,
   "model_quantization": "Q4_K_M",
   "model_license": "Apache-2.0",

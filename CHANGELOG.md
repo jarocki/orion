@@ -7,6 +7,140 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.0.0-rc6] - 2026-06-11
+
+Sixth release candidate (rc5 skipped — operator chose to go direct from
+W9-2 cyberdeck UX to W10-1 Nebula AI per DEC-PHASE10-005 path ii).
+
+**rc6 is the v2.0.0 AI HEADLINE candidate.** Layer 3 of the 6-layer
+architecture (AI Forensic Engine — previously deferred to v2.1 by
+DEC-008) is now in code per DEC-PHASE10-001..-015. ISO grows from
+~1 GB (rc4) to ~6 GB (rc6) to bundle the inference floor for fully-
+local AI on hostile networks.
+
+### Added
+
+- **Nebula AI runtime** (`scripts/nebula/`): Python 3 stdlib-only control
+  plane — CLI dispatcher (`nebula`), integrity verification
+  (`integrity.py`), 1-token warmup (`warmup.py`), JSON status emitter
+  (`status.py`) for Control Center, helpers/ (subprocess + paths).
+  `from __future__ import annotations` honored on every module
+  (DEC-PHASE9-019 invariant). DEC-PHASE10-001/-005.
+- **Bundled inference model**: Mistral-7B-Instruct-v0.3 Q4_K_M
+  (~4.4 GB GGUF, Apache 2.0) staged from `bartowski/Mistral-7B-Instruct-
+  v0.3-GGUF` (primary) + `MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF`
+  (fallback). Both non-gated. SHA-256 pinned this release at
+  `1270d22c0fbb3d092fb725d4d96c457b7b687a5f5a715abe1e818da303e562b6`
+  (closes #56). DEC-PHASE10-002 / -008 / -013.
+- **Ollama daemon** v0.30.7 — distributed as `.tar.zst` (ollama never
+  shipped a `.deb`; iter-1's hallucinated `.deb` path was corrected in
+  iter-7). Extracted to `/usr/local/` by the 0500 hook. `zstd` package
+  added to `orionx.list.chroot`. SHA-256 pinned at
+  `88c110a6c9a9130e5ed0aa90f47e8ddb013cb638d834e11ddf1517615704d34c`
+  (closes #57). DEC-PHASE10-007.
+- **Boot-time integrity check** — `nebula-integrity-check.service`
+  (Type=oneshot) runs `Before=nebula-runtime.service`. On manifest
+  mismatch, ollama is BLOCKED from starting; failure logged to
+  `/var/log/orionx/nebula-integrity.log`. DEC-PHASE10-009.
+- **Lazy-start Ollama** via socket activation — `nebula-runtime.socket`
+  + `nebula-runtime.service`. First inference request triggers daemon
+  startup; boot stays fast, idle RAM stays under ~1.5 GB.
+  DEC-PHASE10-010.
+- **Opt-in warmup** — `nebula-warmup.service` NOT enabled by default.
+  Operator opts in via Control Center to perform a 1-token inference at
+  desktop session start. DEC-PHASE10-010.
+- **AppArmor sandbox** — `iso/config/includes.chroot/etc/apparmor.d/
+  usr.bin.ollama` confines the Ollama daemon. Read-only access to
+  `/opt/orionx/nebula/models/**`; write only to `/var/log/orionx/`;
+  deny exec of unknown binaries. DEC-PHASE10-011 (DEC-007 sandbox
+  spirit). The `network inet stream` rule remains broader than ideal
+  for true loopback-only on Bullseye AppArmor 3.x — tracked as #53 for
+  v2.1 nftables OUTPUT enforcement.
+- **Cyberdeck Control Center wiring** — `scripts/control_center/
+  sections/nebula.py` reads live status from `nebula status` JSON. The
+  Phase 9 W9-2 placeholder ("Runtime: not yet enabled (lands in W10-1)")
+  is now alive: "Runtime: ready, model: mistral-7b-instruct-v0.3-Q4_K_M
+  (4.4 GB, integrity OK)". DEC-PHASE10-005.
+- **GGUF model staging pipeline** — NEW `stage_nebula_model()` in
+  `scripts/build-iso.sh` (sibling to `stage_application_content()`,
+  disjoint subtree ownership). Downloads from HF with primary+fallback
+  URLs, SHA-256 verifies against manifest, rsyncs into includes.chroot,
+  generates MANIFEST.sha256. Honors `ORIONX_MODEL_LOCAL` env var for
+  air-gap builders. DEC-PHASE10-008.
+
+### Fixed (8-iteration CI cascade, all on PR #54)
+
+- **iter-3** — `curl` is not installed in the `debian:bullseye-slim`
+  build container; switched stage_nebula_model + 0500 hook fetches to
+  `wget`. `exit 1` propagation added to stage_nebula_model failure
+  branch.
+- **iter-4** — TheBloke/Mistral-7B-Instruct-v0.3-GGUF HF repository
+  inherits Mistral AI's acceptance-gating. CI returned 401; swapped to
+  non-gated bartowski + MaziyarPanahi mirrors (closes #60).
+- **iter-5** — `tests/unit/test_build_iso.sh` T17 had a `grep -A2`
+  bug that matched the wrong block; T34 added with proper `-A10`
+  per-path anchors covering the lb_exit branch, no-ISO-found branch,
+  and ISO-copy-failure branch.
+- **iter-6** — `.github/workflows/qemu-test.yml` "Build ISO in
+  debian:bullseye container" step's `docker run ... | tee tmp/build-iso
+  .log` pipeline silently swallowed docker's non-zero exit through
+  tee's exit-0. GitHub Actions runs `run:` blocks under `bash -e` but
+  NOT `bash -eo pipefail`. CI had been falsely reporting green for 5
+  iterations. Added `set -o pipefail` at the top of the step (closes
+  #61). T35 regression guard added. DEC-PHASE10-014.
+- **iter-7** — Pinned ollama version `v0.3.12` returns 404; ollama
+  jumped 0.3.x → 0.30.x major version. Updated to `v0.30.7`.
+  Discovered ollama NEVER shipped a `.deb` — iter-1's `.deb` extension
+  was hallucinated. Switched to `.tar.zst` (canonical ollama distribu-
+  tion since v0.24+). Added `zstd` package to `orionx.list.chroot`
+  for chroot decompression. T35.d YAML parse assertion bug fixed
+  (was checking output, now checks exit code) with PyYAML-availability
+  guard.
+- **iter-8** — `test-iso-content-presence.sh` section 15 asserted
+  `^Package: ollama$` in dpkg/status; ollama isn't in dpkg under the
+  `.tar.zst` extraction model. Replaced with binary-presence check at
+  `/usr/local/bin/ollama`. Added `zstd` dpkg-presence assertion.
+
+### Meta-lessons (DEC-PHASE10-015 records all three)
+
+1. **CI cannot be trusted blind without `pipefail`.** Iter-6's tee
+   pipeline bug masked the W10-1 build failure for 5 iterations,
+   producing false-green CI checks while the build silently exited 0
+   with no ISO. Workflow-policy-class invariant proposal for v2.1:
+   require `set -o pipefail` in every `run:` block that uses a pipe
+   where the left-hand exit code matters.
+2. **Cascade-consolidation discipline (DEC-PHASE7-041) scales to 8
+   iterations** when each iter is minimal/traceable/reviewable. The
+   new project ceiling is iter-8; the floor remains a single concrete
+   root cause + a single concrete fix + a regression guard per iter.
+3. **Single-source upstream supply-chain risk** demonstrated by
+   TheBloke gating (iter-4) and ollama-never-shipped-`.deb` (iter-7).
+   v2.1 should bundle a backup model mirror set so single-source
+   gating cannot block rebuilds.
+
+### Cross-references
+
+- W10-1 final HEAD: `5fed021` (iter-8); merged to develop as `bb44742`.
+- CI final-green proof: run **27355317949** on `5fed021`. Artifact
+  `orionx-iso-27355317949` (~6 GB).
+- DEC-PHASE10-001..-015 cover the full Phase 10 W10-1 decision arc.
+- W10-2 (Nebula chat UX), W10-3 (MCP tool server), W10-4 (Inference
+  Constraint Layer), W10-5 (detection daemon), W10-6 (auto-healing
+  playbooks), W10-7..-10 detail-planning awaits operator rc6 hardware
+  re-validation.
+
+### Pre-rc6 SHA pin commit
+
+This release pins:
+- `iso/config/nebula-model-manifest.json` model_sha256 (#56)
+- `iso/config/hooks/live/0500-install-external-tools.hook.chroot`
+  OLLAMA_TGZ_SHA256 (#57)
+
+Both `TBD-...` sentinels resolved to canonical SHAs computed in CI
+run 27355317949 and re-verified during this release prep.
+
+---
+
 ## [v2.0.0-rc4] - 2026-06-02
 
 Fourth release candidate. The operator booted v2.0.0-rc3 from USB on real
