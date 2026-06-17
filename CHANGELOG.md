@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.0.0-rc7] - 2026-06-16
+
+Seventh release candidate — **hardware-attestation hotfix** discovered when
+operator booted rc6 on real hardware and reported it "just looks like
+vanilla debian" (Phoenix wallpaper not set, menu items dead, Control
+Center won't start, Nebula AI not running). The Phase 9 cyberdeck
+content + Phase 10 Nebula AI runtime were all correctly built into the
+rc6 ISO (CI logs and content-presence tests confirmed this). The bug
+was at boot time: **live-config was creating its default user `user`,
+not `orionx`**, so none of the per-user configs (xfconf wallpaper,
+.desktop launchers under /home/orionx/, autologin target, panel widgets)
+applied to the active session. Logging out and back in as `orionx`
+revealed the full cyberdeck — proving the content was in the ISO; only
+the live-user identity was wrong.
+
+This is the same class of regression as Phase 8's #43 (operator-
+attestation gap that automated CI couldn't surface) — but in a different
+axis. CI's W7-4-B serial-sentinel runtime-verify checks systemd unit
+states, not the identity of the live login user. QEMU-based content-
+presence verifies files exist in the squashfs but not which user
+actually owns the booted session.
+
+### Fixed
+
+- **`iso/auto/config:64` `--bootappend-live`** — appended `username=orionx
+  hostname=orionx-cyberdeck` to the kernel cmdline. live-config reads
+  these at boot and creates `orionx` as the live user (reusing the
+  pre-built home dir from `iso/config/hooks/normal/0100-create-user.hook
+  .chroot`) instead of its default `user`. With this in place, autologin
+  per DEC-PHASE9-005 targets the same user that owns the per-user
+  xfconf wallpaper config, the `.desktop` launchers, and the panel
+  layout — and the cyberdeck renders correctly on first boot.
+- **`tests/unit/test_iso_serial_console.sh`** — added T3 and T4
+  asserting `username=orionx` and `hostname=orionx-cyberdeck` are
+  present in `--bootappend-live`. Prevents regression of this exact
+  class. DEC-PHASE10-016.
+
+### Meta-lesson (recorded as DEC-PHASE10-016)
+
+**Operator hardware attestation discovers classes of bugs that automated
+CI is structurally blind to.** Phase 8's #43 fix (content-presence as a
+CI gate) prevents the "missing-content" class. rc7's fix prevents the
+"wrong-user" class. Both required hardware boots from a real operator.
+W7-4-B + content-presence + boot-test work for what they target; they
+do NOT replace operator-on-hardware as the final acceptance gate. Plan
+for v2.1: extend W7-4-B serial-sentinel suite to assert the live-login
+user identity matches the autologin target.
+
+### Cross-references
+
+- rc6 build (`27395285540`) was internally correct — `release-artifacts-
+  27395285540` ISO has the cyberdeck content; operators can re-test rc6
+  by logging out and logging in as `orionx` (passwordless). rc7
+  obviates this workaround.
+- #56 + #57 SHA pins from rc6 carry forward unchanged (pins remain
+  valid; same model + ollama versions).
+- #62 (2 GB asset-size cap) still applies; rc7 ISO will also need
+  `gh run download` workaround until v2.1 split-and-reassemble lands.
+- Phase 10 W10-1 closure (`bb44742`) unchanged — that work was correct
+  end-to-end at the build layer.
+
+---
+
 ## [v2.0.0-rc6] - 2026-06-11
 
 Sixth release candidate (rc5 skipped — operator chose to go direct from

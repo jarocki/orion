@@ -14,19 +14,21 @@
 #   without requiring live-build or QEMU. Tests run on macOS and Linux CI.
 #
 # Test scope:
-#   T1: iso/auto/config — console=ttyS0,115200n8 present in --bootappend-live
-#   T2: iso/auto/config — console=tty0 present in --bootappend-live (VGA preserved)
-#   T3: iso/auto/config — splash and persistence still present (UX preserved)
-#   T4: iso/auto/config — --hook-files wires 0500-bootloader-serial.hook.binary
-#   T5: iso/auto/config — bash syntax valid
-#   T6: Hook file — exists and is executable
-#   T7: Hook file — bash syntax valid
-#   T8: Hook file — isolinux.cfg patching logic (serial 0 115200 prepended)
-#   T9: Hook file — grub.cfg patching logic (serial + terminal directives prepended)
-#   T10: Hook file — idempotency (second run does not double-patch)
-#   T11: Hook file — missing isolinux.cfg emits WARNING, does not exit non-zero
-#   T12: Hook file — missing grub.cfg emits WARNING, does not exit non-zero
-#   T13: Production sequence — auto/config, hook present, hook patches both configs
+#   T1:  iso/auto/config — console=ttyS0,115200n8 present in --bootappend-live
+#   T2:  iso/auto/config — console=tty0 present in --bootappend-live (VGA preserved)
+#   T3:  iso/auto/config — username=orionx present in --bootappend-live (rc7 hotfix, DEC-PHASE10-016)
+#   T4:  iso/auto/config — hostname=orionx-cyberdeck present in --bootappend-live (rc7 hotfix)
+#   T5:  iso/auto/config — splash and persistence still present (UX preserved)
+#   T6:  iso/auto/config — --hook-files wires 0500-bootloader-serial.hook.binary
+#   T7:  iso/auto/config — bash syntax valid
+#   T8:  Hook file — exists and is executable
+#   T9:  Hook file — bash syntax valid
+#   T10: Hook file — isolinux.cfg patching logic (serial 0 115200 prepended)
+#   T11: Hook file — grub.cfg patching logic (serial + terminal directives prepended)
+#   T12: Hook file — idempotency (second run does not double-patch)
+#   T13: Hook file — missing isolinux.cfg emits WARNING, does not exit non-zero
+#   T14: Hook file — missing grub.cfg emits WARNING, does not exit non-zero
+#   T15: Production sequence — auto/config, hook present, hook patches both configs
 #
 # Usage:
 #   bash tests/unit/test_iso_serial_console.sh
@@ -101,6 +103,33 @@ contains "console=ttyS0,115200n8 in --bootappend-live" "console=ttyS0,115200n8" 
 echo ""
 
 # ---------------------------------------------------------------------------
+# T3: username=orionx present in --bootappend-live (rc7 hotfix, DEC-PHASE10-016)
+# ---------------------------------------------------------------------------
+# Debian live-config reads `username=` from the kernel cmdline and creates
+# that user at boot. Without it, live-config defaults to `user` — which has
+# NONE of the Orion-X per-user configs (xfconf wallpaper, .desktop launchers,
+# autologin target, panel layout). Operator on rc6 hardware reported the
+# system looking like "vanilla Debian" because the active session was `user`,
+# not `orionx`. Logging out + back in as `orionx` revealed the full Phoenix
+# cyberdeck — proving the content was present, only the live-user identity
+# was wrong. This regression test ensures `username=orionx` stays in the
+# cmdline so the active boot user IS orionx and per-user configs apply.
+echo "[T3] username=orionx in --bootappend-live (rc7 hotfix, DEC-PHASE10-016)"
+contains "username=orionx in --bootappend-live" "username=orionx" "$BOOTAPPEND_LINE"
+echo ""
+
+# ---------------------------------------------------------------------------
+# T4: hostname=orionx-cyberdeck present in --bootappend-live (rc7 hotfix)
+# ---------------------------------------------------------------------------
+# Pairs with T3 username=orionx so the booted system identity is consistent
+# (hostname appears in shell prompt, journal, Matrix federation, mesh peer
+# discovery). Without `hostname=` the system shows "debian" as hostname even
+# when username is correct — partial cyberdeck identity is its own UX bug.
+echo "[T4] hostname=orionx-cyberdeck in --bootappend-live (rc7 hotfix)"
+contains "hostname=orionx-cyberdeck in --bootappend-live" "hostname=orionx-cyberdeck" "$BOOTAPPEND_LINE"
+echo ""
+
+# ---------------------------------------------------------------------------
 # T2: console=tty0 present in --bootappend-live (VGA output preserved)
 # ---------------------------------------------------------------------------
 echo "[T2] console=tty0 in --bootappend-live"
@@ -108,15 +137,15 @@ contains "console=tty0 in --bootappend-live" "console=tty0" "$BOOTAPPEND_LINE"
 echo ""
 
 # ---------------------------------------------------------------------------
-# T3: splash and persistence still present (existing UX not broken)
+# T5: splash and persistence still present (existing UX not broken)
 # ---------------------------------------------------------------------------
-echo "[T3] UX params preserved (splash, persistence)"
+echo "[T5] UX params preserved (splash, persistence)"
 contains "splash still in --bootappend-live" "splash" "$BOOTAPPEND_LINE"
 contains "persistence still in --bootappend-live" "persistence" "$BOOTAPPEND_LINE"
 echo ""
 
 # ---------------------------------------------------------------------------
-# T4: canonical hook location + --hook-files removed (DEC-PHASE7-024)
+# T6: canonical hook location + --hook-files removed (DEC-PHASE7-024)
 # ---------------------------------------------------------------------------
 # Per DEC-PHASE7-024: live-build auto-discovers hooks under
 # iso/config/hooks/normal/. The --hook-files workaround in iso/auto/config
@@ -124,7 +153,7 @@ echo ""
 # keeping both would create dual-registration. This test verifies:
 #   (a) the hook file is present at its canonical binary/ path
 #   (b) --hook-files is NOT present in iso/auto/config (removal confirmed)
-echo "[T4] canonical hook at iso/config/hooks/normal/ AND --hook-files absent from auto/config"
+echo "[T6] canonical hook at iso/config/hooks/normal/ AND --hook-files absent from auto/config"
 if [[ -f "$HOOK_SCRIPT" ]]; then
     pass "hook exists at canonical path iso/config/hooks/normal/0500-bootloader-serial.hook.binary"
 else
@@ -138,9 +167,9 @@ not_contains "--hook-files absent from auto/config (DEC-PHASE7-024)" "--hook-fil
 echo ""
 
 # ---------------------------------------------------------------------------
-# T5: iso/auto/config bash syntax valid
+# T7: iso/auto/config bash syntax valid
 # ---------------------------------------------------------------------------
-echo "[T5] iso/auto/config bash syntax"
+echo "[T7] iso/auto/config bash syntax"
 if bash -n "$AUTO_CONFIG" 2>&1; then
     pass "iso/auto/config bash syntax valid"
 else
@@ -149,9 +178,9 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# T6: Hook file exists and is executable
+# T8: Hook file exists and is executable
 # ---------------------------------------------------------------------------
-echo "[T6] Hook file presence and executability"
+echo "[T8] Hook file presence and executability"
 if [[ -f "$HOOK_SCRIPT" ]]; then
     pass "0500-bootloader-serial.hook.binary exists"
 else
@@ -165,9 +194,9 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# T7: Hook file bash syntax valid
+# T9: Hook file bash syntax valid
 # ---------------------------------------------------------------------------
-echo "[T7] Hook file bash syntax"
+echo "[T9] Hook file bash syntax"
 if bash -n "$HOOK_SCRIPT" 2>&1; then
     pass "hook file bash syntax valid"
 else
@@ -176,9 +205,9 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# T8: Hook patches isolinux.cfg (BIOS) correctly
+# T10: Hook patches isolinux.cfg (BIOS) correctly
 # ---------------------------------------------------------------------------
-echo "[T8] Hook patches isolinux.cfg with serial 0 115200"
+echo "[T10] Hook patches isolinux.cfg with serial 0 115200"
 BIOS_SCRATCH="$SCRATCH/bios_test"
 mkdir -p "$BIOS_SCRATCH/binary/isolinux"
 # Simulate what live-build generates for isolinux.cfg (real-world minimal example)
@@ -204,9 +233,9 @@ contains "original DEFAULT line still present after patch" "DEFAULT vesamenu.c32
 echo ""
 
 # ---------------------------------------------------------------------------
-# T9: Hook patches grub.cfg (UEFI) correctly
+# T11: Hook patches grub.cfg (UEFI) correctly
 # ---------------------------------------------------------------------------
-echo "[T9] Hook patches grub.cfg with serial + terminal directives"
+echo "[T11] Hook patches grub.cfg with serial + terminal directives"
 UEFI_SCRATCH="$SCRATCH/uefi_test"
 mkdir -p "$UEFI_SCRATCH/binary/boot/grub"
 # Simulate what live-build generates for grub.cfg
@@ -235,9 +264,9 @@ contains "original grub content still present" 'set default="0"' "$PATCHED_GRUB"
 echo ""
 
 # ---------------------------------------------------------------------------
-# T10: Hook is idempotent (second run does not double-patch)
+# T12: Hook is idempotent (second run does not double-patch)
 # ---------------------------------------------------------------------------
-echo "[T10] Hook idempotency (no double-patch on second run)"
+echo "[T12] Hook idempotency (no double-patch on second run)"
 IDEM_SCRATCH="$SCRATCH/idempotency_test"
 mkdir -p "$IDEM_SCRATCH/binary/isolinux"
 mkdir -p "$IDEM_SCRATCH/binary/boot/grub"
@@ -272,9 +301,9 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# T11: Missing isolinux.cfg emits WARNING but exits 0
+# T13: Missing isolinux.cfg emits WARNING but exits 0
 # ---------------------------------------------------------------------------
-echo "[T11] Missing isolinux.cfg — WARNING emitted, exits 0"
+echo "[T13] Missing isolinux.cfg — WARNING emitted, exits 0"
 MISS_BIOS_SCRATCH="$SCRATCH/missing_bios_test"
 mkdir -p "$MISS_BIOS_SCRATCH/binary/boot/grub"
 # No isolinux directory — grub.cfg exists
@@ -294,9 +323,9 @@ contains "WARNING emitted for missing isolinux.cfg" "WARNING" "$MISS_BIOS_OUTPUT
 echo ""
 
 # ---------------------------------------------------------------------------
-# T12: Missing grub.cfg emits WARNING but exits 0
+# T14: Missing grub.cfg emits WARNING but exits 0
 # ---------------------------------------------------------------------------
-echo "[T12] Missing grub.cfg — WARNING emitted, exits 0"
+echo "[T14] Missing grub.cfg — WARNING emitted, exits 0"
 MISS_UEFI_SCRATCH="$SCRATCH/missing_uefi_test"
 mkdir -p "$MISS_UEFI_SCRATCH/binary/isolinux"
 # No boot/grub directory — isolinux.cfg exists
@@ -316,16 +345,16 @@ contains "WARNING emitted for missing grub.cfg" "WARNING" "$MISS_UEFI_OUTPUT"
 echo ""
 
 # ---------------------------------------------------------------------------
-# T13: Production sequence — config present + hook patches both configs
+# T15: Production sequence — config present + hook patches both configs
 # ---------------------------------------------------------------------------
 # This test exercises the real production sequence end-to-end at the unit level:
-# 1. hook lives at canonical path iso/config/hooks/normal/ (verified in T4)
-# 2. The hook is present and executable (verified in T6)
+# 1. hook lives at canonical path iso/config/hooks/normal/ (verified in T6)
+# 2. The hook is present and executable (verified in T8)
 # 3. The hook patches isolinux.cfg AND grub.cfg in a single run
 # This mirrors what lb_binary does: runs all .hook.binary scripts from CWD
 # with binary/ as the working tree. Auto-discovery finds the hook because
 # it is in iso/config/hooks/normal/ (DEC-PHASE7-024, no --hook-files needed).
-echo "[T13] Production sequence — hook at canonical path; hook patches both configs"
+echo "[T15] Production sequence — hook at canonical path; hook patches both configs"
 
 E2E_SCRATCH="$SCRATCH/e2e_test"
 mkdir -p "$E2E_SCRATCH/binary/isolinux"

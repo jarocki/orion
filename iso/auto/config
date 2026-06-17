@@ -42,7 +42,7 @@
 set -e
 
 # Version authority: read from environment; scripts/build-iso.sh exports it.
-ORIONX_VERSION="${ORIONX_VERSION:-v2.0.0-rc6}"
+ORIONX_VERSION="${ORIONX_VERSION:-v2.0.0-rc7}"
 
 # Base distribution
 DISTRIBUTION="bullseye"
@@ -61,7 +61,7 @@ lb config noauto \
     --debian-installer false \
     --debian-installer-distribution "$DISTRIBUTION" \
     --debian-installer-gui false \
-    --bootappend-live "boot=live components splash quiet persistence console=tty0 console=ttyS0,115200n8" \
+    --bootappend-live "boot=live components splash quiet persistence console=tty0 console=ttyS0,115200n8 username=orionx hostname=orionx-cyberdeck" \
     --bootappend-install "locales=en_US.UTF-8" \
     --bootloader "syslinux,grub-efi" \
     --iso-application "Orion-X Phoenix Edition" \
