@@ -38,7 +38,7 @@ set -euo pipefail
 # Downstream consumers (iso/auto/config, iso-volume label) read ORIONX_VERSION
 # from the environment when this script exports it.
 # ---------------------------------------------------------------------------
-VERSION="${ORIONX_VERSION:-v2.0.0-rc7}"
+VERSION="${ORIONX_VERSION:-v2.0.0-rc8}"
 
 # ---------------------------------------------------------------------------
 # Path setup

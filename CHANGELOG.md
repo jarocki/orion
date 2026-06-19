@@ -7,6 +7,102 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.0.0-rc8] - 2026-06-19
+
+Eighth release candidate — **hardware-attestation hotfix bundle (iteration 2)**,
+extending DEC-PHASE10-016. Operator booted rc7 on hardware and surfaced three
+distinct bug classes that CI was structurally blind to. All three are boot-time
+or import-time failures invisible to the unit/integration CI gates we have.
+
+### Fixed
+
+- **Bug A — `orionx-control-center` crashes `ModuleNotFoundError: No module
+  named 'control_center'`** (`scripts/control_center/orionx-control-center`
+  line ~70). Operator terminal output: `ModuleNotFoundError: No module named
+  'control_center'` when launching the GTK Control Center from the XFCE menu.
+  Root cause: the entrypoint uses `os.path.abspath(__file__)` to locate the
+  `scripts/` parent directory. `abspath` does NOT resolve symlinks — when
+  invoked as `/usr/bin/orionx-control-center` (symlink → `/opt/orionx/scripts/
+  control_center/orionx-control-center`, wired by `0700-orionx-setup.hook
+  .chroot`), `abspath` returns the symlink path, giving `script_dir=/usr/bin`
+  and `scripts_dir=/`. The `control_center` package at `/opt/orionx/scripts/
+  control_center/` is never on `sys.path`. Fix: `os.path.realpath(__file__)`
+  resolves the full symlink chain to the actual file path before dirname,
+  giving the correct `scripts_dir=/opt/orionx/scripts`. Pattern already used
+  correctly in `scripts/nebula/nebula` line 53. (closes #63,
+  DEC-PHASE10-017)
+
+- **Bug B — `.bashrc` v1.5.5 stale strings + dual-authority `orionx-help`**
+  (`iso/config/hooks/normal/0100-create-user.hook.chroot`). Operator terminal
+  output: `Welcome to Orion-X Phoenix Edition v1.5.5!` and `orionx-help`
+  listing tools that do not exist (`setup-vpn.sh`, stale forensic aliases).
+  Root cause: two definitions of `orionx-help()` existed simultaneously:
+  (1) `/etc/profile.d/orionx-help.sh` — written by `0700-orionx-setup.hook
+  .chroot`, the CORRECT v2.0 tool list; (2) `/home/orionx/.bashrc` — written
+  by `0100-create-user.hook.chroot`, the STALE v1.5.5 body. Bash sources
+  `/etc/profile.d/*.sh` before `~/.bashrc`; the `.bashrc` redefinition wins,
+  so the wrong help always rendered. A stale MOTD block (`Phoenix Edition
+  v1.5.5`) was also written by `0100-create-user.hook.chroot`, creating a
+  second MOTD authority. Fix B.1: rewrote the `.bashrc` heredoc in
+  `0100-create-user.hook.chroot` to contain only interactive-shell hygiene
+  (history, `checkwinsize`, prompt, aliases, `bash_completion` source) —
+  removed the welcome echo, the stale `orionx-help()` body, and the stale
+  version literal. Single authority: `0700-orionx-setup.hook.chroot` owns
+  both MOTD and `orionx-help`. Fix B.2: removed the stale
+  `cat > /etc/update-motd.d/10-orionx-welcome` block from
+  `0100-create-user.hook.chroot` (MOTD authority now exclusively in `0700`).
+  The MOTD in `0700` now reads its version string from `/etc/orionx-version`
+  (written by the same `0700` hook from `${ORIONX_VERSION:-v2.0.0-rc8}`)
+  rather than a hardcoded literal — eliminating the stale-literal class for
+  future RC cuts. (closes #62, DEC-PHASE10-017)
+
+- **Bug C — Autologin identity still defaults to `user`, not `orionx`**
+  (`iso/auto/config` line ~64). Operator report: "It's not starting up with
+  the user set to orionx, but I can logout and login (still) as user orionx."
+  Root cause: rc7 added `username=orionx hostname=orionx-cyberdeck` (bare
+  form) to `--bootappend-live`. Debian Bullseye live-config 5.x parses
+  cmdline params with the `live-config.` prefix only; the bare form is
+  silently ignored. live-config therefore created its default `user`, not
+  `orionx`. Fix: changed to `live-config.username=orionx live-config.hostname=
+  orionx-cyberdeck` per the live-config(7) Bullseye manpage. Regression test
+  T3 and T4 in `tests/unit/test_iso_serial_console.sh` updated to assert the
+  prefixed form. (closes #62, DEC-PHASE10-017)
+
+### Meta-lesson (DEC-PHASE10-017 — hardware attestation iteration 2, extends DEC-PHASE10-016)
+
+**Operator hardware attestation discovers classes of bugs that automated CI
+is structurally blind to.** This is the second hardware-attestation iteration
+(rc7 was iteration 1). Three new bug classes surfaced that no current CI gate
+covers:
+
+1. **Import-path-via-symlink failures** — the `ModuleNotFoundError` on
+   `orionx-control-center` only manifests when the script is invoked via a
+   `/usr/bin/` symlink, which is exactly how the live system runs it. Dev-host
+   `python3 scripts/control_center/orionx-control-center` never triggers this
+   because `__file__` is already the real path.
+2. **Dual-authority shell function shadowing** — the `.bashrc` overwrite of
+   `/etc/profile.d/orionx-help.sh` can only be observed by logging in as the
+   live user and running `orionx-help` interactively. CI's syntax checks and
+   content-presence checks cannot surface this.
+3. **Bare vs. prefixed live-config cmdline params** — the autologin identity
+   bug (`user` not `orionx`) requires a real boot with the correct live-config
+   version to observe. QEMU boots in CI do not assert the live login username.
+
+**Phase 11 candidate:** add a qemu-based first-login smoke test that captures
+the first interactive bash prompt and the first `orionx-help` invocation,
+asserting both match the current build's version and tool list, not stale
+literals. This would close the structural CI blindspot for all three classes
+above.
+
+### Cross-references
+
+- #56 + #57 SHA pins from rc6 carry forward unchanged.
+- #62 (2 GB asset-size cap workaround) still applies.
+- #63: `orionx-control-center` symlink `ModuleNotFoundError` (fixed in rc8).
+- Phase 10 W10-1 closure (`bb44742`) unchanged.
+
+---
+
 ## [v2.0.0-rc7] - 2026-06-16
 
 Seventh release candidate — **hardware-attestation hotfix** discovered when

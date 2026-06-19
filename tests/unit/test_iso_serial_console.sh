@@ -16,8 +16,8 @@
 # Test scope:
 #   T1:  iso/auto/config — console=ttyS0,115200n8 present in --bootappend-live
 #   T2:  iso/auto/config — console=tty0 present in --bootappend-live (VGA preserved)
-#   T3:  iso/auto/config — username=orionx present in --bootappend-live (rc7 hotfix, DEC-PHASE10-016)
-#   T4:  iso/auto/config — hostname=orionx-cyberdeck present in --bootappend-live (rc7 hotfix)
+#   T3:  iso/auto/config — live-config.username=orionx present in --bootappend-live (rc8 fix, DEC-PHASE10-017)
+#   T4:  iso/auto/config — live-config.hostname=orionx-cyberdeck present in --bootappend-live (rc8 fix)
 #   T5:  iso/auto/config — splash and persistence still present (UX preserved)
 #   T6:  iso/auto/config — --hook-files wires 0500-bootloader-serial.hook.binary
 #   T7:  iso/auto/config — bash syntax valid
@@ -103,30 +103,34 @@ contains "console=ttyS0,115200n8 in --bootappend-live" "console=ttyS0,115200n8" 
 echo ""
 
 # ---------------------------------------------------------------------------
-# T3: username=orionx present in --bootappend-live (rc7 hotfix, DEC-PHASE10-016)
+# T3: live-config.username=orionx present in --bootappend-live (rc8 fix, DEC-PHASE10-017)
 # ---------------------------------------------------------------------------
-# Debian live-config reads `username=` from the kernel cmdline and creates
-# that user at boot. Without it, live-config defaults to `user` — which has
-# NONE of the Orion-X per-user configs (xfconf wallpaper, .desktop launchers,
-# autologin target, panel layout). Operator on rc6 hardware reported the
-# system looking like "vanilla Debian" because the active session was `user`,
-# not `orionx`. Logging out + back in as `orionx` revealed the full Phoenix
-# cyberdeck — proving the content was present, only the live-user identity
-# was wrong. This regression test ensures `username=orionx` stays in the
+# Debian Bullseye live-config 5.x parses cmdline params with the `live-config.`
+# prefix; rc7 used the bare `username=orionx` form, which Bullseye live-config
+# ignored (bare form is not parsed by live-config on Bullseye). rc8 uses the
+# prefixed form per live-config(7) bullseye manpage. Without the prefix,
+# live-config defaults to creating `user` — which has NONE of the Orion-X
+# per-user configs (xfconf wallpaper, .desktop launchers, autologin target,
+# panel layout). Operator on rc6 hardware reported the system looking like
+# "vanilla Debian" because the active session was `user`, not `orionx`.
+# rc7 added the bare form (incorrect); rc8 corrects to the prefixed form.
+# This regression test ensures `live-config.username=orionx` stays in the
 # cmdline so the active boot user IS orionx and per-user configs apply.
-echo "[T3] username=orionx in --bootappend-live (rc7 hotfix, DEC-PHASE10-016)"
-contains "username=orionx in --bootappend-live" "username=orionx" "$BOOTAPPEND_LINE"
+echo "[T3] live-config.username=orionx in --bootappend-live (rc8 fix, DEC-PHASE10-017)"
+contains "live-config.username=orionx in --bootappend-live" "live-config.username=orionx" "$BOOTAPPEND_LINE"
 echo ""
 
 # ---------------------------------------------------------------------------
-# T4: hostname=orionx-cyberdeck present in --bootappend-live (rc7 hotfix)
+# T4: live-config.hostname=orionx-cyberdeck present in --bootappend-live (rc8 fix)
 # ---------------------------------------------------------------------------
-# Pairs with T3 username=orionx so the booted system identity is consistent
-# (hostname appears in shell prompt, journal, Matrix federation, mesh peer
-# discovery). Without `hostname=` the system shows "debian" as hostname even
-# when username is correct — partial cyberdeck identity is its own UX bug.
-echo "[T4] hostname=orionx-cyberdeck in --bootappend-live (rc7 hotfix)"
-contains "hostname=orionx-cyberdeck in --bootappend-live" "hostname=orionx-cyberdeck" "$BOOTAPPEND_LINE"
+# Pairs with T3 live-config.username=orionx so the booted system identity is
+# consistent (hostname appears in shell prompt, journal, Matrix federation,
+# mesh peer discovery). Without `live-config.hostname=` the system shows
+# "debian" as hostname even when username is correct — partial cyberdeck
+# identity is its own UX bug. rc7 used the bare `hostname=` form; rc8 corrects
+# to `live-config.hostname=` per live-config(7) bullseye manpage.
+echo "[T4] live-config.hostname=orionx-cyberdeck in --bootappend-live (rc8 fix)"
+contains "live-config.hostname=orionx-cyberdeck in --bootappend-live" "live-config.hostname=orionx-cyberdeck" "$BOOTAPPEND_LINE"
 echo ""
 
 # ---------------------------------------------------------------------------

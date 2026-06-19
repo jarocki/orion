@@ -64,10 +64,18 @@ def main(argv: list[str] | None = None) -> int:
     _parse_args(args_list)
 
     # Add the scripts/ directory to sys.path so `control_center` package
-    # is importable when the script is run directly as
-    # /usr/bin/orionx-control-center (symlink target is
-    # /opt/orionx/scripts/control_center/orionx-control-center).
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # is importable when the script is run via the /usr/bin/ symlink.
+    # MUST use os.path.realpath (not os.path.abspath): abspath does NOT
+    # resolve symlinks — it returns the symlink path itself. When invoked
+    # as /usr/bin/orionx-control-center (symlink → /opt/orionx/scripts/
+    # control_center/orionx-control-center), abspath gives script_dir=/usr/bin
+    # and scripts_dir=/, putting the wrong directory on sys.path and causing
+    # ModuleNotFoundError: No module named 'control_center'. realpath resolves
+    # the symlink chain to the actual file, giving script_dir=
+    # /opt/orionx/scripts/control_center and scripts_dir=/opt/orionx/scripts —
+    # exactly where the control_center package lives. See scripts/nebula/nebula
+    # line 53 for the same pattern. (rc8 fix, DEC-PHASE10-017)
+    script_dir = os.path.dirname(os.path.realpath(__file__))
     scripts_dir = os.path.dirname(script_dir)
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)

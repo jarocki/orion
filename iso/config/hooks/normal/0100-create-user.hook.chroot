@@ -1,7 +1,8 @@
 #!/bin/sh
 #
-# Orion-X Phoenix Edition v2.0.0-rc4
-# User creation hook for live-build
+# Orion-X Phoenix Edition — User creation hook for live-build
+# (Version label removed per DEC-PHASE7-002 single-version-authority;
+#  iso/auto/config and scripts/build-iso.sh are the sole ORIONX_VERSION owners.)
 #
 # This script creates the default live user and sets up the home directory.
 #
@@ -89,8 +90,19 @@ if [ -d /usr/share/doc/orionx ]; then
 fi
 
 # Set up bash configuration
+# NOTE: welcome message → /etc/update-motd.d/10-orionx-welcome (MOTD authority)
+# NOTE: orionx-help() → /etc/profile.d/orionx-help.sh (function authority)
+# The .bashrc is intentionally limited to interactive-shell hygiene + prompt +
+# aliases. Redefining the welcome echo or orionx-help() here creates a dual
+# authority and the .bashrc definition WINS (bash sources ~/.bashrc after
+# /etc/profile.d/*.sh), silently overriding the correct v2.0 content with
+# stale v1.5.5 content. Single-authority rule: CLAUDE.md Sacred Practice #12.
+# (rc8 fix for stale v1.5.5 dual-authority bug, DEC-PHASE10-017)
 cat > /home/orionx/.bashrc << EOF
-# Orion-X Phoenix Edition v1.5.5 bash configuration
+# Orion-X Phoenix Edition — interactive shell config
+# NOTE: welcome message comes from /etc/update-motd.d/10-orionx-welcome
+# NOTE: orionx-help function comes from /etc/profile.d/orionx-help.sh
+# Do NOT redefine either here — single-authority rule (CLAUDE.md Sacred Practice #12).
 
 # If not running interactively, don't do anything
 case \$- in
@@ -98,16 +110,14 @@ case \$- in
       *) return;;
 esac
 
-# History control
+# History
 HISTCONTROL=ignoreboth
 HISTSIZE=1000
 HISTFILESIZE=2000
 shopt -s histappend
-
-# Check window size after each command
 shopt -s checkwinsize
 
-# Set prompt
+# Prompt
 PS1='\[\033[38;5;214m\][Orion-X]\[\033[00m\] \[\033[01;34m\]\w\[\033[00m\]\\$ '
 
 # Aliases
@@ -117,28 +127,8 @@ alias l='ls -CF'
 alias update='sudo apt-get update && sudo apt-get upgrade'
 alias cls='clear'
 
-# Path
-export PATH=\$PATH:/usr/bin:/usr/local/bin
-
-# Welcome message
-echo "Welcome to Orion-X Phoenix Edition v1.5.5!"
-echo "Type 'orionx-help' for assistance."
-
-# Custom help function
-orionx-help() {
-    echo "Orion-X Phoenix Edition v1.5.5 Help"
-    echo "-----------------------------------"
-    echo "setup-vpn.sh     : Configure WireGuard VPN"
-    echo "setup-matrix.sh  : Setup secure communication"
-    echo "toggle-theme.sh  : Switch between dark and green themes"
-    echo "run-lynis.sh     : Run security audit"
-    echo ""
-    echo "Forensic Tools:"
-    echo "artifact-analyzer.py : Automate artifact analysis"
-    echo "storyboard-gen.py    : Create incident timeline"
-    echo ""
-    echo "Documentation available in /usr/share/doc/orionx/"
-}
+# Source bash_completion if present (XFCE Terminal sets PS1; completion is nice-to-have)
+[ -f /etc/bash_completion ] && . /etc/bash_completion
 EOF
 
 # Set up XFCE4 desktop wallpaper via xfconf XML (default backdrop authority).
@@ -207,24 +197,11 @@ chown -R orionx:orionx /home/orionx/.config
 echo "dark" > /home/orionx/.orionx_theme
 chown orionx:orionx /home/orionx/.orionx_theme
 
-# Create a welcome message that shows at login
-cat > /etc/update-motd.d/10-orionx-welcome << EOF
-#!/bin/sh
-echo "
- ██████╗ ██████╗ ██╗ ██████╗ ███╗   ██╗      ██╗  ██╗
-██╔═══██╗██╔══██╗██║██╔═══██╗████╗  ██║      ╚██╗██╔╝
-██║   ██║██████╔╝██║██║   ██║██╔██╗ ██║█████╗ ╚███╔╝ 
-██║   ██║██╔══██╗██║██║   ██║██║╚██╗██║╚════╝ ██╔██╗ 
-╚██████╔╝██║  ██║██║╚██████╔╝██║ ╚████║      ██╔╝ ██╗
- ╚═════╝ ╚═╝  ╚═╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝      ╚═╝  ╚═╝
-"
-echo "Phoenix Edition v1.5.5 - Incident Response & Digital Forensics Toolkit"
-echo ""
-echo "Type 'orionx-help' for a list of available tools and commands"
-echo "Documentation available in /usr/share/doc/orionx/"
-echo ""
-EOF
-chmod +x /etc/update-motd.d/10-orionx-welcome
+# MOTD authority: /etc/update-motd.d/10-orionx-welcome is written by
+# iso/config/hooks/live/0700-orionx-setup.hook.chroot (single authority).
+# Do NOT write it here — this hook ran first and the 0700 hook runs later
+# and overwrites it anyway, but having a stale v1.5.5 definition here is
+# confusing and violated single-authority rule. (rc8 fix, DEC-PHASE10-017)
 
 # Ensure proper permissions
 chown -R orionx:orionx /home/orionx

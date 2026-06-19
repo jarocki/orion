@@ -176,14 +176,25 @@ DESKTOP_EOF
 echo "[orionx-setup] Installing MOTD..."
 mkdir -p /etc/update-motd.d/
 
+# Write /etc/orionx-version so MOTD and other runtime scripts can reference
+# the build-time version without hardcoding it in multiple places.
+# ORIONX_VERSION is passed from build-iso.sh → lb config → chroot env when
+# available; fall back to v2.0.0-rc8 (the current canonical default from
+# iso/auto/config and scripts/build-iso.sh, per DEC-PHASE7-002 single-
+# version-authority). Pattern 2 of Bug B.2 rc8 fix (DEC-PHASE10-017):
+# stage a version file so MOTD reads it at login, avoiding both a stale
+# literal and a chroot-env-propagation dependency.
+echo "${ORIONX_VERSION:-v2.0.0-rc8}" > /etc/orionx-version
+
 cat > /etc/update-motd.d/10-orionx-welcome << 'MOTD_EOF'
 #!/bin/bash
-cat << 'EOF'
+ORIONX_VER="$(cat /etc/orionx-version 2>/dev/null || echo v2.0.0)"
+cat << EOF
   ___      _               __  __
  / _ \ _ _(_)___ _ _      \ \/ /
 | (_) | '_| / _ \ ' \      >  <
  \___/|_| |_\___/_||_|    /_/\_\
-Orion-X Phoenix Edition v2.0.0-rc4
+Orion-X Phoenix Edition ${ORIONX_VER}
 
 Quick start:
   orionx-mesh       — WireGuard P2P mesh management
