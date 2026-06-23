@@ -42,7 +42,7 @@
 set -e
 
 # Version authority: read from environment; scripts/build-iso.sh exports it.
-ORIONX_VERSION="${ORIONX_VERSION:-v2.0.0-rc8}"
+ORIONX_VERSION="${ORIONX_VERSION:-v2.0.0-rc9}"
 
 # Base distribution
 DISTRIBUTION="bullseye"

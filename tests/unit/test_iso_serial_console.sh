@@ -29,6 +29,8 @@
 #   T13: Hook file — missing isolinux.cfg emits WARNING, does not exit non-zero
 #   T14: Hook file — missing grub.cfg emits WARNING, does not exit non-zero
 #   T15: Production sequence — auto/config, hook present, hook patches both configs
+#   T16: live-config.username=orionx in BOTH static bootloader cfgs (rc9 hotfix, DEC-PHASE10-018)
+#   T17: live-config.hostname=orionx-cyberdeck in BOTH static bootloader cfgs (rc9 hotfix, DEC-PHASE10-018)
 #
 # Usage:
 #   bash tests/unit/test_iso_serial_console.sh
@@ -425,6 +427,34 @@ contains "kernel cmdline in isolinux.cfg has console=ttyS0" \
 contains "kernel cmdline in grub.cfg has console=ttyS0" \
     "console=ttyS0" "$E2E_GRUB"
 
+echo ""
+
+# ---------------------------------------------------------------------------
+# T16: live-config.username=orionx in BOTH static bootloader cfgs (rc9 hotfix, DEC-PHASE10-018)
+# ---------------------------------------------------------------------------
+# DUAL AUTHORITY GUARD: iso/config/includes.binary/isolinux/isolinux.cfg and
+# iso/config/includes.binary/boot/grub/grub.cfg are copied verbatim by
+# lb_binary_local-includes AFTER live-build generates configs from
+# --bootappend-live. They override --bootappend-live. Hardware attestation on
+# rc8 revealed that T3/T4 (which only check iso/auto/config) PASSED while the
+# actual booted kernel cmdline lacked the tokens. T16 + T17 close the gap by
+# asserting the live-config.username/hostname tokens are present in BOTH static
+# cfgs that ACTUALLY reach the booted kernel. Until issue #64 consolidates to a
+# single authority (v2.1), all three authorities must match.
+ISOLINUX_CFG="$REPO_ROOT/iso/config/includes.binary/isolinux/isolinux.cfg"
+GRUB_CFG="$REPO_ROOT/iso/config/includes.binary/boot/grub/grub.cfg"
+
+echo "[T16] live-config.username=orionx in BOTH static bootloader cfgs"
+# Use grep -F for literal matching; BSD grep (macOS) does not support \s in -E mode
+ISOLINUX_APPEND=$(grep 'append boot=live' "$ISOLINUX_CFG" | head -1)
+contains "live-config.username=orionx in isolinux.cfg live label" "live-config.username=orionx" "$ISOLINUX_APPEND"
+GRUB_LINUX=$(grep 'linux /live/vmlinuz boot=live' "$GRUB_CFG" | head -1)
+contains "live-config.username=orionx in grub.cfg Orion-X Live menuentry" "live-config.username=orionx" "$GRUB_LINUX"
+echo ""
+
+echo "[T17] live-config.hostname=orionx-cyberdeck in BOTH static bootloader cfgs"
+contains "live-config.hostname=orionx-cyberdeck in isolinux.cfg live label" "live-config.hostname=orionx-cyberdeck" "$ISOLINUX_APPEND"
+contains "live-config.hostname=orionx-cyberdeck in grub.cfg Orion-X Live menuentry" "live-config.hostname=orionx-cyberdeck" "$GRUB_LINUX"
 echo ""
 
 # ---------------------------------------------------------------------------

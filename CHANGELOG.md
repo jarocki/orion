@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.0.0-rc9] - 2026-06-22
+
+Ninth release candidate — **hardware-attestation hotfix (iteration 3)**: dual-authority
+kernel cmdline bug surfaces two iterations deep. Operator booted rc8 on hardware and
+confirmed Bug A's realpath fix (DEC-PHASE10-017) IS working — `orionx-control-center
+--version` printed `2.0.0-rc5-w9-2` cleanly, confirming the rc8 ISO was booted. But
+`cat /proc/cmdline` showed neither `live-config.username=orionx` nor
+`live-config.hostname=orionx-cyberdeck` on the kernel cmdline. `whoami` returned
+`user`, hostname remained `debian`. The cyberdeck identity was still broken despite
+T3/T4 having passed in rc8 review.
+
+### Root cause (DEC-PHASE10-018)
+
+**DUAL AUTHORITY for kernel cmdline** — two competing surfaces both write bootloader
+configs, but only one actually reaches the booted kernel:
+
+1. `iso/auto/config` line ~64: `--bootappend-live "..."` — the surface we have been
+   editing since rc7. live-build generates a bootloader config from this value.
+2. `iso/config/includes.binary/isolinux/isolinux.cfg` +
+   `iso/config/includes.binary/boot/grub/grub.cfg` — **static files** introduced in
+   DEC-PHASE7-024 (W7-3, issue #35) to pre-bake serial-console support. The
+   `lb_binary_local-includes` stage copies these files verbatim into the ISO binary
+   tree **after** the bootloader-generation stage. They overwrite whatever live-build
+   generated from `--bootappend-live`.
+
+Every `--bootappend-live` edit since rc7 has been a silent no-op. The static cfgs
+still carried rc4-era cmdlines with no live-config tokens. DEC-PHASE7-024 introduced
+this mechanism deliberately for issue #35, but established no invariant requiring the
+static cfgs to stay in sync with `--bootappend-live`. The drift was invisible because
+T3/T4 only checked `iso/auto/config` — the LOSING authority.
+
+### Fixed
+
+- **`iso/config/includes.binary/isolinux/isolinux.cfg`** — appended
+  `live-config.username=orionx live-config.hostname=orionx-cyberdeck` to the `append`
+  line in BOTH the `live` label (default) and `live-failsafe` label. This is the
+  EFFECTIVE BIOS-boot kernel cmdline authority. Updated header comment to carry the
+  DUAL AUTHORITY WARNING and cross-reference DEC-PHASE10-018 and issue #64.
+
+- **`iso/config/includes.binary/boot/grub/grub.cfg`** — same tokens appended to the
+  `linux` line in BOTH `menuentry` blocks ("Orion-X Live" and "Orion-X Live
+  (failsafe)"). This is the EFFECTIVE UEFI-boot kernel cmdline authority. Same DUAL
+  AUTHORITY WARNING header added.
+
+- **`tests/unit/test_iso_serial_console.sh`** — added T16 and T17 asserting that
+  `live-config.username=orionx` and `live-config.hostname=orionx-cyberdeck` are
+  present in the `append`/`linux` lines of BOTH static bootloader cfgs (the WINNING
+  authorities), not just in `iso/auto/config` (the LOSING authority). T3/T4 are
+  preserved — they still guard `iso/auto/config` so all three authorities are now
+  independently tested. Closes the test gap that allowed T3/T4 to pass while hardware
+  showed the tokens missing.
+
+### Meta-lesson (DEC-PHASE10-018 — hardware attestation iteration 3)
+
+**When a state has multiple authorities, EVERY authority must be tested; ideally all
+are consolidated to one.** T3/T4 tested the wrong (losing) authority and gave false
+confidence for two release candidates. The structural lesson: any time
+`lb_binary_local-includes` or a similar override mechanism is present, the files it
+copies are the real authority — and those are what the regression tests must check.
+
+Issue #64 tracks v2.1 consolidation to a single bootloader cmdline authority (likely
+a template or generator so `--bootappend-live` and the static cfgs cannot drift). For
+rc9, patching all three authorities and guarding all three with tests is the
+minimum-impact, maximum-safety fix within scope.
+
+### Cross-references
+
+- #62: dual `orionx-help` authority, stale MOTD (fixed rc8).
+- #63: `orionx-control-center` realpath fix (fixed rc8, confirmed working on rc8 hardware).
+- #64: v2.1 consolidation — single bootloader cmdline authority (tracked, deferred).
+- DEC-PHASE7-024: original dual-authority mechanism (pre-baked bootloader via includes.binary/).
+- DEC-PHASE10-017: rc8 fixes (Bug A realpath, Bug B dual orionx-help, Bug C bare live-config params).
+- DEC-PHASE10-018: rc9 root cause — static cfgs override --bootappend-live; dual authority confirmed.
+
+---
+
 ## [v2.0.0-rc8] - 2026-06-19
 
 Eighth release candidate — **hardware-attestation hotfix bundle (iteration 2)**,
