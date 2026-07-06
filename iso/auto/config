@@ -61,7 +61,7 @@ lb config noauto \
     --debian-installer false \
     --debian-installer-distribution "$DISTRIBUTION" \
     --debian-installer-gui false \
-    --bootappend-live "boot=live components splash quiet persistence console=tty0 console=ttyS0,115200n8 live-config.username=orionx live-config.hostname=orionx-cyberdeck" \
+    --bootappend-live "boot=live components splash quiet persistence console=tty0 console=ttyS0,115200n8 live-config.username=orionx-operator live-config.hostname=orionx" \
     --bootappend-install "locales=en_US.UTF-8" \
     --bootloader "syslinux,grub-efi" \
     --iso-application "Orion-X Phoenix Edition" \

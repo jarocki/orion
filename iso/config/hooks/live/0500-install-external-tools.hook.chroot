@@ -8,12 +8,22 @@
 # @status accepted
 # @rationale Debian Bullseye does not ship ollama via apt. The binary .deb is
 #   downloaded and installed here during the chroot phase so ollama ends up in
-#   the squashfs image. Unlike zeek/ghidra (soft-fail, warn-and-continue),
-#   ollama is LOAD-BEARING for the v2.0.0 Nebula AI headline feature: if ollama
-#   is absent, nebula-runtime.service will never start and the Control Center
-#   will show "Runtime: down" indefinitely. Therefore: install failure = LOUD
-#   (build aborts with non-zero exit), not soft. This is an explicit, documented
-#   divergence from the zeek/ghidra soft-fail pattern. References: DEC-PHASE10-007.
+#   the squashfs image. Unlike zeek (soft-fail, warn-and-continue), ollama is
+#   LOAD-BEARING for the v2.0.0 Nebula AI headline feature: if ollama is absent,
+#   nebula-runtime.service will never start and the Control Center will show
+#   "Runtime: down" indefinitely. Therefore: install failure = LOUD (build aborts
+#   with non-zero exit), not soft. References: DEC-PHASE10-007.
+#
+# @decision DEC-PHASE11-004
+# @title Ghidra bulk staging deferred from base ISO to W11-8 optional installer
+# @status accepted
+# @rationale W11-2 debloat pass removes Ghidra from the base ISO to reduce size
+#   per DEC-PHASE11-003. Ghidra (~500 MB download + JRE) is an optional reverse-
+#   engineering tool that does not serve the core forensic/network mission without
+#   prior operator context. Post-boot operators who need Ghidra run:
+#     /opt/orionx/optional/install-ghidra.sh
+#   That script (W11-8) follows the optional-installer framework convention:
+#   preflight banner + network check + sentinel drop. References: DEC-PHASE11-004.
 
 set -euo pipefail
 
@@ -44,18 +54,6 @@ pip3 install volatility3 || echo "WARNING: volatility3 install failed"
     # Refresh apt cache to clear any error state from the failed source
     apt-get update >/dev/null 2>&1 || true
 }
-
-# Ghidra (download binary release)
-# Upstream GitHub release URL may move or 404. Wrap entire block for soft-fail.
-{
-    GHIDRA_VERSION="11.3.1"
-    GHIDRA_DATE="20250205"
-    wget -nv -O /tmp/ghidra.zip "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_DATE}.zip"
-    unzip -q /tmp/ghidra.zip -d /opt/
-    ln -sf /opt/ghidra_${GHIDRA_VERSION}_PUBLIC /opt/ghidra
-    rm /tmp/ghidra.zip
-    echo 'export PATH="/opt/ghidra:$PATH"' >> /etc/profile.d/ghidra.sh
-} || echo "WARNING: ghidra install failed — upstream release URL unavailable"
 
 # Autopsy (requires Java, complex install — placeholder)
 echo "NOTE: Autopsy requires manual installation. See docs/INSTALL_AUTOPSY.md"

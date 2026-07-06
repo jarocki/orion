@@ -5,8 +5,8 @@
 # @title ISO build pipeline modernization for Phase 7 integration testing
 # @status accepted
 # @rationale W7-1 introduced --dry-run mode for path-resolution validation on
-#   non-Linux hosts, standardized the version string to v2.0.0-rc4 (Phase 9
-#   rc4 release), fixed the directory reference from legacy uppercase ISO/ to
+#   non-Linux hosts, standardized the version string to v2.0.0-rc9 (current cut;
+#   per W11-2 hygiene pass issue #63), fixed the directory reference from legacy uppercase ISO/ to
 #   lowercase iso/ (the actual live-build tree), and moved the logfile from a
 #   repo-root litter path to tmp/ per Sacred Practice 3. A single version
 #   constant (VERSION) is the sole authority — never duplicated. The script
@@ -20,7 +20,7 @@
 #                Exits 0 on success or non-zero on validation failure.
 #                Required for non-Linux hosts and CI path-resolution checks.
 #
-#   --version    Override VERSION (default: v2.0.0-rc4). Must start with 'v'.
+#   --version    Override VERSION (default: v2.0.0-rc9). Must start with 'v'.
 #
 # Output:
 #   output/orionx-phoenix-edition-<VERSION>.iso (full build only)
@@ -74,7 +74,7 @@ parse_args() {
                 # consumers that expect the canonical 'vMAJOR.MINOR.PATCH-...' form.
                 if [[ "$VERSION" != v* ]]; then
                     echo "ERROR: --version value must start with 'v' (got: '$VERSION')" >&2
-                    echo "       Example: --version v2.0.0-rc4" >&2
+                    echo "       Example: --version v2.0.0-rc9" >&2
                     exit 1
                 fi
                 shift 2
@@ -382,7 +382,7 @@ stage_application_content() {
         cat > "$stage_dir/opt/orionx/theme/wallpapers/README.txt" <<'WALLPAPER_EOF'
 Orion-X Phoenix Edition Wallpapers
 This directory is intended for branded desktop wallpapers.
-At v2.0.0-rc4, the phoenix wallpaper asset is staged from theme/wallpapers/.
+At v2.0.0-rc9, the phoenix wallpaper asset is staged from theme/wallpapers/.
 Default Debian wallpapers are used at runtime.
 WALLPAPER_EOF
     fi
@@ -408,6 +408,176 @@ WALLPAPER_EOF
     cp "$REPO_ROOT/README.md" "$stage_dir/usr/share/doc/orionx/README.md" 2>/dev/null || true
 
     log "Application content staged: $(find "$stage_dir/opt/orionx" "$stage_dir/usr/share/doc/orionx" -type f 2>/dev/null | wc -l) files"
+}
+
+# ---------------------------------------------------------------------------
+# Generate bootloader configs from the single --bootappend-live source
+#
+# @decision DEC-PHASE11-012
+# @title Bootloader cmdline single-authority: generate isolinux.cfg + grub.cfg
+#   from --bootappend-live in iso/auto/config at build time (issue #64)
+# @status accepted
+# @rationale The rc7-rc9 hotfix arc directly edited iso/config/includes.binary/
+#   isolinux.cfg and iso/config/includes.binary/boot/grub/grub.cfg to inject
+#   live-config.username= and live-config.hostname= tokens. Hardware attestation
+#   of rc9 (2026-07-05) proved that /proc/cmdline never showed the tokens despite
+#   three release cuts of edits — the static cfg dual-authority was dead-authority.
+#   DEC-PHASE10-018 identified the hazard; this function retires it.
+#
+#   Single-authority discipline (Sacred Practice #12): iso/auto/config's
+#   --bootappend-live string is the ONE authoritative source. This function
+#   reads it, validates it, and writes both bootloader configs from embedded
+#   HEREDOC templates. The generated files carry a "GENERATED — do not edit"
+#   marker so any human-edit attempt is immediately visible in git diff.
+#
+#   The identity tokens this function injects (orionx-operator / orionx) are
+#   per the DEC-PHASE11-012 product identity decision (supersedes
+#   DEC-PHASE10-017 / DEC-PHASE10-018 rc7-rc9 identity of orionx / orionx-cyberdeck).
+#
+#   Callers: main() — invoked before configure_live_build() so the generated
+#   files land in iso/config/includes.binary/ before lb_binary_local-includes
+#   copies them into binary/.
+# ---------------------------------------------------------------------------
+generate_bootloader_configs() {
+    log "Generating bootloader configs from single --bootappend-live source (DEC-PHASE11-012)..."
+
+    local auto_config="$ISO_DIR/auto/config"
+    if [[ ! -f "$auto_config" ]]; then
+        log "ERROR: iso/auto/config not found at $auto_config"
+        log "       Cannot extract --bootappend-live string — build aborted."
+        exit 1
+    fi
+
+    # Extract the --bootappend-live value from iso/auto/config.
+    # The line has the form:
+    #   --bootappend-live "boot=live components ... live-config.username=... live-config.hostname=..."
+    # We use grep + sed to isolate the quoted string content.
+    local bootappend_line
+    bootappend_line="$(grep -- '--bootappend-live' "$auto_config" | grep -v '^\s*#' | head -1)"
+    if [[ -z "$bootappend_line" ]]; then
+        log "ERROR: --bootappend-live not found in $auto_config"
+        log "       The single-authority cmdline source is missing — build aborted."
+        exit 1
+    fi
+
+    # Extract the quoted value: everything between the first " and last " on the line
+    local bootappend
+    bootappend="$(echo "$bootappend_line" | sed 's/.*--bootappend-live[[:space:]]*"\([^"]*\)".*/\1/')"
+    if [[ -z "$bootappend" ]]; then
+        log "ERROR: Failed to parse --bootappend-live value from: $bootappend_line"
+        exit 1
+    fi
+
+    # Validate that the required identity tokens are present.
+    if ! echo "$bootappend" | grep -q 'live-config.username='; then
+        log "ERROR: --bootappend-live does not contain live-config.username= token"
+        log "       Update iso/auto/config before building. (DEC-PHASE11-012)"
+        exit 1
+    fi
+    if ! echo "$bootappend" | grep -q 'live-config.hostname='; then
+        log "ERROR: --bootappend-live does not contain live-config.hostname= token"
+        log "       Update iso/auto/config before building. (DEC-PHASE11-012)"
+        exit 1
+    fi
+
+    log "  --bootappend-live: $bootappend"
+
+    # Failsafe kernel args (label-specific, orthogonal to --bootappend-live)
+    local failsafe_extra="nosplash text noapic noapm nodma nomce nosmp nolapic"
+
+    # Output paths
+    local isolinux_dir="$ISO_DIR/config/includes.binary/isolinux"
+    local grub_dir="$ISO_DIR/config/includes.binary/boot/grub"
+    mkdir -p "$isolinux_dir" "$grub_dir"
+
+    local isolinux_cfg="$isolinux_dir/isolinux.cfg"
+    local grub_cfg="$grub_dir/grub.cfg"
+
+    # -----------------------------------------------------------------------
+    # Generate isolinux.cfg (BIOS bootloader)
+    # -----------------------------------------------------------------------
+    cat > "$isolinux_cfg" << ISOLINUX_EOF
+# GENERATED — do not edit — regenerate via scripts/build-iso.sh
+#
+# @decision DEC-PHASE11-012
+# @title Bootloader cmdline single-authority (issue #64)
+# @status accepted
+# @rationale This file is generated by scripts/build-iso.sh::generate_bootloader_configs()
+#   from the single --bootappend-live source in iso/auto/config. Direct edits
+#   will be overwritten on the next build. The rc7-rc9 dual-authority arc (where
+#   this file was hand-edited without effect on /proc/cmdline) is retired.
+#   References: DEC-PHASE11-012, DEC-PHASE10-018 (superseded), issue #64, issue #65.
+#
+# Generated from: iso/auto/config::--bootappend-live
+# Active cmdline (live label):
+#   $bootappend
+#
+# timeout: units are 1/10th second. timeout 10 = 1.0 second before auto-boot.
+# prompt 0: do not prompt for user input (auto-boot after timeout).
+
+serial 0 115200
+default live
+timeout 10
+prompt 0
+
+label live
+    menu label Orion-X Live
+    kernel /live/vmlinuz
+    initrd /live/initrd.img
+    append $bootappend
+
+label live-failsafe
+    menu label Orion-X Live (failsafe)
+    kernel /live/vmlinuz
+    initrd /live/initrd.img
+    append $bootappend $failsafe_extra
+ISOLINUX_EOF
+
+    log "  Generated: $isolinux_cfg"
+
+    # -----------------------------------------------------------------------
+    # Generate grub.cfg (UEFI bootloader)
+    # -----------------------------------------------------------------------
+    cat > "$grub_cfg" << GRUB_EOF
+# GENERATED — do not edit — regenerate via scripts/build-iso.sh
+#
+# @decision DEC-PHASE11-012
+# @title Bootloader cmdline single-authority (issue #64)
+# @status accepted
+# @rationale This file is generated by scripts/build-iso.sh::generate_bootloader_configs()
+#   from the single --bootappend-live source in iso/auto/config. Direct edits
+#   will be overwritten on the next build. The rc7-rc9 dual-authority arc (where
+#   this file was hand-edited without effect on /proc/cmdline) is retired.
+#   References: DEC-PHASE11-012, DEC-PHASE10-018 (superseded), issue #64, issue #65.
+#
+# Generated from: iso/auto/config::--bootappend-live
+# Active cmdline (Orion-X Live menuentry):
+#   $bootappend
+#
+# set timeout=1: auto-boot after 1 second with no input.
+# set default=0: boot the first menuentry (Orion-X Live).
+
+serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
+terminal_input --append serial
+terminal_output --append serial
+
+set timeout=1
+set default=0
+
+menuentry "Orion-X Live" {
+    linux /live/vmlinuz $bootappend
+    initrd /live/initrd.img
+}
+
+menuentry "Orion-X Live (failsafe)" {
+    linux /live/vmlinuz $bootappend $failsafe_extra
+    initrd /live/initrd.img
+}
+GRUB_EOF
+
+    log "  Generated: $grub_cfg"
+    log "Bootloader configs generated from single --bootappend-live source."
+    log "  Identity tokens confirmed: $(echo "$bootappend" | grep -oE 'live-config\.(username|hostname)=[^ ]*' | tr '\n' ' ')"
 }
 
 # ---------------------------------------------------------------------------
@@ -527,7 +697,8 @@ fi
 
 prepare_build_env
 stage_application_content       # DEC-PHASE8-004: stage v2.0.0 app content (fix #43)
-stage_nebula_model              # DEC-PHASE10-008: stage Mistral-7B + integrity chain
+stage_nebula_model              # DEC-PHASE10-008: stage Qwen2.5-3B + integrity chain
+generate_bootloader_configs     # DEC-PHASE11-012: write isolinux.cfg + grub.cfg from single --bootappend-live source (issue #64)
 configure_live_build
 build_iso
 

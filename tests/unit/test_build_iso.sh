@@ -127,14 +127,21 @@ run_test "build-iso.sh is executable" "[[ -x '$BUILD_SCRIPT' ]]"
 echo ""
 
 # ---------------------------------------------------------------------------
-# T2: Version flag — script must contain v2.0.0-rc4, not v1.5.5 or rc1
-# rc4: version literal bumped to v2.0.0-rc4 (DEC-PHASE9 version coherence)
+# T2: Version flag — script must contain v2.0.0-rc9, not v1.5.5 or stale rc4
+# rc9: version literal updated to v2.0.0-rc9 per W11-2 hygiene pass (issue #63)
+# The version default in build-iso.sh must always match the current cut cycle.
+# @decision DEC-PHASE7-002: VERSION="${ORIONX_VERSION:-v2.0.0-rc9}" is the sole
+#   version authority; test literal matches current source default (W11-2 cleanup).
 # ---------------------------------------------------------------------------
 echo "[T2] Version string"
 SCRIPT_CONTENT="$(cat "$BUILD_SCRIPT")"
 not_contains "script does not hardcode v1.5.5" "v1.5.5" "$SCRIPT_CONTENT"
 not_contains "script does not use stale v2.0.0-rc1 default" "v2.0.0-rc1" "$SCRIPT_CONTENT"
-contains "script contains v2.0.0-rc4 default" "v2.0.0-rc4" "$SCRIPT_CONTENT"
+# The stale rc4 literal must be absent from functional code. We check via grep -v comment lines.
+SCRIPT_CODE_NOCOMMENTS="$(echo "$SCRIPT_CONTENT" | grep -v '^\s*#')"
+STALE_RC4="v2.0.0-rc""4"  # split so this test file itself is not a false hit
+not_contains "script does not use stale rc4 default in functional code" "$STALE_RC4" "$SCRIPT_CODE_NOCOMMENTS"
+contains "script contains v2.0.0-rc9 default" "v2.0.0-rc9" "$SCRIPT_CONTENT"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -173,7 +180,7 @@ run_test "--dry-run exits 0 with iso/ present" \
     "(cd '$FAKE_REPO_OK' && bash scripts/build-iso.sh --dry-run)"
 contains "--dry-run emits 'iso/ directory found'" "iso/ directory found" "$DRY_OUTPUT"
 contains "--dry-run emits 'dry-run] All path'" "[dry-run] All path" "$DRY_OUTPUT"
-contains "--dry-run emits version v2.0.0-rc4" "v2.0.0-rc4" "$DRY_OUTPUT"
+contains "--dry-run emits version v2.0.0-rc9" "v2.0.0-rc9" "$DRY_OUTPUT"
 contains "--dry-run reports iso_dir path" "iso_dir" "$DRY_OUTPUT"
 not_contains "--dry-run does not invoke lb build" "lb build" "$DRY_OUTPUT"
 echo ""
@@ -204,7 +211,7 @@ VER_OUTPUT="$((cd "$FAKE_REPO_VER" && bash scripts/build-iso.sh --dry-run --vers
 run_test "--version override exits 0" \
     "(cd '$FAKE_REPO_VER' && bash scripts/build-iso.sh --dry-run --version v99.0.0-test)"
 contains "--version appears in output" "v99.0.0-test" "$VER_OUTPUT"
-not_contains "default version v2.0.0-rc4 not in overridden output" "v2.0.0-rc4" "$VER_OUTPUT"
+not_contains "default version rc9 not in overridden output (v-flag overrides default)" "v2.0.0-rc9" "$VER_OUTPUT"
 echo ""
 
 # ---------------------------------------------------------------------------
