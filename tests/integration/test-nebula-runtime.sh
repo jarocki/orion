@@ -88,7 +88,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "=== W10-1 Nebula Runtime: End-to-End Integrity Integration Test ==="
+echo "=== W11-1 Nebula Runtime: End-to-End Integrity Integration Test (Qwen2.5-3B-Instruct Q4_K_M) ==="
 echo "    ISO: $ISO_PATH"
 
 # ===========================================================================
@@ -155,16 +155,16 @@ MULTI_USER_WANTS="$SQF/etc/systemd/system/multi-user.target.wants"
 # ===========================================================================
 # 2. DEFINITIVE: sha256sum -c MANIFEST.sha256 (end-to-end integrity proof)
 #
-#    This is the canonical proof that the entire W10-1 staging + integrity
+#    This is the canonical proof that the entire W11-1 staging + integrity
 #    pipeline works:
 #      build-iso.sh stage_nebula_model()
-#        → download Mistral-7B-Instruct-v0.3 Q4_K_M GGUF
+#        → download Qwen2.5-3B-Instruct Q4_K_M GGUF (DEC-PHASE11-002)
 #        → sha256sum verify against nebula-model-manifest.json
 #        → write MANIFEST.sha256 to includes.chroot/opt/orionx/nebula/models/
 #      live-build squashfs sealing
 #        → model file + MANIFEST byte-for-byte copied into squashfs
 #      THIS TEST: extract squashfs, run sha256sum -c MANIFEST.sha256
-#        → PASS = every byte of the 4.4 GB model is exactly what was staged
+#        → PASS = every byte of the ~1.9 GB model is exactly what was staged
 # ===========================================================================
 section "DEFINITIVE: sha256sum -c MANIFEST.sha256 (end-to-end integrity proof)"
 
@@ -280,7 +280,7 @@ fi
 echo "${GREEN}PASS${NC}: Nebula runtime integration test passed — all $PASS assertions passed"
 echo ""
 echo "NOTE: The sha256sum PASS above is DEFINITIVE proof that:"
-echo "  - The Mistral-7B-Instruct-v0.3 Q4_K_M GGUF was staged byte-for-byte into the squashfs"
+echo "  - The Qwen2.5-3B-Instruct Q4_K_M GGUF was staged byte-for-byte into the squashfs (DEC-PHASE11-002)"
 echo "  - MANIFEST.sha256 records the correct SHA-256 for integrity.py to verify at boot"
-echo "  - The full W10-1 staging + integrity chain (DEC-PHASE10-008/009) is functional"
+echo "  - The full W11-1 staging + integrity chain (DEC-PHASE10-008/009, DEC-PHASE11-002) is functional"
 exit 0

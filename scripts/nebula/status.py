@@ -12,10 +12,10 @@ Output format (JSON to stdout)::
         "ollama_version": "0.3.12" | null,
         "integrity_state": "OK" | "FAIL" | "UNKNOWN",
         "integrity_detail": "<human-readable>",
-        "model_name": "mistral:7b-instruct-v0.3-q4_K_M" | null,
-        "model_size_bytes": 4368438976 | null,
+        "model_name": "qwen2.5:3b-instruct-q4_K_M" | null,
+        "model_size_bytes": 1940000000 | null,
         "manifest_present": true | false,
-        "status_summary": "Runtime: ready, model: mistral-7b-instruct-v0.3-Q4_K_M (4.4 GB, integrity OK)"
+        "status_summary": "Runtime: ready, model: Qwen2.5-3B-Instruct-Q4_K_M (~1.9 GB, integrity OK)"
                         | "Runtime: down"
                         | "Runtime: integrity-failed"
     }

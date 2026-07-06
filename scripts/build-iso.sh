@@ -154,9 +154,10 @@ check_prerequisites() {
 # @decision DEC-PHASE10-008
 # @title Nebula model staging: HuggingFace download + SHA-256 verify + rsync into chroot
 # @status accepted
-# @rationale W10-1 bundles Mistral-7B-Instruct-v0.3 Q4_K_M (4.4 GB, Apache-2.0) directly
-#   into the ISO so the system works fully offline on first boot (DEC-006 LOCAL-ONLY).
-#   The model is NOT committed to git (4.4 GB would bloat every clone 10x); instead
+# @rationale W11-1 swaps the bundled model to Qwen2.5-3B-Instruct Q4_K_M (~1.9 GB, Apache-2.0)
+#   per DEC-PHASE11-002 (Mistral-7B-Instruct-v0.3 Q4_K_M retired). The model is bundled
+#   directly into the ISO so the system works fully offline on first boot (DEC-006 LOCAL-ONLY).
+#   The model is NOT committed to git (~1.9 GB would still bloat every clone); instead
 #   this function downloads it from HuggingFace at build time, verifies SHA-256 against
 #   the pinned manifest, and rsyncs into includes.chroot so live-build picks it up.
 #   ORIONX_MODEL_LOCAL env var provides an air-gap-builder escape hatch: when set,

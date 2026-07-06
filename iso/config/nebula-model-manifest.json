@@ -1,16 +1,16 @@
 {
-  "_doc": "Nebula AI bundled model manifest — single authority for the pinned HuggingFace model URL, SHA-256, filename, and metadata. Consumed at build time by stage_nebula_model() in scripts/build-iso.sh and at boot time indirectly via the MANIFEST.sha256 generated from this source. DEC-PHASE10-002 (model selection: Mistral-7B-Instruct-v0.3 Q4_K_M, Apache-2.0), DEC-PHASE10-008 (HF staging + ORIONX_MODEL_LOCAL air-gap fallback). Mirror swap from TheBloke (gated) to bartowski (non-gated) per closes #60 — DEC-PHASE10-002 Mistral-7B-Instruct-v0.3 Q4_K_M model choice preserved; same Apache 2.0 license.",
+  "_doc": "Nebula AI bundled model manifest — single authority for the pinned HuggingFace model URL, SHA-256, filename, and metadata. Consumed at build time by stage_nebula_model() in scripts/build-iso.sh and at boot time indirectly via the MANIFEST.sha256 generated from this source. DEC-PHASE11-002 (model swap: Qwen2.5-3B-Instruct Q4_K_M, Apache-2.0), DEC-PHASE10-008 (HF staging + ORIONX_MODEL_LOCAL air-gap fallback). Mirror: bartowski primary / Qwen upstream fallback per DEC-PHASE11-002.",
   "manifest_schema_version": 1,
-  "model_name": "mistral-7b-instruct-v0.3-Q4_K_M",
-  "model_filename": "mistral-7b-instruct-v0.3.Q4_K_M.gguf",
-  "model_url_primary": "https://huggingface.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf",
-  "model_url_fallback": "https://huggingface.co/MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF/resolve/main/Mistral-7B-Instruct-v0.3.Q4_K_M.gguf",
-  "model_sha256": "1270d22c0fbb3d092fb725d4d96c457b7b687a5f5a715abe1e818da303e562b6",
-  "model_size_bytes": 4368438976,
+  "model_name": "qwen2.5-3b-instruct-Q4_K_M",
+  "model_filename": "Qwen2.5-3B-Instruct-Q4_K_M.gguf",
+  "model_url_primary": "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf",
+  "model_url_fallback": "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
+  "model_sha256": "TBD-VERIFY-AT-DOWNLOAD",
+  "model_size_bytes": 1940000000,
   "model_quantization": "Q4_K_M",
   "model_license": "Apache-2.0",
-  "ollama_model_tag": "mistral:7b-instruct-v0.3-q4_K_M",
-  "_integrity_note": "model_sha256 is 'TBD-VERIFY-AT-DOWNLOAD' — the first successful build will compute the real SHA-256 from the downloaded file and a follow-up commit will pin the verified value. This is the standard trust-on-first-use pattern with subsequent integrity lockdown (DEC-PHASE10-008). Once verified, the SHA-256 must be a 64-char lowercase hex string. model_filename (lowercase) is the destination name written by wget -O in stage_nebula_model(); source URL filenames may differ in case (bartowski uses titlecase) — the manifest filename field governs the on-disk name, not the URL.",
-  "_size_note": "model_size_bytes is the expected on-disk size of the Q4_K_M GGUF (approximately 4.4 GB). The ISO size jumps from ~1.8 GB (rc4) to ~6 GB with this model bundled (DEC-PHASE10-003 target). A WARN (not fail) is emitted by build-iso.sh if the final ISO exceeds 7 GB (DEC-PHASE10-012).",
-  "_mirror_note": "Primary: bartowski/Mistral-7B-Instruct-v0.3-GGUF — post-TheBloke community standard for GGUF mirrors, non-gated for Apache 2.0 models. Fallback: MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF — also non-gated. Both verified non-gated as of iter-4 (CI run 27248652260 failed on TheBloke gating). hf_commit_sha removed — no pinned SHA from bartowski yet; pin in same follow-up commit that pins model_sha256 per #56."
+  "ollama_model_tag": "qwen2.5:3b-instruct-q4_K_M",
+  "_integrity_note": "model_sha256 is 'TBD-VERIFY-AT-DOWNLOAD' — the first successful build will compute the real SHA-256 from the downloaded file and a follow-up commit will pin the verified value. This is the standard trust-on-first-use pattern with subsequent integrity lockdown (DEC-PHASE10-008). Once verified, the SHA-256 must be a 64-char lowercase hex string. model_filename governs the on-disk name written by wget -O in stage_nebula_model(); source URL filenames may differ in case — the manifest filename field is authoritative.",
+  "_size_note": "model_size_bytes is the expected on-disk size of the Qwen2.5-3B-Instruct Q4_K_M GGUF (approximately 1.9 GB). ISO size target ≤3.0 GB compressed (Phase 11 lean-release goal ~2.8 GB per DEC-PHASE11-001). A WARN (not fail) is emitted by build-iso.sh if the final ISO exceeds 7 GB (DEC-PHASE10-012); effective warn threshold for content-presence size check relaxed to 3 GB for this smaller model per DEC-PHASE10-012.",
+  "_mirror_note": "Primary: bartowski/Qwen2.5-3B-Instruct-GGUF — post-TheBloke community standard for GGUF mirrors, non-gated for Apache-2.0 models. Fallback: Qwen/Qwen2.5-3B-Instruct-GGUF — official upstream Qwen team mirror, non-gated. hf_commit_sha deferred — pin in same follow-up commit that pins model_sha256 per #56 / #57 pattern."
 }
