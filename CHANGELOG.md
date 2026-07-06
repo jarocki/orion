@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.1.0] - Unreleased
+
+Phase 11 lean-release tightening pass (v2.1.0 arc — W11-1 through W11-10). All Phase 10
+capabilities (Nebula chat, MCP tool server, Constraint Layer, Ralph Loop, ATT&CK/ATLAS,
+Merkle audit, auto-healing) are preserved. The tightening axes: smaller mission-fit LLM,
+mission-fit debloat, post-boot optional-installer framework, and a unique Orion-X cyberdeck
+visual identity. Target: ≤3.0 GB compressed ISO (~2.8 GB). See DEC-PHASE11-001.
+
+### Changed (W11-1)
+
+- **Nebula bundled model swap — Mistral-7B-Instruct-v0.3 Q4_K_M → Qwen2.5-3B-Instruct
+  Q4_K_M** (DEC-PHASE11-002). `iso/config/nebula-model-manifest.json` updated:
+  - `model_name`: `qwen2.5-3b-instruct-Q4_K_M`
+  - `model_filename`: `Qwen2.5-3B-Instruct-Q4_K_M.gguf`
+  - `model_url_primary`: bartowski/Qwen2.5-3B-Instruct-GGUF (non-gated community GGUF
+    mirror; replaces bartowski/Mistral-7B-Instruct-v0.3-GGUF)
+  - `model_url_fallback`: Qwen/Qwen2.5-3B-Instruct-GGUF (official Qwen team upstream)
+  - `ollama_model_tag`: `qwen2.5:3b-instruct-q4_K_M`
+  - `model_size_bytes`: ~1.94 GB (was ~4.4 GB; −2.5 GB delta, largest single ISO reduction)
+  - `model_license`: Apache-2.0 (unchanged license class from Mistral; clean redistribution)
+  - `model_sha256`: trust-on-first-use sentinel `TBD-VERIFY-AT-DOWNLOAD` (per
+    DEC-PHASE10-008; pin the real SHA-256 in the follow-up commit after the first green CI
+    build of W11-1)
+- **Ollama daemon, AppArmor profile, and the 3 W10-1 systemd units
+  (`nebula-integrity-check`, `nebula-runtime`, `nebula-warmup`) preserved verbatim** — only
+  the model file swaps (DEC-PHASE11-002).
+- **Content-presence section 15** (`tests/integration/test-iso-content-presence.sh`) updated
+  for the new model filename and size; warn threshold relaxed from 4 GB to 3 GB for the
+  smaller Qwen model (DEC-PHASE10-012).
+- **First-inference QEMU latency benchmark** added to
+  `tests/integration/test-qemu-boot.sh` (103-line section recording Qwen2.5-3B cold-start
+  wall-clock time in the QEMU environment as the baseline for W11-1).
+- Build and status comment refreshes in `scripts/build-iso.sh` and
+  `scripts/nebula/status.py` to reflect the Qwen2.5-3B model identity.
+
+---
+
 ## [v2.0.0-rc9] - 2026-06-22
 
 Ninth release candidate — **hardware-attestation hotfix (iteration 3)**: dual-authority

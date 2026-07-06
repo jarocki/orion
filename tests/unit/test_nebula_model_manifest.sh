@@ -38,7 +38,7 @@ fail() {
 }
 
 echo "================================================================"
-echo "test_nebula_model_manifest.sh — W10-1 manifest structural tests"
+echo "test_nebula_model_manifest.sh — W11-1 manifest structural tests (Qwen2.5-3B-Instruct Q4_K_M)"
 echo "Manifest: $MANIFEST"
 echo "================================================================"
 echo ""
@@ -94,16 +94,16 @@ done
 echo ""
 
 # ===========================================================================
-# T3: model_filename matches expected name (DEC-PHASE10-002 invariant)
+# T3: model_filename matches expected name (DEC-PHASE11-002 invariant)
 # ===========================================================================
-echo "[T3] model_filename is mistral-7b-instruct-v0.3.Q4_K_M.gguf (DEC-PHASE10-002)"
+echo "[T3] model_filename is Qwen2.5-3B-Instruct-Q4_K_M.gguf (DEC-PHASE11-002)"
 MODEL_FILENAME="$(python3 -c "import json; print(json.load(open('$MANIFEST'))['model_filename'])" 2>/dev/null)"
-EXPECTED_FILENAME="mistral-7b-instruct-v0.3.Q4_K_M.gguf"
+EXPECTED_FILENAME="Qwen2.5-3B-Instruct-Q4_K_M.gguf"
 if [[ "$MODEL_FILENAME" == "$EXPECTED_FILENAME" ]]; then
     pass "model_filename == $EXPECTED_FILENAME"
 else
     fail "model_filename == $EXPECTED_FILENAME" \
-         "Got: $MODEL_FILENAME (DEC-PHASE10-002 mandates Mistral-7B-Instruct-v0.3 Q4_K_M)"
+         "Got: $MODEL_FILENAME (DEC-PHASE11-002 mandates Qwen2.5-3B-Instruct Q4_K_M)"
 fi
 echo ""
 
@@ -133,7 +133,7 @@ if [[ "$LICENSE" == "Apache-2.0" ]]; then
     pass "model_license == Apache-2.0"
 else
     fail "model_license == Apache-2.0" \
-         "Got: $LICENSE — Mistral-7B-Instruct-v0.3 is Apache-2.0"
+         "Got: $LICENSE — Qwen2.5-3B-Instruct is Apache-2.0 (DEC-PHASE11-002)"
 fi
 echo ""
 
@@ -163,37 +163,37 @@ for url_label_pair in "model_url_primary:$URL_PRIMARY" "model_url_fallback:$URL_
     else
         fail "$label is a HuggingFace HTTPS URL" "Got: $url"
     fi
-    if echo "$url" | grep -qi "mistral"; then
-        pass "$label URL references mistral model"
+    if echo "$url" | grep -qi "qwen"; then
+        pass "$label URL references qwen model"
     else
-        fail "$label URL references mistral model" "Got: $url"
+        fail "$label URL references qwen model" "Got: $url — expected Qwen2.5-3B-Instruct (DEC-PHASE11-002)"
     fi
 done
 echo ""
 
 # ===========================================================================
 # T8: model_size_bytes is a positive integer in the expected range
-#     (~4.4 GB = 4368438976 bytes; accept ±10% as valid range)
+#     (~1.9 GB; accept 1.5–2.5 GB as valid range for Qwen2.5-3B Q4_K_M)
 # ===========================================================================
-echo "[T8] model_size_bytes is in expected range for Q4_K_M (~4.4 GB)"
+echo "[T8] model_size_bytes is in expected range for Q4_K_M (~1.9 GB)"
 SIZE_BYTES="$(python3 -c "import json; print(json.load(open('$MANIFEST'))['model_size_bytes'])" 2>/dev/null)"
-LOWER=3900000000   # ~3.6 GB lower bound
-UPPER=5000000000   # ~4.7 GB upper bound
+LOWER=1500000000   # ~1.4 GB lower bound
+UPPER=2500000000   # ~2.3 GB upper bound
 if python3 -c "assert $LOWER < $SIZE_BYTES < $UPPER" 2>/dev/null; then
     SIZE_GB="$(python3 -c "print(f'{$SIZE_BYTES/1024/1024/1024:.2f}')")"
     pass "model_size_bytes=$SIZE_BYTES (~${SIZE_GB} GB) is in expected range"
 else
     fail "model_size_bytes in range [$LOWER, $UPPER]" \
-         "Got: $SIZE_BYTES — unexpected size for Mistral-7B Q4_K_M"
+         "Got: $SIZE_BYTES — unexpected size for Qwen2.5-3B Q4_K_M (DEC-PHASE11-002)"
 fi
 echo ""
 
 # ===========================================================================
 # T9: DEC decision references present in the manifest
 # ===========================================================================
-echo "[T9] DEC-PHASE10 decision references present in manifest"
+echo "[T9] DEC decision references present in manifest"
 MANIFEST_TEXT="$(cat "$MANIFEST")"
-for dec_ref in "DEC-PHASE10-002" "DEC-PHASE10-008"; do
+for dec_ref in "DEC-PHASE11-002" "DEC-PHASE10-008"; do
     if echo "$MANIFEST_TEXT" | grep -q "$dec_ref"; then
         pass "manifest references $dec_ref"
     else
@@ -204,43 +204,43 @@ done
 echo ""
 
 # ===========================================================================
-# T10: primary URL is bartowski mirror, fallback is MaziyarPanahi mirror
-#      (iter-4 mirror swap: TheBloke was gated, closes #60)
+# T10: primary URL is bartowski mirror, fallback is Qwen upstream mirror
+#      (DEC-PHASE11-002: bartowski primary / Qwen team upstream fallback)
 # ===========================================================================
-echo "[T10] URL mirrors are non-gated bartowski (primary) and MaziyarPanahi (fallback)"
+echo "[T10] URL mirrors are non-gated bartowski (primary) and Qwen upstream (fallback)"
 URL_PRIMARY="$(python3 -c "import json; print(json.load(open('$MANIFEST'))['model_url_primary'])" 2>/dev/null)"
 URL_FALLBACK="$(python3 -c "import json; print(json.load(open('$MANIFEST'))['model_url_fallback'])" 2>/dev/null)"
 if echo "$URL_PRIMARY" | grep -q "bartowski"; then
     pass "model_url_primary uses bartowski mirror (non-gated)"
 else
     fail "model_url_primary uses bartowski mirror" \
-         "Got: $URL_PRIMARY — expected bartowski/Mistral-7B-Instruct-v0.3-GGUF"
+         "Got: $URL_PRIMARY — expected bartowski/Qwen2.5-3B-Instruct-GGUF (DEC-PHASE11-002)"
 fi
-if echo "$URL_FALLBACK" | grep -q "MaziyarPanahi"; then
-    pass "model_url_fallback uses MaziyarPanahi mirror (non-gated)"
+if echo "$URL_FALLBACK" | grep -qi "Qwen/Qwen"; then
+    pass "model_url_fallback uses Qwen upstream mirror (non-gated)"
 else
-    fail "model_url_fallback uses MaziyarPanahi mirror" \
-         "Got: $URL_FALLBACK — expected MaziyarPanahi/Mistral-7B-Instruct-v0.3-GGUF"
+    fail "model_url_fallback uses Qwen upstream mirror" \
+         "Got: $URL_FALLBACK — expected Qwen/Qwen2.5-3B-Instruct-GGUF upstream (DEC-PHASE11-002)"
 fi
 echo ""
 
 # ===========================================================================
-# T11: TheBloke is NOT referenced in any URL (gated mirror guard, closes #60)
+# T11: No Mistral or TheBloke references remain in any URL (model-swap guard)
 # ===========================================================================
-echo "[T11] No TheBloke URL references remain in manifest (gated mirror guard)"
+echo "[T11] No Mistral or TheBloke URL references remain in manifest (model-swap guard)"
 if python3 -c "
 import json, sys
 d = json.load(open('$MANIFEST'))
 urls = [d.get('model_url_primary',''), d.get('model_url_fallback','')]
 for u in urls:
-    if 'TheBloke' in u:
+    if 'TheBloke' in u or 'mistral' in u.lower():
         sys.exit(1)
 sys.exit(0)
 " 2>/dev/null; then
-    pass "No TheBloke URL references in manifest (CI gating guard)"
+    pass "No Mistral or TheBloke URL references in manifest (model-swap guard, DEC-PHASE11-002)"
 else
-    fail "No TheBloke URL references in manifest" \
-         "TheBloke/Mistral-7B-Instruct-v0.3-GGUF is gated (closes #60) — replace with bartowski/MaziyarPanahi"
+    fail "No Mistral or TheBloke URL references in manifest" \
+         "Mistral/TheBloke URLs must be replaced with Qwen2.5-3B-Instruct mirrors (DEC-PHASE11-002)"
 fi
 echo ""
 

@@ -577,8 +577,9 @@ done
 # @decision DEC-PHASE10-008
 # @title stage_nebula_model: HF download + SHA-256 verify + MANIFEST generation
 # @status accepted
-# @rationale stage_nebula_model() downloads the Mistral-7B-Instruct-v0.3 Q4_K_M
-#   GGUF, verifies SHA-256 against nebula-model-manifest.json, and writes
+# @rationale stage_nebula_model() downloads the bundled model GGUF (W11-1:
+#   Qwen2.5-3B-Instruct Q4_K_M per DEC-PHASE11-002, swapped from Mistral-7B),
+#   verifies SHA-256 against nebula-model-manifest.json, and writes
 #   MANIFEST.sha256 into the chroot /opt/orionx/nebula/models/. This section
 #   asserts that the full staged artifact set is present in the squashfs.
 #
@@ -604,27 +605,33 @@ done
 #   activated by 0610-apparmor-setup.hook.chroot. It confines the ollama daemon
 #   to /opt/orionx/nebula/models and localhost networking only.
 # ===========================================================================
-section "15. Phase 10 W10-1 — Nebula runtime: model + manifest + ollama + units staged"
+section "15. Phase 11 W11-1 — Nebula runtime: model + manifest + ollama + units staged"
 
-# (a) Model file present and large (> 4 GB sanity check — the real GGUF is ~4.4 GB)
-# Filename is lowercase: single source of truth is nebula-model-manifest.json
-# model_filename field — "mistral-7b-instruct-v0.3.Q4_K_M.gguf".
-# Linux filesystem is case-sensitive; uppercase Mistral-7B would never match.
-NEBULA_MODEL="$SQF/opt/orionx/nebula/models/mistral-7b-instruct-v0.3.Q4_K_M.gguf"
+# (a) Model file present and large (> 1.5 GB sanity check — the Qwen2.5-3B Q4_K_M GGUF is ~1.9 GB)
+# Filename is single source of truth from nebula-model-manifest.json model_filename field.
+# W11-1 swaps Mistral-7B (~4.4 GB) → Qwen2.5-3B-Instruct Q4_K_M (~1.9 GB, DEC-PHASE11-002).
+# Warn threshold relaxed from 4 GB to 3 GB per DEC-PHASE10-012 for this smaller model.
+NEBULA_MODEL="$SQF/opt/orionx/nebula/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
 if [[ -f "$NEBULA_MODEL" ]]; then
-    pass "/opt/orionx/nebula/models/mistral-7b-instruct-v0.3.Q4_K_M.gguf present (DEC-PHASE10-008)"
-    # Sanity-check: model must be > 4 000 000 000 bytes (the Q4_K_M GGUF is ~4.4 GB)
+    pass "/opt/orionx/nebula/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf present (DEC-PHASE10-008, DEC-PHASE11-002)"
+    # Sanity-check: model must be > 1 500 000 000 bytes (the Qwen2.5-3B Q4_K_M GGUF is ~1.9 GB)
     # || true: stat exits non-zero if field extraction fails; we assert separately.
     MODEL_SIZE="$(stat -c '%s' "$NEBULA_MODEL" 2>/dev/null || stat -f '%z' "$NEBULA_MODEL" 2>/dev/null || true)"
-    if [[ -n "$MODEL_SIZE" && "$MODEL_SIZE" -gt 4000000000 ]]; then
-        pass "model file size > 4 GB ($MODEL_SIZE bytes — real GGUF, not a stub)"
+    if [[ -z "$MODEL_SIZE" ]]; then
+        fail "model file size unknown" \
+             "MODEL_SIZE could not be determined — model may be absent (DEC-PHASE10-008)"
+    elif [[ "$MODEL_SIZE" -le 1500000000 ]]; then
+        fail "model file size > 1.5 GB (floor)" \
+             "Got: $MODEL_SIZE bytes — model may be a stub or download incomplete (DEC-PHASE10-008)"
+    elif [[ "$MODEL_SIZE" -ge 3000000000 ]]; then
+        fail "model file size < 3.0 GB (ceiling, Mistral-regression guard)" \
+             "Got: $MODEL_SIZE bytes — exceeds Qwen-3B plausible ceiling; possible accidental Mistral-7B regression (DEC-PHASE11-002)"
     else
-        fail "model file size > 4 GB" \
-             "Got: ${MODEL_SIZE:-unknown} bytes — model may be a stub or download incomplete (DEC-PHASE10-008)"
+        pass "model file size in Qwen-3B range 1.5 GB < size < 3.0 GB ($MODEL_SIZE bytes)"
     fi
 else
-    fail "/opt/orionx/nebula/models/mistral-7b-instruct-v0.3.Q4_K_M.gguf present" \
-         "stage_nebula_model() in build-iso.sh must download+stage the GGUF (DEC-PHASE10-008)"
+    fail "/opt/orionx/nebula/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf present" \
+         "stage_nebula_model() in build-iso.sh must download+stage the GGUF (DEC-PHASE10-008, DEC-PHASE11-002)"
 fi
 
 # (b) MANIFEST.sha256 present (written by stage_nebula_model after SHA-256 verify)
