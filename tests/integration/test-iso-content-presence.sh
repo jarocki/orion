@@ -617,11 +617,17 @@ if [[ -f "$NEBULA_MODEL" ]]; then
     # Sanity-check: model must be > 1 500 000 000 bytes (the Qwen2.5-3B Q4_K_M GGUF is ~1.9 GB)
     # || true: stat exits non-zero if field extraction fails; we assert separately.
     MODEL_SIZE="$(stat -c '%s' "$NEBULA_MODEL" 2>/dev/null || stat -f '%z' "$NEBULA_MODEL" 2>/dev/null || true)"
-    if [[ -n "$MODEL_SIZE" && "$MODEL_SIZE" -gt 1500000000 ]]; then
-        pass "model file size > 1.5 GB ($MODEL_SIZE bytes — real GGUF, not a stub)"
+    if [[ -z "$MODEL_SIZE" ]]; then
+        fail "model file size unknown" \
+             "MODEL_SIZE could not be determined — model may be absent (DEC-PHASE10-008)"
+    elif [[ "$MODEL_SIZE" -le 1500000000 ]]; then
+        fail "model file size > 1.5 GB (floor)" \
+             "Got: $MODEL_SIZE bytes — model may be a stub or download incomplete (DEC-PHASE10-008)"
+    elif [[ "$MODEL_SIZE" -ge 3000000000 ]]; then
+        fail "model file size < 3.0 GB (ceiling, Mistral-regression guard)" \
+             "Got: $MODEL_SIZE bytes — exceeds Qwen-3B plausible ceiling; possible accidental Mistral-7B regression (DEC-PHASE11-002)"
     else
-        fail "model file size > 1.5 GB" \
-             "Got: ${MODEL_SIZE:-unknown} bytes — model may be a stub or download incomplete (DEC-PHASE10-008)"
+        pass "model file size in Qwen-3B range 1.5 GB < size < 3.0 GB ($MODEL_SIZE bytes)"
     fi
 else
     fail "/opt/orionx/nebula/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf present" \
