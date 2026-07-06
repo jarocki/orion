@@ -16,8 +16,8 @@
 # Test scope:
 #   T1:  iso/auto/config — console=ttyS0,115200n8 present in --bootappend-live
 #   T2:  iso/auto/config — console=tty0 present in --bootappend-live (VGA preserved)
-#   T3:  iso/auto/config — live-config.username=orionx present in --bootappend-live (rc8 fix, DEC-PHASE10-017)
-#   T4:  iso/auto/config — live-config.hostname=orionx-cyberdeck present in --bootappend-live (rc8 fix)
+#   T3:  iso/auto/config — live-config.username=orionx-operator present in --bootappend-live (DEC-PHASE11-012)
+#   T4:  iso/auto/config — live-config.hostname=orionx present in --bootappend-live (DEC-PHASE11-012)
 #   T5:  iso/auto/config — splash and persistence still present (UX preserved)
 #   T6:  iso/auto/config — --hook-files wires 0500-bootloader-serial.hook.binary
 #   T7:  iso/auto/config — bash syntax valid
@@ -29,8 +29,9 @@
 #   T13: Hook file — missing isolinux.cfg emits WARNING, does not exit non-zero
 #   T14: Hook file — missing grub.cfg emits WARNING, does not exit non-zero
 #   T15: Production sequence — auto/config, hook present, hook patches both configs
-#   T16: live-config.username=orionx in BOTH static bootloader cfgs (rc9 hotfix, DEC-PHASE10-018)
-#   T17: live-config.hostname=orionx-cyberdeck in BOTH static bootloader cfgs (rc9 hotfix, DEC-PHASE10-018)
+#   T16: live-config.username=orionx-operator in BOTH generated bootloader cfgs (DEC-PHASE11-012)
+#   T17: live-config.hostname=orionx in BOTH generated bootloader cfgs (DEC-PHASE11-012)
+#   T18: GENERATED marker on line 1 of BOTH bootloader cfgs (proves generator ran, DEC-PHASE11-012)
 #
 # Usage:
 #   bash tests/unit/test_iso_serial_console.sh
@@ -105,34 +106,31 @@ contains "console=ttyS0,115200n8 in --bootappend-live" "console=ttyS0,115200n8" 
 echo ""
 
 # ---------------------------------------------------------------------------
-# T3: live-config.username=orionx present in --bootappend-live (rc8 fix, DEC-PHASE10-017)
+# T3: live-config.username=orionx-operator present in --bootappend-live (DEC-PHASE11-012)
 # ---------------------------------------------------------------------------
-# Debian Bullseye live-config 5.x parses cmdline params with the `live-config.`
-# prefix; rc7 used the bare `username=orionx` form, which Bullseye live-config
-# ignored (bare form is not parsed by live-config on Bullseye). rc8 uses the
-# prefixed form per live-config(7) bullseye manpage. Without the prefix,
-# live-config defaults to creating `user` — which has NONE of the Orion-X
-# per-user configs (xfconf wallpaper, .desktop launchers, autologin target,
-# panel layout). Operator on rc6 hardware reported the system looking like
-# "vanilla Debian" because the active session was `user`, not `orionx`.
-# rc7 added the bare form (incorrect); rc8 corrects to the prefixed form.
-# This regression test ensures `live-config.username=orionx` stays in the
-# cmdline so the active boot user IS orionx and per-user configs apply.
-echo "[T3] live-config.username=orionx in --bootappend-live (rc8 fix, DEC-PHASE10-017)"
-contains "live-config.username=orionx in --bootappend-live" "live-config.username=orionx" "$BOOTAPPEND_LINE"
+# DEC-PHASE11-012 supersedes DEC-PHASE10-017: the autologin identity is now
+# `orionx-operator` (not `orionx`). The rc7-rc9 hotfix arc used `orionx` but
+# hardware attestation (2026-07-05) confirmed neither `live-config.username=`
+# nor `live-config.hostname=` reached /proc/cmdline on the actual boot — the
+# static-cfg dual-authority was dead-authority. W11-2 retires the static cfgs
+# and sets the identity via the single --bootappend-live source in iso/auto/config,
+# generated into both bootloader configs by scripts/build-iso.sh (DEC-PHASE11-012).
+# This test asserts the single-authority source carries the correct identity.
+echo "[T3] live-config.username=orionx-operator in --bootappend-live (DEC-PHASE11-012)"
+contains "live-config.username=orionx-operator in --bootappend-live" "live-config.username=orionx-operator" "$BOOTAPPEND_LINE"
 echo ""
 
 # ---------------------------------------------------------------------------
-# T4: live-config.hostname=orionx-cyberdeck present in --bootappend-live (rc8 fix)
+# T4: live-config.hostname=orionx present in --bootappend-live (DEC-PHASE11-012)
 # ---------------------------------------------------------------------------
-# Pairs with T3 live-config.username=orionx so the booted system identity is
-# consistent (hostname appears in shell prompt, journal, Matrix federation,
-# mesh peer discovery). Without `live-config.hostname=` the system shows
-# "debian" as hostname even when username is correct — partial cyberdeck
-# identity is its own UX bug. rc7 used the bare `hostname=` form; rc8 corrects
-# to `live-config.hostname=` per live-config(7) bullseye manpage.
-echo "[T4] live-config.hostname=orionx-cyberdeck in --bootappend-live (rc8 fix)"
-contains "live-config.hostname=orionx-cyberdeck in --bootappend-live" "live-config.hostname=orionx-cyberdeck" "$BOOTAPPEND_LINE"
+# Pairs with T3. DEC-PHASE11-012 sets the canonical hostname to `orionx`
+# (was `orionx-cyberdeck` in the rc7-rc9 arc; changed per operator directive
+# 2026-07-05). The hostname appears in the shell prompt, journal, Matrix
+# federation, and mesh peer discovery. The single-authority source (iso/auto/config
+# --bootappend-live) is the ONLY place this is set — the generator propagates it
+# to both isolinux.cfg and grub.cfg.
+echo "[T4] live-config.hostname=orionx in --bootappend-live (DEC-PHASE11-012)"
+contains "live-config.hostname=orionx in --bootappend-live" "live-config.hostname=orionx" "$BOOTAPPEND_LINE"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -430,31 +428,46 @@ contains "kernel cmdline in grub.cfg has console=ttyS0" \
 echo ""
 
 # ---------------------------------------------------------------------------
-# T16: live-config.username=orionx in BOTH static bootloader cfgs (rc9 hotfix, DEC-PHASE10-018)
+# T16: live-config.username=orionx-operator in BOTH generated bootloader cfgs (DEC-PHASE11-012)
 # ---------------------------------------------------------------------------
-# DUAL AUTHORITY GUARD: iso/config/includes.binary/isolinux/isolinux.cfg and
-# iso/config/includes.binary/boot/grub/grub.cfg are copied verbatim by
-# lb_binary_local-includes AFTER live-build generates configs from
-# --bootappend-live. They override --bootappend-live. Hardware attestation on
-# rc8 revealed that T3/T4 (which only check iso/auto/config) PASSED while the
-# actual booted kernel cmdline lacked the tokens. T16 + T17 close the gap by
-# asserting the live-config.username/hostname tokens are present in BOTH static
-# cfgs that ACTUALLY reach the booted kernel. Until issue #64 consolidates to a
-# single authority (v2.1), all three authorities must match.
+# SINGLE AUTHORITY (DEC-PHASE11-012 supersedes DEC-PHASE10-018 dual-authority):
+# iso/config/includes.binary/isolinux/isolinux.cfg and
+# iso/config/includes.binary/boot/grub/grub.cfg are now GENERATED by
+# scripts/build-iso.sh::generate_bootloader_configs() from the single
+# --bootappend-live source in iso/auto/config. Direct edits are overwritten on
+# next build. T16+T17 assert that the generated-and-committed cfgs carry the
+# correct identity tokens (orionx-operator / orionx per DEC-PHASE11-012).
+# T18 asserts the GENERATED marker is present (proves generator ran, not a
+# human hand-edit that may silently diverge again as the rc7-rc9 arc did).
 ISOLINUX_CFG="$REPO_ROOT/iso/config/includes.binary/isolinux/isolinux.cfg"
 GRUB_CFG="$REPO_ROOT/iso/config/includes.binary/boot/grub/grub.cfg"
 
-echo "[T16] live-config.username=orionx in BOTH static bootloader cfgs"
+echo "[T16] live-config.username=orionx-operator in BOTH generated bootloader cfgs (DEC-PHASE11-012)"
 # Use grep -F for literal matching; BSD grep (macOS) does not support \s in -E mode
 ISOLINUX_APPEND=$(grep 'append boot=live' "$ISOLINUX_CFG" | head -1)
-contains "live-config.username=orionx in isolinux.cfg live label" "live-config.username=orionx" "$ISOLINUX_APPEND"
+contains "live-config.username=orionx-operator in isolinux.cfg live label" "live-config.username=orionx-operator" "$ISOLINUX_APPEND"
 GRUB_LINUX=$(grep 'linux /live/vmlinuz boot=live' "$GRUB_CFG" | head -1)
-contains "live-config.username=orionx in grub.cfg Orion-X Live menuentry" "live-config.username=orionx" "$GRUB_LINUX"
+contains "live-config.username=orionx-operator in grub.cfg Orion-X Live menuentry" "live-config.username=orionx-operator" "$GRUB_LINUX"
 echo ""
 
-echo "[T17] live-config.hostname=orionx-cyberdeck in BOTH static bootloader cfgs"
-contains "live-config.hostname=orionx-cyberdeck in isolinux.cfg live label" "live-config.hostname=orionx-cyberdeck" "$ISOLINUX_APPEND"
-contains "live-config.hostname=orionx-cyberdeck in grub.cfg Orion-X Live menuentry" "live-config.hostname=orionx-cyberdeck" "$GRUB_LINUX"
+echo "[T17] live-config.hostname=orionx in BOTH generated bootloader cfgs (DEC-PHASE11-012)"
+contains "live-config.hostname=orionx in isolinux.cfg live label" "live-config.hostname=orionx" "$ISOLINUX_APPEND"
+contains "live-config.hostname=orionx in grub.cfg Orion-X Live menuentry" "live-config.hostname=orionx" "$GRUB_LINUX"
+echo ""
+
+# ---------------------------------------------------------------------------
+# T18: GENERATED marker on line 1 of BOTH bootloader cfgs (DEC-PHASE11-012)
+# ---------------------------------------------------------------------------
+# Proves that generate_bootloader_configs() ran and wrote the cfgs — not that
+# a human hand-edited them (which would silently diverge as the rc7-rc9 arc did).
+# The marker "# GENERATED — do not edit — regenerate via scripts/build-iso.sh"
+# must be on line 1 of both files. Any human-edit that omits or moves this line
+# is caught immediately by this assertion.
+echo "[T18] GENERATED marker on line 1 of BOTH bootloader cfgs (proves generator ran, DEC-PHASE11-012)"
+ISOLINUX_LINE1="$(head -1 "$ISOLINUX_CFG")"
+contains "GENERATED marker on line 1 of isolinux.cfg" "GENERATED — do not edit — regenerate via scripts/build-iso.sh" "$ISOLINUX_LINE1"
+GRUB_LINE1="$(head -1 "$GRUB_CFG")"
+contains "GENERATED marker on line 1 of grub.cfg" "GENERATED — do not edit — regenerate via scripts/build-iso.sh" "$GRUB_LINE1"
 echo ""
 
 # ---------------------------------------------------------------------------

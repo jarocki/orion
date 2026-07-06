@@ -19,7 +19,7 @@
 # Usage:
 #   bash tests/integration/test-iso-content-presence.sh [path/to/orionx.iso]
 #
-# Default ISO path: output/orionx-phoenix-edition-v2.0.0-rc4.iso (positional arg $1 overrides)
+# Default ISO path: output/orionx-phoenix-edition-v2.0.0-rc9.iso (positional arg $1 overrides)
 # Exit codes:
 #   0  all assertions passed
 #   1  one or more assertions failed or prerequisites missing
@@ -29,7 +29,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-ISO_PATH="${1:-$REPO_ROOT/output/orionx-phoenix-edition-v2.0.0-rc4.iso}"
+ISO_PATH="${1:-$REPO_ROOT/output/orionx-phoenix-edition-v2.0.0-rc9.iso}"
 WORK=""
 
 # ---------------------------------------------------------------------------
@@ -764,6 +764,211 @@ if [[ -f "$SQF/etc/apparmor.d/usr.bin.ollama" ]]; then
 else
     fail "/etc/apparmor.d/usr.bin.ollama AppArmor profile present" \
          "AppArmor profile missing — includes.chroot/etc/apparmor.d/usr.bin.ollama not staged (DEC-PHASE10-011)"
+fi
+
+# ===========================================================================
+# 16. W11-2 debloat post-conditions + bootloader single-authority + W9-2 import
+# ===========================================================================
+# @decision DEC-PHASE11-012
+# @title Section 16: W11-2 debloat assertions, GENERATED marker, W9-2 import
+# @status accepted
+# @rationale W11-2 lands three coupled fixes (issue #63, #64, #65, #66):
+#   (a) 14 packages debloated from base ISO per DEC-PHASE11-003 + DEC-PHASE11-006;
+#   (b) Ghidra bulk staging removed from base (deferred to W11-8 optional installer);
+#   (c) bootloader cmdline single-authority: both cfgs carry GENERATED marker and
+#       correct identity tokens (orionx-operator / orionx per DEC-PHASE11-012);
+#   (d) W9-2 Python module present and importable inside the built squashfs.
+#   These assertions run against the CI-built ISO squashfs so build-time bugs
+#   are caught before hardware boot (the class of issue that made rc7-rc9 silently
+#   ship dead-authority bootloader configs).
+section "16. W11-2: debloat post-conditions + GENERATED bootloader + W9-2 import"
+
+# ---------------------------------------------------------------------------
+# 16a. Dropped packages absent from dpkg -l in the extracted squashfs
+# ---------------------------------------------------------------------------
+# We use dpkg --get-selections (available in the squashfs dpkg database) parsed
+# via grep against the dpkg status file, which is cheaper than running dpkg -l.
+# The dpkg status file is at $SQF/var/lib/dpkg/status.
+DPKG_STATUS="$SQF/var/lib/dpkg/status"
+DROPPED_PACKAGES=(hashcat john hydra proxychains chntpw steghide encfs openvpn build-essential gcc make libssl-dev python3-dev vim)
+
+echo "  [16a] Verifying 14 dropped packages absent from squashfs dpkg database"
+if [[ -f "$DPKG_STATUS" ]]; then
+    for pkg in "${DROPPED_PACKAGES[@]}"; do
+        # grep for "Package: <pkg>" followed shortly by "Status: install ok installed"
+        # A simple approach: check if the package appears as installed in the status file.
+        if grep -q "^Package: ${pkg}$" "$DPKG_STATUS"; then
+            fail "16a: $pkg absent from squashfs dpkg database (W11-2 debloat)" \
+                 "Package '$pkg' found in dpkg status — debloat did not remove it from the ISO"
+        else
+            pass "16a: $pkg absent from squashfs dpkg database (W11-2 debloat)"
+        fi
+    done
+else
+    fail "16a: dpkg status file available for package checks" \
+         "$DPKG_STATUS not found — cannot verify package absence; squashfs extraction may be incomplete"
+fi
+
+# ---------------------------------------------------------------------------
+# 16b. Ghidra references absent from the extracted 0500 hook
+# ---------------------------------------------------------------------------
+echo "  [16b] Verifying Ghidra bulk staging removed from 0500 hook"
+# The 0500 hook is a live/ hook (runs at build time, not boot time), so it won't be
+# in the squashfs at all. Instead we assert against the source hook in the worktree.
+HOOK_0500_SRC="$REPO_ROOT/iso/config/hooks/live/0500-install-external-tools.hook.chroot"
+if [[ -f "$HOOK_0500_SRC" ]]; then
+    GHIDRA_HITS=$(grep -cE '(NationalSecurityAgency/ghidra|unzip.*ghidra|GHIDRA_VERSION|GHIDRA_DATE|/opt/ghidra[^.])' "$HOOK_0500_SRC" 2>/dev/null || echo "0")
+    if [[ "$GHIDRA_HITS" -eq 0 ]]; then
+        pass "16b: Ghidra bulk staging absent from 0500 hook source (DEC-PHASE11-004)"
+    else
+        fail "16b: Ghidra bulk staging absent from 0500 hook source" \
+             "Found $GHIDRA_HITS Ghidra reference(s) in $HOOK_0500_SRC — debloat incomplete"
+    fi
+else
+    fail "16b: 0500 hook source file accessible for Ghidra check" \
+         "Cannot find $HOOK_0500_SRC"
+fi
+
+# ---------------------------------------------------------------------------
+# 16c. GENERATED marker on line 1 of both bootloader cfgs in the binary tree
+# ---------------------------------------------------------------------------
+echo "  [16c] Verifying GENERATED marker in bootloader cfgs (proves generator ran)"
+# We check against the source cfgs in the worktree (includes.binary/).
+# In a real CI run these would also be extracted from the ISO binary partition.
+ISOLINUX_SRC="$REPO_ROOT/iso/config/includes.binary/isolinux/isolinux.cfg"
+GRUB_SRC="$REPO_ROOT/iso/config/includes.binary/boot/grub/grub.cfg"
+
+GENERATED_MARKER="GENERATED — do not edit — regenerate via scripts/build-iso.sh"
+
+if [[ -f "$ISOLINUX_SRC" ]]; then
+    ISOLINUX_L1="$(head -1 "$ISOLINUX_SRC")"
+    if echo "$ISOLINUX_L1" | grep -qF "$GENERATED_MARKER"; then
+        pass "16c: GENERATED marker on line 1 of isolinux.cfg (DEC-PHASE11-012)"
+    else
+        fail "16c: GENERATED marker on line 1 of isolinux.cfg" \
+             "Line 1 is: $ISOLINUX_L1"
+    fi
+else
+    fail "16c: isolinux.cfg accessible for marker check" "Not found: $ISOLINUX_SRC"
+fi
+
+if [[ -f "$GRUB_SRC" ]]; then
+    GRUB_L1="$(head -1 "$GRUB_SRC")"
+    if echo "$GRUB_L1" | grep -qF "$GENERATED_MARKER"; then
+        pass "16c: GENERATED marker on line 1 of grub.cfg (DEC-PHASE11-012)"
+    else
+        fail "16c: GENERATED marker on line 1 of grub.cfg" \
+             "Line 1 is: $GRUB_L1"
+    fi
+else
+    fail "16c: grub.cfg accessible for marker check" "Not found: $GRUB_SRC"
+fi
+
+# ---------------------------------------------------------------------------
+# 16d. Identity tokens present in both bootloader cfgs
+# ---------------------------------------------------------------------------
+echo "  [16d] Verifying identity tokens in both bootloader cfgs (issue #65 guard)"
+# This assertion would have caught the rc7-rc9 silent no-op: the static cfgs had
+# the wrong identity because they were hand-edited without going through the
+# generator. Now that the generator is the authority, this assertion catches
+# any future divergence between the generated cfgs and the intended identity.
+
+USERNAME_TOKEN="live-config.username=orionx-operator"
+HOSTNAME_TOKEN="live-config.hostname=orionx"
+
+if [[ -f "$ISOLINUX_SRC" ]]; then
+    if grep -q "$USERNAME_TOKEN" "$ISOLINUX_SRC"; then
+        pass "16d: $USERNAME_TOKEN present in isolinux.cfg"
+    else
+        fail "16d: $USERNAME_TOKEN present in isolinux.cfg" \
+             "Identity token missing — generator may not have run or wrong identity (DEC-PHASE11-012)"
+    fi
+    if grep -q "$HOSTNAME_TOKEN" "$ISOLINUX_SRC"; then
+        pass "16d: $HOSTNAME_TOKEN present in isolinux.cfg"
+    else
+        fail "16d: $HOSTNAME_TOKEN present in isolinux.cfg" \
+             "Hostname token missing — generator may not have run or wrong identity (DEC-PHASE11-012)"
+    fi
+fi
+
+if [[ -f "$GRUB_SRC" ]]; then
+    if grep -q "$USERNAME_TOKEN" "$GRUB_SRC"; then
+        pass "16d: $USERNAME_TOKEN present in grub.cfg"
+    else
+        fail "16d: $USERNAME_TOKEN present in grub.cfg" \
+             "Identity token missing — generator may not have run or wrong identity (DEC-PHASE11-012)"
+    fi
+    if grep -q "$HOSTNAME_TOKEN" "$GRUB_SRC"; then
+        pass "16d: $HOSTNAME_TOKEN present in grub.cfg"
+    else
+        fail "16d: $HOSTNAME_TOKEN present in grub.cfg" \
+             "Hostname token missing — generator may not have run or wrong identity (DEC-PHASE11-012)"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 16e. W9-2 wrapper + Python module present at expected squashfs paths
+# ---------------------------------------------------------------------------
+echo "  [16e] Verifying W9-2 wrapper + control_center module present in squashfs"
+# stage_application_content() rsyncs scripts/ → /opt/orionx/scripts/ inside the squashfs.
+# 0700-orionx-setup.hook.chroot symlinks /usr/bin/orionx-control-center → the staged wrapper.
+
+CC_WRAPPER="$SQF/usr/bin/orionx-control-center"
+CC_MODULE_DIR="$SQF/opt/orionx/scripts/control_center"
+CC_INIT="$CC_MODULE_DIR/__init__.py"
+CC_APP="$CC_MODULE_DIR/app.py"
+
+if [[ -e "$CC_WRAPPER" ]]; then
+    pass "16e: /usr/bin/orionx-control-center present in squashfs (wrapper or symlink)"
+else
+    fail "16e: /usr/bin/orionx-control-center present in squashfs" \
+         "Wrapper or symlink missing — 0700-orionx-setup.hook.chroot may not have run (issue #66)"
+fi
+
+if [[ -d "$CC_MODULE_DIR" ]]; then
+    pass "16e: /opt/orionx/scripts/control_center/ directory present in squashfs"
+else
+    fail "16e: /opt/orionx/scripts/control_center/ directory present in squashfs" \
+         "Module directory missing — stage_application_content() may not have staged scripts/ (issue #66)"
+fi
+
+if [[ -f "$CC_INIT" ]]; then
+    pass "16e: control_center/__init__.py present in squashfs"
+else
+    fail "16e: control_center/__init__.py present in squashfs" \
+         "$CC_INIT not found — module package incomplete (issue #66)"
+fi
+
+if [[ -f "$CC_APP" ]]; then
+    pass "16e: control_center/app.py present in squashfs"
+else
+    fail "16e: control_center/app.py present in squashfs" \
+         "$CC_APP not found — module package incomplete (issue #66)"
+fi
+
+# ---------------------------------------------------------------------------
+# 16f. W9-2 Python import assertion: python3 -c "from control_center.app import run_app"
+# ---------------------------------------------------------------------------
+# We use PYTHONPATH pointed at the squashfs-extracted scripts/ tree to avoid
+# needing chroot privileges. This sidesteps the need for root-level chroot
+# while still proving the module tree is complete and syntactically importable.
+# This assertion catches the class of bug where the wrapper ships but the module
+# is missing from the squashfs (the issue #66 hardware failure).
+echo "  [16f] W9-2 Python import assertion: from control_center.app import run_app"
+
+CC_SCRIPTS_PARENT="$SQF/opt/orionx/scripts"
+if [[ -d "$CC_SCRIPTS_PARENT" ]]; then
+    IMPORT_EXIT=0
+    IMPORT_OUTPUT="$(PYTHONPATH="$CC_SCRIPTS_PARENT" python3 -c "from control_center.app import run_app; print('import OK')" 2>&1)" || IMPORT_EXIT=$?
+    if [[ $IMPORT_EXIT -eq 0 ]]; then
+        pass "16f: 'from control_center.app import run_app' exits 0 in squashfs context (issue #66)"
+    else
+        fail "16f: 'from control_center.app import run_app' exits 0 in squashfs context" \
+             "Import failed (exit $IMPORT_EXIT): $IMPORT_OUTPUT"
+    fi
+else
+    fail "16f: /opt/orionx/scripts/ present for PYTHONPATH import test" \
+         "Parent directory $CC_SCRIPTS_PARENT missing — cannot test Python import (issue #66)"
 fi
 
 # ===========================================================================

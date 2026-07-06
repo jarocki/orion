@@ -1,4 +1,4 @@
-# Orion-X Phoenix Edition v2.0.0-rc4
+# Orion-X Phoenix Edition v2.1.0
 # Package list for live-build (Debian Bullseye)
 #
 # @decision DEC-PHASE9-004
@@ -23,6 +23,15 @@
 # They must be installed via separate mechanisms (custom .deb, pip, or
 # third-party repo) and are commented out here so apt does not fail the
 # live-build.  See docs/DEVELOPMENT_CHECKLIST.md for install procedures.
+#
+# W11-2 debloat pass (DEC-PHASE11-003 + DEC-PHASE11-006):
+#   Removed: hashcat, john, hydra, proxychains, chntpw, steghide, encfs,
+#            openvpn, build-essential, gcc, make, libssl-dev, python3-dev, vim
+#   Retained: aircrack-ng, neovim, screen, tmux
+#   Dev toolchain (build-essential, gcc, make, python3-dev, libssl-dev) deferred
+#   to W11-8 optional installer (install-devel.sh). Operators who need a
+#   build environment post-boot use the optional installer.
+#   Offensive kit residue removed from base ISO mission-fit profile.
 
 # Base system
 live-boot
@@ -47,7 +56,8 @@ binwalk
 # bulk-extractor
 dc3dd
 foremost
-# EXTERNAL: ghidra           — install via https://ghidra-sre.org/
+# EXTERNAL: ghidra           — deferred to W11-8 optional installer (install-ghidra.sh)
+#                              per DEC-PHASE11-004. Run: /opt/orionx/optional/install-ghidra.sh
 hexedit
 sleuthkit
 tcpdump
@@ -86,8 +96,6 @@ fping
 iputils-ping
 netcat-openbsd
 nmap
-openvpn
-proxychains
 smbclient
 ssh
 traceroute
@@ -100,7 +108,6 @@ apparmor-utils
 apparmor-profiles
 apparmor-profiles-extra
 aircrack-ng
-chntpw
 clamav
 cryptsetup
 # fail2ban — SSH brute-force defense; modernized replacement for the obsolete
@@ -115,9 +122,6 @@ cryptsetup
 #   and systemd integration. Daemon is enabled by the package's own postinst
 #   (dh_installsystemd); no custom hook or unit file required (same as NM).
 fail2ban
-hashcat
-hydra
-john
 lynis
 macchanger
 nftables
@@ -125,16 +129,6 @@ nftables
 # Disabled to unblock live-build. Tracked: jarocki/orion#33
 # nikto
 rkhunter
-steghide
-
-# Development tools
-build-essential
-gcc
-git
-make
-python3
-python3-pip
-python3-venv
 
 # Utilities
 apt-transport-https
@@ -145,7 +139,6 @@ coreutils
 # ddrescue binary is provided by the gddrescue Debian package
 gddrescue
 dialog
-encfs
 file
 gawk
 gnupg
@@ -175,18 +168,14 @@ smartmontools
 strace
 tmux
 usbutils
-vim
 whois
 zip
 # Phase 5 hook dependency — 0500-install-external-tools.hook.chroot uses unzip
-# to extract the Ghidra release archive. Without this the hook aborts and blocks
-# all Phase 6 hooks and the W7-3 binary stage. See jarocki/orion#33.
+# to extract archive assets. See jarocki/orion#33.
 unzip
 
 # Libraries and dependencies
 libimage-exiftool-perl
-libssl-dev
-python3-dev
 python3-numpy
 python3-scapy
 

@@ -15,6 +15,44 @@ Merkle audit, auto-healing) are preserved. The tightening axes: smaller mission-
 mission-fit debloat, post-boot optional-installer framework, and a unique Orion-X cyberdeck
 visual identity. Target: ≤3.0 GB compressed ISO (~2.8 GB). See DEC-PHASE11-001.
 
+### Changed (W11-2): Debloat + bootloader single-authority + W9-2 packaging fix
+
+- **14 packages removed from base ISO** per DEC-PHASE11-003 + DEC-PHASE11-006 (net delta
+  approximately −395 MB compressed): `hashcat`, `john`, `hydra`, `proxychains`, `chntpw`,
+  `steghide`, `encfs`, `openvpn`, `build-essential`, `gcc`, `make`, `libssl-dev`,
+  `python3-dev`, `vim`. Retained: `aircrack-ng`, `neovim`, `screen`, `tmux`. Dev toolchain
+  deferred to W11-8 optional installer (`install-devel.sh`).
+- **Ghidra bulk staging removed** from `iso/config/hooks/live/0500-install-external-tools.hook.chroot`
+  per DEC-PHASE11-004. Ghidra (~500 MB download + JRE) deferred to W11-8 optional installer
+  (`/opt/orionx/optional/install-ghidra.sh`).
+- **Bootloader cmdline single-authority (issue #64)** — retires the dual-authority hazard
+  identified in DEC-PHASE10-018 and field-attested by the rc7-rc9 silent no-op arc.
+  `scripts/build-iso.sh` gains `generate_bootloader_configs()` which reads the single
+  `--bootappend-live` source in `iso/auto/config` and writes both
+  `iso/config/includes.binary/isolinux/isolinux.cfg` and
+  `iso/config/includes.binary/boot/grub/grub.cfg` from embedded templates with a
+  `# GENERATED — do not edit — regenerate via scripts/build-iso.sh` marker on line 1.
+  Hand-edits to either cfg are overwritten on the next build.
+- **Autologin identity updated** to `orionx-operator` / `orionx` per DEC-PHASE11-012
+  (supersedes rc7-rc9 identity `orionx` / `orionx-cyberdeck`). Identity is set once in
+  `iso/auto/config --bootappend-live` and mechanically propagated to both bootloader configs
+  by the generator.
+- **W9-2 Python import assertion added** to `tests/integration/test-iso-content-presence.sh`
+  section 16 (issue #66): `PYTHONPATH=<squashfs>/opt/orionx/scripts python3 -c "from
+  control_center.app import run_app"` now runs as a CI gate — catches the class of bug
+  where the wrapper ships but the module is missing from the squashfs.
+- **QEMU boot /proc/cmdline capture** added to `tests/integration/test-qemu-boot.sh` (T6,
+  issue #65 hardware fixture): after boot, serial logs are scanned for the kernel cmdline
+  and both identity tokens are asserted present.
+- **`test_build_iso.sh` rc4 → rc9 hygiene** (issue #63): stale `v2.0.0-rc4` version
+  literals in T2/T4/T5/T7 assertions updated to `v2.0.0-rc9` to match the current
+  `scripts/build-iso.sh` default.
+- **`test-iso-content-presence.sh` default ISO filename** updated from
+  `v2.0.0-rc4.iso` → `v2.0.0-rc9.iso` to match current CI output.
+- **`test_iso_serial_console.sh`** T3/T4/T16/T17 identity assertions updated from
+  `orionx` / `orionx-cyberdeck` to `orionx-operator` / `orionx` (DEC-PHASE11-012). New T18
+  asserts the GENERATED marker on line 1 of both bootloader cfgs.
+
 ### Changed (W11-1)
 
 - **Nebula bundled model swap — Mistral-7B-Instruct-v0.3 Q4_K_M → Qwen2.5-3B-Instruct
