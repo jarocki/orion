@@ -15,6 +15,10 @@ Merkle audit, auto-healing) are preserved. The tightening axes: smaller mission-
 mission-fit debloat, post-boot optional-installer framework, and a unique Orion-X cyberdeck
 visual identity. Target: ≤3.0 GB compressed ISO (~2.8 GB). See DEC-PHASE11-001.
 
+### W11-2d: 16f structural rewrite (CI infra fix)
+
+- fix(phase11): W11-2d — 16f structural rewrite (grep for def run_app + wrapper import) closes CI infra bug; python3-gi CI install reverted
+
 ### W11-2c: CI content-presence hotfix (4 failures from run 29070581714)
 
 - fix(phase11): W11-2c — 4 CI content-presence fixes (16a gcc purge in 0500 hook, 16b grep|echo fallback rewrite, 16e -L symlink semantics, 16f python3-gi on CI runner)
