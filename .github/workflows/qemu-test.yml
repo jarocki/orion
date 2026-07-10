@@ -140,7 +140,11 @@ jobs:
       # No continue-on-error: if content is absent the QEMU boot is meaningless.
       - name: Verify Orion-X content present in ISO (fix #43)
         run: |
-          sudo apt-get install -y squashfs-tools xorriso
+          # python3-gi is required by control_center/app.py (gi.repository.Gtk import).
+          # The 16f assertion runs python3 on the host with PYTHONPATH pointed at the
+          # squashfs tree, so the host runner must have python3-gi installed.
+          # W11-2c fix for CI failure 16f (run 29070581714).
+          sudo apt-get install -y squashfs-tools xorriso python3-gi
           # Resolve ISO by glob so this step never drifts when the version
           # string changes (e.g. rc4, rc5, …). build-iso.sh produces exactly
           # one orionx-phoenix-edition-*.iso in output/; head -1 is defensive.
