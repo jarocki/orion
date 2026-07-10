@@ -2725,6 +2725,64 @@ The v2.1.0 ISO passes if ALL of:
 
 **W11-2 iter-1 (planner detail-plan): 2026-07-05.** Detail plan committed on `develop`; DEC-PHASE11-012 recorded; Scope Manifest at `tmp/phase11-w11-2-scope.json`. Ready for `guardian:provision` under workflow_id `phase11-w11-2-debloat-bootloader`.
 
+#### W11-2b — Detail plan (SC2001 shellcheck hotfix on generate_bootloader_configs bootappend extract)
+
+**Seeded:** 2026-07-09 planner amendment. **Status:** ready for `guardian:provision`. **Env:** local + CI shellcheck 0.11.x. **Wave:** post-W11-2 hygiene. **Gate:** review. **Weight:** S. **Deps:** W11-2 (landed at `9fe8c4b`, 2026-07-05).
+
+**Trigger.** Operator ran `make test-unit-bash` on `develop` HEAD `9fe8c4b`: 9 unit suites clean, then `test_iso_content_staging_unit.sh` failed (31 pass / 1 fail / 1 skip) on the shellcheck-on-`build-iso.sh` sub-test, and the remaining ~35 suites never ran. Failure: SC2001 (style) on line 465 — `bootappend="$(echo "$bootappend_line" | sed 's/.*--bootappend-live[[:space:]]*"\([^"]*\)".*/\1/')"`. W11-2 reviewer round 2 verified `bash -n` on `test-qemu-boot.sh` but did NOT re-run file-level shellcheck on `scripts/build-iso.sh` after iter-1's `generate_bootloader_configs()` landed; implementer's "shellcheck clean" self-report was accepted without independent verification. This is a review-discipline gap — future rounds MUST independently execute shellcheck (or the owning unit test) on any file that gained non-trivial bash in the slice, rather than trusting the implementer's summary.
+
+**Slice intent.** Replace the `echo | sed` extraction of the `--bootappend-live` quoted value with bash-native `[[ =~ ]]` + `BASH_REMATCH[1]`. SC2001 clears; fail-loud parse-error path preserved; downstream identity-token grep validation at lines ~473-485 unchanged; no test-file edits (the shellcheck sub-test flips FAIL→PASS from the source fix alone). Single-file, ~5-line net change; NO new DEC (hygiene fix, not a policy change; DEC-PHASE11-012 single-authority discipline unchanged).
+
+**State-authority map (unchanged from W11-2):** `iso/auto/config::--bootappend-live` remains the single-authority cmdline source; `scripts/build-iso.sh::generate_bootloader_configs()` remains sole extractor and generator. This slice replaces the extractor's *implementation*, not its authority.
+
+**Removal targets (Sacred Practice #12 — no parallel paths):**
+1. `echo "$bootappend_line" | sed 's/.*--bootappend-live[[:space:]]*"\([^"]*\)".*/\1/'` at `scripts/build-iso.sh:465`.
+2. The separate `[[ -z "$bootappend" ]]` empty-check block at lines ~466-469 — subsumed into the `[[ =~ ]]` `else` branch since the `+` quantifier in the target regex rejects empty quoted content the same way the two-step chain did.
+
+**Preservation invariants:**
+- Empty-quoted-content case (`--bootappend-live ""`) → regex fails to match (`[^"]+` requires ≥1 char) → `else` branch → `exit 1`. Byte-behavior match with prior two-step chain.
+- Parse-fail case (no `--bootappend-live "…"` on the line) → regex fails → `exit 1`. Byte-behavior match.
+- Success case → `BASH_REMATCH[1]` captures the same span sed's `\1` did → downstream `live-config.username=` / `live-config.hostname=` grep checks and `log "  --bootappend-live: $bootappend"` line proceed unchanged.
+- Serial-console directives, failsafe kernel args, HEREDOC templates, GENERATED marker, DEC-PHASE11-012 identity tokens — all untouched.
+
+**Task decomposition (3 tasks, 1 commit — proportional to slice weight):**
+1. **T1 — Rewrite extractor.** Edit `scripts/build-iso.sh` lines ~463-470: replace the `local bootappend; bootappend="$(echo … | sed …)"; if [[ -z "$bootappend" ]]; then …; fi` block with `local bootappend; if [[ "$bootappend_line" =~ --bootappend-live[[:space:]]*\"([^\"]+)\" ]]; then bootappend="${BASH_REMATCH[1]}"; else log "ERROR: Failed to parse --bootappend-live value from: $bootappend_line"; exit 1; fi`. Refresh the leading comment block to name BASH_REMATCH and note SC2001 hygiene. Do NOT touch `bootappend_line` sourcing (grep chain unchanged), the identity-token validation greps, or anything below in `generate_bootloader_configs()`.
+2. **T2 — Verify unit + full bash suite green.** Run `bash tests/unit/test_iso_content_staging_unit.sh` locally → 0 failures. Run `make test-unit-bash` end-to-end → all ~45 suites complete, no early bail. Run `bash -n scripts/build-iso.sh` → clean. Run `shellcheck scripts/build-iso.sh` directly → clean (independent verification, closes the reviewer-discipline gap this slice was born from).
+3. **T3 — CHANGELOG.** Append single-line entry to `CHANGELOG.md` `[v2.1.0]` section under a `### W11-2b: Shellcheck SC2001 hotfix` mini-subsection: bash-native BASH_REMATCH replaces echo|sed extraction in `generate_bootloader_configs()`; identity/parse-fail behavior byte-preserved; unblocks `make test-unit-bash` end-to-end run.
+4. **Commit shape (single commit acceptable at this scope):** `fix(w11-2b): SC2001 — BASH_REMATCH replaces echo|sed in generate_bootloader_configs bootappend extract`.
+
+**Evaluation Contract (5 items — testable, verbatim):**
+1. `scripts/build-iso.sh` no longer contains the echo|sed backreference pattern: `grep -Ec 'echo[[:space:]]+"\$bootappend_line"[[:space:]]*\|[[:space:]]*sed' scripts/build-iso.sh == 0`.
+2. `scripts/build-iso.sh` uses bash-native regex extraction: `grep -c 'BASH_REMATCH\[1\]' scripts/build-iso.sh >= 1` AND `grep -c '\[\[ "\$bootappend_line" =~ --bootappend-live' scripts/build-iso.sh >= 1`.
+3. `bash tests/unit/test_iso_content_staging_unit.sh` exits 0 at branch HEAD (ShellCheck sub-test now PASS; total ≥32 passed / 0 failed / 1 skip).
+4. `make test-unit-bash` runs end-to-end at branch HEAD, all ~45 unit suites complete without early bail; overall exit 0. Reviewer independently runs `shellcheck scripts/build-iso.sh` and confirms clean (this is the review-discipline correction from the trigger — reviewer must NOT accept the implementer's self-report alone).
+5. `scripts/build-iso.sh --dry-run` invocations behave identically to pre-fix across (a) success case (identity present in `iso/auto/config`, dry-run exits 0 with GENERATED markers emitted), (b) missing `--bootappend-live` line (grep chain fails → `exit 1` with "single-authority cmdline source is missing" message — path unchanged), (c) malformed line without a quoted value (regex fails → `exit 1` with "Failed to parse --bootappend-live value from:" message — same exit code, same class of failure as prior chain).
+
+**Forbidden shortcuts:**
+- Do NOT edit any test file. The failing test at `tests/unit/test_iso_content_staging_unit.sh:236-241` is the correct authority; it flips FAIL→PASS from the source fix alone. Test-side masking (e.g., `# shellcheck disable=SC2001` in `build-iso.sh`) is forbidden — retiring the pattern is the whole point.
+- Do NOT modify the two generated bootloader cfg files (`iso/config/includes.binary/isolinux/isolinux.cfg`, `iso/config/includes.binary/boot/grub/grub.cfg`). They are build outputs; regenerating them is out of scope.
+- Do NOT modify `iso/auto/config` — the single-authority source of `--bootappend-live` is unchanged; identity tokens `orionx-operator` / `orionx` (DEC-PHASE11-012) are preserved.
+- Do NOT touch W10-1 Nebula, W11-1 Qwen manifest, W11-9 branding, or any CI workflow file.
+- Do NOT combine this fix with any unrelated hygiene edit that might surface during T2 (e.g., other shellcheck notices elsewhere in the file). If other SC findings appear, file them for a separate slice and note in the reviewer trailer; W11-2b closes SC2001 line 465 only.
+
+**Ready-for-guardian definition:** All 5 Evaluation Contract items pass. Reviewer executes `shellcheck scripts/build-iso.sh` independently AND runs `make test-unit-bash` end-to-end (must exit 0 across all ~45 suites) AND `bash scripts/build-iso.sh --dry-run` sanity across success/missing/malformed line scenarios, then records `REVIEW_VERDICT=ready_for_guardian`.
+
+**Rollback boundary:** Single-commit slice; `git revert <sha>` cleanly restores the sed-based extractor if any regression surfaces in the broader test suite. Regression classes to watch: (a) shell version incompatibility with `[[ =~ ]]` grouped-capture — bash 3.2+ supports it and Debian/CI + macOS shellcheck harness both meet that floor; (b) unexpected regression in a downstream `bootappend`-consuming block — none expected because the captured value is byte-identical for all valid inputs. Trigger: implementer returns to planner if T2 reveals ANY additional test-suite failure not present on `9fe8c4b`.
+
+**Risk register (2 items — proportional):**
+- **R1 — Regex `+` quantifier strictness change.** The `[^"]+` quantifier requires ≥1 char, while the sed pattern used `\([^"]*\)` (`*` = zero-or-more) followed by a separate `[[ -z "$bootappend" ]]` guard. Net behavior: identical (empty quoted content → exit 1 either way). Mitigation: Evaluation Contract item 5 exercises the empty/malformed path. If any legitimate build scenario intentionally passes an empty `--bootappend-live ""` (none known), it would fail earlier in the regex rather than at the empty-check — same outcome, no behavior regression.
+- **R2 — Review discipline gap that produced this hotfix.** W11-2 reviewer accepted the implementer's "shellcheck clean" self-report without executing shellcheck (or the owning unit test) on `scripts/build-iso.sh` after iter-1's new function landed. Mitigation baked into EC item 4: reviewer MUST independently run `shellcheck scripts/build-iso.sh` and `make test-unit-bash` end-to-end for W11-2b, and this discipline carries forward — any future slice that adds/modifies non-trivial bash in a shellchecked file requires the reviewer to run the tool itself, not merely quote the implementer's claim. Recorded here as a process note (no DEC needed for a review-discipline reminder — the corrected practice is documented in this Ready-for-guardian definition and applies from now on).
+
+**Cross-references:**
+- W11-2 detail plan (this file, section starting line 2569) — sole predecessor; W11-2b addresses a hygiene defect in W11-2's `generate_bootloader_configs()` implementation without touching its architecture.
+- DEC-PHASE11-012 (bootloader cmdline single-authority + identity) — preserved verbatim; W11-2b's extractor rewrite honors the same single-authority discipline.
+- Prior-session wiring bugs #42 (FK on `workflow bind`), #68/#69/#70/#72/#73 — noted; workarounds already applied by orchestrator (unbind closed workflow before rebinding new one).
+- Failing evidence: `tests/unit/test_iso_content_staging_unit.sh:236-241` (shellcheck sub-test on `$BUILD_SCRIPT`).
+
+**Scope Manifest artifact:** `tmp/phase11-w11-2b-scope.json` (written 2026-07-09 by planner; `allowed_paths` = `scripts/build-iso.sh`, `CHANGELOG.md`, `MASTER_PLAN.md`, `tmp/**`; `required_paths` = `scripts/build-iso.sh`; `forbidden_paths` explicitly bans all `iso/`, `tests/`, `.github/workflows/`, `scripts/control_center/**`, `scripts/nebula/**`, both generated bootloader cfgs, and `iso/auto/config`).
+
+**W11-2b iter-1 (planner detail-plan): 2026-07-09.** Detail plan appended to `MASTER_PLAN.md` on `develop`; NO new DEC (hygiene fix); Scope Manifest at `tmp/phase11-w11-2b-scope.json`. Ready for `guardian:provision` under workflow_id `phase11-w11-2b-shellcheck-hotfix`.
+
 ---
 
 ## Initiative 2: Autonomous Forensic Platform (v2.1 -> v3.x)
