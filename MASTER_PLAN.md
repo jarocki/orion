@@ -2919,6 +2919,163 @@ Then records `REVIEW_VERDICT=ready_for_guardian`.
 
 **W11-2c iter-1 (planner detail-plan): 2026-07-10.** Detail plan appended to `MASTER_PLAN.md` on `develop`; NO new DEC (hotfix); Scope Manifest at `tmp/phase11-w11-2c-scope.json`. Ready for `guardian:provision` under workflow_id `phase11-w11-2c-ci-hotfix`.
 
+#### W11-2d — Detail plan (16f rewrite: runtime C-extension import → structural grep pair)
+
+**Seeded:** 2026-07-10 planner amendment. **Status:** ready for `guardian:provision`. **Env:** GitHub Actions `ubuntu-latest` (24.04 Noble, Python 3.12) + `debian:bullseye` build container. **Wave:** post-W11-2c hygiene, pre-W11-3. **Gate:** review. **Weight:** S (very tiny — 2 in-scope files, 3 tasks, 1 risk item). **Deps:** W11-2c (landed at `dff6209`, 2026-07-10). **Workflow ID:** `phase11-w11-2d-16f-structural`.
+
+**Trigger.** CI run `29105513999` on `develop` HEAD `dff6209` (post-W11-2c) advanced content-presence from 98/4 to **101/1**. Failures 16a (gcc purge), 16b (bash arithmetic), and 16e (`-L` symlink semantics) now PASS as designed. Only 16f — the host `python3 -c "from control_center.app import run_app"` runtime import — still fails, with `ModuleNotFoundError: No module named 'gi'`. CI log shows `python3-gi is already the newest version (3.48.2-1)` and `python3-gi set to manually installed` — the W11-2c workflow install DID land the package. The failure is a Python-packaging quirk of Ubuntu 24.04 Noble: Python 3.12 + PEP 668 externally-managed-environment + PYTHONPATH prepend cannot resolve a system C-extension shipped under `/usr/lib/python3/dist-packages` for the `gi` binding when the interpreter is invoked with `PYTHONPATH` pointing at an unrelated tree. The chroot IS correctly staging `python3-gi`; the host runner IS correctly installing it; but the host `python3` invocation the assertion uses cannot bridge the two. The runtime import assertion is architecturally the wrong shape for the CI-runner environment we have.
+
+**Fix decision (operator-selected in dispatch context; recorded here for auditability):** Rewrite 16f as a **structural grep pair** that proves the same acceptance signal (issue #66 wire cohesion between wrapper and module) without invoking a Python runtime that has to bridge host and chroot ABIs. Two structural checks replace the one runtime import:
+1. `grep -qE "^def run_app\b" "$APP_PY"` proves the `control_center.app.run_app` symbol is defined in the shipped module — catches the "module truncated / renamed / missing" class of bug.
+2. `grep -qE "from control_center\.app import run_app" "$WRAPPER"` proves the wrapper actually wires to that symbol — catches the "wrapper drifts away from module" class of bug that issue #66 originally exposed.
+
+The runtime C-extension import IS still exercised at first boot on hardware and inside QEMU (T6 in `tests/integration/test-qemu-boot.sh` launches Control Center via the wrapper, which triggers the real `import gi`), so the runtime signal is not lost — it moves from the content-presence pre-QEMU step to the QEMU boot step, which is the natural home for runtime bindings anyway. Content-presence is the right home for structural (grep) assertions; QEMU is the right home for runtime assertions. W11-2c misplaced the runtime signal in content-presence; W11-2d corrects the layering.
+
+**Companion cleanup.** With the runtime import removed from content-presence, the W11-2c workflow addition of `python3-gi` to the CI runner install becomes dead weight. Remove `python3-gi` from the `sudo apt-get install -y squashfs-tools xorriso python3-gi` line in `.github/workflows/qemu-test.yml:147` (revert to `squashfs-tools xorriso`), and remove the 3-line comment block above it (lines 143-146 explaining why python3-gi was needed). Safe: `grep -rn 'python3-gi' <repo>` confirms the only other references are inside content-presence assertions that check the extracted **squashfs** `$SQF/var/lib/dpkg/status` (chroot side), not the host runner — verified by R1 mitigation below.
+
+**State-authority map:**
+- **`tests/integration/test-iso-content-presence.sh` section 16f** — the test file authority for W9-2 wire-cohesion post-conditions. This slice rewrites the single failing sub-assertion in place. Sections 16a (gcc), 16b (Ghidra count), 16c (packages present), 16d (module tree extracted), 16e (wrapper `-L` + `readlink` target) UNTOUCHED — all passing on `dff6209`.
+- **`.github/workflows/qemu-test.yml`** — CI runner setup authority. Reverts the W11-2c `python3-gi` addition (now dead weight) and its explanatory comment. NO other changes to matrix, timeout-minutes, KVM handling, ISO glob, artifact upload, or step ordering.
+- **`iso/config/hooks/live/0500-install-external-tools.hook.chroot`** UNTOUCHED. The W11-2c gcc/g++ purge block is correct and stays.
+- **`iso/config/hooks/live/0700-orionx-setup.hook.chroot`** UNTOUCHED. The wrapper symlink authority is correct as-shipped.
+- **`iso/config/package-lists/orionx.list.chroot`** UNTOUCHED. `python3-gi` remains in the chroot package list (required for GTK runtime at first boot; unrelated to CI runner install).
+- **`scripts/control_center/**`** UNTOUCHED. The module and wrapper are correct.
+- **`tests/integration/test-qemu-boot.sh`** UNTOUCHED. T6 already exercises the runtime import via first-boot Control Center launch; W11-2d makes no change to that assertion.
+- **`CHANGELOG.md`** and **`MASTER_PLAN.md`** — governance surfaces; extended per the W11-2b/W11-2c pattern.
+
+**Removal targets (Sacred Practice #12 — no parallel paths):**
+1. The runtime import assertion at `tests/integration/test-iso-content-presence.sh` around lines 970-978 (`PYTHONPATH=... python3 -c "from control_center.app import run_app"`). Deleted, not left commented. The structural grep pair replaces it as the single 16f authority.
+2. `python3-gi` in `.github/workflows/qemu-test.yml:147` and the 3-line explanatory comment block at lines 143-146. Deleted — no "kept as a fallback" hedge. If the structural check ever needs to be re-supplemented with a runtime check, that would happen in QEMU (T6), not the host runner.
+
+**Preservation invariants:**
+- W11-2c preserved — 16a gcc purge PASSes on next CI run; 16b Ghidra count PASSes; 16e wrapper `-L` + `readlink` target PASSes. The three assertions W11-2c rewrote must remain green.
+- W11-2b (SC2001 shellcheck) preserved — no touch to `scripts/build-iso.sh` or `iso/auto/config`.
+- W11-2 (debloat + bootloader single-authority) preserved — no touch to package list, no touch to generated bootloader cfgs, no touch to `test_iso_serial_console.sh`, DEC-PHASE11-012 identity tokens untouched.
+- W11-1 (Nebula manifest, W10-1 systemd chain, AppArmor) preserved — no touch to `iso/config/nebula-model-manifest.json`, `iso/config/includes.chroot/etc/systemd/system/nebula-*`, `iso/config/hooks/live/0610-*` / `0615-*`, or `scripts/nebula/**`.
+- W9-2 (Control Center Python module and wrapper) preserved — no touch to `scripts/control_center/**`. 16f rewrite is test-side + workflow-side only.
+- W9-1 / W11-9 branding surfaces (wallpaper, themes, Plymouth) untouched.
+- The 101 assertions in `test-iso-content-presence.sh` that currently PASS on `dff6209` continue to PASS after this slice (regression check via full-run at branch HEAD).
+- Runtime C-extension coverage preserved by design: `test-qemu-boot.sh` T6 exercises the real `import gi` path via first-boot Control Center launch; W11-2d moves the runtime signal into its architecturally correct home (QEMU), not out of the test suite.
+
+**Task decomposition (3 tasks, 1-2 commits — proportional to slice weight):**
+
+1. **T1 — Rewrite 16f as structural grep pair (test-side).** Edit `tests/integration/test-iso-content-presence.sh` section 16f (lines 959-982): (a) update the header-comment block at lines 959-966 to explain the structural approach (see comment-block text below); (b) replace the `IMPORT_EXIT` / `IMPORT_OUTPUT` / `PYTHONPATH ... python3 -c ...` block at lines 970-978 with two `grep -qE` sub-assertions plus their PASS/FAIL wiring, retaining the outer `if [[ -d "$CC_SCRIPTS_PARENT" ]]` gate; (c) update the outer-else FAIL message at line 980-981 to name the corrected semantics ("Cannot find `$CC_SCRIPTS_PARENT`" — no more PYTHONPATH-import phrasing). Comment-block header text (verbatim, replaces lines 959-966):
+
+   ```bash
+   # ---------------------------------------------------------------------------
+   # 16f. W9-2 wire-cohesion structural assertion (issue #66 defense)
+   # ---------------------------------------------------------------------------
+   # Uses structural (grep) checks rather than a live runtime import because:
+   #   - Ubuntu 24.04 GHA runners have python3-gi installed but python3 -c with
+   #     PYTHONPATH prepend cannot resolve C-extension modules from
+   #     /usr/lib/python3/dist-packages (PEP 668 externally-managed environment
+   #     interaction on Python 3.12). See CI run 29105513999.
+   #   - The runtime C-extension import IS exercised at first boot on hardware
+   #     and in QEMU (test-qemu-boot.sh T6 launches Control Center via the
+   #     wrapper, which triggers the real import gi), so the runtime signal is
+   #     not lost — it lives in its architecturally correct home.
+   #   - Structural checks (symbol definition + import statement) prove the
+   #     wrapper->module wire that issue #66 originally broke, without
+   #     depending on cross-ABI Python runtime bridging.
+   ```
+
+   Replacement block (verbatim, replaces lines 969-982):
+
+   ```bash
+   CC_SCRIPTS_PARENT="$SQF/opt/orionx/scripts"
+   if [[ -d "$CC_SCRIPTS_PARENT" ]]; then
+       APP_PY="$CC_SCRIPTS_PARENT/control_center/app.py"
+       WRAPPER="$CC_SCRIPTS_PARENT/control_center/orionx-control-center"
+
+       # Structural check 1: run_app symbol defined in app.py
+       if [[ -f "$APP_PY" ]] && grep -qE "^def run_app\b" "$APP_PY"; then
+           pass "16f: control_center.app.run_app symbol defined in squashfs (issue #66 module completeness)"
+       else
+           fail "16f: control_center.app.run_app symbol defined in squashfs" \
+                "run_app function not found in $APP_PY (issue #66 — module tree incomplete)"
+       fi
+
+       # Structural check 2: wrapper imports run_app from control_center.app
+       if [[ -f "$WRAPPER" ]] && grep -qE "from control_center\.app import run_app" "$WRAPPER"; then
+           pass "16f: wrapper imports run_app from control_center.app (issue #66 wire cohesion)"
+       else
+           fail "16f: wrapper imports run_app from control_center.app" \
+                "Import statement not found in $WRAPPER (issue #66 — wire missing)"
+       fi
+   else
+       fail "16f: /opt/orionx/scripts/ present in squashfs" \
+            "Cannot find $CC_SCRIPTS_PARENT"
+   fi
+   ```
+
+   Verify: `bash -n tests/integration/test-iso-content-presence.sh`; smoke-run the section 16 block against a temporary staging tree that mirrors the extracted squashfs (or against the `scripts/control_center/` worktree copy adapted to the expected path — the assertions themselves are grep-based so no full ISO is required to validate the shape). Commit part of: `fix(w11-2d): rewrite 16f as structural grep pair — remove host python3 runtime import`.
+
+2. **T2 — Revert W11-2c `python3-gi` addition to CI runner install (workflow-side).** Edit `.github/workflows/qemu-test.yml`: (a) delete lines 143-146 (the 4-line comment block explaining the W11-2c `python3-gi` addition — planner note: exact line numbers verified against `dff6209`; adjust if the file has drifted); (b) change line 147 from `sudo apt-get install -y squashfs-tools xorriso python3-gi` back to `sudo apt-get install -y squashfs-tools xorriso`. NO other line changes; NO relocation of the install step; NO change to the surrounding workflow structure. Verify: `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/qemu-test.yml"))'` parses clean; `grep -c 'python3-gi' .github/workflows/qemu-test.yml == 0` (package fully removed from the workflow); `grep -c 'squashfs-tools xorriso' .github/workflows/qemu-test.yml >= 1` (base install line preserved). Commit part of T1's shared commit (single-commit shape preferred for a very tiny slice).
+
+3. **T3 — CHANGELOG v2.1.0 W11-2d mini-subsection + MASTER_PLAN iter annotation.** Edit `CHANGELOG.md` `## [v2.1.0]` section: append a `### W11-2d: 16f rewrite — runtime import → structural check` mini-subsection explaining (a) why the W11-2c host `python3-gi` approach did not fix the failure (PEP 668 + PYTHONPATH interaction on Ubuntu 24.04 Python 3.12), (b) the structural grep pair replacement in section 16f, (c) the companion `python3-gi` removal from CI runner install (dead weight after test rewrite), (d) the runtime import assertion continues to run at first boot inside QEMU via `test-qemu-boot.sh` T6 — coverage preserved. Edit `MASTER_PLAN.md`: append one line to this section — `**W11-2d iter-1 (planner detail-plan): 2026-07-10.** Detail plan appended to MASTER_PLAN.md on develop; NO new DEC (hotfix); Scope Manifest at tmp/phase11-w11-2d-16f-structural-scope.json. Ready for guardian:provision under workflow_id phase11-w11-2d-16f-structural.` — do NOT touch permanent Decision Log rows, the W-ID table at line 2398, or any DEC-PHASE11-001..-012 rationale text. Commit: `docs(w11-2d): CHANGELOG v2.1.0 — W11-2d 16f structural rewrite` (or fold into T1's shared commit at implementer discretion).
+
+**Suggested commit shapes (implementer discretion within cascade-consolidation guidance):**
+- **Option A (single commit, recommended for very tiny slice):** T1+T2+T3 in one `fix(w11-2d): rewrite 16f as structural grep pair — remove host python3 runtime import + companion CI cleanup` commit. Matches the slice's tiny weight and keeps the CI cascade tight.
+- **Option B (2 commits):** T1+T2 fix commit, T3 docs commit. Cleanly separates behavior from docs; acceptable.
+
+**Evaluation Contract (5 items — testable, verbatim):**
+
+1. **Runtime import assertion removed from 16f.** After the fix, `grep -c "python3 -c \"from control_center.app import run_app" tests/integration/test-iso-content-presence.sh == 0` (the runtime import invocation is deleted, not commented) AND `grep -c "PYTHONPATH=\"\$CC_SCRIPTS_PARENT\"" tests/integration/test-iso-content-presence.sh == 0` (no leftover PYTHONPATH invocation in the 16f block). Independently verifiable at branch HEAD.
+
+2. **Structural grep pair present in 16f.** After the fix, `grep -cE 'grep -qE "\^def run_app' tests/integration/test-iso-content-presence.sh >= 1` (structural check 1 — symbol definition) AND `grep -cE 'grep -qE "from control_center\\\\.app import run_app"' tests/integration/test-iso-content-presence.sh >= 1` (structural check 2 — wrapper import statement). Both PASS messages present: `grep -c "control_center.app.run_app symbol defined in squashfs" tests/integration/test-iso-content-presence.sh >= 1` AND `grep -c "wrapper imports run_app from control_center.app" tests/integration/test-iso-content-presence.sh >= 1`.
+
+3. **`python3-gi` removed from CI runner install.** After the fix, `grep -c 'python3-gi' .github/workflows/qemu-test.yml == 0` (package fully removed, comment block deleted). `grep -n 'sudo apt-get install -y squashfs-tools xorriso' .github/workflows/qemu-test.yml` matches exactly one line without a trailing `python3-gi` token. NO change to `runs-on`, matrix, `timeout-minutes`, KVM handling, ISO glob, artifact upload, or step ordering (reviewer verifies via `git diff .github/workflows/qemu-test.yml`).
+
+4. **CI content-presence result improves to 102/0.** On the next CI run of `qemu-test.yml` at branch HEAD, the `Verify Orion-X content present in ISO` step exits 0 with `Results: 102 passed, 0 failed (total: 102)` — up from 101/1 on `dff6209`. Note: the total may be 102 (was 101 before this slice because 16f was a single assertion; W11-2d adds a second sub-assertion inside the same 16f block). The acceptance is `0 failed`, not the exact pass count. Independently verifiable in the CI log by grepping for `Results:` and asserting `0 failed`.
+
+5. **No regression in the 101 passing assertions AND `make test-unit-bash` remains green.** Full CI run reports 0 failures; reviewer runs `make test-unit-bash` end-to-end and reports the tail (`ALL BASH UNIT TESTS PASSED` or equivalent). `git diff --name-only develop..HEAD` returns only files inside the Scope Manifest `allowed_paths`.
+
+**Forbidden shortcuts:**
+
+- Do NOT keep the runtime import as a "fallback if structural passes" hedge. Sacred Practice #12: one authority per assertion. The structural grep pair IS the 16f authority; the runtime import moves to QEMU T6 (already there) or nowhere.
+- Do NOT rewrite T6 in `test-qemu-boot.sh` to add a redundant `import gi` check just because 16f no longer runs it. T6 already covers the runtime path via the actual Control Center launch; adding a parallel check would create two runtime authorities for the same signal.
+- Do NOT reintroduce the runtime import via any other mechanism (e.g., a chroot-into step, a bind-mount, a Docker exec of the chroot Python). If a future slice ever needs a runtime import in CI, that requires a new DEC — not a W11-2d silent expansion.
+- Do NOT touch `iso/config/hooks/live/0500-install-external-tools.hook.chroot` (W11-2c debloat-purge authority) — the gcc/g++ purge is correct as-shipped.
+- Do NOT touch `iso/config/hooks/live/0700-orionx-setup.hook.chroot` — wrapper symlink authority is correct as-shipped.
+- Do NOT touch `iso/config/package-lists/orionx.list.chroot` — `python3-gi` stays in the chroot package list (required for GTK runtime at first boot; only the CI-runner install is removed).
+- Do NOT edit `scripts/control_center/app.py` or the wrapper script to make grep patterns "easier" — the current `def run_app` signature and `from control_center.app import run_app` import statement are already the canonical shapes; if they weren't, the runtime import assertion would have failed for a different reason. Structural checks match reality, not the other way around.
+- Do NOT touch W10-1 Nebula (`iso/config/nebula-model-manifest.json`, `scripts/nebula/**`, nebula-*.service unit files, AppArmor `usr.sbin.ollama` profile), W11-1 model manifest, or W11-9 branding assets. This is a test + CI hotfix; scope is section-16f-of-content-presence + workflow install-line cleanup + docs.
+- Do NOT combine this fix with any unrelated hygiene edit that surfaces during T1's `bash -n` run on the test file. If additional shellcheck findings appear elsewhere in the file, file them for a separate slice; W11-2d closes only the single 16f failure.
+- Do NOT add a `# shellcheck disable` pragma to hide the rewrite. Structural checks are shellcheck-clean by construction.
+
+**Ready-for-guardian definition:** All 5 Evaluation Contract items pass. Reviewer independently:
+1. Runs `bash -n tests/integration/test-iso-content-presence.sh` (clean).
+2. Runs `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/qemu-test.yml"))'` (parses clean).
+3. Runs `grep -c 'python3-gi' .github/workflows/qemu-test.yml` (returns 0) AND `grep -c 'python3-gi' iso/config/package-lists/orionx.list.chroot` (returns 1 — chroot install preserved).
+4. Runs `make test-unit-bash` end-to-end (exits 0; no regression from `dff6209`).
+5. Runs `git diff --name-only develop..HEAD` and verifies every changed file is inside the Scope Manifest `allowed_paths` (`tests/integration/test-iso-content-presence.sh`, `.github/workflows/qemu-test.yml`, `CHANGELOG.md`, `MASTER_PLAN.md`, `tmp/**`).
+6. Triggers a CI re-run (or waits for the PR's automatic run) and confirms the `Verify Orion-X content present in ISO` step exits 0 with the `Results:` line reporting `0 failed`. If 16f still fails, or any previously-passing assertion regresses, verdict is `needs_changes`.
+
+Then records `REVIEW_VERDICT=ready_for_guardian`.
+
+**Rollback boundary:** 1-2 commits. `git revert <sha>` cleanly restores the pre-fix 16f runtime import and the W11-2c `python3-gi` install line. Regression classes to watch:
+- **Structural check drift:** if a future slice renames `run_app` in `control_center/app.py` (e.g., to `main` or `launch`), 16f structural check 1 fails. Recorded here as a forward-looking dependency; the fail message names the symbol clearly, so diagnosis is one-line.
+- **Wrapper import statement drift:** if a future slice changes the wrapper's import from `from control_center.app import run_app` to any other form (e.g., `import control_center.app as _cc; _cc.run_app()`), 16f structural check 2 fails. Recorded as a forward-looking dependency; the fail message names the expected pattern.
+- **QEMU T6 coverage regression:** if a future slice weakens `test-qemu-boot.sh` T6's Control Center launch assertion, the runtime `import gi` coverage is lost. Not a W11-2d risk (T6 is untouched by this slice), but reviewer notes it as a preservation invariant to protect in future slices.
+
+**Risk register (1 item — proportional to very tiny slice):**
+
+- **R1 — Removing `python3-gi` from CI runner install could affect other tests that use it.** Confirmed safe by grep: `grep -rn 'python3-gi\|import gi' <repo> --include="*.yml" --include="*.yaml" --include="*.sh"` shows exactly three consumers — (a) the workflow line being removed (`.github/workflows/qemu-test.yml:147`, plus its comment block at lines 143-146), (b) `tests/unit/test_build_iso.sh:539` which iterates `for gtk_pkg in python3-gi ...` inside an assertion that checks the extracted **squashfs** package list (chroot side, unaffected by host runner install), (c) `tests/integration/test-iso-content-presence.sh:559` which similarly checks the extracted squashfs `$SQF/var/lib/dpkg/status` (chroot side, unaffected). **Mitigation:** the CI runner `python3-gi` install serves ONLY the current 16f runtime import assertion. Once that assertion is rewritten as a structural check, the runner install has zero remaining consumers and is safely removed. Full reviewer verification: `make test-unit-bash` end-to-end must remain green (Evaluation Contract item 5), and the next CI run must show 0 content-presence failures (item 4).
+
+**Scope Manifest artifact:** `tmp/phase11-w11-2d-16f-structural-scope.json` (written 2026-07-10 by planner; `allowed_paths` = `tests/integration/test-iso-content-presence.sh`, `.github/workflows/qemu-test.yml`, `CHANGELOG.md`, `MASTER_PLAN.md`, `tmp/**`; `required_paths` = `tests/integration/test-iso-content-presence.sh`, `CHANGELOG.md`; `forbidden_paths` explicitly bans `scripts/**`, `iso/auto/config`, `iso/config/package-lists/**`, `iso/config/hooks/live/0500-install-external-tools.hook.chroot` (W11-2c authority), `iso/config/hooks/live/0700-orionx-setup.hook.chroot`, `iso/config/hooks/live/0610-*` / `0615-*` / `0620-*` / `0600-*` / `normal/**` / `binary/**`, `iso/config/nebula-model-manifest.json`, `iso/config/includes.chroot/**`, `iso/config/includes.binary/**`, plus explicit named workflow files other than `qemu-test.yml`).
+
+**Cross-references:**
+- W11-2 detail plan (this file, section starting line 2569) — introduced the section 16 W9-2 packaging assertions; 16f is one of that set.
+- W11-2c detail plan (this file, section starting line 2788) — fixed 16a/16b/16e successfully; attempted 16f fix (host `python3-gi` install) did not resolve the Ubuntu 24.04 + Python 3.12 + PYTHONPATH interaction. W11-2d supersedes the W11-2c 16f approach with the structural rewrite.
+- W9-2 packaging authority split (this file, line 2595) — the wrapper/module co-shipment invariant. 16f structural checks are the CI-time enforcement of that invariant; W11-2d rewrites the enforcement mechanism without weakening the invariant.
+- DEC-PHASE11-003 (debloat policy) — preserved verbatim; W11-2d does not touch the chroot debloat surface.
+- DEC-PHASE11-012 (bootloader single-authority + identity) — preserved verbatim; W11-2d does not touch bootloader-related surfaces.
+- `test-qemu-boot.sh` T6 — the architecturally correct home for the runtime `import gi` signal; W11-2d relies on T6 being present and functional (invariant, not modified by this slice).
+- Prior-session wiring gaps #42, #68, #69, #70, #72, #73 — same-class integration bugs where the wrapper/module wire cohesion matters; W11-2d's structural check hardens the CI-time defense against that class.
+- Failing CI run: `29105513999` on `develop` HEAD `dff6209` (Verify Orion-X content present in ISO — exit 1; 1 failure / 101 passes / 102 total; only failing sub-assertion: 16f Python `import gi` — `ModuleNotFoundError: No module named 'gi'` despite `python3-gi is already the newest version`).
+
+**W11-2d iter-1 (planner detail-plan): 2026-07-10.** Detail plan appended to `MASTER_PLAN.md` on `develop`; NO new DEC (hotfix); Scope Manifest at `tmp/phase11-w11-2d-16f-structural-scope.json`. Ready for `guardian:provision` under workflow_id `phase11-w11-2d-16f-structural`.
+
 ---
 
 ## Initiative 2: Autonomous Forensic Platform (v2.1 -> v3.x)
