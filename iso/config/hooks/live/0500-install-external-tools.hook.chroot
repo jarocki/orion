@@ -174,4 +174,14 @@ echo "[ollama] Installation complete: $(ollama --version 2>/dev/null || echo 've
 echo "[ollama] Binary: $(command -v ollama)"
 echo "=== Ollama installation complete ==="
 
+# ---------------------------------------------------------------------------
+# W11-2c debloat-purge: remove gcc/g++ transitive Recommends that survive
+# list-driven removal because iso/auto/config runs --apt-recommends true.
+# DEC-PHASE11-003 policy is enforced list-side (gcc not in orionx.list.chroot)
+# AND chroot-side (this purge). Single debloat-in-chroot authority: this hook.
+# ---------------------------------------------------------------------------
+echo "[0500] W11-2c: purging gcc/g++ Recommends residue (DEC-PHASE11-003 enforcement)"
+DEBIAN_FRONTEND=noninteractive apt-get purge -y --autoremove \
+    gcc gcc-10 g++ g++-10 || true
+
 echo "=== External tools installation complete ==="

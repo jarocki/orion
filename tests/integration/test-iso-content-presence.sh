@@ -817,7 +817,11 @@ echo "  [16b] Verifying Ghidra bulk staging removed from 0500 hook"
 # in the squashfs at all. Instead we assert against the source hook in the worktree.
 HOOK_0500_SRC="$REPO_ROOT/iso/config/hooks/live/0500-install-external-tools.hook.chroot"
 if [[ -f "$HOOK_0500_SRC" ]]; then
-    GHIDRA_HITS=$(grep -cE '(NationalSecurityAgency/ghidra|unzip.*ghidra|GHIDRA_VERSION|GHIDRA_DATE|/opt/ghidra[^.])' "$HOOK_0500_SRC" 2>/dev/null || echo "0")
+    if grep -qE '(NationalSecurityAgency/ghidra|unzip.*ghidra|GHIDRA_VERSION|GHIDRA_DATE|/opt/ghidra[^.])' "$HOOK_0500_SRC" 2>/dev/null; then
+        GHIDRA_HITS=$(grep -cE '(NationalSecurityAgency/ghidra|unzip.*ghidra|GHIDRA_VERSION|GHIDRA_DATE|/opt/ghidra[^.])' "$HOOK_0500_SRC" 2>/dev/null)
+    else
+        GHIDRA_HITS=0
+    fi
     if [[ "$GHIDRA_HITS" -eq 0 ]]; then
         pass "16b: Ghidra bulk staging absent from 0500 hook source (DEC-PHASE11-004)"
     else
@@ -918,11 +922,17 @@ CC_MODULE_DIR="$SQF/opt/orionx/scripts/control_center"
 CC_INIT="$CC_MODULE_DIR/__init__.py"
 CC_APP="$CC_MODULE_DIR/app.py"
 
-if [[ -e "$CC_WRAPPER" ]]; then
-    pass "16e: /usr/bin/orionx-control-center present in squashfs (wrapper or symlink)"
+if [[ -L "$CC_WRAPPER" ]]; then
+    CC_WRAPPER_TARGET="$(readlink "$CC_WRAPPER" 2>/dev/null || :)"
+    if [[ "$CC_WRAPPER_TARGET" == "/opt/orionx/scripts/control_center/orionx-control-center" ]]; then
+        pass "16e: /usr/bin/orionx-control-center symlink present in squashfs (issue #66)"
+    else
+        fail "16e: /usr/bin/orionx-control-center symlink target correct" \
+             "Got target: $CC_WRAPPER_TARGET"
+    fi
 else
-    fail "16e: /usr/bin/orionx-control-center present in squashfs" \
-         "Wrapper or symlink missing — 0700-orionx-setup.hook.chroot may not have run (issue #66)"
+    fail "16e: /usr/bin/orionx-control-center symlink present in squashfs" \
+         "Symlink not found at $CC_WRAPPER — 0700-orionx-setup.hook.chroot did not create it (issue #66)"
 fi
 
 if [[ -d "$CC_MODULE_DIR" ]]; then
