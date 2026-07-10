@@ -15,6 +15,10 @@ Merkle audit, auto-healing) are preserved. The tightening axes: smaller mission-
 mission-fit debloat, post-boot optional-installer framework, and a unique Orion-X cyberdeck
 visual identity. Target: ≤3.0 GB compressed ISO (~2.8 GB). See DEC-PHASE11-001.
 
+### W11-2b: Shellcheck SC2001 hotfix
+
+- fix(phase11): W11-2b — SC2001 shellcheck fix in build-iso.sh bootappend extraction (BASH_REMATCH replaces echo|sed)
+
 ### Changed (W11-2): Debloat + bootloader single-authority + W9-2 packaging fix
 
 - **14 packages removed from base ISO** per DEC-PHASE11-003 + DEC-PHASE11-006 (net delta

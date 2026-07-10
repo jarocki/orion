@@ -460,10 +460,16 @@ generate_bootloader_configs() {
         exit 1
     fi
 
-    # Extract the quoted value: everything between the first " and last " on the line
+    # Extract the quoted value using bash native regex.
+    # BASH_REMATCH[1] captures the quoted content; using [[ =~ ]] avoids the
+    # echo|sed subshell and is SC2001-clean (native regex, no external tool).
+    # The + quantifier (not *) requires at least one char, so empty-quoted-content
+    # fails the match and falls through to the error branch — same fail-loud behavior
+    # as the previous two-step (sed + [[ -z ]]) implementation.
     local bootappend
-    bootappend="$(echo "$bootappend_line" | sed 's/.*--bootappend-live[[:space:]]*"\([^"]*\)".*/\1/')"
-    if [[ -z "$bootappend" ]]; then
+    if [[ "$bootappend_line" =~ --bootappend-live[[:space:]]*\"([^\"]+)\" ]]; then
+        bootappend="${BASH_REMATCH[1]}"
+    else
         log "ERROR: Failed to parse --bootappend-live value from: $bootappend_line"
         exit 1
     fi
