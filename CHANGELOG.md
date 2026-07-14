@@ -15,6 +15,80 @@ Merkle audit, auto-healing) are preserved. The tightening axes: smaller mission-
 mission-fit debloat, post-boot optional-installer framework, and a unique Orion-X cyberdeck
 visual identity. Target: ≤3.0 GB compressed ISO (~2.8 GB). See DEC-PHASE11-001.
 
+### W11-9a: Boot chain cyberdeck branding — Plymouth + GRUB + isolinux + LightDM
+
+Ship the pre-XFCE visual identity chain so Orion-X identity is visible from
+power-on through LightDM greeter. All theme assets derived from the W9-1
+Phoenix wallpaper (operator directive 2026-07-13 — reuse over new imagery).
+
+**Plymouth theme `orionx-phoenix` shipped (T2):**
+- `iso/config/includes.chroot/usr/share/plymouth/themes/orionx-phoenix/`
+  — `orionx-phoenix.plymouth` (theme metadata, ModuleName=script),
+  — `orionx-phoenix.script` (Plymouth script API: wallpaper fill + dark
+    overlay + Phoenix-red Orion-X wordmark + progress bar + passphrase prompt
+    callbacks),
+  — `background.png` (W9-1 Phoenix wallpaper, reused per operator directive).
+- `/etc/plymouth/plymouthd.conf` staged with `Theme=orionx-phoenix`.
+- Total theme size: ~1.55 MB (plan estimate was 5 MB; well under).
+- Packages added: `plymouth`, `plymouth-themes`, `plymouth-label`.
+- **DEC-PHASE11-010** — W11-9a boot chain single authority.
+
+**0800-orionx-branding hook shipped (T3):**
+- `iso/config/hooks/live/0800-orionx-branding.hook.chroot` (chmod 755).
+  Numbered 0800 to run last in the live hook chain, after all 0500-0700 hooks.
+  Hook body: (i) validates theme assets present, (ii) `plymouth-set-default-theme
+  -R orionx-phoenix` (activates theme + triggers `update-initramfs -u` to embed
+  theme in initrd), (iii) `fc-cache -f` (font cache primer — no-op in W11-9a,
+  active in W11-9b when Iosevka + Hack fonts land), (iv) belt-and-suspenders
+  write of `/etc/plymouth/plymouthd.conf`. `set -eux` — fails loud.
+- shellcheck: clean.
+
+**GRUB theme `orionx` shipped (T4):**
+- `iso/config/includes.chroot/usr/share/grub/themes/orionx/theme.txt`
+  (GRUB theme description language: Phoenix wallpaper backdrop, Phoenix-red
+  `#E84000` selected-item accent, DejaVu transitional font, progress bar,
+  help label).
+- `background.png` (W9-1 Phoenix wallpaper, reused).
+- **ACTIVATION PENDING RIDER SUB-SLICE:** `theme.txt` is staged but not yet
+  wired via `GRUB_THEME=` in the generated `grub.cfg`. Activating GRUB_THEME
+  requires a one-line addition to `generate_bootloader_configs()` in
+  `scripts/build-iso.sh`, which is a forbidden W11-9a scope surface
+  (DEC-PHASE11-012 preservation). Rider sub-slice planned. UEFI boot shows
+  the GRUB menu; theming activates when the generator rider lands.
+  W11-9b will additionally update font reference DejaVu → Iosevka PF2.
+
+**isolinux splash asset shipped (T5):**
+- `iso/config/includes.binary/isolinux/orionx-splash.png` staged (W9-1
+  wallpaper, reused).
+- `# W11-9a: isolinux MENU BACKGROUND line escalation deferred` — the
+  `isolinux.cfg` generator does not emit a `MENU BACKGROUND` line (generated
+  file is forbidden W11-9a scope per DEC-PHASE11-012). Asset is staged and
+  ready; BIOS boot menu remains vanilla until the generator rider lands.
+
+**LightDM greeter `orionx-greeter` shipped (T6):**
+- `iso/config/includes.chroot/usr/share/lightdm-gtk-greeter/orionx/orionx-greeter.conf`
+  (asset manifest + W11-9b upgrade target comments).
+- `iso/config/includes.chroot/etc/lightdm/lightdm-gtk-greeter.conf`
+  — `background=/opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png`
+    (Phase 9 wallpaper single-authority preserved).
+  — `theme-name=Adwaita-dark` (transitional; W11-9b replaces with Orion-X-Cyberdeck).
+  — `icon-theme-name=Adwaita` (transitional; W11-9b replaces with Orion-X-Icons).
+  — `font-name=Sans 11` (transitional; W11-9b replaces with Iosevka 11).
+  — Autologin authority (`DEC-PHASE9-005`) untouched.
+- `lightdm-gtk-greeter` added to package list.
+- **DEC-PHASE11-013 font substitution note (W11-9a):** W11-9a does NOT stage any
+  fonts. The `fc-cache -f` call in the 0800 hook is a no-op in W11-9a (extension
+  point for W11-9b). The forbidden vendor monospace font (superseded by DEC-PHASE11-013)
+  is not referenced anywhere in W11-9a source, scripts, tests, or this CHANGELOG entry.
+  W11-9b ships Iosevka (OFL-1.1) + Hack (Bitstream Vera / Apache-2.0) per DEC-PHASE11-013.
+
+**Tests shipped (T7 / T8):**
+- `tests/integration/test-iso-content-presence.sh` section 23a: 11 assertions
+  covering all 9 W11-9a Evaluation Contract content-presence conditions.
+- `tests/integration/test-qemu-boot.sh` W11-9a block: T8(a) Plymouth invocation
+  detection, T8(b) W11-2 identity preservation in `/proc/cmdline`, T8(c)
+  LightDM greeter conf source-tree check.
+
 ### W11-2d: 16f structural rewrite (CI infra fix)
 
 - fix(phase11): W11-2d — 16f structural rewrite (grep for def run_app + wrapper import) closes CI infra bug; python3-gi CI install reverted
