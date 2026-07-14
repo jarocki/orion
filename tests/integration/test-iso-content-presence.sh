@@ -1002,6 +1002,168 @@ else
 fi
 
 # ===========================================================================
+# 17. W11-9a: Boot chain branding — Plymouth + GRUB + isolinux + LightDM
+# ===========================================================================
+#
+# @decision DEC-PHASE11-010
+# @title W11-9a content-presence section 23a: boot chain branding assets
+# @status accepted
+# @rationale W11-9a stages Plymouth orionx-phoenix theme, GRUB orionx theme,
+#   isolinux splash asset, and LightDM greeter config. This section (labelled
+#   section 23a per plan numbering) asserts all 9 sub-conditions required by
+#   the W11-9a Evaluation Contract item 9. Assertions are keyed as 23a-a
+#   through 23a-i matching the plan text (T7 assertions in MASTER_PLAN).
+#
+# Section label note: sections 17-22 are reserved for W11-3 through W11-8
+# work items between W11-2 (section 16) and W11-9a (here, section 23/17).
+# The section number in echo output uses 23a to match the plan numbering;
+# the comment label 17 reflects insertion order in this file.
+
+section "17. W11-9a: Boot chain branding assets (section 23a)"
+
+# ---------------------------------------------------------------------------
+# 23a-a: Plymouth theme directory and .plymouth metadata present in squashfs
+# ---------------------------------------------------------------------------
+PLYMOUTH_THEME_DIR="$SQF/usr/share/plymouth/themes/orionx-phoenix"
+
+if [[ -d "$PLYMOUTH_THEME_DIR" ]]; then
+    pass "23a-a: /usr/share/plymouth/themes/orionx-phoenix/ present in squashfs"
+else
+    fail "23a-a: /usr/share/plymouth/themes/orionx-phoenix/ present in squashfs" \
+         "Plymouth theme directory missing — check includes.chroot staging"
+fi
+
+# 23a-a(ii): .plymouth metadata file
+if [[ -f "$PLYMOUTH_THEME_DIR/orionx-phoenix.plymouth" ]]; then
+    pass "23a-a: orionx-phoenix.plymouth metadata file present"
+else
+    fail "23a-a: orionx-phoenix.plymouth metadata file present" \
+         "Missing: $PLYMOUTH_THEME_DIR/orionx-phoenix.plymouth"
+fi
+
+# ---------------------------------------------------------------------------
+# 23a-b: Plymouth script file present
+# ---------------------------------------------------------------------------
+if [[ -f "$PLYMOUTH_THEME_DIR/orionx-phoenix.script" ]]; then
+    pass "23a-b: orionx-phoenix.script present in squashfs"
+else
+    fail "23a-b: orionx-phoenix.script present in squashfs" \
+         "Missing: $PLYMOUTH_THEME_DIR/orionx-phoenix.script"
+fi
+
+# ---------------------------------------------------------------------------
+# 23a-c: At least one PNG asset present under Plymouth theme dir
+# ---------------------------------------------------------------------------
+PLYMOUTH_PNG_COUNT=0
+if [[ -d "$PLYMOUTH_THEME_DIR" ]]; then
+    PLYMOUTH_PNG_COUNT=$(find "$PLYMOUTH_THEME_DIR" -name "*.png" -type f 2>/dev/null | wc -l)
+fi
+
+if [[ "$PLYMOUTH_PNG_COUNT" -ge 1 ]]; then
+    pass "23a-c: at least one PNG asset present under Plymouth theme dir (found: $PLYMOUTH_PNG_COUNT)"
+else
+    fail "23a-c: at least one PNG asset present under Plymouth theme dir" \
+         "No *.png files found under $PLYMOUTH_THEME_DIR"
+fi
+
+# ---------------------------------------------------------------------------
+# 23a-d: /etc/plymouth/plymouthd.conf contains Theme=orionx-phoenix
+# ---------------------------------------------------------------------------
+PLYMOUTHD_CONF="$SQF/etc/plymouth/plymouthd.conf"
+
+if [[ -f "$PLYMOUTHD_CONF" ]] && grep -q "Theme=orionx-phoenix" "$PLYMOUTHD_CONF"; then
+    pass "23a-d: /etc/plymouth/plymouthd.conf contains Theme=orionx-phoenix"
+else
+    fail "23a-d: /etc/plymouth/plymouthd.conf contains Theme=orionx-phoenix" \
+         "File missing or Theme= line absent: $PLYMOUTHD_CONF"
+fi
+
+# ---------------------------------------------------------------------------
+# 23a-e: GRUB theme.txt present in squashfs
+# ---------------------------------------------------------------------------
+GRUB_THEME_DIR="$SQF/usr/share/grub/themes/orionx"
+GRUB_THEME_TXT="$GRUB_THEME_DIR/theme.txt"
+
+if [[ -f "$GRUB_THEME_TXT" ]]; then
+    pass "23a-e: /usr/share/grub/themes/orionx/theme.txt present in squashfs"
+else
+    fail "23a-e: /usr/share/grub/themes/orionx/theme.txt present in squashfs" \
+         "Missing: $GRUB_THEME_TXT"
+fi
+
+# ---------------------------------------------------------------------------
+# 23a-f: At least one image asset present under GRUB theme dir
+# ---------------------------------------------------------------------------
+GRUB_PNG_COUNT=0
+if [[ -d "$GRUB_THEME_DIR" ]]; then
+    GRUB_PNG_COUNT=$(find "$GRUB_THEME_DIR" -name "*.png" -type f 2>/dev/null | wc -l)
+fi
+
+if [[ "$GRUB_PNG_COUNT" -ge 1 ]]; then
+    pass "23a-f: at least one PNG asset present under GRUB theme dir (found: $GRUB_PNG_COUNT)"
+else
+    fail "23a-f: at least one PNG asset present under GRUB theme dir" \
+         "No *.png files found under $GRUB_THEME_DIR"
+fi
+
+# ---------------------------------------------------------------------------
+# 23a-g: LightDM greeter orionx asset directory present in squashfs
+# ---------------------------------------------------------------------------
+LIGHTDM_GREETER_DIR="$SQF/usr/share/lightdm-gtk-greeter/orionx"
+
+if [[ -d "$LIGHTDM_GREETER_DIR" ]]; then
+    pass "23a-g: /usr/share/lightdm-gtk-greeter/orionx/ present in squashfs"
+else
+    fail "23a-g: /usr/share/lightdm-gtk-greeter/orionx/ present in squashfs" \
+         "LightDM greeter asset directory missing — check includes.chroot staging"
+fi
+
+# ---------------------------------------------------------------------------
+# 23a-h: /etc/lightdm/lightdm-gtk-greeter.conf present and contains wallpaper
+# ---------------------------------------------------------------------------
+LIGHTDM_GREETER_CONF="$SQF/etc/lightdm/lightdm-gtk-greeter.conf"
+EXPECTED_BG="/opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png"
+
+if [[ -f "$LIGHTDM_GREETER_CONF" ]] && \
+   grep -q "background=${EXPECTED_BG}" "$LIGHTDM_GREETER_CONF"; then
+    pass "23a-h: /etc/lightdm/lightdm-gtk-greeter.conf present and background=W9-1 wallpaper"
+else
+    fail "23a-h: /etc/lightdm/lightdm-gtk-greeter.conf present and background=W9-1 wallpaper" \
+         "File missing or background line absent: $LIGHTDM_GREETER_CONF (expected background=${EXPECTED_BG})"
+fi
+
+# ---------------------------------------------------------------------------
+# 23a-i: 0800-orionx-branding.hook.chroot present in source tree (build-time check)
+# ---------------------------------------------------------------------------
+# Hooks run at chroot build time and are not copied into the squashfs root.
+# This assertion checks the source-tree location, not the squashfs extraction.
+HOOK_SOURCE="$REPO_ROOT/iso/config/hooks/live/0800-orionx-branding.hook.chroot"
+
+if [[ -f "$HOOK_SOURCE" ]]; then
+    pass "23a-i: 0800-orionx-branding.hook.chroot present in source tree (iso/config/hooks/live/)"
+else
+    fail "23a-i: 0800-orionx-branding.hook.chroot present in source tree" \
+         "Missing: $HOOK_SOURCE"
+fi
+
+# Also verify the hook contains the critical activation command
+if [[ -f "$HOOK_SOURCE" ]] && \
+   grep -q "plymouth-set-default-theme -R orionx-phoenix" "$HOOK_SOURCE"; then
+    pass "23a-i(ii): hook contains plymouth-set-default-theme -R orionx-phoenix"
+else
+    fail "23a-i(ii): hook contains plymouth-set-default-theme -R orionx-phoenix" \
+         "Activation command absent from $HOOK_SOURCE"
+fi
+
+# Verify hook carries @decision annotation referencing DEC-PHASE11-010
+if [[ -f "$HOOK_SOURCE" ]] && grep -q "DEC-PHASE11-010" "$HOOK_SOURCE"; then
+    pass "23a-i(iii): hook carries @decision DEC-PHASE11-010 annotation"
+else
+    fail "23a-i(iii): hook carries @decision DEC-PHASE11-010 annotation" \
+         "@decision DEC-PHASE11-010 not found in $HOOK_SOURCE"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
