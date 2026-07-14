@@ -1,0 +1,142 @@
+# Orion-X Phoenix Edition — Plymouth splash script
+#
+# @decision DEC-PHASE11-010
+# @title W11-9a: Plymouth orionx-phoenix splash script
+# @status accepted
+# @rationale Plymouth scripting language drives the boot splash animation.
+#   Design: Phoenix wallpaper fills screen; centered Orion-X wordmark in
+#   Phoenix-red (#E84000) with white shadow for contrast on any background;
+#   progress bar at bottom in Phoenix-red; prompt box on passphrase request.
+#   No animated sprite frames — single background PNG per operator directive
+#   (reuse W9-1 wallpaper, no new PNG creation). Total theme size < 2 MB.
+#   plymouth-label (plymouth package) provides the Text.new() rendering.
+#
+# Plymouth script API reference: /usr/share/doc/plymouth/script-api (Debian)
+# Colors are specified as R, G, B floats in [0.0, 1.0].
+# PHOENIX_RED = #E84000 → R=0.91, G=0.25, B=0.0
+
+# ---------------------------------------------------------------------------
+# Screen dimensions and color constants
+# ---------------------------------------------------------------------------
+screen_width  = Window.GetWidth();
+screen_height = Window.GetHeight();
+
+PHOENIX_RED_R = 0.91;
+PHOENIX_RED_G = 0.25;
+PHOENIX_RED_B = 0.00;
+WHITE_R = 1.0;
+WHITE_G = 1.0;
+WHITE_B = 1.0;
+
+# ---------------------------------------------------------------------------
+# Background: Phoenix wallpaper fills the full screen
+# ---------------------------------------------------------------------------
+background_image = Image("background.png");
+scaled_bg = background_image.Scale(screen_width, screen_height);
+background_sprite = Sprite(scaled_bg);
+background_sprite.SetX(0);
+background_sprite.SetY(0);
+background_sprite.SetZ(-100);
+
+# ---------------------------------------------------------------------------
+# Dark overlay: semi-transparent darken layer for text readability
+# (Plymouth Image.Scale trick: 1x1 dark rectangle scaled to full screen)
+# ---------------------------------------------------------------------------
+overlay_image = Image.new(screen_width, screen_height);
+overlay_image.Rectangle(0, 0, screen_width, screen_height, 0.0, 0.0, 0.0, 0.45);
+overlay_sprite = Sprite(overlay_image);
+overlay_sprite.SetX(0);
+overlay_sprite.SetY(0);
+overlay_sprite.SetZ(-50);
+
+# ---------------------------------------------------------------------------
+# Wordmark: "Orion-X" centered, Phoenix red
+# ---------------------------------------------------------------------------
+wordmark = Text.new("Orion-X");
+wordmark.SetAlignment("center");
+wordmark.SetColor(PHOENIX_RED_R, PHOENIX_RED_G, PHOENIX_RED_B, 1.0);
+wordmark_sprite = Sprite(wordmark);
+wordmark_sprite.SetX(Math.Int((screen_width - wordmark.GetWidth()) / 2));
+wordmark_sprite.SetY(Math.Int(screen_height * 0.42));
+wordmark_sprite.SetZ(100);
+
+# Sub-label: "Phoenix Edition" in white below the wordmark
+sublabel = Text.new("Phoenix Edition");
+sublabel.SetAlignment("center");
+sublabel.SetColor(WHITE_R, WHITE_G, WHITE_B, 0.80);
+sublabel_sprite = Sprite(sublabel);
+sublabel_sprite.SetX(Math.Int((screen_width - sublabel.GetWidth()) / 2));
+sublabel_sprite.SetY(Math.Int(screen_height * 0.42) + wordmark.GetHeight() + 8);
+sublabel_sprite.SetZ(100);
+
+# ---------------------------------------------------------------------------
+# Progress bar: Phoenix-red bar at 85% of screen height
+# ---------------------------------------------------------------------------
+BAR_HEIGHT   = 4;
+BAR_Y        = Math.Int(screen_height * 0.85);
+BAR_MAX      = Math.Int(screen_width * 0.70);
+BAR_X_OFFSET = Math.Int(screen_width * 0.15);
+
+bar_bg_image = Image.new(BAR_MAX, BAR_HEIGHT);
+bar_bg_image.Rectangle(0, 0, BAR_MAX, BAR_HEIGHT, 0.25, 0.25, 0.25, 1.0);
+bar_bg_sprite = Sprite(bar_bg_image);
+bar_bg_sprite.SetX(BAR_X_OFFSET);
+bar_bg_sprite.SetY(BAR_Y);
+bar_bg_sprite.SetZ(90);
+
+bar_fg_image = Image.new(BAR_MAX, BAR_HEIGHT);
+bar_fg_sprite = Sprite();
+bar_fg_sprite.SetX(BAR_X_OFFSET);
+bar_fg_sprite.SetY(BAR_Y);
+bar_fg_sprite.SetZ(95);
+
+progress_ratio = 0.0;
+
+# ---------------------------------------------------------------------------
+# Passphrase / message prompt
+# ---------------------------------------------------------------------------
+prompt_sprite = Sprite();
+prompt_sprite.SetZ(150);
+
+# ---------------------------------------------------------------------------
+# Callbacks
+# ---------------------------------------------------------------------------
+Plymouth.SetBootProgressFunction(
+    fun (duration, progress) {
+        progress_ratio = progress;
+        filled = Math.Int(BAR_MAX * progress_ratio);
+        if (filled < 1) {
+            filled = 1;
+        }
+        new_bar = Image.new(filled, BAR_HEIGHT);
+        new_bar.Rectangle(0, 0, filled, BAR_HEIGHT,
+                          PHOENIX_RED_R, PHOENIX_RED_G, PHOENIX_RED_B, 1.0);
+        bar_fg_sprite.SetImage(new_bar);
+    }
+);
+
+Plymouth.SetMessageFunction(
+    fun (text) {
+        msg_image = Text.new(text);
+        msg_image.SetColor(WHITE_R, WHITE_G, WHITE_B, 0.75);
+        prompt_sprite.SetImage(msg_image);
+        prompt_sprite.SetX(Math.Int((screen_width - msg_image.GetWidth()) / 2));
+        prompt_sprite.SetY(Math.Int(screen_height * 0.90));
+    }
+);
+
+Plymouth.SetDisplayPasswordFunction(
+    fun (prompt_text, bullets) {
+        prompt_image = Text.new(prompt_text);
+        prompt_image.SetColor(WHITE_R, WHITE_G, WHITE_B, 1.0);
+        prompt_sprite.SetImage(prompt_image);
+        prompt_sprite.SetX(Math.Int((screen_width - prompt_image.GetWidth()) / 2));
+        prompt_sprite.SetY(Math.Int(screen_height * 0.88));
+    }
+);
+
+Plymouth.SetDisplayNormalFunction(
+    fun () {
+        prompt_sprite.SetOpacity(0.0);
+    }
+);

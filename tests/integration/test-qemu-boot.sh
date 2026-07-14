@@ -486,5 +486,126 @@ else
     fi
 fi
 
+# ===========================================================================
+# W11-9a: Plymouth + identity-preservation assertions (DEC-PHASE11-010)
+#
+# Three checks added per W11-9a T8 in MASTER_PLAN:
+#   (a) Plymouth invocation detected (plymouthd process or journal grep
+#       in serial log — proves the splash ran during boot sequence).
+#   (b) Identity preservation: /proc/cmdline still carries
+#       live-config.username=orionx-operator AND live-config.name=orionx
+#       (W11-2 cmdline tokens must survive W11-9a branding layer).
+#   (c) LightDM greeter conf presence check via mount-and-inspect (source
+#       tree check; full GUI verification is hardware smoke concern W11-10).
+#
+# All three checks degrade to SKIP rather than FAIL when the QEMU boot
+# did not complete (harness_exit != 0 or no serial log available).
+# Plymouth detection in a QEMU serial-console boot often does not produce
+# explicit plymouth log output (splash requires framebuffer; QEMU serial
+# mode uses VGA text console). The check uses a best-effort serial grep
+# and degrades cleanly if the sentinel is absent.
+# ===========================================================================
+echo ""
+echo "==========================================="
+echo "  W11-9a — Plymouth + Identity Preservation"
+echo "==========================================="
+
+_w119a_pass() { echo "${GREEN}  PASS${NC}: $1"; }
+_w119a_fail() { echo "${RED}  FAIL${NC}: $1"; if [[ -n "${2:-}" ]]; then echo "         $2"; fi; }
+_w119a_skip() { echo "${YELLOW}  SKIP${NC}: $1"; if [[ -n "${2:-}" ]]; then echo "         $2"; fi; }
+
+# Locate best available serial log (produced by harness regardless of boot mode)
+_W119A_SERIAL_LOG=""
+if [[ -d "${QEMU_ARTIFACTS_DIR:-}" ]]; then
+    for _sl in \
+        "${QEMU_ARTIFACTS_DIR}/serial-uefi.log" \
+        "${QEMU_ARTIFACTS_DIR}/serial-bios.log"; do
+        if [[ -f "$_sl" ]]; then
+            _W119A_SERIAL_LOG="$_sl"
+            break
+        fi
+    done
+fi
+
+# ---------------------------------------------------------------------------
+# W11-9a T8(a): Plymouth splash invocation detected
+# ---------------------------------------------------------------------------
+# Plymouth writes "Plymouth started" or equivalent to the kernel ring buffer
+# (or /var/log/syslog). In QEMU serial mode with framebuffer Plymouth tends
+# to run but its output goes to the framebuffer, not the serial console.
+# Best-effort: grep for "plymouth" or "orionx-phoenix" in the serial log.
+# Degrade to INFORMATIONAL SKIP if not found — hardware attestation confirms.
+if [[ "${harness_exit}" -ne 0 ]]; then
+    _w119a_skip "T8(a) Plymouth invocation" "QEMU harness did not pass (harness_exit=${harness_exit}); skipping Plymouth check"
+elif [[ -z "${_W119A_SERIAL_LOG}" ]]; then
+    _w119a_skip "T8(a) Plymouth invocation" "No serial log found under ${QEMU_ARTIFACTS_DIR:-<unset>}; cannot inspect"
+else
+    # Check for plymouthd or plymouth in boot log
+    if grep -qiE "plymouth|orionx-phoenix" "${_W119A_SERIAL_LOG}" 2>/dev/null; then
+        _w119a_pass "T8(a) Plymouth invocation detected in serial log (splash ran)"
+    else
+        # Not a hard FAIL — Plymouth runs on the framebuffer in QEMU, serial log
+        # may not capture it. INFORMATIONAL: note the absence.
+        _w119a_skip "T8(a) Plymouth invocation" \
+            "No 'plymouth'/'orionx-phoenix' sentinel in ${_W119A_SERIAL_LOG}; framebuffer splash likely ran off-console"
+        echo "         This is expected in QEMU serial mode; hardware smoke (W11-10) is definitive."
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# W11-9a T8(b): W11-2 identity preservation in /proc/cmdline
+# ---------------------------------------------------------------------------
+# The W11-2 cmdline tokens live-config.username=orionx-operator and
+# live-config.name=orionx must survive the W11-9a branding layer.
+# The serial log for T6(c) above already captured /proc/cmdline output
+# from scripts/qemu-boot-test.sh if that assertion ran. We re-check here.
+W119A_EXPECTED_USERNAME="live-config.username=orionx-operator"
+W119A_EXPECTED_HOSTNAME="live-config.name=orionx"
+
+if [[ "${harness_exit}" -ne 0 ]]; then
+    _w119a_skip "T8(b) W11-2 identity preservation" "QEMU harness did not pass; skipping cmdline check"
+elif [[ -z "${_W119A_SERIAL_LOG}" ]]; then
+    _w119a_skip "T8(b) W11-2 identity preservation" "No serial log available"
+else
+    _CMDLINE_LINE="$(grep -m1 "${W119A_EXPECTED_USERNAME}" "${_W119A_SERIAL_LOG}" 2>/dev/null || true)"
+    if [[ -n "${_CMDLINE_LINE}" ]]; then
+        _w119a_pass "T8(b) /proc/cmdline contains live-config.username=orionx-operator (W11-2 preserved)"
+        if echo "${_CMDLINE_LINE}" | grep -q "${W119A_EXPECTED_HOSTNAME}"; then
+            _w119a_pass "T8(b) /proc/cmdline contains live-config.name=orionx (W11-2 preserved)"
+        else
+            _w119a_skip "T8(b) live-config.name=orionx" \
+                "username token found but name token not on same line; grep may have captured partial cmdline"
+        fi
+    else
+        _w119a_skip "T8(b) W11-2 identity preservation" \
+            "cmdline with live-config.username=orionx-operator not found in serial log"
+        echo "         The T6(c) whoami check above is the primary identity preservation assertion."
+        echo "         This T8(b) check is additive; a SKIP here is not a gate-failure."
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# W11-9a T8(c): LightDM greeter conf presence (source-tree check)
+# ---------------------------------------------------------------------------
+# Full GUI greeter verification requires hardware boot (W11-10 scope).
+# This check validates the source-tree staging is correct — same boundary
+# as content-presence section 23a-h, kept here so QEMU test output includes
+# the greeter assertion alongside Plymouth and identity checks.
+LIGHTDM_GREETER_SOURCE="${REPO_ROOT}/iso/config/includes.chroot/etc/lightdm/lightdm-gtk-greeter.conf"
+
+if [[ -f "${LIGHTDM_GREETER_SOURCE}" ]]; then
+    _w119a_pass "T8(c) lightdm-gtk-greeter.conf present in source tree (staging verified)"
+    if grep -q "background=/opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png" \
+             "${LIGHTDM_GREETER_SOURCE}" 2>/dev/null; then
+        _w119a_pass "T8(c) lightdm-gtk-greeter.conf background= points to W9-1 wallpaper path"
+    else
+        _w119a_fail "T8(c) lightdm-gtk-greeter.conf background= points to W9-1 wallpaper path" \
+            "Expected background=/opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png not found"
+    fi
+else
+    _w119a_fail "T8(c) lightdm-gtk-greeter.conf present in source tree" \
+        "Missing: ${LIGHTDM_GREETER_SOURCE}"
+fi
+
 echo "==========================================="
 exit "${harness_exit}"

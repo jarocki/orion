@@ -1,0 +1,25 @@
+# Orion-X Phoenix Edition — Plymouth theme metadata
+#
+# @decision DEC-PHASE11-010
+# @title W11-9a: Plymouth orionx-phoenix theme (boot splash)
+# @status accepted
+# @rationale W11-9a boot chain: ship Plymouth orionx-phoenix as the boot
+#   splash identity layer. Theme drives the pre-desktop visual — the operator
+#   sees Orion-X identity from power-on through LightDM greeter to XFCE
+#   session start. Background derived from the W9-1 Phoenix wallpaper
+#   (source authority: theme/wallpapers/orionx-phoenix-wallpaper.png).
+#   Wordmark rendered via Plymouth text module — no extra PNG required per
+#   operator directive 2026-07-13.
+#   plymouth-label package required for the Text plugin's font rendering.
+#   Activation: 0800-orionx-branding.hook.chroot calls
+#   `plymouth-set-default-theme -R orionx-phoenix` at chroot-hook time
+#   and writes /etc/plymouth/plymouthd.conf as belt-and-suspenders.
+
+[Plymouth Theme]
+Name=Orion-X Phoenix
+Description=Orion-X Phoenix Edition boot splash — Phoenix mark + Orion-X wordmark
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/orionx-phoenix
+ScriptFile=/usr/share/plymouth/themes/orionx-phoenix/orionx-phoenix.script
