@@ -1,0 +1,140 @@
+#!/bin/bash
+# shellcheck shell=bash
+# Orion-X Phoenix Edition — W11-9a boot-chain branding hook
+#
+# @decision DEC-PHASE11-010
+# @title W11-9a: 0800-orionx-branding activates Plymouth theme + primes font cache
+# @status accepted
+# @rationale This hook is the SINGLE authority for boot-chain branding activation
+#   within the live-build chroot. Responsibilities (in order):
+#     (i)  Activate orionx-phoenix Plymouth theme and regenerate initramfs so
+#          the theme is embedded in the initrd — required for the splash to
+#          appear before the root filesystem is mounted.
+#          `plymouth-set-default-theme -R orionx-phoenix` writes
+#          /etc/plymouth/plymouthd.conf AND triggers update-initramfs -u.
+#          The explicit plymouthd.conf in includes.chroot (also shipped by
+#          W11-9a) provides belt-and-suspenders for inspection without
+#          re-running the hook.
+#     (ii) Run `fc-cache -f` to prime the font cache for W11-9b fonts.
+#          In W11-9a this is a safe no-op (no fonts staged yet); W11-9b
+#          will stage Iosevka + Hack fonts and this call will populate their
+#          cache entries. Ordering: font-cache before any session that reads
+#          fonts, which in this hook chain means before initramfs regen.
+#          However, since font cache is irrelevant to initramfs content, the
+#          order within this hook does not create a dependency.
+#    (iii) Belt-and-suspenders: write /etc/plymouth/plymouthd.conf directly
+#          (plymouth-set-default-theme -R already does this, but explicit
+#          file write is more inspectable in CI audit logs and guarantees
+#          correct state even if plymouth-set-default-theme path changes).
+#
+# ORDERING: This hook is numbered 0800 so it runs AFTER:
+#   0500-install-external-tools.hook.chroot  (external tool download)
+#   0600-filesystem-hardening.hook.chroot     (filesystem permissions baseline)
+#   0610-apparmor-setup.hook.chroot           (AppArmor profiles)
+#   0615-install-systemd-units.hook.chroot    (systemd unit staging)
+#   0620-service-hardening.hook.chroot        (service hardening)
+#   0700-orionx-setup.hook.chroot             (Orion-X application setup)
+#
+# Branding activation runs last in the live hook chain so all system
+# packages (including plymouth and initramfs-tools) are fully installed
+# and their postinst scripts have completed before we invoke
+# update-initramfs.
+#
+# ROLLBACK: If this hook fails, the build fails loudly (set -eux). The
+# rollback boundary from MASTER_PLAN W11-9a: if Plymouth theme wedges boot
+# (blank screen, kernel panic in initramfs), Guardian does NOT land.
+# Implementer returns to planner with failure diagnosis.
+# Rollback path: `git revert` the branch merge; pre-W11-9a develop boots
+# cleanly without this hook.
+#
+# FORBIDDEN: Do NOT add GRUB_THEME= or any grub-update invocation here.
+# GRUB_THEME activation requires a one-line generator edit in
+# scripts/build-iso.sh::generate_bootloader_configs() which is a
+# forbidden W11-9a scope surface. Escalate to planner as a rider sub-slice.
+# Tracked in W11-9a Evaluation Contract item 4 / CHANGELOG note.
+#
+# W11-9b extension point: When W11-9b stages fonts under
+# /usr/share/fonts/opentype/orionx/, the fc-cache -f call below will
+# automatically populate their entries without any hook change needed.
+
+set -eux
+
+HOOK_NAME="0800-orionx-branding"
+LOG_PREFIX="[${HOOK_NAME}]"
+
+echo "${LOG_PREFIX} Starting W11-9a boot-chain branding hook"
+
+# ---------------------------------------------------------------------------
+# Step 1: Activate Plymouth orionx-phoenix theme + regenerate initramfs
+# ---------------------------------------------------------------------------
+echo "${LOG_PREFIX} Activating Plymouth theme: orionx-phoenix"
+
+# Verify the theme directory is present before activation — fail loud if missing.
+THEME_DIR="/usr/share/plymouth/themes/orionx-phoenix"
+if [[ ! -d "${THEME_DIR}" ]]; then
+    echo "${LOG_PREFIX} ERROR: Plymouth theme directory missing: ${THEME_DIR}" >&2
+    echo "${LOG_PREFIX} Check that includes.chroot staged the theme correctly." >&2
+    exit 1
+fi
+
+THEME_SCRIPT="${THEME_DIR}/orionx-phoenix.script"
+THEME_PLYMOUTH="${THEME_DIR}/orionx-phoenix.plymouth"
+THEME_BG="${THEME_DIR}/background.png"
+
+for asset in "${THEME_SCRIPT}" "${THEME_PLYMOUTH}" "${THEME_BG}"; do
+    if [[ ! -f "${asset}" ]]; then
+        echo "${LOG_PREFIX} ERROR: Required Plymouth theme asset missing: ${asset}" >&2
+        exit 1
+    fi
+done
+
+echo "${LOG_PREFIX} Theme assets verified: .plymouth, .script, background.png"
+
+# plymouth-set-default-theme -R:
+#   - Writes Theme=orionx-phoenix to /etc/plymouth/plymouthd.conf
+#   - Runs update-initramfs -u to embed the theme in the initrd
+# This is the canonical activation path per the Debian plymouth packaging.
+plymouth-set-default-theme -R orionx-phoenix
+echo "${LOG_PREFIX} Plymouth theme activated and initramfs regenerated"
+
+# ---------------------------------------------------------------------------
+# Step 2: Prime font cache (W11-9b extension point — no-op in W11-9a)
+# ---------------------------------------------------------------------------
+echo "${LOG_PREFIX} Running fc-cache -f (font cache primer — no-op in W11-9a, active in W11-9b)"
+fc-cache -f
+echo "${LOG_PREFIX} fc-cache complete"
+
+# ---------------------------------------------------------------------------
+# Step 3: Belt-and-suspenders plymouthd.conf write
+# ---------------------------------------------------------------------------
+# plymouth-set-default-theme -R already writes /etc/plymouth/plymouthd.conf.
+# This explicit write ensures the Theme= line survives even if the plymouth
+# packaging ever changes its write path. Also makes the configuration
+# auditable in the build log.
+echo "${LOG_PREFIX} Writing /etc/plymouth/plymouthd.conf (belt-and-suspenders)"
+mkdir -p /etc/plymouth
+cat > /etc/plymouth/plymouthd.conf << 'PLYMOUTHCONF'
+# /etc/plymouth/plymouthd.conf — managed by 0800-orionx-branding.hook.chroot
+# @decision DEC-PHASE11-010 — DO NOT HAND-EDIT; re-run hook to regenerate
+[Daemon]
+Theme=orionx-phoenix
+ShowDelay=0
+DeviceTimeout=8
+PLYMOUTHCONF
+
+echo "${LOG_PREFIX} /etc/plymouth/plymouthd.conf written with Theme=orionx-phoenix"
+
+# ---------------------------------------------------------------------------
+# Final: Verify activation
+# ---------------------------------------------------------------------------
+ACTIVE_THEME=$(plymouth-set-default-theme 2>/dev/null || true)
+if [[ "${ACTIVE_THEME}" == "orionx-phoenix" ]]; then
+    echo "${LOG_PREFIX} Verified: active Plymouth theme = orionx-phoenix"
+else
+    echo "${LOG_PREFIX} WARNING: plymouth-set-default-theme reports '${ACTIVE_THEME}'" \
+         "instead of 'orionx-phoenix' — config written but query inconsistent" >&2
+    # Non-fatal: plymouthd.conf is correct; the theme will still activate at boot.
+    # The -R flag already embedded orionx-phoenix in the initramfs.
+fi
+
+echo "${LOG_PREFIX} W11-9a boot-chain branding hook complete"
