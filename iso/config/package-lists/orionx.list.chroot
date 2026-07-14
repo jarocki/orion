@@ -191,6 +191,16 @@ gir1.2-glib-2.0
 # xfce4-genmon-plugin: generic monitor plugin for XFCE panel (drives panel widgets)
 xfce4-genmon-plugin
 
+# W11-9a: Boot chain branding — Plymouth splash + LightDM greeter (DEC-PHASE11-010)
+# plymouth: boot splash framework
+plymouth
+# plymouth-themes: stock Plymouth themes (dep for plymouth-set-default-theme infra)
+plymouth-themes
+# plymouth-label: text rendering plugin used by orionx-phoenix.script
+plymouth-label
+# lightdm-gtk-greeter: GTK3 greeter for LightDM (DM already present via xfce4 dep)
+lightdm-gtk-greeter
+
 # Custom packages (will be installed from config/packages.chroot/)
 # orionx-custom-tools
 # orionx-theme
