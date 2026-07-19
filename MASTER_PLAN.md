@@ -4191,6 +4191,238 @@ The three-way identity fork this plan retires was introduced when DEC-PHASE11-01
 
 ---
 
+#### W11-11 — Detail plan (In-ISO diagnostic tool `orionx-diag` — LAYER A: shell tool + version-manifest extension + 0700 symlink; Control Center Awareness pane launch button deferred to W11-11b)
+
+**Seeded:** 2026-07-19 planner amendment (this section). **Status:** ready for `guardian:provision`. **Env:** Linux/CI (build-time content-presence assertions; runtime in-ISO verified by content-presence + QEMU boot smoke — see T-Verify below). **Wave:** 6 (rider — depends on the accumulated Phase 11 surface: W11-1 model, W11-2 debloat + identity tokens, W11-3 RE toolkit, W11-4 YARA, W11-5 comms, W11-6 Suricata, W11-7 ClamAV drop, W11-8 optional installers, W11-9a/W11-9a2/W11-9b branding — all landed; no new dependency introduced by this slice). **Gate:** review. **Weight:** L (substantial new feature: 1 new tool + hook extension + version-manifest schema change + unit test + content-presence Section 27; see cascade note in EC10 for Layer B deferral rationale). **Deps:** all landed Phase 11 W11-* slices as of develop head (this slice inspects them, does not extend them).
+
+**Operator directive verbatim (2026-07-18, incorporated into this planner amendment 2026-07-19):** "Ship a diagnostic tool built INTO the ISO that automates checking, testing, and verification that (a) ISO OS + tools correctly match the current repository version, (b) all expected tools and dependencies are installed and work properly."
+
+**Problem.** Phase 11 has accumulated 16 landed slices (W11-1, W11-2, W11-2b/c/d/e/f, W11-3, W11-4, W11-5, W11-6, W11-7, W11-8, W11-9a, W11-9a2, W11-9b), each of which stages assets, packages, systemd units, hooks, and branding into the ISO. Verification today happens ONLY at build time via `tests/integration/test-iso-content-presence.sh` (Sections 15-26) executed on the CI-produced squashfs. There is NO in-ISO mechanism for an operator to type one command on a running system and know: "am I actually running the Phase 11 release I think I am, and did every slice land correctly?" Real hardware boots, live-USB copies, and post-boot state drift (manual `apt`, freshen script mutations, `dpkg --purge`, filesystem overlay writes) can silently diverge a running system from the shipped ISO. Content-presence tests only prove the CI-built squashfs; they do not prove what's on the metal in front of the operator. This is a critical trust gap for a live-forensic-DVD product where the operator MUST be able to attest to their own running toolkit before writing findings that will be used in an investigation.
+
+**Solution — `orionx-diag`.** A single POSIX-bash tool that runs on the live system, executes ten check categories (Identity, Version manifest, Base packages, File presence, Systemd unit state, Python imports, Nebula runtime, Branding, Freshen scripts, Optional installers), produces colored PASS/FAIL/SKIP output, exits `0` iff every category passes, exits `1` on any FAIL, exits `2` on script-internal error (missing prereq, unreadable manifest). Supports `--json` (machine-readable output for CI + Control Center consumers) and `--category <name>` (filter to one category for iterative debugging). The tool is staged at `iso/config/includes.chroot/opt/orionx/scripts/orionx-diag` (source of truth; **no `.sh` suffix on the staged path** — matches the `orionx-mesh` precedent at `iso/config/includes.chroot/opt/orionx/scripts/mesh/orionx-mesh`) with a symlink `/usr/local/bin/orionx-diag` created by an extension to the 0700 hook's `SCRIPT_MAP`. The check-category logic reads the `/etc/orionx-version` KEY=VALUE manifest (extended by this slice — see below) for build metadata (ISO_VERSION, BUILD_TIMESTAMP, GIT_HEAD_SHA, GIT_HEAD_TITLE, PHASE_11_SLICES) and cross-references it with dpkg, systemd, filesystem, and Python-import state. The **operator experience** target: `sudo orionx-diag` on a booted system produces one screen of output ending with `Overall: PASS` or `Overall: FAIL` in <5 seconds wall-clock on the standard 2 vCPU / 4 GB VM shape (SLA verified in T-Verify).
+
+**Design decision — extend `/etc/orionx-version` from single-line to KEY=VALUE (backward-compatible transition).** The current 0700 hook writes `/etc/orionx-version` as a single line: `${ORIONX_VERSION:-v2.0.0-rc8}`. Two callers read this file today: (a) `/etc/update-motd.d/10-orionx-welcome` (via `cat /etc/orionx-version`), (b) `/etc/motd` per the rc9 pattern (per line 2386 whole-slice EC item 6 and line 3834 W11-9c preview). Both use raw `cat` and would break if the file becomes multi-line. **Design chosen:** extend `/etc/orionx-version` to a KEY=VALUE manifest with `ISO_VERSION=` as the first line, and update the MOTD reader to `grep '^ISO_VERSION=' /etc/orionx-version | cut -d= -f2` for the version string. This is a two-line change to the 0700 hook (one for the manifest write, one for the MOTD reader), preserves the rc9-era single-authority discipline (0700 owns the manifest write; MOTD/orionx-diag are readers), and gives `orionx-diag` the structured fields it needs. **Explicitly rejected alternatives:** (1) Add a SECOND file `/etc/orionx-manifest` for structured content → dual-authority anti-pattern, would require MOTD dual-read logic. (2) Emit JSON to `/etc/orionx-version.json` → adds a jq/python parsing dependency on every reader; readers today are bash-only. (3) Keep the single-line format and hardcode Phase-11 slice list inside `orionx-diag` → duplicates the ISO_VERSION authority; a `v2.1.0-rc9`-shipped ISO with W11-11 hardcoding "v2.1.0-rc9" would fail on a `v2.1.0-rc10` re-cut without a code change to the diag tool. KEY=VALUE with `orionx-diag` reading `/etc/orionx-version` is the single-authority-preserving design.
+
+**KEY=VALUE manifest schema (new authority for this slice, owned by 0700 hook):**
+```
+ISO_VERSION=v2.1.0-rc9
+BUILD_TIMESTAMP=2026-07-19T14:22:37Z
+GIT_HEAD_SHA=86dd6ee
+GIT_HEAD_TITLE=Merge feature/phase8-rc3-fix into develop (rc3 re-cut fix)
+PHASE_11_SLICES=W11-1,W11-2,W11-2b,W11-2c,W11-2d,W11-2e,W11-2f,W11-3,W11-4,W11-5,W11-6,W11-7,W11-8,W11-9a,W11-9a2,W11-9b
+```
+All values populated by the 0700 hook at chroot-build time using: `ISO_VERSION=${ORIONX_VERSION:-v2.0.0-rc8}` (same fallback as current), `BUILD_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)`, `GIT_HEAD_SHA=${ORIONX_GIT_SHA:-unknown}` (new env var passed from `build-iso.sh` or defaulted to `unknown`), `GIT_HEAD_TITLE=${ORIONX_GIT_TITLE:-unknown}` (same pattern), `PHASE_11_SLICES=${ORIONX_PHASE_11_SLICES:-unknown}` (same pattern). **Env-var propagation to the chroot:** these three new env vars (`ORIONX_GIT_SHA`, `ORIONX_GIT_TITLE`, `ORIONX_PHASE_11_SLICES`) are populated in the build container at `scripts/build-iso.sh` startup time via `git rev-parse HEAD`, `git log -1 --format=%s`, and a hardcoded slice list. **Deferral note on `build-iso.sh` scope:** the operator directive explicitly flagged "OR create a static template … populated at build time via `git rev-parse HEAD`" as an alternative to touching the build-iso.sh generator. Planner chooses the env-var path because it (a) reuses the existing `ORIONX_VERSION` propagation pattern (`iso/auto/config` → chroot env → hook), (b) does not require adding a new template-file staging authority (which would need its own content-presence assertion), (c) touches only `scripts/build-iso.sh` at 3 new export lines near the existing `ORIONX_VERSION=` export (bounded, reviewable diff, DEC-PHASE7-002 single-version-authority preserved — this slice extends the export list, does not fork the authority). **Fallback behavior:** if the env vars are `unknown` (e.g., a hand-built ISO outside the CI pipeline), `orionx-diag` in the Version manifest category emits SKIP for GIT_HEAD_SHA/TITLE/SLICES with reason "manifest field is 'unknown' — likely built outside CI"; ISO_VERSION SKIP is a FAIL (that field must always populate — it's the primary identity axis).
+
+**Ten check categories — exact assertions each runs:**
+
+1. **Identity** (3 assertions):
+   - (a) `whoami` == `orionx-operator` (matches DEC-PHASE10-014 `live-config.username=orionx-operator` cmdline token; W11-2 identity discipline). PASS if match, FAIL if mismatch.
+   - (b) `hostname` == `orionx` (matches `live-config.hostname=orionx` cmdline token). PASS if match, FAIL if mismatch.
+   - (c) `/proc/cmdline` contains both `live-config.username=orionx-operator` AND `live-config.hostname=orionx` (proves the running kernel was booted with the W11-2 identity tokens, not that the userland was manually re-set post-boot). PASS if both present, FAIL if either missing.
+
+2. **Version manifest** (5 assertions):
+   - (a) `/etc/orionx-version` exists and is readable. FAIL if absent.
+   - (b) `ISO_VERSION=` line present. FAIL if absent.
+   - (c) `BUILD_TIMESTAMP=` line present + parses as an ISO-8601 timestamp (regex check, no `date -d` — Bullseye `date -d` is fine but bash regex avoids that dependency). FAIL if absent or malformed.
+   - (d) `GIT_HEAD_SHA=` line present. SKIP if value is `unknown` (see fallback above), FAIL if absent.
+   - (e) `PHASE_11_SLICES=` line present and contains at least `W11-1,W11-2` (proves Phase 11 core landed; the current slice list is not hardcoded — the tool trusts the manifest). SKIP if value is `unknown`, FAIL if absent or if the string does not contain `W11-1`.
+
+3. **Base packages — install-time presence** (dpkg -l checks, 8 assertions matching content-presence Section 21 W11-3 + Section 25c W11-7 absence gate):
+   - (a) `radare2` installed (`dpkg -l radare2` returns `ii`). FAIL if absent (W11-3 gate).
+   - (b) `ssdeep` installed. FAIL if absent (W11-3 gate).
+   - (c) `md5deep` installed (provides hashdeep). FAIL if absent (W11-3 gate).
+   - (d) `yara` installed. FAIL if absent (W11-4 gate).
+   - (e) `python3-yara` installed. FAIL if absent (W11-4 gate).
+   - (f) `suricata` installed. FAIL if absent (W11-6 gate).
+   - (g) `python3-pefile` OR `/opt/orionx/venv/re/bin/pefile*`-equivalent present. FAIL if neither (W11-3 gate — package OR pip-install path per W11-3 detail plan).
+   - (h) `clamav` NOT installed (`dpkg -l clamav` returns non-`ii` or "no packages found"). FAIL if `ii` (W11-7 debloat gate; DEC-PHASE11-009).
+
+4. **File presence — staged assets exist** (12 assertions cross-referencing content-presence Sections 15, 21-26):
+   - (a) `/opt/orionx/nebula/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf` exists and size > 1.5 GB (W11-1 model floor, matches Section 15 assertion). FAIL if absent.
+   - (b) `/opt/orionx/nebula/models/MANIFEST.sha256` exists (W11-1 integrity manifest). FAIL if absent.
+   - (c) `/opt/orionx/venv/re/bin/capa` exists and executable (W11-3 Layer A capa venv). FAIL if absent.
+   - (d) `/opt/orionx/comms/README.md` exists (W11-5 Layer A skeleton). FAIL if absent.
+   - (e) `/opt/orionx/yara/README.md` exists (W11-4 Layer A licensing README). FAIL if absent.
+   - (f) `/opt/orionx/yara/LOCKFILE.json` exists (W11-4 Layer A). FAIL if absent.
+   - (g) `/var/lib/suricata/orionx-README.md` exists (W11-6 Layer A skeleton). FAIL if absent.
+   - (h) `/opt/orionx/optional/lib/orionx-installer-common.sh` exists (W11-8 Layer A shared lib). FAIL if absent.
+   - (i) All 6 optional installers present + executable at `/opt/orionx/optional/install-{clamav,element,floss,ghidra,gomuks,trid}.sh` (W11-8 Layer A). FAIL if any missing.
+   - (j) `/usr/share/themes/Orion-X-Cyberdeck/` directory exists (W11-9b desktop identity). FAIL if absent.
+   - (k) `/usr/share/plymouth/themes/orionx-phoenix/` directory exists (W11-9a boot chain). FAIL if absent.
+   - (l) `/usr/share/grub/themes/orionx/theme.txt` exists (W11-9a2 GRUB theme). FAIL if absent.
+
+5. **Systemd unit state** (5 assertions):
+   - (a) `nebula-integrity-check.service` is `enabled` (`systemctl is-enabled` returns `enabled` or `enabled-runtime`; per W10-1 boot warm-up). FAIL otherwise.
+   - (b) `nebula-runtime.socket` is `enabled` (per W10-1 socket-activation authority). FAIL otherwise.
+   - (c) `suricata.service` is `masked` OR has `ConditionPathExists=` gating in its unit file (W11-6 lazy-start override, DEC-PHASE11-008). PASS if masked, PASS if `systemctl show suricata.service` reports the ConditionPathExists directive, FAIL otherwise.
+   - (d) `NetworkManager.service` is `enabled` (rc4 GUI networking gate — this is a runtime-attesting check that Phase 8 network stack still works post-boot). FAIL otherwise.
+   - (e) `lightdm.service` is `active` OR `enabled` (autologin authority per DEC-PHASE9-005). FAIL otherwise.
+
+6. **Python imports** (2 assertions):
+   - (a) `python3 -c 'from control_center.app import run_app'` returns exit 0 (W11-2c/2d Control Center importability gate). FAIL on non-zero exit; capture the import traceback into the FAIL detail message.
+   - (b) `python3 -c 'import yara'` returns exit 0 (W11-4 YARA Python binding gate; proves the `python3-yara` binding actually loads, not just that the .deb is installed). FAIL on non-zero exit.
+
+7. **Nebula runtime** (4 assertions):
+   - (a) `/usr/local/bin/ollama` exists + executable (W10-1 iter-7 ollama staging). FAIL if absent.
+   - (b) `ollama --version` returns exit 0 (proves the binary is loadable + not corrupt on this hardware). FAIL on non-zero exit.
+   - (c) Model file SHA-256 matches the SHA in `/opt/orionx/nebula/models/MANIFEST.sha256` (W10-1 integrity gate; if MANIFEST.sha256 contains the pin sentinel — see W11-2e/1 trust-on-first-use — SKIP with reason "trust-on-first-use pending pin"). PASS on match, FAIL on mismatch, SKIP on sentinel.
+   - (d) `nebula-integrity-check.service` last run reports success — `systemctl show nebula-integrity-check.service --property=ExecMainStatus` reports `0` OR the service has never run yet (SKIP with reason "not yet run this boot"; do not FAIL on a fresh boot where the timer hasn't fired). PASS on status=0, SKIP if never-run, FAIL on non-zero.
+
+8. **Branding** (4 assertions):
+   - (a) `plymouth-set-default-theme` reports `orionx-phoenix` (W11-9a Plymouth authority). FAIL if empty or a different theme; SKIP with reason "plymouth-set-default-theme not on PATH" if the tool is absent (some minimal Plymouth builds don't ship it).
+   - (b) `/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml` contains `Orion-X-Cyberdeck` (W11-9b GTK theme wiring, DEC-PHASE9-002 XFCE authority hook). FAIL if absent, SKIP if xsettings.xml itself missing.
+   - (c) `/boot/grub/grub.cfg` contains `set theme=/boot/grub/themes/orionx/theme.txt` (W11-9a2 activation gate). This check runs against `/boot/grub/grub.cfg` when readable (post-install target); FAIL if file present but directive missing, SKIP if file absent (live-boot ISO does not surface post-install `/boot/grub/` — the bootloader read it from includes.binary at boot time, not from this path).
+   - (d) `/etc/motd` OR `/etc/update-motd.d/10-orionx-welcome` contains `Orion-X Phoenix Edition` (rc9-era MOTD wordmark gate). FAIL if neither has the string.
+
+9. **Freshen scripts** (2 assertions):
+   - (a) `/usr/local/bin/orionx-freshen-yara` symlink exists + target executable (0700 SCRIPT_MAP entry from W11-4). FAIL if absent.
+   - (b) `/usr/local/bin/orionx-freshen-suricata` symlink exists + target executable (0700 SCRIPT_MAP entry from W11-6). FAIL if absent.
+
+10. **Optional installers — script-level self-check** (2 assertions):
+    - (a) Each of the 6 `install-*.sh` files under `/opt/orionx/optional/` sources `orionx-installer-common.sh` (grep the source directive; matches content-presence Section 26c). FAIL if any missing the source line.
+    - (b) `orionx-installer-common.sh` defines the 7 expected functions (grep for `orionx_log_info`, `orionx_log_error`, `orionx_require_root`, `orionx_require_network`, `orionx_wget_extract`, `orionx_mark_installed`, `orionx_check_installed` — matches Section 26b). FAIL if any function missing.
+
+Total: **47 assertions** across 10 categories. Output is human-readable colored table by default (uses `\033[32m`/`\033[31m`/`\033[33m` — no `tput` dependency; `no_color` fallback when `NO_COLOR=1` env var or stdout is not a TTY, following the [no-color.org](https://no-color.org/) convention). `--json` emits one JSON object with fields `iso_version`, `build_timestamp`, `git_head_sha`, `overall` (`PASS`/`FAIL`), `categories` (map of category name → `{pass:N,fail:N,skip:N,assertions:[...]}`), suitable for Control Center Awareness pane consumption in W11-11b.
+
+**Scope Manifest:** `tmp/phase11-w11-11-diagnostic-tool-scope.json` (LEGAL keys only: `allowed_paths`, `required_paths`, `forbidden_paths`, `authority_domains`, `state_domains`). Synced to runtime via `cc-policy workflow scope-sync phase11-w11-11-diagnostic-tool --work-item-id wi-phase11-w11-11-diagnostic-tool --scope-file tmp/phase11-w11-11-diagnostic-tool-scope.json`.
+
+- **allowed_paths:**
+  - `iso/config/includes.chroot/opt/orionx/scripts/orionx-diag` (new, source of truth — no `.sh` suffix on the staged path, matching `orionx-mesh` precedent)
+  - `iso/config/hooks/live/0700-orionx-setup.hook.chroot` (extend SCRIPT_MAP with `orionx-diag` entry + extend `/etc/orionx-version` write to KEY=VALUE + update MOTD reader `grep`)
+  - `scripts/build-iso.sh` (add 3 export lines near existing `ORIONX_VERSION=` for `ORIONX_GIT_SHA`, `ORIONX_GIT_TITLE`, `ORIONX_PHASE_11_SLICES`)
+  - `iso/config/includes.chroot/opt/orionx/scripts/README.md` (new — one-page operator-facing doc for the diag tool)
+  - `tests/integration/test-iso-content-presence.sh` (append Section 27 with 8 build-time source-presence assertions — see T5)
+  - `tests/unit/test_orionx_diag.sh` (new — unit-test the diag script's structure + `--json` output shape without running the full check suite; validated in Docker or on the CI runner directly)
+  - `CHANGELOG.md`
+  - `MASTER_PLAN.md` (this section only; iter-1 landing stamp)
+  - `tmp/**` (scope file, JSON output samples, planner scratch)
+
+- **required_paths (MUST exist post-implementation):**
+  - `iso/config/includes.chroot/opt/orionx/scripts/orionx-diag`
+  - `iso/config/includes.chroot/opt/orionx/scripts/README.md`
+  - `iso/config/hooks/live/0700-orionx-setup.hook.chroot` (extended)
+  - `scripts/build-iso.sh` (extended)
+  - `tests/integration/test-iso-content-presence.sh` (Section 27 appended)
+  - `tests/unit/test_orionx_diag.sh` (new)
+  - `CHANGELOG.md` (W11-11 entry appended)
+
+- **forbidden_paths (standard Phase 11 boundary + slice-specific):**
+  - `iso/config/nebula-model-manifest.json` (W11-1 authority — this slice READS the model, does not modify manifest)
+  - `iso/config/package-lists/orionx.list.chroot` (W11-2 debloat authority — this slice READS dpkg state, does not modify package list)
+  - `iso/config/hooks/live/0500-install-external-tools.hook.chroot` (W11-3 Layer A tool-install authority)
+  - `iso/config/hooks/live/0600-filesystem-hardening.hook.chroot` (W11-2 hardening authority)
+  - `iso/config/hooks/live/0610-apparmor-setup.hook.chroot` (AppArmor authority; DEC-007)
+  - `iso/config/hooks/live/0615-install-systemd-units.hook.chroot` (systemd units authority)
+  - `iso/config/hooks/live/0620-service-hardening.hook.chroot` (service-hardening authority)
+  - `iso/config/hooks/live/0800-orionx-branding.hook.chroot` (W11-9a Plymouth activation authority)
+  - `iso/config/hooks/normal/**` (all normal hooks — this slice is chroot-only)
+  - `iso/config/includes.chroot/etc/systemd/system/**` (systemd unit-file authority)
+  - `iso/config/includes.chroot/etc/apparmor.d/**` (AppArmor profile authority)
+  - `iso/config/includes.chroot/opt/orionx/nebula/**` (W10-1 / W11-1 Nebula content authority — this slice READS)
+  - `iso/config/includes.chroot/opt/orionx/optional/**` (W11-8 installer content authority — this slice READS)
+  - `iso/config/includes.chroot/opt/orionx/re/**` (W11-3 RE toolkit content authority — this slice READS)
+  - `iso/config/includes.chroot/opt/orionx/yara/**` (W11-4 YARA content authority — this slice READS)
+  - `iso/config/includes.chroot/opt/orionx/comms/**` (W11-5 comms content authority — this slice READS)
+  - `iso/config/includes.chroot/opt/orionx/scripts/mesh/**` (W3 mesh CLI — READS only)
+  - `iso/config/includes.chroot/opt/orionx/scripts/control_center/**` (W9-2 Control Center source — READS only; the Awareness-pane launch button is deferred to W11-11b explicitly per EC10)
+  - `iso/config/includes.chroot/opt/orionx/scripts/orionx-freshen-{yara,suricata}.sh` (W11-4 / W11-6 freshen authority — READS only)
+  - `iso/config/includes.chroot/usr/share/themes/**` (W11-9b branding authority — this slice READS)
+  - `iso/config/includes.chroot/usr/share/plymouth/**` (W11-9a Plymouth authority — this slice READS)
+  - `iso/config/includes.chroot/usr/share/grub/**` (W11-9a2 GRUB theme authority — READS)
+  - `iso/config/includes.binary/**` (bootloader binary tree — this slice does not touch)
+  - `iso/auto/config` (DEC-PHASE7-002 single-version-authority for `ORIONX_VERSION`; this slice consumes but does not modify)
+  - All existing `iso/config/includes.chroot/etc/orionx-version` **downstream readers** other than the two named in this slice: no MOTD reader edits beyond the 2-line `grep`/`cut` adjustment; no new `/etc/orionx-version` writer authority created.
+
+- **authority_domains:**
+  - `orionx_diag_tool` (new — the diag script itself; owner: `iso/config/includes.chroot/opt/orionx/scripts/orionx-diag`)
+  - `orionx_version_manifest` (extended — the KEY=VALUE format; owner: 0700 hook write block, readers: MOTD + orionx-diag)
+  - `build_env_var_propagation` (extended — `ORIONX_VERSION` authority now surrounded by `ORIONX_GIT_SHA` + `ORIONX_GIT_TITLE` + `ORIONX_PHASE_11_SLICES` sibling exports; owner: `scripts/build-iso.sh`, consumer: 0700 hook)
+
+- **state_domains:**
+  - `/etc/orionx-version` (write authority: 0700 hook; read authorities: MOTD reader + orionx-diag; format authority: this slice)
+  - `/usr/local/bin/orionx-diag` (symlink authority: 0700 SCRIPT_MAP; target: `/opt/orionx/scripts/orionx-diag`)
+
+**Tasks (7):**
+
+- **T1 — Author `iso/config/includes.chroot/opt/orionx/scripts/orionx-diag`.** Shell script (bash — the Orion-X live system ships bash by default; POSIX-sh compatibility is NOT required for a live-forensic tool). Header: `#!/usr/bin/env bash`, `# shellcheck shell=bash`, `set -euo pipefail`, `# @decision DEC-PHASE11-014` (see Decision Log addition below), `# @title Orion-X in-ISO diagnostic tool — automated verification of running system against build manifest and expected slice content`, `# @status accepted`, `# @rationale` naming the operator directive verbatim. Body: (a) arg-parse block for `--json`, `--category <name>`, `--help`, `--version` (prints the tool's own version = ISO_VERSION for consistency); (b) manifest-read function loading `/etc/orionx-version` into a bash assoc-array; (c) one function per category `check_identity`, `check_version_manifest`, `check_packages`, `check_files`, `check_systemd`, `check_python`, `check_nebula`, `check_branding`, `check_freshen`, `check_optional`; (d) each function appends `pass:<msg>` / `fail:<msg>:<detail>` / `skip:<msg>:<reason>` lines to a shared results buffer; (e) main dispatch: if `--category X`, run only `check_X`; else run all; (f) render function: if `--json`, emit a single JSON object; else print colored table + summary line + `Overall: PASS`/`Overall: FAIL`; (g) exit 0 iff no FAILs, exit 1 on any FAIL, exit 2 on script-internal error (unreadable manifest with no `--allow-missing-manifest` override). Approximate 300-400 lines. `shellcheck -S error` MUST exit 0. **Rooted-check discipline:** the tool MUST NOT `sudo` internally; it reports FAIL with reason "requires root" if `[[ $EUID -ne 0 ]]` and the category needs root (categories 3, 5, 7d — dpkg query with `-l` is fine as non-root; the `systemctl show ExecMainStatus` for nebula-integrity-check may need root depending on Bullseye systemd; the tool emits a per-assertion SKIP with reason "root required" rather than a FAIL when it can distinguish). Operator invocation is `sudo orionx-diag` per the header docstring. Commit: `feat(w11-11): orionx-diag in-ISO diagnostic tool with 10 check categories + JSON output`.
+
+- **T2 — Extend `iso/config/hooks/live/0700-orionx-setup.hook.chroot`.** Three edits, all bounded and mechanically reviewable:
+  - **T2a — SCRIPT_MAP:** add `["orionx-diag"]="/opt/orionx/scripts/orionx-diag"` to the existing SCRIPT_MAP declaration (around line 55-90). The 0700 hook's symlink-creation loop at line 93-94 will then create `/usr/local/bin/orionx-diag → /opt/orionx/scripts/orionx-diag` with the same 0755 mode as every other Orion-X tool. **No changes to the loop logic.**
+  - **T2b — /etc/orionx-version write block:** replace the single `echo "${ORIONX_VERSION:-v2.0.0-rc8}" > /etc/orionx-version` at line 199 with a HEREDOC that emits the KEY=VALUE manifest per the schema above. Timestamp uses `date -u +%Y-%m-%dT%H:%M:%SZ` at build time (deterministic-ish; two builds from the same SHA will differ in this field, which is CORRECT — BUILD_TIMESTAMP is a build-time attribute, not a code-content attribute). Fallbacks for `GIT_HEAD_SHA`, `GIT_HEAD_TITLE`, `PHASE_11_SLICES`: `${ORIONX_GIT_SHA:-unknown}`, `${ORIONX_GIT_TITLE:-unknown}`, `${ORIONX_PHASE_11_SLICES:-unknown}`.
+  - **T2c — MOTD reader update:** change line 203 `ORIONX_VER="$(cat /etc/orionx-version 2>/dev/null || echo v2.0.0)"` to `ORIONX_VER="$(grep '^ISO_VERSION=' /etc/orionx-version 2>/dev/null | cut -d= -f2 || echo v2.0.0)"`. Backward-compat verified in T-Verify: the grep fails cleanly on a legacy single-line file (which the current SHA has), and the fallback `echo v2.0.0` kicks in — MOTD displays `v2.0.0` on the pre-W11-11 legacy file (acceptable degrade). On the post-W11-11 file, the grep extracts `v2.1.0-rcX` correctly.
+  Commit: `feat(w11-11): 0700 hook — SCRIPT_MAP orionx-diag + /etc/orionx-version KEY=VALUE manifest + MOTD grep reader`.
+
+- **T3 — Extend `scripts/build-iso.sh`.** Add 3 export lines near the existing `ORIONX_VERSION=` export block. Recommended block:
+  ```bash
+  export ORIONX_GIT_SHA="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+  export ORIONX_GIT_TITLE="$(git log -1 --format=%s 2>/dev/null || echo unknown)"
+  export ORIONX_PHASE_11_SLICES="W11-1,W11-2,W11-2b,W11-2c,W11-2d,W11-2e,W11-2f,W11-3,W11-4,W11-5,W11-6,W11-7,W11-8,W11-9a,W11-9a2,W11-9b"
+  ```
+  Slice-list value is hardcoded here (the build-iso.sh is authoritative for the phase-list at build time; the tool itself does not know what slices should exist — that's what the manifest tells it). Insert immediately AFTER the existing `ORIONX_VERSION` export so lb config sees them all together. Commit: `feat(w11-11): build-iso.sh export GIT_SHA + GIT_TITLE + PHASE_11_SLICES to chroot env for /etc/orionx-version manifest`.
+
+- **T4 — Author `iso/config/includes.chroot/opt/orionx/scripts/README.md`.** One-page operator-facing doc: what `orionx-diag` is, how to run it (`sudo orionx-diag`, `orionx-diag --json`, `orionx-diag --category identity`), what a PASS/FAIL/SKIP means for each category, how to interpret the `Overall` line, where to file issues if a FAIL happens on a supported hardware config. Cross-reference `/etc/orionx-version` as the source of build metadata. Approximate 60-80 lines. **Not a full man page**; the tool's own `--help` output is the canonical CLI reference. Commit: `docs(w11-11): scripts/README.md operator guide for orionx-diag`.
+
+- **T5 — Append Section 27 to `tests/integration/test-iso-content-presence.sh`.** The section validates BUILD-TIME source presence + squashfs presence (build artifact — proving the diag tool ships), NOT tool runtime behavior (which is proven separately by T6 unit test + T-Verify QEMU boot smoke). Eight assertions:
+  - `27a`: `iso/config/includes.chroot/opt/orionx/scripts/orionx-diag` present in repo, executable in source tree (executable-bit check: `[[ -x <path> ]]`).
+  - `27b`: `iso/config/includes.chroot/opt/orionx/scripts/orionx-diag` passes `shellcheck -S error` (no severity=error findings; warnings acceptable).
+  - `27c`: `iso/config/includes.chroot/opt/orionx/scripts/README.md` present in repo.
+  - `27d`: `iso/config/hooks/live/0700-orionx-setup.hook.chroot` contains `["orionx-diag"]=` line (SCRIPT_MAP addition).
+  - `27e`: `iso/config/hooks/live/0700-orionx-setup.hook.chroot` contains `ISO_VERSION=` in a HEREDOC or echo block (KEY=VALUE manifest emission).
+  - `27f`: `scripts/build-iso.sh` contains `ORIONX_GIT_SHA=` export line.
+  - `27g`: Squashfs check (guarded by `SQUASHFS_MOUNTED`) — `/opt/orionx/scripts/orionx-diag` present in squashfs at expected path (`skip` if squashfs not extracted).
+  - `27h`: Squashfs check — `/usr/local/bin/orionx-diag` symlink present in squashfs pointing to the scripts path (`skip` if squashfs not extracted).
+  Section header: `section "27. W11-11: orionx-diag in-ISO diagnostic tool + version-manifest KEY=VALUE extension (DEC-PHASE11-014)"`. Insertion point: end of file, immediately BEFORE the `# ===\n# Summary` block at line 2518. Commit: `test(w11-11): content-presence Section 27 (8 assertions) for orionx-diag + manifest`.
+
+- **T6 — Author `tests/unit/test_orionx_diag.sh`.** Unit-test the diag script's structure + arg parsing + JSON output shape WITHOUT running the full check suite (which requires the live system state — that's an integration concern deferred to T-Verify). Six assertions:
+  - `T6a`: script exists at expected path (`iso/config/includes.chroot/opt/orionx/scripts/orionx-diag`), is executable, `bash -n` (syntax check) exits 0.
+  - `T6b`: `orionx-diag --help` exits 0 and prints a usage line containing `--json` and `--category`.
+  - `T6c`: `orionx-diag --version` exits 0 and prints a version string (does NOT validate the value against manifest, since unit tests run on the host without `/etc/orionx-version` — validates only the shape).
+  - `T6d`: `orionx-diag --category nonexistent` exits with code 2 (or 1 — planner leaves the exact code to implementer as long as non-zero AND documented in `--help`) with an error message containing "unknown category".
+  - `T6e`: `orionx-diag --json --category identity` on the host (which will FAIL all identity checks — host is not `orionx-operator`) emits VALID JSON parseable by `python3 -m json.tool` (proves the JSON path never silently corrupts on FAIL). Test asserts exit != 0 (identity FAILs) AND JSON parses.
+  - `T6f`: `shellcheck -S error iso/config/includes.chroot/opt/orionx/scripts/orionx-diag` exits 0 (no severity=error findings; matches T5 27b at build time — this test runs shellcheck at unit-test time on the source).
+  Commit: `test(w11-11): unit test for orionx-diag structure + arg-parse + JSON shape`.
+
+- **T7 — CHANGELOG + MASTER_PLAN iter-1 stamp.**
+  - **T7a — CHANGELOG.md:** prepend `### W11-11 Layer A: in-ISO diagnostic tool` block under the existing v2.1.0 section. Content: names the tool + 10 categories + 47 assertions + `--json` + `--category` + operator invocation `sudo orionx-diag` + KEY=VALUE manifest extension of `/etc/orionx-version` + DEC-PHASE11-014 reference + defers Control Center Awareness pane launch button to W11-11b.
+  - **T7b — MASTER_PLAN.md:** append an iter-1 landing note at the END of this section (does NOT touch the mainline W11-1..W11-10 row list at line 2398-2406, does NOT touch line 2388 whole-slice EC insertion order, does NOT touch Decision Log rows other than adding DEC-PHASE11-014 at the end).
+  - **T7c — Decision Log DEC-PHASE11-014:** append one new row `| DEC-PHASE11-014 | 2026-07-19 | [PHASE 11 W11-11 IN-ISO DIAGNOSTIC TOOL + /etc/orionx-version KEY=VALUE MANIFEST] ...` under the DEC-PHASE11-013 row (the last Phase 11 DEC). Rationale text captures the operator directive verbatim + KEY=VALUE design choice + backward-compat MOTD reader path + explicit rejection of dual-file / JSON alternatives + Control Center Awareness pane deferral to W11-11b.
+  Commit: `docs(w11-11): CHANGELOG v2.1.0 + MASTER_PLAN iter-1 stamp + DEC-PHASE11-014 for diagnostic tool + manifest extension`.
+
+**Evaluation Contract (10 items — every item mechanically checkable):**
+
+1. **`orionx-diag` script staged + executable + shellcheck-clean:** `iso/config/includes.chroot/opt/orionx/scripts/orionx-diag` exists, `[[ -x $path ]]` returns true, `bash -n $path` exits 0, `shellcheck -S error $path` exits 0. Verified by content-presence Section 27 assertions 27a + 27b + unit-test T6a + T6f.
+2. **0700 hook extended with three targeted edits (SCRIPT_MAP + manifest KEY=VALUE + MOTD reader):** (a) 0700 hook contains `["orionx-diag"]=` line, (b) 0700 hook contains `ISO_VERSION=` inside the /etc/orionx-version write block, (c) 0700 hook MOTD reader uses `grep '^ISO_VERSION='` instead of raw `cat`. Verified by content-presence Section 27 assertions 27d + 27e + repo grep for the MOTD reader form.
+3. **`/etc/orionx-version` shipped in KEY=VALUE format on the built ISO:** squashfs extraction shows `/etc/orionx-version` contains at minimum `ISO_VERSION=`, `BUILD_TIMESTAMP=`, `GIT_HEAD_SHA=`, `GIT_HEAD_TITLE=`, `PHASE_11_SLICES=` lines. Verified by content-presence Section 27 assertion 27g (extended in-line: after asserting the diag script squashfs presence, grep the version file for all 5 keys). If time-boxed, may fold into 27g as a compound assertion; implementer chooses.
+4. **Ten check categories implemented, matching the operator directive:** `orionx-diag --category identity`, `--category version-manifest`, `--category packages`, `--category files`, `--category systemd`, `--category python`, `--category nebula`, `--category branding`, `--category freshen`, `--category optional` each exit 0 or non-zero (per system state) but MUST NOT exit 2 (internal error) on a healthy system. Verified by T-Verify QEMU boot smoke: `sudo orionx-diag --category identity` returns 0 on a booted CI-built ISO with W11-2 identity tokens active.
+5. **`--json` emits valid JSON:** `orionx-diag --json` output parses via `python3 -m json.tool` on a fresh boot (verified by T6e unit + T-Verify QEMU smoke).
+6. **`--category` filter works correctly:** `orionx-diag --category identity` runs ONLY the 3 identity assertions (not the other 44); verifiable by counting output lines OR by JSON output `.categories` map having exactly one key. Unit T6e covers the JSON shape; T-Verify runtime covers the actual filtering.
+7. **Unit test `tests/unit/test_orionx_diag.sh` passes locally + in CI:** all 6 assertions T6a-T6f return PASS. `bash tests/unit/test_orionx_diag.sh` exits 0.
+8. **Content-presence Section 27 (8 build-time assertions) all PASS on the CI-built squashfs:** `bash tests/integration/test-iso-content-presence.sh` includes `PASS: 27a`..`PASS: 27h` in its output; existing Sections 15-26 continue to PASS (no regression).
+9. **CHANGELOG.md contains W11-11 entry under v2.1.0:** `grep -F 'W11-11' CHANGELOG.md` returns at least one hit under the v2.1.0 section header; entry names DEC-PHASE11-014, the tool, the 10 categories, the JSON output, and the W11-11b deferral.
+10. **W11-11b Layer B deferral explicit in plan + CHANGELOG:** MASTER_PLAN.md (this section) + CHANGELOG.md both name the Control Center Awareness pane launch button as W11-11b Layer B (out of scope for W11-11). No Control Center source edits under `scripts/control_center/**` in this slice. Rationale: DEC-PHASE7-041 cascade-consolidation discipline — this slice is already L-weight (new tool + hook extension + build-iso.sh extension + version-manifest schema change + 8 new content-presence assertions + 6 new unit assertions + Decision Log entry); adding Control Center Python integration would push it to XL and increase revert-blast-radius. W11-11b is a small follow-on: add a launch button to the existing Awareness pane at `scripts/control_center/sections/awareness.py` that shells out to `sudo orionx-diag --json` and renders the result in the pane. That will be its own planner amendment when scoped.
+
+**Forbidden shortcuts (explicit):**
+
+- Do NOT hardcode the Phase 11 slice list inside `orionx-diag` — the tool trusts `/etc/orionx-version` PHASE_11_SLICES field. Hardcoding would fork the authority and break every subsequent slice-addition (W11-11b, W11-9c, etc.).
+- Do NOT add a second version-manifest file (`/etc/orionx-manifest`, `/etc/orionx-version.json`, `/opt/orionx/nebula/models/MANIFEST.sha256`-style sidecar) — `/etc/orionx-version` remains the single-authority version-attestation file. Extend it; don't fork it.
+- Do NOT modify MOTD content beyond the 2-line `grep`/`cut` reader change in T2c — MOTD is DEC-PHASE9-004 / rc9-era MOTD authority, not W11-11 authority. The reader change is the minimum diff to preserve backward-compat with the KEY=VALUE format.
+- Do NOT touch Control Center source under `scripts/control_center/**` — Awareness pane launch button is EXPLICITLY W11-11b Layer B (EC10).
+- Do NOT add `sudo` invocations INSIDE `orionx-diag` — the tool assumes it's invoked with the required privilege (per `sudo orionx-diag` operator convention) and emits per-assertion SKIP with reason "root required" for the categories that need it when running non-root. `sudo` from inside a diagnostic tool is a security anti-pattern (elevated ambient authority on a forensic host).
+- Do NOT add `jq` or any new Python/Node dependency as an `orionx-diag` runtime requirement — bash + `grep`/`cut`/`awk` MUST be sufficient. JSON output is emitted by string concatenation (the JSON structure is trivial: nested objects with well-known keys, no arbitrary escaping needed for the assertion messages that the tool itself controls).
+- Do NOT modify `iso/auto/config` to add new env-var propagation directives — env vars propagate via the existing `lb config --bootappend-live` OR chroot-env pattern that `ORIONX_VERSION` already uses. Adding to `iso/auto/config` would be a new authority; the existing pattern in `scripts/build-iso.sh` is the right seat.
+- Do NOT extend `/etc/orionx-version` to include SECRETS (SSH keys, wallet keys, session tokens) — this is a build-attestation file readable by any process on the live system. Only build-time attributes belong here.
+- Do NOT combine this slice with W11-9c (Control Center + terminal + MOTD finishing) — the MOTD reader edit in T2c is the ONLY MOTD touch W11-11 permits; W11-9c owns the broader MOTD wordmark + Control Center GTK styling pass. Each is its own workflow (matches the W11-* discipline established in W11-3, W11-4, W11-5, W11-6, W11-8, W11-9a, W11-9a2).
+
+**Rollback boundary.** If the built ISO fails to boot with W11-11 active (e.g., 0700 hook errors during chroot phase, MOTD grep breaks and MOTD emits empty version string, orionx-diag script has a bash syntax error caught only at runtime), `git revert` the branch merge — pre-W11-11 develop boots cleanly with legacy single-line `/etc/orionx-version`. The revert reverts (a) the orionx-diag script, (b) the 0700 hook 3-edit block, (c) the build-iso.sh 3-export block, (d) the README.md, (e) the content-presence Section 27, (f) the unit test, (g) the CHANGELOG entry, (h) the DEC-PHASE11-014 row. No hook, no service, no runtime state to unwind — the failure surface is (i) chroot-build-time (0700 hook error → CI catches immediately, ISO does not ship), (ii) boot-time (MOTD read error → login shell still works, only the banner mis-renders), (iii) runtime (orionx-diag bug → operator sees FAIL output but nothing else breaks). Rollback is atomic and safe at each stage.
+
+**Follow-up seeded (NOT this slice) — W11-11b:** Control Center Awareness pane launch button. Scope preview: add a "Run Diagnostics" button + result panel to `scripts/control_center/sections/awareness.py` that spawns `pkexec orionx-diag --json` (or an equivalent policy-kit-aware invocation), parses the JSON, renders per-category PASS/FAIL/SKIP indicators inside the pane. Requires a `pkexec` policy file at `iso/config/includes.chroot/usr/share/polkit-1/actions/org.orionx.diag.policy` so a non-root Control Center session can elevate to run the diag tool without a password prompt on a live-forensic host (or with one prompt on hardened deployments — operator preference). Estimated M-weight. **Tracker:** file a follow-up issue at implementer landing time referencing this section as the parent seed.
+
+**Ready for guardian when:** Evaluation Contract items 1-10 all pass; reviewer verdict `REVIEW_VERDICT=ready_for_guardian`; test-state is `pass` on head SHA; CHANGELOG entry present; MASTER_PLAN.md this section stamped with iter-1 landing note; DEC-PHASE11-014 row appended to Decision Log; Scope Manifest untouched during implementation (no path added, none removed).
+
+**W11-11 iter-1 (planner detail-plan): 2026-07-19.** Detail plan appended to `MASTER_PLAN.md` on `develop`; NEW DEC-PHASE11-014 added to Decision Log at implementer T7c (KEY=VALUE manifest + in-ISO diagnostic tool authority); Scope Manifest at `tmp/phase11-w11-11-diagnostic-tool-scope.json` (LEGAL keys only: `allowed_paths`, `required_paths`, `forbidden_paths`, `authority_domains`, `state_domains`); to be synced to runtime by the operator/implementer via `cc-policy workflow scope-sync phase11-w11-11-diagnostic-tool --work-item-id wi-phase11-w11-11-diagnostic-tool --scope-file tmp/phase11-w11-11-diagnostic-tool-scope.json` immediately prior to `guardian:provision` dispatch. Ready for `guardian:provision` under workflow_id `phase11-w11-11-diagnostic-tool`.
+
+---
+
 ## Initiative 2: Autonomous Forensic Platform (v2.1 -> v3.x)
 
 This initiative transforms Orion X from a toolkit into an autonomous forensic intelligence platform. Each release builds on v2.0.0 and is independently valuable.
