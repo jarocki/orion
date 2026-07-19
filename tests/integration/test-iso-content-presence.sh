@@ -1758,6 +1758,147 @@ else
 fi
 
 # ===========================================================================
+# 22. W11-4 Layer A: YARA skeleton + freshen script + yara binary
+#
+# @decision DEC-PHASE11-005
+# @title W11-4 Layer A content-presence section 22: YARA rulesets skeleton
+# @status accepted
+# @rationale W11-4 Layer A stages the YARA rulesets skeleton:
+#   (a) yara Debian package installed in the chroot
+#   (b) /opt/orionx/yara/README.md present and contains "Licensing Split"
+#   (c) /opt/orionx/yara/LOCKFILE.json present, parses as JSON, and has 4 rulesets
+#   (d) /opt/orionx/scripts/orionx-freshen-yara.sh present and executable
+#   (e) /usr/local/bin/orionx-freshen-yara symlink present (created by 0700 hook)
+#   (f) rules-*/ dirs NOT present (Layer A sentinel — actual snapshots deferred to W11-4b)
+#   Layer B (W11-4b) will flip assertion (f) and populate the rules-*/ directories
+#   via git clone at ISO build time.
+# ===========================================================================
+section "22. W11-4 Layer A: YARA skeleton + freshen script + yara binary (DEC-PHASE11-005)"
+
+# ---------------------------------------------------------------------------
+# 22a. yara Debian package installed in chroot dpkg database
+# ---------------------------------------------------------------------------
+if [[ -f "$DPKG_STATUS" ]] && grep -q "^Package: yara$" "$DPKG_STATUS" 2>/dev/null; then
+    pass "22a: package installed in chroot: yara (W11-4 Layer A, DEC-PHASE11-005)"
+elif [[ -x "$SQF/usr/bin/yara" ]]; then
+    pass "22a: package installed in chroot: yara (binary present at /usr/bin/yara)"
+else
+    fail "22a: package installed in chroot: yara" \
+         "Check orionx.list.chroot W11-4 block includes yara"
+fi
+
+# ---------------------------------------------------------------------------
+# 22b. /opt/orionx/yara/README.md present and contains "Licensing Split"
+# ---------------------------------------------------------------------------
+YARA_README="$SQF/opt/orionx/yara/README.md"
+if [[ -f "$YARA_README" ]]; then
+    pass "22b: /opt/orionx/yara/README.md present in squashfs (W11-4 skeleton)"
+    if grep -q "Licensing Split" "$YARA_README" 2>/dev/null; then
+        pass "22b: README.md contains 'Licensing Split' section (license table present)"
+    else
+        fail "22b: README.md contains 'Licensing Split' section" \
+             "Licensing Split heading not found in $YARA_README — check includes.chroot content"
+    fi
+else
+    fail "22b: /opt/orionx/yara/README.md present in squashfs" \
+         "iso/config/includes.chroot/opt/orionx/yara/README.md not staged"
+    fail "22b: README.md contains 'Licensing Split' section" \
+         "File missing — cannot check"
+fi
+
+# ---------------------------------------------------------------------------
+# 22c. /opt/orionx/yara/LOCKFILE.json present, parses as JSON, has 4 rulesets
+# ---------------------------------------------------------------------------
+YARA_LOCKFILE="$SQF/opt/orionx/yara/LOCKFILE.json"
+if [[ -f "$YARA_LOCKFILE" ]]; then
+    pass "22c: /opt/orionx/yara/LOCKFILE.json present in squashfs (W11-4 template)"
+    # Validate JSON parse + ruleset count via python3
+    RULESET_COUNT=$(python3 -c "
+import json, sys
+try:
+    with open('$YARA_LOCKFILE') as f:
+        d = json.load(f)
+    print(len(d.get('rulesets', {})))
+except Exception as e:
+    print('ERROR: ' + str(e))
+    sys.exit(1)
+" 2>/dev/null || echo "ERROR")
+    if [[ "$RULESET_COUNT" == "ERROR" ]] || [[ -z "$RULESET_COUNT" ]]; then
+        fail "22c: LOCKFILE.json parses as valid JSON" \
+             "python3 json.load() failed — LOCKFILE.json may be malformed"
+    else
+        pass "22c: LOCKFILE.json parses as valid JSON"
+        if [[ "$RULESET_COUNT" -eq 4 ]]; then
+            pass "22c: LOCKFILE.json contains exactly 4 rulesets (yara-rules, reversinglabs, binaryalert-managed, didierstevens)"
+        else
+            fail "22c: LOCKFILE.json contains exactly 4 rulesets" \
+                 "Got $RULESET_COUNT ruleset(s) — expected 4 (DEC-PHASE11-005 licensing split)"
+        fi
+    fi
+else
+    fail "22c: /opt/orionx/yara/LOCKFILE.json present in squashfs" \
+         "iso/config/includes.chroot/opt/orionx/yara/LOCKFILE.json not staged"
+    fail "22c: LOCKFILE.json parses as valid JSON" \
+         "File missing — cannot check"
+    fail "22c: LOCKFILE.json contains exactly 4 rulesets" \
+         "File missing — cannot check"
+fi
+
+# ---------------------------------------------------------------------------
+# 22d. /opt/orionx/scripts/orionx-freshen-yara.sh present and executable
+# ---------------------------------------------------------------------------
+YARA_FRESHEN="$SQF/opt/orionx/scripts/orionx-freshen-yara.sh"
+if [[ -f "$YARA_FRESHEN" ]]; then
+    pass "22d: /opt/orionx/scripts/orionx-freshen-yara.sh present in squashfs (W11-4 freshen script)"
+    if [[ -x "$YARA_FRESHEN" ]]; then
+        pass "22d: orionx-freshen-yara.sh is executable (0700 hook chmod 755)"
+    else
+        fail "22d: orionx-freshen-yara.sh is executable" \
+             "0700 hook sets chmod 755 on all scripts/ files — check hook execution"
+    fi
+else
+    fail "22d: /opt/orionx/scripts/orionx-freshen-yara.sh present in squashfs" \
+         "scripts/orionx-freshen-yara.sh not staged — check stage_application_content rsync"
+    fail "22d: orionx-freshen-yara.sh is executable" \
+         "File missing — cannot check"
+fi
+
+# ---------------------------------------------------------------------------
+# 22e. /usr/local/bin/orionx-freshen-yara symlink present (0700 hook)
+# ---------------------------------------------------------------------------
+# Note: the 0700 hook creates symlinks in /usr/bin/ via SCRIPT_MAP. The
+# SCRIPT_MAP key "orionx-freshen-yara" maps to the scripts/ path. The hook
+# creates /usr/bin/orionx-freshen-yara (not /usr/local/bin/). Both paths
+# are acceptable; we check /usr/bin/ first (canonical hook output) then
+# /usr/local/bin/ as a fallback.
+if [[ -L "$SQF/usr/bin/orionx-freshen-yara" ]]; then
+    pass "22e: /usr/bin/orionx-freshen-yara symlink present (0700 hook SCRIPT_MAP, DEC-PHASE11-005)"
+elif [[ -f "$SQF/usr/bin/orionx-freshen-yara" ]]; then
+    pass "22e: /usr/bin/orionx-freshen-yara present as regular file (0700 hook)"
+elif [[ -L "$SQF/usr/local/bin/orionx-freshen-yara" ]] || \
+     [[ -f "$SQF/usr/local/bin/orionx-freshen-yara" ]]; then
+    pass "22e: /usr/local/bin/orionx-freshen-yara present (alternative PATH location)"
+else
+    fail "22e: /usr/bin/orionx-freshen-yara symlink present" \
+         "0700-orionx-setup.hook.chroot SCRIPT_MAP must include [\"orionx-freshen-yara\"]=\"/opt/orionx/scripts/orionx-freshen-yara.sh\""
+fi
+
+# ---------------------------------------------------------------------------
+# 22f. rules-*/ directories NOT present (Layer A sentinel — W11-4b will flip)
+# ---------------------------------------------------------------------------
+# Layer A intentionally ships NO ruleset snapshots; operators run
+# orionx-freshen-yara post-boot. When W11-4b lands and populates the rules-*/
+# dirs at build time, this assertion should be inverted to REQUIRE their presence.
+# || true: find exits 0 always; we just count.
+RULES_DIR_COUNT=$(find "$SQF/opt/orionx/yara" -maxdepth 1 -type d -name "rules-*" 2>/dev/null | wc -l | tr -d ' ' || true)
+if [[ "$RULES_DIR_COUNT" -eq 0 ]]; then
+    pass "22f: rules-*/ dirs NOT present in squashfs (Layer A sentinel — snapshots deferred to W11-4b)"
+else
+    fail "22f: rules-*/ dirs NOT present in squashfs" \
+         "Found $RULES_DIR_COUNT rules-*/ dir(s) — Layer A should ship only the skeleton. If W11-4b has landed, invert this assertion."
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

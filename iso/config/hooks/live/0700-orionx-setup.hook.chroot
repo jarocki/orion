@@ -76,6 +76,12 @@ declare -A SCRIPT_MAP=(
     # Nebula control-plane Python; the nebula dispatcher is the operator entrypoint.
     # nebula-mcp and other W10-3+ tools get their own PATH entries in later slices.
     ["nebula"]="/opt/orionx/scripts/nebula/nebula"
+    # W11-4 Layer A: YARA ruleset freshen script (DEC-PHASE11-005).
+    # Operators run `sudo orionx-freshen-yara` post-boot to populate rules-*/
+    # directories under /opt/orionx/yara/. Layer B (W11-4b) will automate this
+    # at build time via git clone. Single PATH entry; no .desktop launcher needed
+    # (this is a root-only maintenance command, not an end-user GUI tool).
+    ["orionx-freshen-yara"]="/opt/orionx/scripts/orionx-freshen-yara.sh"
 )
 
 for name in "${!SCRIPT_MAP[@]}"; do
