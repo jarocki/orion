@@ -231,6 +231,14 @@ gtk2-engines-murrine
 # papirus-icon-theme: Papirus icon theme (GPL-3.0+) — base for Orion-X-Icons inheritance
 papirus-icon-theme
 
+# W11-3 Layer A: RE toolkit — Debian packaged tools (DEC-PHASE11-004)
+radare2
+ssdeep
+md5deep
+python3-pefile
+python3-yara
+python3-capstone
+
 # Custom packages (will be installed from config/packages.chroot/)
 # orionx-custom-tools
 # orionx-theme

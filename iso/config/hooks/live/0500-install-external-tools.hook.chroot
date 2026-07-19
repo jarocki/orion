@@ -184,4 +184,33 @@ echo "[0500] W11-2c: purging gcc/g++ Recommends residue (DEC-PHASE11-003 enforce
 DEBIAN_FRONTEND=noninteractive apt-get purge -y --autoremove \
     gcc gcc-10 g++ g++-10 || true
 
+# ---------------------------------------------------------------------------
+# W11-3 Layer A: capa + python-magic venv (DEC-PHASE11-004)
+#
+# capa (Apache-2.0) and python-magic are installed into a dedicated virtual
+# environment at /opt/orionx/venv/re/ to avoid system-Python conflicts.
+# This install is SOFT-FAIL: if the network is unavailable during the chroot
+# build phase (e.g. air-gap build or transient network failure), the install
+# is skipped with a loud warning and the package-list tools (radare2, ssdeep,
+# etc.) remain available. capa is not load-bearing for any daemon — its
+# absence at build time does not abort the build.
+#
+# After a successful install, /usr/bin/capa is symlinked for convenience.
+# ---------------------------------------------------------------------------
+echo "=== W11-3: Installing capa + python-magic to /opt/orionx/venv/re/ ==="
+python3 -m venv /opt/orionx/venv/re/ 2>&1 || {
+    echo "[W11-3] WARN: venv creation failed — capa install skipped (network may be unavailable)"
+}
+if [[ -f /opt/orionx/venv/re/bin/pip ]]; then
+    /opt/orionx/venv/re/bin/pip install --no-input flare-capa python-magic 2>&1 || {
+        echo "[W11-3] WARN: pip install failed — capa install skipped"
+    }
+    if [[ -f /opt/orionx/venv/re/bin/capa ]]; then
+        echo "[W11-3] capa installed: $(/opt/orionx/venv/re/bin/capa --version 2>&1 | head -1)"
+        # Symlink for user convenience
+        ln -sf /opt/orionx/venv/re/bin/capa /usr/bin/capa
+    fi
+fi
+echo "=== W11-3 capa venv install complete ==="
+
 echo "=== External tools installation complete ==="
