@@ -7,21 +7,18 @@
 
 set -euo pipefail
 
-if [[ $EUID -ne 0 ]]; then
-    echo "ERROR: install-clamav requires root" >&2
-    exit 1
-fi
+# SC1091: library lives at runtime path /opt/orionx/optional/lib/ on the target
+# system; shellcheck cannot follow the absolute source path on the build host.
+# shellcheck disable=SC1091
+source /opt/orionx/optional/lib/orionx-installer-common.sh
 
-if ! getent hosts deb.debian.org >/dev/null 2>&1; then
-    echo "ERROR: deb.debian.org unreachable (air-gap or DNS). ClamAV install requires network." >&2
-    exit 1
-fi
+orionx_require_root
+orionx_require_network deb.debian.org
 
-echo "[install-clamav] Installing ClamAV + freshclam..."
-apt-get update
-apt-get install -y clamav clamav-freshclam
+orionx_log_info "Installing ClamAV + freshclam..."
+orionx_apt_install clamav clamav-freshclam
 
-echo "[install-clamav] Running initial freshclam to populate signatures..."
-freshclam || echo "[install-clamav] WARN: freshclam initial run failed (retry manually)"
+orionx_log_info "Running initial freshclam to populate signatures..."
+freshclam || orionx_log_info "WARN: freshclam initial run failed (retry manually)"
 
-echo "[install-clamav] Complete. Usage: clamscan <file>"
+orionx_log_info "Complete. Usage: clamscan <file>"
