@@ -3151,6 +3151,102 @@ Then records `REVIEW_VERDICT=ready_for_guardian`.
 
 ---
 
+#### W11-2f — Detail plan (Disable XFCE auto-lock on passwordless live account, closes #76)
+
+**Seeded:** 2026-07-19 planner amendment. **Status:** ready for `guardian:provision`. **Env:** local edit; hardware attestation at next rc-cut. **Wave:** post-W11-2e hygiene, pre-W11-3. **Gate:** review. **Weight:** S (very tiny — 3 in-scope files, 5 tasks, no new DEC). **Deps:** W11-1 (landed), W11-2 through W11-2e (landed). **Workflow ID:** `phase11-w11-2f-screen-lock`.
+
+**Field evidence anchor (2026-07-16):** Operator idle-timed-out on live desktop; XFCE screensaver locked the screen with a password prompt against the `orionx` passwordless locked account; empty password did not unlock; graphical session bricked until reboot. High-priority operator-facing bricking bug (issue #76). Fix must land before the next rc-cut so the ISO is usable for long-running analysis (packet capture, YARA scan, memory dump) without operator-in-seat continuity.
+
+**Root cause:** default XFCE session in the Bullseye-derived Debian Live ships `xfce4-screensaver` (transitively via `xfce4-goodies`/session-defaults) which auto-activates a locker after an idle timeout. PAM cannot authenticate a passwordless locked account (`passwd -d orionx` at `0100-create-user.hook.chroot:34`), so the unlock dialog has no acceptance path. This is a defaults problem, not a package problem — the screensaver package itself is harmless; only the enabled-by-default `lock` and `idle-activation` behaviors brick the session.
+
+**Architecture correction — DEC-PHASE9-002 compliance (critical).** The dispatch context proposed shipping a static file at `iso/config/includes.chroot/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml`. That path **violates DEC-PHASE9-002** which explicitly states: `/etc/skel is NOT used (it would duplicate the authority)` — the single authority for XFCE xfconf defaults for the live user is `iso/config/hooks/normal/0100-create-user.hook.chroot` writing directly to `/home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/`. Introducing a parallel `/etc/skel` authority for `xfce4-screensaver.xml` while `xfce4-desktop.xml` lives under `/home/orionx` would produce exactly the class of dual-authority bug the plan's ethos forbids. **Corrected approach:** extend `0100-create-user.hook.chroot` to also write `xfce4-screensaver.xml` under the same `/home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/` directory it already owns. Layer 2 (the `/etc/xdg/autostart/orionx-disable-screen-lock.desktop` xset defense) IS shipped as a static includes.chroot file because `/etc/xdg/autostart/` is not an xfconf authority (precedent: `nm-applet.desktop` ships there statically already).
+
+**Defense strategy (belt + suspenders — both required):**
+
+1. **Layer 1 — xfconf XML defaults (authoritative):** Extend `0100-create-user.hook.chroot` to write `/home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml` with `lock/enabled=false`, `saver/enabled=false`, `saver/idle-activation/enabled=false`. This is the primary fix; xfce4-screensaver reads these on session start.
+
+2. **Layer 2 — xset autostart (safety net):** Ship a static `iso/config/includes.chroot/etc/xdg/autostart/orionx-disable-screen-lock.desktop` running `xset s off; xset -dpms; xset s noblank; xfce4-screensaver-command --exit >/dev/null 2>&1 || true` at XFCE session start. This guards against a future Debian upgrade that changes xfconf schema names, a corrupt `.config` in the live user's tmpfs, or any other screensaver (e.g., a stray `gnome-screensaver`) sneaking into the session. `OnlyShowIn=XFCE` scopes the autostart correctly.
+
+3. **Layer 3 (explicitly NOT taken) — package purge:** removing `xfce4-screensaver` from the package list is rejected. It is a transitive dependency of `xfce4-goodies`/session defaults; a purge risks pulling the XFCE session with it, and even if `apt-get remove --purge` succeeds locally, the next Bullseye point release could re-pull it. Layers 1+2 disable the harmful behavior without fighting the packaging graph. Recorded here so a future implementer does not "helpfully" add a purge line during a debloat pass.
+
+**Scope Manifest — allowed / required / forbidden:**
+
+| Path | Class | Rationale |
+|---|---|---|
+| `iso/config/hooks/normal/0100-create-user.hook.chroot` | allowed + required | Layer 1 xfconf extension; single-authority target per DEC-PHASE9-002. |
+| `iso/config/includes.chroot/etc/xdg/autostart/orionx-disable-screen-lock.desktop` | allowed + required (new file) | Layer 2 xset autostart. No existing authority for `/etc/xdg/autostart/*.desktop`; static ship matches nm-applet precedent. |
+| `tests/integration/test-iso-content-presence.sh` | allowed + required | New W11-2f content-presence section (16g). |
+| `CHANGELOG.md` | allowed + required | v2.1.0 W11-2f entry. |
+| `MASTER_PLAN.md` | allowed | Iter annotation only; no permanent-section edits. |
+| `tmp/**` | allowed | Scratch. |
+| `iso/config/includes.chroot/etc/skel/**` | forbidden | Violates DEC-PHASE9-002 single-authority for XFCE xfconf; DO NOT create this path. |
+| `iso/config/package-lists/**` | forbidden | Layer 3 (purge) explicitly rejected above. |
+| `scripts/**` | forbidden | No build-script change required. |
+| `iso/auto/**` | forbidden | No boot cmdline change. |
+| `iso/config/hooks/live/**` | forbidden | 0100 is under `hooks/normal/`; live hooks are not this slice's authority. |
+| `iso/config/hooks/normal/0[2-9]*` | forbidden | Only 0100 is in scope; other normal hooks are separate authorities. |
+| `iso/config/includes.chroot/etc/xdg/autostart/nm-applet.desktop` | forbidden | Pre-existing peer file; MUST NOT be modified. |
+| `iso/config/includes.chroot/etc/xdg/autostart/orionx-control-center.desktop` | forbidden | Pre-existing peer file (W9-2 authority); MUST NOT be modified. |
+| `iso/config/includes.binary/**`, `iso/config/bootloaders/**`, `iso/config/nebula-model-manifest.json`, `.github/workflows/**`, `docs/**`, `runtime/**`, `hooks/**`, `agents/**`, `settings.json`, `CLAUDE.md`, `AGENTS.md` | forbidden | Standard control-plane and out-of-scope surfaces (pattern from W11-2e). |
+
+**State authorities touched:** `xfce_xfconf_defaults` (extension of the DEC-PHASE9-002 single-authority pattern to a second xfconf channel), and `xfce_session_autostart` (introduces `/etc/xdg/autostart/` as a new static surface — nm-applet already lives there so the precedent is set, but the `orionx-` prefix establishes the naming convention for future Orion-X autostart entries).
+
+**Tasks (5, tight):**
+
+1. **T1 — Layer 1 xfconf XML in `0100-create-user.hook.chroot`.** Immediately after the existing `xfce4-desktop.xml` heredoc block (currently ending at line 155 `EOF`), append a new heredoc block that writes `xfce4-screensaver.xml` into the same `/home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/` directory the previous block already ensured exists (line 140 `mkdir -p`). Content: `<channel name="xfce4-screensaver" version="1.0">` containing `<property name="lock" type="empty"><property name="enabled" type="bool" value="false"/></property>` and `<property name="saver" type="empty"><property name="enabled" type="bool" value="false"/><property name="idle-activation" type="empty"><property name="enabled" type="bool" value="false"/></property></property>`. Include a comment header above the block naming issue #76 and referencing DEC-PHASE9-002 (this slice reuses the same authority, does not introduce a new one). Do NOT re-mkdir the xfconf dir; it already exists from the previous block. Verify: `sh -n iso/config/hooks/normal/0100-create-user.hook.chroot` parses clean; `xmllint --noout` on the extracted heredoc content succeeds (implementer may sanity-check locally); `grep -c 'xfce4-screensaver.xml' iso/config/hooks/normal/0100-create-user.hook.chroot == 1`. Commit: `fix(w11-2f): 0100 hook — write xfce4-screensaver.xml disabling lock (partial #76)`.
+
+2. **T2 — Layer 2 static autostart `.desktop`.** Create `iso/config/includes.chroot/etc/xdg/autostart/orionx-disable-screen-lock.desktop` verbatim with the standard `[Desktop Entry]` header plus `Type=Application`, `Name=Orion-X: disable screen lock`, `Comment=Belt-and-suspenders idle lock disable for the passwordless live account (issue #76)`, `Exec=sh -c "xset s off; xset -dpms; xset s noblank; xfce4-screensaver-command --exit >/dev/null 2>&1 || true"`, `X-XFCE-Autostart-Enabled=true`, `NoDisplay=true`, `OnlyShowIn=XFCE`. File is a plain 644 text file (not executable; XDG autostart entries do not need `+x`). Verify: file exists; `grep -c '^Exec=' == 1`; `grep -c 'OnlyShowIn=XFCE' == 1`. Commit part of T1's shared commit is acceptable, or a separate `feat(w11-2f): xset autostart .desktop (partial #76)` — implementer's choice.
+
+3. **T3 — Content-presence section 16g in `tests/integration/test-iso-content-presence.sh`.** Add a new subsection after the existing 16f section, following the exact idiom used in 16a/16b/16c (section-comment banner, `echo "  [16g] ..."` progress line, `pass "..." / fail "..." "..."` calls using the existing `$SQF` prefix for the extracted squashfs). Three assertions: (a) `$SQF/home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml` file present (Layer 1 landed in hook); (b) that XML contains `name="lock"` and `value="false"` on the same property (grep for `lock` block containing `value="false"`); (c) `$SQF/etc/xdg/autostart/orionx-disable-screen-lock.desktop` present and contains `xset s off` (Layer 2 landed). Follow the W11-2e/W11-2d style of naming the DEC/issue in the pass message: reference `#76` and `DEC-PHASE9-002`. Verify: `bash -n tests/integration/test-iso-content-presence.sh` parses clean; running the full test on `develop` HEAD (before implementation lands the actual files) shows section 16g failing loudly (proving the assertion is real, not a no-op) — then after T1+T2 land in the same PR, section 16g passes.
+
+4. **T4 — CHANGELOG entry.** Edit `CHANGELOG.md` `## [v2.1.0]` section: append a new `### W11-2f: Disable XFCE auto-lock on passwordless live account (closes #76)` mini-subsection with (a) one-line symptom naming the 2026-07-16 field observation, (b) Layer 1 + Layer 2 defense summary (one line each), (c) explicit note that Layer 3 (package purge) was rejected because of transitive dependencies, (d) `closes #76`. Do NOT touch prior W11-* mini-subsections. Commit: `docs(w11-2f): CHANGELOG v2.1.0 — W11-2f disable idle screen lock (closes #76)` — or fold into T1's consolidated commit.
+
+5. **T5 — Verify unit + integration tests green.** Run local `bash tests/unit/*.sh` (or the project's unit runner) — must exit 0. Run `bash -n` on the two touched shell files. Confirm `git diff --name-only develop..HEAD` returns only files inside the Scope Manifest `allowed_paths`. No commit — this is verification only.
+
+**Commit shape:** 3 code/doc commits (T1+T2 folded, T3, T4) OR 1 consolidated `fix(w11-2f): disable XFCE idle lock on passwordless live account (closes #76)` — implementer's choice; consolidated is preferred for a slice this tight (matches W11-2b/W11-2e shape). Reviewer verifies scope compliance regardless of shape.
+
+**Evaluation Contract (5 items, guardian-readiness gate):**
+
+1. **Layer 1 xfconf XML present in the extracted squashfs (T1).** `unsquashfs`-ing the ISO produces `home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml` with `lock/enabled=false` and `saver/enabled=false`. Independently verifiable by re-running the extracted test's section 16g. `$SQF/home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml` MUST exist; content MUST contain the `lock` disabled property.
+
+2. **Layer 2 autostart present in the extracted squashfs (T2).** `$SQF/etc/xdg/autostart/orionx-disable-screen-lock.desktop` present, contains `xset s off`, `OnlyShowIn=XFCE`, and the `xfce4-screensaver-command --exit` fallback.
+
+3. **Content-presence section 16g asserts both layers (T3).** Section 16g in `test-iso-content-presence.sh` contains at least 3 named assertions (Layer 1 XML present, Layer 1 XML content correct, Layer 2 .desktop present + content). Pass messages reference `#76` and DEC-PHASE9-002. `bash -n` clean.
+
+4. **CHANGELOG entry present and scoped (T4).** `CHANGELOG.md` `[v2.1.0]` section contains a `### W11-2f` mini-subsection naming (a) 2026-07-16 field observation, (b) both layers, (c) `closes #76`. No prior W11-* subsections touched.
+
+5. **Scope compliance and unit tests green (T5).** `git diff --name-only develop..HEAD` returns only files inside the Scope Manifest `allowed_paths` (no `iso/config/includes.chroot/etc/skel/**` entries — that path is forbidden by this slice per DEC-PHASE9-002 compliance). `bash tests/unit/*.sh` exits 0. `bash -n` on `0100-create-user.hook.chroot` and `test-iso-content-presence.sh` clean.
+
+**Ready for guardian when:** all 5 Evaluation Contract items PASS on the working branch HEAD; `git diff --stat` shows edits only inside the allowed paths; the reviewer's `REVIEW_VERDICT=ready_for_guardian` completion has been recorded against a HEAD SHA matching the landing target.
+
+**Forbidden shortcuts:**
+
+- Do NOT ship a static `/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml` file (violates DEC-PHASE9-002 single-authority). The dispatch context suggested this path; the correction is to extend `0100-create-user.hook.chroot` instead. Any file under `iso/config/includes.chroot/etc/skel/**` in the diff is an automatic reviewer reject.
+- Do NOT add `xfce4-screensaver` to a package purge list. Layer 3 is explicitly rejected in the strategy above.
+- Do NOT modify `xfce4-desktop.xml` (Phase 9 wallpaper authority, DEC-PHASE9-002) in the same hook block. Extend as an adjacent new heredoc; do not fold into the existing `xfce4-desktop.xml` block.
+- Do NOT introduce a new hook file (e.g., `0110-disable-screen-lock.hook.chroot`). The single-authority for user-config defaults is `0100-create-user.hook.chroot`; splitting into a second hook would produce the exact dual-authority pattern DEC-PHASE9-002 forbids.
+- Do NOT touch pre-existing autostart files (`nm-applet.desktop`, `orionx-control-center.desktop`). Only add the new `orionx-disable-screen-lock.desktop`.
+- Do NOT combine this fix with unrelated hygiene edits that surface during T5. File any incidental findings for a separate slice; W11-2f closes only the idle-lock bricking bug.
+
+**Rollback boundary:** 1-2 commits. `git revert <sha>` cleanly removes both the `xfce4-screensaver.xml` heredoc block from `0100-create-user.hook.chroot` and the `orionx-disable-screen-lock.desktop` file, restoring the pre-fix vanilla XFCE screensaver defaults. Regression classes to watch:
+
+- **Bullseye XFCE point release changes xfconf schema:** if a future Debian point release renames `lock/enabled` or restructures the `saver` channel, Layer 1 becomes ineffective. Layer 2 (xset autostart) is the safety net for exactly this class. Recorded as a preservation invariant for future slices.
+- **Someone adds `xfce4-screensaver` to a purge list without reading this section:** if a future debloat pass removes the package, Layer 1's XML becomes an orphan but Layer 2's xset commands still work (harmless if screensaver is absent). The reviewer for any future debloat slice should grep for `xfce4-screensaver` in this section before approving.
+- **A future slice ships a `/etc/skel/.config/xfce4/*` file:** re-introduces the DEC-PHASE9-002 dual-authority bug. The Scope Manifest `forbidden_paths` catches this at scope-check time; the `0100-create-user.hook.chroot` comment header (added in T1) reminds any future implementer of the constraint.
+
+**Cross-references:**
+
+- DEC-PHASE9-002 (XFCE wallpaper authority: 0100-create-user direct /home/orionx build) — the single-authority pattern extended by W11-2f; **preserved verbatim**, no policy change.
+- W9-1 (Phoenix wallpaper) + W9-2 (Control Center) — same hook (`0100-create-user.hook.chroot`) is the writer for wallpaper xfconf; W11-2f co-locates the screensaver disable in the same authority. Hardware-attested co-shipment path (rc9 identity fix `e09efbf` on 2026-07-13 landed W11-2 identity through this hook).
+- Issue #76 (the tracking issue this slice closes; priority:high; observed 2026-07-16 on develop `bfc2896`).
+- Adjacent risks noted in #76 body: (a) DEC-PHASE9-005 autologin authority — preserved; W11-2f does not touch autologin. (b) W11-2 identity `live-config.username=orionx-operator` — preserved; W11-2f does not touch bootloader cmdline. (c) Future W9-Awareness pane "prevent idle lock" toggle — out of scope for W11-2f; recorded as a future Control Center enhancement.
+
+**Hardware attestation gate:** validated at the next rc-cut (W11-10) — boot ISO, leave idle for 30+ minutes, screen remains unlocked and interactive. Not a per-slice gate for W11-2f itself (the CI content-presence assertion is the guardian gate); the hardware attestation is the rc-cut acceptance signal per the W11-10 gate.
+
+**W11-2f iter-1 (planner detail-plan): 2026-07-19.** Detail plan appended to `MASTER_PLAN.md` on `develop`; NO new DEC (extends DEC-PHASE9-002 single-authority to a second xfconf channel — same policy, same authority, second channel); Scope Manifest at `tmp/phase11-w11-2f-screen-lock-scope.json`. Ready for `guardian:provision` under workflow_id `phase11-w11-2f-screen-lock`.
+
+---
+
 #### W11-9 — Detail plan (Orion-X cyberdeck branding pipeline — UMBRELLA + split into W11-9a / W11-9b / W11-9c)
 
 **Seeded:** 2026-07-13 planner amendment. **Status:** umbrella plan authored; W11-9a ready for `guardian:provision`; W11-9b and W11-9c detail plans deferred to planner-dispatch at their own provisioning time. **Env:** Linux/CI + QEMU + hardware attestation. **Wave:** 6. **Gate:** review per sub-slice; operator sign-off on the cyberdeck acceptance gate at W11-10 rc-cut. **Weight:** XL (umbrella); L (9a) + L (9b) + S (9c). **Deps:** W11-2 (landed at `9fe8c4b`; W11-2b `98dfc2e`, W11-2c `0838a31`, W11-2d `7759e84`; hardware-attested at rc9 identity fix `e09efbf` on 2026-07-13).
