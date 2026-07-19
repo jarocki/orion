@@ -15,6 +15,7 @@ Merkle audit, auto-healing) are preserved. The tightening axes: smaller mission-
 mission-fit debloat, post-boot optional-installer framework, and a unique Orion-X cyberdeck
 visual identity. Target: ≤3.0 GB compressed ISO (~2.8 GB). See DEC-PHASE11-001.
 
+- feat(phase11): W11-4 Layer A — YARA rulesets skeleton (yara pkg + /opt/orionx/yara/{README.md,LOCKFILE.json} + scripts/orionx-freshen-yara.sh + 0700 hook symlink); actual ruleset snapshots deferred to W11-4b (DEC-PHASE11-005)
 - feat(phase11): W11-3 Layer A — Debian-packaged RE toolkit (radare2, ssdeep, md5deep, python3-{pefile,yara,capstone}) + capa venv; heavy binaries (FLOSS/TrID/remnux/Node) deferred to W11-3b
 - fix(phase11): W11-2e — Qwen SHA256 pinned in nebula-model-manifest.json (closes #67, unblocks nebula-integrity-check.service on hardware)
 

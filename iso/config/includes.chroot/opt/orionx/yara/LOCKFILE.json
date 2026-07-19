@@ -1,0 +1,36 @@
+{
+  "_schema_notes": "TBD-VERIFY-AT-FIRST-FRESHEN is a sentinel string; orionx-freshen-yara will replace with actual commit SHAs on first run.",
+  "generated_by": "orionx-freshen-yara (template ships from W11-4; SHAs pinned on first freshen run)",
+  "schema_version": 1,
+  "description": "Orion-X YARA ruleset lockfile — records commit SHAs of last freshen run",
+  "layer": "A",
+  "note": "Layer A ships this template; W11-4b will populate on first freshen",
+  "rulesets": {
+    "yara-rules": {
+      "repo": "https://github.com/Yara-Rules/rules",
+      "branch": "master",
+      "commit_sha": "TBD-VERIFY-AT-FIRST-FRESHEN",
+      "license": "GPL-2.0"
+    },
+    "reversinglabs": {
+      "repo": "https://github.com/reversinglabs/reversinglabs-yara-rules",
+      "branch": "master",
+      "commit_sha": "TBD-VERIFY-AT-FIRST-FRESHEN",
+      "license": "MIT"
+    },
+    "binaryalert-managed": {
+      "repo": "https://github.com/airbnb/binaryalert",
+      "branch": "master",
+      "commit_sha": "TBD-VERIFY-AT-FIRST-FRESHEN",
+      "license": "Apache-2.0",
+      "subpath": "rules/"
+    },
+    "didierstevens": {
+      "repo": "https://github.com/DidierStevens/DidierStevensSuite",
+      "branch": "master",
+      "commit_sha": "TBD-VERIFY-AT-FIRST-FRESHEN",
+      "license": "Public-Domain",
+      "subpath": "yara/"
+    }
+  }
+}

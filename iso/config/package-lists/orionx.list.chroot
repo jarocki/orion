@@ -239,6 +239,10 @@ python3-pefile
 python3-yara
 python3-capstone
 
+# W11-4 Layer A: YARA malware analysis (DEC-PHASE11-005)
+# python3-yara already added above in W11-3 Layer A.
+yara
+
 # Custom packages (will be installed from config/packages.chroot/)
 # orionx-custom-tools
 # orionx-theme
