@@ -48,6 +48,7 @@ and all Phase 11 slice tools are present and functional.
 
 **Control Center Awareness pane launch button deferred to W11-11b** (Layer B). W11-11b will add a "Run Diagnostics" button to `scripts/control_center/sections/awareness.py` that spawns `pkexec orionx-diag --json`. This slice is Layer A only — no Control Center source edits. Reference: DEC-PHASE11-015.
 
+- feat(phase11): W11-12 — orionx-imager host-side ISO downloader + USB writer (RPi Imager-style). Python + tkinter GUI + bash CLI (macOS/Linux). Downloads latest GitHub release, verifies SHA256, refuse-list safety for internal disks. Windows deferred to W11-12b.
 - feat(phase11): W11-8 Layer A — Optional installer framework (shared lib + 5 new stubs: ghidra/element/floss/trid/gomuks) + install-clamav.sh refactor. Layer B (Control Center badge) deferred to W11-8b.
 - fix(phase11): W11-7 — ClamAV dropped from base ISO (-350 MB); moved to /opt/orionx/optional/install-clamav.sh (DEC-PHASE11-009 LOCKED)
 - feat(phase11): W11-6 Layer A — Suricata IDS (lazy-start override + skeleton + orionx-freshen-suricata); Layer B (bundled rules + Nebula tier selector) deferred to W11-6b
