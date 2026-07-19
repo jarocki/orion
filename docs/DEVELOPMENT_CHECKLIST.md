@@ -70,3 +70,11 @@ This checklist outlines the tasks and best practices to follow when modifying or
 ---
 
 This checklist helps standardize the development process and is especially useful for open-source contributors who want to contribute code. Before submitting a pull request or cutting a new release, please go through the relevant sections of this checklist.
+
+## Phase 11 slice cadence
+
+Each Phase 11 slice follows: planner (Detail Plan + EC in `MASTER_PLAN.md`) ->
+guardian:provision (worktree + lease) -> implementer -> reviewer ->
+guardian:land (merge + push). Hotfixes use the W11-Nx pattern (see
+`docs/release-process.md`). MASTER_PLAN.md carries the authoritative
+Evaluation Contract for every landed slice.

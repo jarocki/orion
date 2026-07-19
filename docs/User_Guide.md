@@ -1,4 +1,4 @@
-# Orion-X Phoenix Edition v2.0.0-rc1 User Guide
+# Orion-X Phoenix Edition v2.1.0-dev User Guide
 
 ## Table of Contents
 
@@ -78,9 +78,9 @@
 
 ### About Orion-X Phoenix Edition
 
-Orion-X Phoenix Edition v2.0.0-rc1 is a comprehensive cybersecurity toolkit designed specifically for incident response and digital forensics. It provides a hardened Linux-based live environment that emphasizes security, privacy, and team collaboration.
+Orion-X Phoenix Edition v2.1.0-dev is a comprehensive cybersecurity toolkit designed specifically for incident response and digital forensics. It provides a hardened Linux-based live environment that emphasizes security, privacy, and team collaboration.
 
-The "Phoenix" name symbolizes the toolkit's ability to help organizations rise from the ashes of security incidents through effective investigation and response. This edition (v2.0.0-rc1) represents a significant evolution from previous versions, with enhanced security features, improved usability, and expanded capabilities.
+The "Phoenix" name symbolizes the toolkit's ability to help organizations rise from the ashes of security incidents through effective investigation and response. This edition (v2.1.0-dev) represents a significant evolution from previous versions, with enhanced security features, improved usability, and expanded capabilities.
 
 Orion-X is designed to be booted directly from USB media, leaving no traces on the host system. It can run entirely in memory, providing a secure and isolated environment for analyzing potentially compromised systems.
 
@@ -137,7 +137,7 @@ Before you can use Orion-X, you need to create bootable media (typically a USB d
    ```
 3. Create bootable media (replace `/dev/sdX` with your device):
    ```bash
-   sudo dd if=/path/to/orionx-phoenix-edition-v2.0.0-rc1.iso of=/dev/sdX bs=4M status=progress conv=fsync
+   sudo dd if=/path/to/orionx-phoenix-edition-v2.1.0-dev.iso of=/dev/sdX bs=4M status=progress conv=fsync
    ```
 
 #### On Windows
@@ -161,7 +161,7 @@ Before you can use Orion-X, you need to create bootable media (typically a USB d
    ```
 4. Create bootable media:
    ```bash
-   sudo dd if=/path/to/orionx-phoenix-edition-v2.0.0-rc1.iso of=/dev/rdiskN bs=1m
+   sudo dd if=/path/to/orionx-phoenix-edition-v2.1.0-dev.iso of=/dev/rdiskN bs=1m
    ```
 5. Eject the drive when complete:
    ```bash
@@ -175,10 +175,10 @@ To verify the integrity of your bootable media:
 1. Calculate the SHA-256 hash of the ISO before writing to USB:
    ```bash
    # On Linux/macOS
-   sha256sum orionx-phoenix-edition-v2.0.0-rc1.iso
+   sha256sum orionx-phoenix-edition-v2.1.0-dev.iso
    
    # On Windows (PowerShell)
-   Get-FileHash orionx-phoenix-edition-v2.0.0-rc1.iso -Algorithm SHA256
+   Get-FileHash orionx-phoenix-edition-v2.1.0-dev.iso -Algorithm SHA256
    ```
 
 2. Compare the calculated hash with the one provided on the download page
@@ -194,9 +194,9 @@ To verify the integrity of your bootable media:
 
 When booting from your Orion-X USB drive, you'll be presented with several boot options:
 
-- **Orion-X Phoenix Edition v2.0.0-rc1**: Standard boot with default settings
-- **Orion-X Phoenix Edition v2.0.0-rc1 (with persistence)**: Boot with persistent storage
-- **Orion-X Phoenix Edition v2.0.0-rc1 (Safe Mode)**: Boot with minimal drivers for compatibility
+- **Orion-X Phoenix Edition v2.1.0-dev**: Standard boot with default settings
+- **Orion-X Phoenix Edition v2.1.0-dev (with persistence)**: Boot with persistent storage
+- **Orion-X Phoenix Edition v2.1.0-dev (Safe Mode)**: Boot with minimal drivers for compatibility
 - **Memory Test**: Run a memory diagnostic
 
 Use the arrow keys to select your preferred option and press Enter to boot.
@@ -1487,4 +1487,75 @@ Ctrl+E                         # Export packet dissections
 
 ---
 
-This User Guide provides a comprehensive overview of Orion-X Phoenix Edition v2.0.0-rc1. For further assistance or to report issues, please contact the Orion-X support team or consult the official project repository.
+This User Guide provides a comprehensive overview of Orion-X Phoenix Edition v2.1.0-dev. For further assistance or to report issues, please contact the Orion-X support team or consult the official project repository.
+
+---
+
+## 20. Diagnostic Tool (`orionx-diag`)
+
+Orion-X ships with a built-in diagnostic tool that verifies the running system
+matches the build manifest and all expected tools + dependencies are installed
+and functional.
+
+### Quick check
+
+```bash
+sudo orionx-diag
+```
+
+Prints colored PASS/FAIL/SKIP across 10 categories. Exit 0 = all pass.
+
+### Targeted probes
+
+```bash
+sudo orionx-diag --category identity   # single category
+sudo orionx-diag --category nebula --verbose
+sudo orionx-diag --json                # machine-readable
+```
+
+See [orionx-diag.md](orionx-diag.md) for the complete reference (10 categories,
+version manifest schema, CI integration).
+
+## 21. Optional Installers
+
+Some tools that would bloat the base ISO or require network access are shipped
+as post-boot installers under `/opt/orionx/optional/`:
+
+| Installer | Tool | Size |
+|---|---|---|
+| `install-clamav.sh` | ClamAV signature scanner | ~350 MB |
+| `install-ghidra.sh` | NSA Ghidra (RE) | ~500 MB |
+| `install-element.sh` | Element desktop Matrix client | ~200 MB |
+| `install-floss.sh` | Mandiant FLOSS | ~50 MB |
+| `install-trid.sh` | File type identification | ~5 MB |
+| `install-gomuks.sh` | Matrix TUI client | ~20 MB |
+
+### Usage
+
+```bash
+# Verify network first (Orion-X is designed for air-gap — installers require net)
+sudo /opt/orionx/optional/install-clamav.sh
+```
+
+Each installer:
+
+- Requires root (`sudo`)
+- Verifies network connectivity to the download source first
+- Exits cleanly with an error message on air-gap (no partial installs)
+- Uses the shared `lib/orionx-installer-common.sh` for logging, apt/wget helpers,
+  and SHA256 verification
+
+## 22. Cyberdeck Visual Identity
+
+Orion-X ships with a coherent visual identity across the boot chain and desktop:
+
+- **Plymouth splash** — Phoenix wallpaper on kernel handoff (`orionx-phoenix` theme)
+- **GRUB / isolinux menu** — Orion-X theme (assets staged; activation via bootloader generator)
+- **LightDM greeter** — Orion-X-Greeter with Phoenix backdrop and Iosevka font
+- **XFCE desktop** — `Orion-X-Cyberdeck` GTK theme (Adwaita-dark fork with Phoenix red-orange `#FF5722` accent)
+- **Icons** — `Orion-X-Icons` (Papirus-Dark inheritance)
+- **Fonts** — Iosevka (SIL OFL-1.1) primary, Hack (permissive) secondary
+- **Terminal** — xfce4-terminal defaults to Iosevka 11pt, dark background, Phoenix accent selection
+- **MOTD** — ASCII wordmark on login
+
+Explicitly NOT shipped: JetBrains software (per DEC-PHASE11-013).

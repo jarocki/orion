@@ -72,3 +72,14 @@ By contributing to Orion-X Phoenix Edition, you agree that your contributions wi
 If you have any questions about contributing, please create an issue tagged with "question" or contact the maintainers directly.
 
 Thank you for helping improve Orion-X Phoenix Edition!
+
+## Coding norms
+
+- **No JetBrains software** — per DEC-PHASE11-013, Orion-X does not include any
+  JetBrains-branded tools or fonts. Use Iosevka + Hack instead. Rationale in
+  the DEC.
+- **Air-gap first** — every runtime path must fail cleanly (loud + non-zero
+  exit) when the network is unreachable. See `orionx-freshen-yara`,
+  `orionx-freshen-suricata`, and `install-*.sh` for reference patterns.
+- **Single authority** — every operational fact has one owner module. Adding
+  a new mechanism means removing the one it replaces, not shipping both.
