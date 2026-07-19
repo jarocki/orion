@@ -2010,6 +2010,110 @@ else
 fi
 
 # ===========================================================================
+# 24. W11-6 Layer A: Suricata IDS — lazy-start + skeleton + freshen script
+#
+# @decision DEC-PHASE11-008
+# @title W11-6 Layer A content-presence section 24: Suricata IDS skeleton
+# @status accepted
+# @rationale W11-6 Layer A stages the Suricata IDS integration:
+#   (a) suricata Debian package installed in chroot
+#   (b) systemd drop-in override at /etc/systemd/system/suricata.service.d/orionx-lazy.conf
+#       present and contains ConditionPathExists=/var/lib/suricata/orionx-enabled
+#   (c) /var/lib/suricata/orionx-README.md skeleton present
+#   (d) /opt/orionx/scripts/orionx-freshen-suricata.sh present + executable + shellcheck-clean
+#   (e) /usr/bin/orionx-freshen-suricata symlink present (created by 0700 hook)
+#   (f) Layer B sentinel: /var/lib/suricata/rules/ NOT present with .rules files
+#       (bundled ruleset deferred to W11-6b)
+#   Layer B (W11-6b) will flip assertion (f) and wire the Nebula tier selector.
+# ===========================================================================
+section "24. W11-6 Layer A: Suricata IDS — lazy-start + skeleton + freshen script (DEC-PHASE11-008)"
+
+# 24a. suricata package installed in chroot
+if [[ -f "$DPKG_STATUS" ]] && grep -q "^Package: suricata$" "$DPKG_STATUS" 2>/dev/null; then
+    pass "24a: package installed in chroot: suricata (W11-6 Layer A, DEC-PHASE11-008)"
+elif [[ -x "$SQF/usr/bin/suricata" ]]; then
+    pass "24a: package installed in chroot: suricata (binary present at /usr/bin/suricata)"
+else
+    fail "24a: package installed in chroot: suricata" \
+         "Check orionx.list.chroot W11-6 block includes suricata"
+fi
+
+# 24b. systemd drop-in present and contains ConditionPathExists
+SURICATA_DROPIN="$SQF/etc/systemd/system/suricata.service.d/orionx-lazy.conf"
+if [[ -f "$SURICATA_DROPIN" ]]; then
+    pass "24b: /etc/systemd/system/suricata.service.d/orionx-lazy.conf present (W11-6 lazy-start)"
+    if grep -q "ConditionPathExists=/var/lib/suricata/orionx-enabled" "$SURICATA_DROPIN" 2>/dev/null; then
+        pass "24b: orionx-lazy.conf contains ConditionPathExists=/var/lib/suricata/orionx-enabled"
+    else
+        fail "24b: orionx-lazy.conf contains ConditionPathExists=/var/lib/suricata/orionx-enabled" \
+             "Drop-in missing the ConditionPathExists sentinel — check includes.chroot staging"
+    fi
+else
+    fail "24b: /etc/systemd/system/suricata.service.d/orionx-lazy.conf present" \
+         "Systemd drop-in missing — includes.chroot/etc/systemd/system/suricata.service.d/ not staged"
+fi
+
+# 24c. /var/lib/suricata/orionx-README.md skeleton present
+if [[ -f "$SQF/var/lib/suricata/orionx-README.md" ]]; then
+    pass "24c: /var/lib/suricata/orionx-README.md present (W11-6 skeleton)"
+else
+    fail "24c: /var/lib/suricata/orionx-README.md present" \
+         "Skeleton README missing — includes.chroot/var/lib/suricata/ not staged"
+fi
+
+# 24d. orionx-freshen-suricata.sh staged + executable + shellcheck-clean
+SURICATA_FRESHEN="$SQF/opt/orionx/scripts/orionx-freshen-suricata.sh"
+if [[ -f "$SURICATA_FRESHEN" ]]; then
+    pass "24d: /opt/orionx/scripts/orionx-freshen-suricata.sh present in squashfs (W11-6 freshen script)"
+else
+    fail "24d: /opt/orionx/scripts/orionx-freshen-suricata.sh present in squashfs" \
+         "stage_application_content must rsync scripts/ — ensure orionx-freshen-suricata.sh exists in repo scripts/"
+fi
+
+if [[ -f "$SURICATA_FRESHEN" ]] && [[ -x "$SURICATA_FRESHEN" ]]; then
+    pass "24d: /opt/orionx/scripts/orionx-freshen-suricata.sh is executable in chroot"
+else
+    fail "24d: /opt/orionx/scripts/orionx-freshen-suricata.sh is executable in chroot" \
+         "0700 hook sets chmod 755 on all scripts/ files — check hook execution"
+fi
+
+# Lint check runs against the source file in the repo (not inside squashfs)
+SURICATA_FRESHEN_SRC="$REPO_ROOT/scripts/orionx-freshen-suricata.sh"
+if command -v shellcheck >/dev/null 2>&1; then
+    if shellcheck "$SURICATA_FRESHEN_SRC" 2>/dev/null; then
+        pass "24d: scripts/orionx-freshen-suricata.sh shellcheck-clean"
+    else
+        fail "24d: scripts/orionx-freshen-suricata.sh shellcheck-clean" \
+             "shellcheck found issues — run: shellcheck $SURICATA_FRESHEN_SRC"
+    fi
+else
+    skip "24d shellcheck: shellcheck not installed on this host (install shellcheck to enable)"
+fi
+
+# 24e. /usr/bin/orionx-freshen-suricata symlink (created by 0700 hook)
+if [[ -L "$SQF/usr/bin/orionx-freshen-suricata" ]]; then
+    pass "24e: /usr/bin/orionx-freshen-suricata symlink present in chroot (0700 hook)"
+elif [[ -f "$SQF/usr/bin/orionx-freshen-suricata" ]]; then
+    pass "24e: /usr/bin/orionx-freshen-suricata present in chroot (as regular file)"
+else
+    fail "24e: /usr/bin/orionx-freshen-suricata symlink present in chroot" \
+         "0700-orionx-setup.hook.chroot SCRIPT_MAP must include orionx-freshen-suricata"
+fi
+
+# 24f. Layer B sentinel: /var/lib/suricata/rules/ NOT present with .rules files
+# Layer A intentionally ships NO bundled ruleset; operators fetch post-boot via
+# orionx-freshen-suricata. When W11-6b lands and bundles the ET-Open snapshot,
+# this assertion should be inverted (or removed).
+# || true: find exits non-zero when path absent; that is the desired Layer A state.
+SURICATA_RULES_COUNT="$(find "$SQF/var/lib/suricata/rules" -name '*.rules' 2>/dev/null | wc -l | tr -d ' ' || true)"
+if [[ "$SURICATA_RULES_COUNT" -eq 0 ]]; then
+    pass "24f: /var/lib/suricata/rules/ NOT present with .rules files (Layer B sentinel — deferred to W11-6b)"
+else
+    fail "24f: /var/lib/suricata/rules/ NOT present with .rules files" \
+         "Found $SURICATA_RULES_COUNT .rules file(s) — Layer A should ship no bundled rules. If W11-6b has landed, invert this assertion."
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

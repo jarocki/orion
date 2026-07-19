@@ -82,6 +82,12 @@ declare -A SCRIPT_MAP=(
     # at build time via git clone. Single PATH entry; no .desktop launcher needed
     # (this is a root-only maintenance command, not an end-user GUI tool).
     ["orionx-freshen-yara"]="/opt/orionx/scripts/orionx-freshen-yara.sh"
+    # W11-6 Layer A: Suricata IDS freshen script (DEC-PHASE11-008).
+    # Operators run `sudo orionx-freshen-suricata` post-boot to fetch ET-Open
+    # rules (BSD-2-Clause) from emergingthreats.net. Layer B (W11-6b) will
+    # automate this at build time and wire the Nebula tier selector. Single
+    # PATH entry; no .desktop launcher needed (root-only maintenance command).
+    ["orionx-freshen-suricata"]="/opt/orionx/scripts/orionx-freshen-suricata.sh"
 )
 
 for name in "${!SCRIPT_MAP[@]}"; do
