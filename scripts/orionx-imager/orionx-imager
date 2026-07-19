@@ -1,0 +1,592 @@
+#!/usr/bin/env python3
+"""
+orionx-imager — Host-side ISO downloader and USB writer for Orion-X.
+
+Modeled after Raspberry Pi Imager: pick device on the left, pick ISO source
+on the right, confirm, write.
+
+Layer A (this slice): macOS + Linux, stdlib-only (tkinter + urllib + subprocess).
+Layer B (W11-12b): Windows support, pyinstaller packaging, real progress bars,
+                   code-signing, verification-after-write, .desktop entry.
+
+Run without arguments for the tkinter GUI.
+Run with CLI flags (--list-devices, --iso, --iso-release, --target, --dry-run,
+--skip-verify, --force) to use headless CLI mode.
+
+@decision DEC-PHASE11-015
+@title    Orion-X imager — tkinter GUI + CLI entry point (Layer A)
+@status   accepted
+@rationale
+    Single Python executable: no pip install, no venv, no third-party deps.
+    Delegates all substantive logic to lib/{devices,downloader,writer}.py.
+    GUI and CLI share the same safety guards — refuse-list, mandatory SHA256
+    (GUI never exposes skip-verify), mandatory confirmation before write.
+    Elevation via sudo inside lib/writer.py (Layer A model).
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import pathlib
+import queue
+import sys
+import threading
+
+# ---------------------------------------------------------------------------
+# Ensure lib/ is importable when this script is run directly from its directory
+# ---------------------------------------------------------------------------
+_SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
+from lib import devices as _devices          # noqa: E402
+from lib import downloader as _downloader    # noqa: E402
+from lib import writer as _writer            # noqa: E402
+
+# ---------------------------------------------------------------------------
+# Version
+# ---------------------------------------------------------------------------
+__version__ = "1.0.0"
+
+
+# ===========================================================================
+# GUI
+# ===========================================================================
+
+class ImagerGUI:
+    """tkinter GUI for orionx-imager.
+
+    Layout (RPi-Imager inspired):
+      - Left panel:  SELECT DEVICE  — Combobox populated from devices.list_usb_devices()
+      - Right panel: SELECT ISO     — Radio buttons (Latest / Tag / Local file) + browse
+      - Center row:  confirm checkbox + Write button + Dry Run button
+      - Bottom:      indeterminate progress bar + scrolling log text widget
+    """
+
+    def __init__(self, root: "tk.Tk") -> None:  # type: ignore[name-defined]
+        import tkinter as tk
+        from tkinter import filedialog, messagebox, simpledialog, ttk
+
+        self._tk = tk
+        self._filedialog = filedialog
+        self._messagebox = messagebox
+        self._simpledialog = simpledialog
+        self._ttk = ttk
+
+        self.root = root
+        root.title("Orion-X Imager")
+        root.geometry("760x560")
+        root.resizable(True, True)
+
+        self._devices: list[dict] = []
+        self._write_thread: threading.Thread | None = None
+        self._log_queue: queue.Queue[str] = queue.Queue()
+
+        self._build_ui()
+        self.refresh_devices()
+        self._poll_log_queue()
+
+    # ------------------------------------------------------------------
+    # UI construction
+    # ------------------------------------------------------------------
+
+    def _build_ui(self) -> None:
+        tk = self._tk
+        ttk = self._ttk
+        root = self.root
+
+        # Header
+        ttk.Label(root, text="Orion-X ISO Imager", font=("Helvetica", 16, "bold")).pack(pady=(14, 2))
+        ttk.Label(root, text="Download, verify, and write Orion-X to a USB drive").pack()
+
+        # Main two-panel row
+        main = ttk.Frame(root)
+        main.pack(padx=20, pady=12, fill="both", expand=False)
+        main.grid_columnconfigure(0, weight=1)
+        main.grid_columnconfigure(1, weight=1)
+
+        # --- LEFT: device picker ---
+        left = ttk.LabelFrame(main, text="1. SELECT DEVICE")
+        left.grid(row=0, column=0, padx=(0, 8), pady=4, sticky="nsew")
+
+        self._device_var = tk.StringVar()
+        self._device_combo = ttk.Combobox(left, textvariable=self._device_var,
+                                           width=34, state="readonly")
+        self._device_combo.pack(padx=10, pady=(10, 4))
+        ttk.Button(left, text="Refresh Devices", command=self.refresh_devices).pack(pady=(0, 10))
+
+        # --- RIGHT: ISO source picker ---
+        right = ttk.LabelFrame(main, text="2. SELECT ISO SOURCE")
+        right.grid(row=0, column=1, padx=(8, 0), pady=4, sticky="nsew")
+
+        self._iso_source = tk.StringVar(value="latest")
+        ttk.Radiobutton(right, text="Latest GitHub release",
+                        value="latest", variable=self._iso_source).pack(anchor="w", padx=10, pady=(10, 2))
+        ttk.Radiobutton(right, text="Specific release tag:",
+                        value="tag", variable=self._iso_source).pack(anchor="w", padx=10)
+
+        self._tag_var = tk.StringVar()
+        ttk.Entry(right, textvariable=self._tag_var, width=22).pack(padx=24, pady=(0, 6), anchor="w")
+
+        ttk.Radiobutton(right, text="Local .iso file:",
+                        value="local", variable=self._iso_source).pack(anchor="w", padx=10)
+        self._local_path_var = tk.StringVar()
+        path_row = ttk.Frame(right)
+        path_row.pack(padx=10, pady=(2, 10), fill="x")
+        ttk.Entry(path_row, textvariable=self._local_path_var, width=24).pack(side="left")
+        ttk.Button(path_row, text="Browse…", command=self._browse_iso).pack(side="left", padx=(4, 0))
+
+        # --- Confirmation row ---
+        confirm_frame = ttk.Frame(root)
+        confirm_frame.pack(pady=(4, 0))
+        self._confirm_var = tk.BooleanVar()
+        self._confirm_cb = ttk.Checkbutton(
+            confirm_frame,
+            text="I understand this will PERMANENTLY ERASE the selected device.",
+            variable=self._confirm_var,
+            command=self._update_write_btn,
+        )
+        self._confirm_cb.pack()
+
+        # --- Action buttons ---
+        btn_row = ttk.Frame(root)
+        btn_row.pack(pady=8)
+        self._write_btn = ttk.Button(btn_row, text="WRITE", command=self._on_write, state="disabled")
+        self._write_btn.pack(side="left", padx=6)
+        self._dryrun_btn = ttk.Button(btn_row, text="Dry Run", command=self._on_dry_run)
+        self._dryrun_btn.pack(side="left", padx=6)
+
+        # --- Progress bar ---
+        self._progress = ttk.Progressbar(root, mode="indeterminate", length=400)
+        self._progress.pack(pady=(0, 4))
+
+        # --- Log window ---
+        log_frame = ttk.Frame(root)
+        log_frame.pack(padx=20, pady=(0, 14), fill="both", expand=True)
+        self._log = tk.Text(log_frame, height=8, wrap="word", state="disabled")
+        scrollbar = ttk.Scrollbar(log_frame, command=self._log.yview)
+        self._log.configure(yscrollcommand=scrollbar.set)
+        self._log.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+    # ------------------------------------------------------------------
+    # Device management
+    # ------------------------------------------------------------------
+
+    def refresh_devices(self) -> None:
+        try:
+            devs = _devices.list_usb_devices()
+        except Exception as exc:
+            self._log_msg(f"ERROR listing devices: {exc}")
+            devs = []
+
+        self._devices = devs
+        options = [
+            f"{d['path']}  ({d['size']}, {d['model'] or 'Unknown'})"
+            for d in devs
+        ]
+        self._device_combo["values"] = options
+        if options:
+            self._device_combo.current(0)
+        self._log_msg(f"Found {len(options)} removable device(s).")
+
+    # ------------------------------------------------------------------
+    # ISO source
+    # ------------------------------------------------------------------
+
+    def _browse_iso(self) -> None:
+        path = self._filedialog.askopenfilename(
+            title="Select ISO file",
+            filetypes=[("ISO images", "*.iso"), ("All files", "*")],
+        )
+        if path:
+            self._local_path_var.set(path)
+            self._iso_source.set("local")
+
+    # ------------------------------------------------------------------
+    # Write / Dry Run
+    # ------------------------------------------------------------------
+
+    def _update_write_btn(self) -> None:
+        state = "normal" if self._confirm_var.get() else "disabled"
+        self._write_btn.config(state=state)
+
+    def _on_dry_run(self) -> None:
+        self._start_write(dry_run=True)
+
+    def _on_write(self) -> None:
+        if not self._confirm_var.get():
+            self._messagebox.showwarning("Confirm required", "Check the confirmation box first.")
+            return
+
+        # Extra modal: type ERASE
+        target = self._selected_target()
+        if target is None:
+            return
+
+        answer = self._simpledialog.askstring(
+            "Confirm ERASE",
+            f"You are about to PERMANENTLY ERASE:\n\n  {target}\n\n"
+            "This CANNOT be undone. Type  ERASE  to confirm:",
+            parent=self.root,
+        )
+        if answer != "ERASE":
+            self._log_msg("Write cancelled — confirmation not given.")
+            return
+
+        self._start_write(dry_run=False)
+
+    def _start_write(self, dry_run: bool) -> None:
+        if self._write_thread and self._write_thread.is_alive():
+            self._messagebox.showinfo("Busy", "A write operation is already in progress.")
+            return
+
+        target = self._selected_target()
+        if target is None:
+            return
+
+        iso_source = self._iso_source.get()
+        tag = self._tag_var.get().strip() or "latest"
+        local_path = self._local_path_var.get().strip()
+
+        self._write_btn.config(state="disabled")
+        self._dryrun_btn.config(state="disabled")
+        self._progress.start(10)
+        self._log_msg("─" * 50)
+        if dry_run:
+            self._log_msg("[DRY RUN] Planning write (nothing will be written)…")
+        else:
+            self._log_msg(f"Starting write to {target}…")
+
+        self._write_thread = threading.Thread(
+            target=self._write_worker,
+            args=(target, iso_source, tag, local_path, dry_run),
+            daemon=True,
+        )
+        self._write_thread.start()
+
+    def _write_worker(
+        self,
+        target: str,
+        iso_source: str,
+        tag: str,
+        local_path: str,
+        dry_run: bool,
+    ) -> None:
+        """Background thread: download (if needed), verify, write."""
+        try:
+            # Resolve ISO path
+            if iso_source == "local":
+                if not local_path or not os.path.exists(local_path):
+                    self._log_q("ERROR: Local ISO file not found.")
+                    return
+                iso_path = pathlib.Path(local_path)
+            else:
+                self._log_q(f"Fetching release metadata ({tag})…")
+                release = _downloader.get_release(tag)
+                self._log_q(f"Release: {release.get('tag_name', '?')} — downloading ISO…")
+
+                def _progress(downloaded: int, total: int) -> None:
+                    if total:
+                        pct = downloaded * 100 // total
+                        self._log_q(f"  Downloading… {pct}% ({downloaded // 1_000_000} MB / {total // 1_000_000} MB)")
+
+                iso_path = _downloader.download_and_verify(
+                    release,
+                    progress_cb=_progress,
+                    skip_verify=False,  # GUI never skips verify (DEC-PHASE11-015)
+                )
+                self._log_q(f"ISO ready: {iso_path}")
+                self._log_q("SHA256 verified.")
+
+            # Write
+            _writer.write_iso(iso_path, target, dry_run=dry_run)
+
+            if dry_run:
+                self._log_q("[DRY RUN] Complete. No data was written.")
+            else:
+                self._log_q(f"Write complete. {target} is now bootable Orion-X media.")
+        except _writer.WriteRefused as exc:
+            self._log_q(f"REFUSED: {exc}")
+        except Exception as exc:
+            self._log_q(f"ERROR: {exc}")
+        finally:
+            self.root.after(0, self._write_done)
+
+    def _write_done(self) -> None:
+        self._progress.stop()
+        self._write_btn.config(state="normal" if self._confirm_var.get() else "disabled")
+        self._dryrun_btn.config(state="normal")
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _selected_target(self) -> str | None:
+        idx = self._device_combo.current()
+        if idx < 0 or idx >= len(self._devices):
+            self._messagebox.showerror("No device selected", "Select a target device first.")
+            return None
+        return self._devices[idx]["path"]
+
+    def _log_q(self, msg: str) -> None:
+        """Thread-safe: push a log message to the queue."""
+        self._log_queue.put(msg)
+
+    def _log_msg(self, msg: str) -> None:
+        """Main-thread: append *msg* to the log text widget."""
+        self._log.config(state="normal")
+        self._log.insert("end", msg + "\n")
+        self._log.see("end")
+        self._log.config(state="disabled")
+        self.root.update_idletasks()
+
+    def _poll_log_queue(self) -> None:
+        """Drain the thread-safe log queue into the text widget."""
+        while True:
+            try:
+                msg = self._log_queue.get_nowait()
+                self._log_msg(msg)
+            except queue.Empty:
+                break
+        self.root.after(100, self._poll_log_queue)
+
+
+# ===========================================================================
+# CLI
+# ===========================================================================
+
+def _cli_main(args: argparse.Namespace) -> int:
+    """Headless CLI mode."""
+
+    # --list-devices
+    if args.list_devices:
+        try:
+            devs = _devices.list_usb_devices()
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        if not devs:
+            print("No removable devices found.")
+            return 0
+        print(f"{'PATH':<20} {'SIZE':<12} {'MODEL'}")
+        print("-" * 55)
+        for d in devs:
+            print(f"{d['path']:<20} {d['size']:<12} {d['model']}")
+        return 0
+
+    # --target is required for write operations
+    if not args.target:
+        print("ERROR: --target is required. Use --list-devices to see available devices.", file=sys.stderr)
+        return 2
+
+    # Safety refuse-list
+    refusal = _devices.refuse_write(args.target)
+    if refusal:
+        print(f"REFUSED: {refusal}", file=sys.stderr)
+        if not args.i_really_know_what_im_doing:
+            print(
+                "To bypass (DANGEROUS, FOR CI/TESTING ONLY), add --i-really-know-what-im-doing",
+                file=sys.stderr,
+            )
+            return 3
+
+    # Resolve ISO path
+    iso_path: pathlib.Path | None = None
+
+    if args.iso:
+        iso_path = pathlib.Path(args.iso)
+        if not args.dry_run and not iso_path.exists():
+            print(f"ERROR: ISO file not found: {iso_path}", file=sys.stderr)
+            return 2
+
+    elif args.iso_release:
+        tag = args.iso_release
+        print(f"Fetching release metadata ({tag})…")
+        try:
+            release = _downloader.get_release(tag)
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+
+        print(f"Release: {release.get('tag_name', '?')}")
+
+        if args.dry_run:
+            # In dry-run we resolve metadata but skip actual download
+            asset = _downloader.find_iso_asset(release)
+            sha_asset = _downloader.find_sha256sums_asset(release)
+            print(
+                f"\n[DRY RUN] NOT executing. Would:\n"
+                f"  1. Download  {asset['browser_download_url']}\n"
+                f"  2. Verify    SHA256 against {sha_asset['browser_download_url'] if sha_asset else '(no SHA256SUMS in release)'}\n"
+                f"  3. Run:      sudo dd if=<iso> of={args.target} bs=4m  (macOS) / bs=4M oflag=direct,sync  (Linux)\n"
+                f"\nNo data written. Remove --dry-run to perform the actual write.\n"
+            )
+            return 0
+
+        def _progress(downloaded: int, total: int) -> None:
+            if total:
+                pct = downloaded * 100 // total
+                mb = downloaded // 1_000_000
+                total_mb = total // 1_000_000
+                print(f"\r  {pct}%  {mb} MB / {total_mb} MB ", end="", flush=True)
+
+        skip = args.skip_verify and args.yes_really_skip_verify
+        if args.skip_verify and not args.yes_really_skip_verify:
+            print(
+                "WARNING: --skip-verify requires --yes-really-skip-verify as well. "
+                "Verification will NOT be skipped unless both flags are provided.",
+                file=sys.stderr,
+            )
+
+        print("Downloading ISO…")
+        try:
+            iso_path = _downloader.download_and_verify(release, progress_cb=_progress, skip_verify=skip)
+        except RuntimeError as exc:
+            print(f"\nERROR: {exc}", file=sys.stderr)
+            return 1
+        print(f"\nISO ready: {iso_path}")
+        if not skip:
+            print("SHA256 verified.")
+
+    else:
+        print("ERROR: --iso <path> or --iso-release <tag|latest> is required.", file=sys.stderr)
+        return 2
+
+    # Interactive confirmation (unless --force)
+    if not args.force and not args.dry_run:
+        print(f"\nTarget device: {args.target}")
+        print("WARNING: ALL DATA ON THIS DEVICE WILL BE ERASED.")
+        try:
+            confirm = input(f"Type the device path to confirm ({args.target}): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nCancelled.")
+            return 4
+        if confirm != args.target:
+            print("Cancelled — confirmation did not match.")
+            return 4
+
+    # Write
+    try:
+        _writer.write_iso(pathlib.Path(iso_path) if iso_path else pathlib.Path("/dev/null"),
+                          args.target,
+                          dry_run=args.dry_run)
+    except _writer.WriteRefused as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return 3
+    except _writer.WriteError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+
+    if args.dry_run:
+        print("[DRY RUN] Complete. No data was written.")
+    else:
+        print(f"Write complete. {args.target} is now bootable Orion-X media.")
+    return 0
+
+
+# ===========================================================================
+# Entry point
+# ===========================================================================
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="orionx-imager",
+        description=(
+            "Orion-X ISO downloader and USB writer (RPi-Imager-style).\n"
+            "Run without arguments for the GUI.\n"
+            "Run with --list-devices, --iso / --iso-release, --target for CLI mode."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--list-devices", action="store_true",
+                        help="List available removable/USB devices and exit")
+    parser.add_argument("--iso", metavar="PATH",
+                        help="Path to a local ISO file to write")
+    parser.add_argument("--iso-release", metavar="TAG",
+                        help="Download ISO from GitHub release (tag or 'latest')")
+    parser.add_argument("--target", metavar="DEVICE",
+                        help="Target block device (e.g. /dev/disk4, /dev/sdb)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Print the intended plan without writing anything")
+    parser.add_argument("--skip-verify", action="store_true",
+                        help="Skip SHA256 verification (NOT recommended; requires --yes-really-skip-verify)")
+    parser.add_argument("--yes-really-skip-verify", action="store_true",
+                        help="Second flag required to actually skip verification (safety two-flag opt-out)")
+    parser.add_argument("--force", action="store_true",
+                        help="Skip interactive confirmation (for CI/testing use only)")
+    parser.add_argument("--list-releases", action="store_true",
+                        help="List available GitHub releases and exit")
+    parser.add_argument("--clear-cache", action="store_true",
+                        help="Clear the local ISO download cache and exit")
+    parser.add_argument("--i-really-know-what-im-doing", action="store_true",
+                        dest="i_really_know_what_im_doing",
+                        help="Bypass the internal-disk refuse-list (DANGEROUS — CI/testing only)")
+    parser.add_argument("--version", action="version", version=f"orionx-imager {__version__}")
+    return parser
+
+
+def main() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    # Utility sub-commands that don't need a target
+    if args.clear_cache:
+        _downloader.clear_cache()
+        print("Cache cleared.")
+        return 0
+
+    if args.list_releases:
+        try:
+            releases = _downloader.list_releases()
+        except RuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        for r in releases:
+            print(r.get("tag_name", "?"))
+        return 0
+
+    # Determine mode: CLI if any meaningful CLI flag is present, else GUI
+    cli_mode = any([
+        args.list_devices,
+        args.iso,
+        args.iso_release,
+        args.target,
+        args.dry_run,
+        args.force,
+    ])
+
+    if cli_mode:
+        return _cli_main(args)
+
+    # GUI mode
+    try:
+        import tkinter as tk
+        from tkinter import simpledialog  # noqa: F401 — pre-import to catch missing tk early
+    except ImportError as exc:
+        print(
+            f"ERROR: Cannot import tkinter ({exc}).\n"
+            "On Linux, install it with:  sudo apt install python3-tk\n"
+            "Then re-run, or use CLI mode: --list-devices / --iso / --target",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        root = tk.Tk()
+    except Exception as exc:
+        print(
+            f"ERROR: Cannot open a display ({exc}).\n"
+            "Use CLI mode in headless environments: --list-devices / --iso / --target",
+            file=sys.stderr,
+        )
+        return 1
+
+    ImagerGUI(root)
+    root.mainloop()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
