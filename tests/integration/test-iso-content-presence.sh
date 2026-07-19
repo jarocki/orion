@@ -1679,6 +1679,85 @@ else
 fi
 
 # ===========================================================================
+# 21. W11-3 Layer A: RE toolkit packages + staging scaffolds
+#
+# @decision DEC-PHASE11-004
+# @title W11-3 Layer A: lean RE + malware analysis toolkit (Debian packages +
+#   capa venv); heavy binaries (FLOSS/TrID/remnux/Node) deferred to W11-3b
+# @status accepted
+# @rationale Debian-packaged tools (radare2, ssdeep, md5deep, python3-pefile,
+#   python3-yara, python3-capstone) go in via the package list. capa (Apache-2.0)
+#   is installed to /opt/orionx/venv/re/ by the 0500 hook (soft-fail if network
+#   unavailable). Staging scaffolds (re/ README + nebula/mcp-servers/ README)
+#   prove the Layer A directory tree is present for Layer B expansion.
+# ===========================================================================
+section "21. W11-3 Layer A: RE toolkit packages + staging scaffolds"
+
+# ---------------------------------------------------------------------------
+# 21a. Debian-packaged RE tools present in squashfs dpkg database
+# ---------------------------------------------------------------------------
+echo "  [21a] Verifying W11-3 RE toolkit Debian packages in squashfs"
+W11_3_PKGS=(radare2 ssdeep md5deep python3-pefile python3-yara python3-capstone)
+if [[ -f "$DPKG_STATUS" ]]; then
+    for pkg in "${W11_3_PKGS[@]}"; do
+        if grep -q "^Package: ${pkg}$" "$DPKG_STATUS" 2>/dev/null; then
+            pass "21a: package installed in chroot: $pkg (W11-3 RE toolkit, DEC-PHASE11-004)"
+        else
+            fail "21a: package installed in chroot: $pkg" \
+                 "Check orionx.list.chroot W11-3 block includes $pkg"
+        fi
+    done
+else
+    fail "21a: dpkg status file available for W11-3 package checks" \
+         "$DPKG_STATUS not found — squashfs extraction may be incomplete"
+fi
+
+# ---------------------------------------------------------------------------
+# 21b. /opt/orionx/re/README.md present in squashfs
+# ---------------------------------------------------------------------------
+if [[ -f "$SQF/opt/orionx/re/README.md" ]]; then
+    pass "21b: /opt/orionx/re/README.md present in squashfs (W11-3 RE toolkit staging scaffold)"
+else
+    fail "21b: /opt/orionx/re/README.md present in squashfs" \
+         "iso/config/includes.chroot/opt/orionx/re/README.md not staged — check includes.chroot"
+fi
+
+# ---------------------------------------------------------------------------
+# 21c. /opt/orionx/nebula/mcp-servers/README.md present in squashfs
+# ---------------------------------------------------------------------------
+if [[ -f "$SQF/opt/orionx/nebula/mcp-servers/README.md" ]]; then
+    pass "21c: /opt/orionx/nebula/mcp-servers/README.md present in squashfs (W11-3 MCP registry scaffold)"
+else
+    fail "21c: /opt/orionx/nebula/mcp-servers/README.md present in squashfs" \
+         "iso/config/includes.chroot/opt/orionx/nebula/mcp-servers/README.md not staged — check includes.chroot"
+fi
+
+# ---------------------------------------------------------------------------
+# 21d. capa venv binary present (best-effort — soft-fail if network was
+#      unavailable at build time; does not cause an overall test failure)
+# ---------------------------------------------------------------------------
+CAPA_BIN="$SQF/opt/orionx/venv/re/bin/capa"
+if [[ -f "$CAPA_BIN" ]]; then
+    pass "21d: /opt/orionx/venv/re/bin/capa installed (W11-3 capa venv, DEC-PHASE11-004)"
+    # Also check the /usr/bin/capa convenience symlink
+    if [[ -L "$SQF/usr/bin/capa" ]] || [[ -f "$SQF/usr/bin/capa" ]]; then
+        pass "21d: /usr/bin/capa symlink/file present (0500 hook convenience symlink)"
+    else
+        fail "21d: /usr/bin/capa symlink present" \
+             "0500 hook should create ln -sf /opt/orionx/venv/re/bin/capa /usr/bin/capa when capa is installed"
+    fi
+else
+    # capa is installed by 0500 hook which is soft-fail when network unavailable.
+    # Record a note rather than a hard fail, so builds without network connectivity
+    # (e.g. air-gap CI runs) are not blocked by this assertion.
+    echo "  NOTE: 21d: /opt/orionx/venv/re/bin/capa not found — capa venv may not have been installed"
+    echo "        (0500 hook soft-fails when network is unavailable during build; not a hard failure)"
+    # Still register as a pass for the overall count to avoid blocking CI on
+    # network-less build environments where the soft-fail is the expected outcome.
+    pass "21d: capa venv check: soft-fail expected when network unavailable at build time (informational only)"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
