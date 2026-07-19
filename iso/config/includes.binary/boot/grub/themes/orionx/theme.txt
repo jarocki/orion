@@ -1,0 +1,99 @@
+# Orion-X Phoenix Edition — GRUB theme
+#
+# @decision DEC-PHASE11-010
+# @title W11-9a: GRUB orionx theme — Phoenix wallpaper backdrop + Phoenix-red accent
+# @status accepted
+# @rationale W11-9a GRUB theme: visual identity layer for UEFI boot menu.
+#   Background is the W9-1 Phoenix wallpaper (operator-directed reuse,
+#   2026-07-13 directive). Menu uses Phoenix-red (#E84000) for selected item.
+#   Font: GRUB built-in DejaVu (W11-9a transitional); W11-9b will add Iosevka
+#   PF2 and edit this file to point at it once the font is staged.
+#
+# ACTIVATION NOTE: This theme.txt is staged but NOT yet activated in
+# generate_bootloader_configs() (scripts/build-iso.sh). Activating GRUB_THEME
+# requires a one-line addition to that generator, which is a forbidden W11-9a
+# scope surface (DEC-PHASE11-012 preservation). This is a planned rider
+# sub-slice per MASTER_PLAN W11-9a Evaluation Contract item 4.
+# QEMU boot test will confirm whether GRUB reads the theme without a
+# GRUB_THEME= line; if not, the escalation path is documented in CHANGELOG.
+#
+# Color palette:
+#   Phoenix red    #E84000  → grub color: #e84000
+#   Phoenix orange #FF6B00  → grub color: #ff6b00
+#   Dark bg        #0A0A0F  → grub color: #0a0a0f
+#   White text     #F0F0F0  → grub color: #f0f0f0
+#   Gray inactive  #606060  → grub color: #606060
+
+# ---------------------------------------------------------------------------
+# Global desktop image
+# ---------------------------------------------------------------------------
+desktop-image: "background.png"
+desktop-image-scale-method: stretch
+desktop-color: "#0a0a0f"
+
+# ---------------------------------------------------------------------------
+# Title banner
+# ---------------------------------------------------------------------------
++ label {
+    id = "orionx-title"
+    text = "Orion-X Phoenix Edition"
+    font = "DejaVu Sans Bold 18"
+    color = "#e84000"
+    align = "center"
+    preferred_size = (0%, 0%)
+    position = (0, 32)
+    size = (100%+0, 48)
+    align = "center"
+}
+
+# ---------------------------------------------------------------------------
+# Boot menu list
+# ---------------------------------------------------------------------------
++ boot_menu {
+    left = 12%
+    top = 28%
+    width = 76%
+    height = 44%
+
+    # Menu frame (semi-transparent dark panel for readability)
+    item_color = "#f0f0f0"
+    item_font = "DejaVu Sans Regular 14"
+
+    selected_item_color = "#e84000"
+    selected_item_font = "DejaVu Sans Bold 14"
+
+    # Highlight bar behind selected item
+    item_height = 38
+    item_padding = 4
+    item_spacing = 2
+
+    scrollbar = false
+}
+
+# ---------------------------------------------------------------------------
+# Progress bar (timeout countdown)
+# ---------------------------------------------------------------------------
++ progress_bar {
+    id = "progress_bar"
+    left = 12%
+    top = 74%
+    width = 76%
+    height = 4
+    fg_color = "#e84000"
+    bg_color = "#303030"
+    border_color = "#404040"
+}
+
+# ---------------------------------------------------------------------------
+# Status / help line at bottom
+# ---------------------------------------------------------------------------
++ label {
+    id = "help-text"
+    text = "Use arrow keys to select. Enter to boot. 'e' to edit."
+    font = "DejaVu Sans Regular 11"
+    color = "#909090"
+    align = "center"
+    position = (0, 90%)
+    size = (100%+0, 24)
+    align = "center"
+}

@@ -110,6 +110,26 @@ Phoenix wallpaper (operator directive 2026-07-13 — reuse over new imagery).
   detection, T8(b) W11-2 identity preservation in `/proc/cmdline`, T8(c)
   LightDM greeter conf source-tree check.
 
+### W11-9a2: GRUB theme activation in generator (closes #74)
+
+- fix(phase11): W11-9a2 — `generate_bootloader_configs()` in `scripts/build-iso.sh`
+  extended to emit `set gfxmode=1024x768`, `insmod png`, and
+  `set theme=/boot/grub/themes/orionx/theme.txt` after `set default=0` in the
+  generated `grub.cfg`. GRUB theme is now active on UEFI live-boot.
+- Theme assets copied from `iso/config/includes.chroot/usr/share/grub/themes/orionx/`
+  to `iso/config/includes.binary/boot/grub/themes/orionx/` (the binary-partition path
+  that live-boot's GRUB reads at runtime, distinct from the post-install chroot path).
+  Copy (not symlink) used for reliability — live-build flattens cross-layer symlinks
+  during binary assembly.
+- `GENERATED — do not edit` marker preserved on line 1 of `grub.cfg`.
+  W11-2 identity tokens (`live-config.username=orionx-operator`,
+  `live-config.hostname=orionx`) preserved verbatim on every `linux` line.
+  DEC-PHASE11-012 generator single-authority discipline unchanged.
+- isolinux `MENU BACKGROUND` deferred to W11-9a3 (splash PNG must be resized
+  from 1024×1024 to 640×480 for VESA mode before emission is safe).
+- **DEC-PHASE11-013** — GRUB theme activation decision.
+- closes #74
+
 ### W11-2d: 16f structural rewrite (CI infra fix)
 
 - fix(phase11): W11-2d — 16f structural rewrite (grep for def run_app + wrapper import) closes CI infra bug; python3-gi CI install reverted

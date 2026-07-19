@@ -957,6 +957,109 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
+# T36: W11-9a2 — generate_bootloader_configs() emits GRUB theme directives
+#
+# @decision DEC-PHASE11-013
+# @title Unit tests: GRUB theme activation lines emitted by generator (W11-9a2, #74)
+# @status accepted
+# @rationale generate_bootloader_configs() must emit three directives after
+#   "set default=0" and before the first menuentry:
+#     set gfxmode=1024x768
+#     insmod png
+#     set theme=/boot/grub/themes/orionx/theme.txt
+#   grub.cfg is a GENERATED file (forbidden from direct commit per scope manifest);
+#   these assertions check the generator HEREDOC source in build-iso.sh, which is
+#   the single authority. The binary-tree theme assets (theme.txt + background.png)
+#   ARE committed (allowed paths) and are asserted as staged. W11-2 identity
+#   tokens and GENERATED marker must be preserved in the generator template.
+#   isolinux.cfg must NOT contain a MENU BACKGROUND directive (deferred to W11-9a3).
+#   References: DEC-PHASE11-012, DEC-PHASE11-013.
+# ---------------------------------------------------------------------------
+echo "[T36] W11-9a2: GRUB theme activation in generate_bootloader_configs() (DEC-PHASE11-013)"
+
+# T36.a: generator HEREDOC contains 'set theme=' directive
+# grub.cfg is generated (not committed); we assert on the generator source which
+# is the authority. The generator writes the file at build time from this HEREDOC.
+if grep -qF "set theme=/boot/grub/themes/orionx/theme.txt" "$BUILD_SCRIPT"; then
+    pass "T36.a: 'set theme=/boot/grub/themes/orionx/theme.txt' in generator HEREDOC (closes #74)"
+else
+    fail "T36.a: 'set theme=' directive not found in build-iso.sh — generator will not emit theme"
+fi
+
+# T36.b: generator HEREDOC contains 'insmod png'
+if grep -qF "insmod png" "$BUILD_SCRIPT"; then
+    pass "T36.b: 'insmod png' present in build-iso.sh generator HEREDOC (PNG decoder)"
+else
+    fail "T36.b: 'insmod png' not found in build-iso.sh generator HEREDOC"
+fi
+
+# T36.c: generator HEREDOC contains 'set gfxmode=1024x768'
+if grep -qF "set gfxmode=1024x768" "$BUILD_SCRIPT"; then
+    pass "T36.c: 'set gfxmode=1024x768' present in build-iso.sh generator HEREDOC (VESA mode)"
+else
+    fail "T36.c: 'set gfxmode=1024x768' not found in build-iso.sh generator HEREDOC"
+fi
+
+# T36.d: generator HEREDOC preserves GENERATED marker on line 1 of emitted grub.cfg
+if grep -qF "GENERATED — do not edit — regenerate via scripts/build-iso.sh" "$BUILD_SCRIPT"; then
+    pass "T36.d: GENERATED marker template present in build-iso.sh (DEC-PHASE11-012 preserved)"
+else
+    fail "T36.d: GENERATED marker template missing from build-iso.sh — generated file won't carry it"
+fi
+
+# T36.e: generator HEREDOC preserves W11-2 identity token structure
+# The HEREDOC uses $bootappend shell variable which expands to the full cmdline at
+# build time. We verify the variable is referenced (not a hardcoded string).
+# The validator in generate_bootloader_configs() ensures the value contains the tokens.
+if grep -qF 'linux /live/vmlinuz $bootappend' "$BUILD_SCRIPT"; then
+    pass "T36.e: linux line in generator HEREDOC uses \$bootappend variable (identity tokens preserved)"
+else
+    fail "T36.e: generator HEREDOC linux line must use \$bootappend (not hardcoded tokens)"
+fi
+
+# T36.f: DEC-PHASE11-013 annotation present in build-iso.sh
+if grep -qF "DEC-PHASE11-013" "$BUILD_SCRIPT"; then
+    pass "T36.f: DEC-PHASE11-013 annotation present in build-iso.sh (W11-9a2)"
+else
+    fail "T36.f: DEC-PHASE11-013 annotation not found in build-iso.sh"
+fi
+
+# T36.g: binary-tree GRUB theme assets staged (committed allowed paths)
+GRUB_THEME_BINARY="$REPO_ROOT/iso/config/includes.binary/boot/grub/themes/orionx"
+if [[ -f "$GRUB_THEME_BINARY/theme.txt" ]]; then
+    pass "T36.g: iso/config/includes.binary/boot/grub/themes/orionx/theme.txt staged"
+else
+    fail "T36.g: iso/config/includes.binary/boot/grub/themes/orionx/theme.txt missing — theme will not render at live-boot"
+fi
+if [[ -f "$GRUB_THEME_BINARY/background.png" ]]; then
+    pass "T36.g: iso/config/includes.binary/boot/grub/themes/orionx/background.png staged"
+else
+    fail "T36.g: iso/config/includes.binary/boot/grub/themes/orionx/background.png missing"
+fi
+
+# T36.h: generator copies binary-tree theme assets (function body check)
+# generate_bootloader_configs() must reference grub_theme_dst copy block.
+if grep -qF "grub_theme_dst" "$BUILD_SCRIPT"; then
+    pass "T36.h: build-iso.sh references grub_theme_dst (binary-tree copy logic present)"
+else
+    fail "T36.h: grub_theme_dst variable not found — binary-tree copy logic missing from generator"
+fi
+
+# T36.i: isolinux.cfg does NOT contain MENU BACKGROUND (deferred to W11-9a3)
+ISOLINUX_CFG="$REPO_ROOT/iso/config/includes.binary/isolinux/isolinux.cfg"
+if [[ -f "$ISOLINUX_CFG" ]]; then
+    if ! grep -qi "MENU BACKGROUND" "$ISOLINUX_CFG"; then
+        pass "T36.i: isolinux.cfg does NOT contain MENU BACKGROUND (W11-9a3 deferred — correct)"
+    else
+        fail "T36.i: isolinux.cfg contains MENU BACKGROUND but W11-9a3 not yet implemented; needs 640x480 splash variant first"
+    fi
+else
+    pass "T36.i: isolinux.cfg not yet generated — MENU BACKGROUND absence trivially satisfied"
+fi
+
+echo ""
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo "================================================================"
