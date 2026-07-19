@@ -15,6 +15,7 @@ Merkle audit, auto-healing) are preserved. The tightening axes: smaller mission-
 mission-fit debloat, post-boot optional-installer framework, and a unique Orion-X cyberdeck
 visual identity. Target: ≤3.0 GB compressed ISO (~2.8 GB). See DEC-PHASE11-001.
 
+- fix(phase11): W11-7 — ClamAV dropped from base ISO (-350 MB); moved to /opt/orionx/optional/install-clamav.sh (DEC-PHASE11-009 LOCKED)
 - feat(phase11): W11-6 Layer A — Suricata IDS (lazy-start override + skeleton + orionx-freshen-suricata); Layer B (bundled rules + Nebula tier selector) deferred to W11-6b
 - feat(phase11): W11-5 Layer A — matrix-commander pip venv + comms skeleton + .desktop launcher; gomuks deferred to W11-5b
 - feat(phase11): W11-4 Layer A — YARA rulesets skeleton (yara pkg + /opt/orionx/yara/{README.md,LOCKFILE.json} + scripts/orionx-freshen-yara.sh + 0700 hook symlink); actual ruleset snapshots deferred to W11-4b (DEC-PHASE11-005)
