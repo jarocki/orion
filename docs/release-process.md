@@ -20,7 +20,7 @@ The `DRAFT` boundary is non-negotiable. CI never publishes a release on its own.
 Before tagging:
 
 - **Phase 7 attestation (W7-7)** is complete for any final `v2.0.0` tag. Release
-  candidate tags (`v2.0.0-rcN`) MAY be cut before W7-7 lands; final releases MUST
+  candidate tags (`v2.1.0-rcN`) MAY be cut before W7-7 lands; final releases MUST
   NOT.
 - **GPG signing key** is provisioned as repository secrets:
   - `secrets.GPG_PRIVATE_KEY` — ASCII-armored private key
@@ -35,14 +35,14 @@ Before tagging:
 - **`CHANGELOG.md` is updated** with a section for the version you are about
   to tag. The section heading must match one of:
   - `## [2.0.0-rc1] — <date or status>`
-  - `## [v2.0.0-rc1] — <date or status>`
+  - `## [v2.1.0-rc1] — <date or status>`
 
   `extract-release-notes.sh` matches both forms. If no section is found, the
   release body falls back to `"See CHANGELOG.md for full release history."`
 
 ---
 
-## 2. Cutting a release candidate (`v2.0.0-rcN`)
+## 2. Cutting a release candidate (`v2.1.0-rcN`)
 
 From a clean checkout of `develop` at the head you intend to release:
 
@@ -55,10 +55,10 @@ git pull --ff-only origin develop
 git log -1 --oneline
 
 # Annotated tag — the message is what `git describe` will surface.
-git tag -a v2.0.0-rc1 -m "Orion-X Phoenix Edition v2.0.0-rc1"
+git tag -a v2.1.0-rc1 -m "Orion-X Phoenix Edition v2.1.0-rc1"
 
 # Push the tag — this fires release.yml.
-git push origin v2.0.0-rc1
+git push origin v2.1.0-rc1
 ```
 
 Tag push triggers `.github/workflows/release.yml`. The workflow auto-flags
@@ -124,11 +124,11 @@ visible to the public**. The operator owns the publish flip.
 
 - GitHub UI: **Repository → Releases** → the draft appears at the top, tagged
   with the version and a `Draft` badge.
-- CLI: `gh release view v2.0.0-rc1 --json isDraft,assets`
+- CLI: `gh release view v2.1.0-rc1 --json isDraft,assets`
 
 ### 4.2. Verify the artifacts
 
-Download the draft assets (`gh release download v2.0.0-rc1 -D /tmp/orion-rc1`
+Download the draft assets (`gh release download v2.1.0-rc1 -D /tmp/orion-rc1`
 or via the UI) and run, from the download directory:
 
 ```bash
@@ -152,7 +152,7 @@ time, either:
   the workflow via `workflow_dispatch`, then upload the new `.asc` files to
   the draft; or
 - sign the artifacts locally and attach the resulting `.asc` files via
-  `gh release upload v2.0.0-rc1 <files>`.
+  `gh release upload v2.1.0-rc1 <files>`.
 
 ### 4.3. Final preflight before publish
 
@@ -167,17 +167,17 @@ time, either:
 
 UI: open the draft, click **Publish release**.
 
-CLI: `gh release edit v2.0.0-rc1 --draft=false`
+CLI: `gh release edit v2.1.0-rc1 --draft=false`
 
 This is the W8-7 `approve` gate. Once flipped, the release is public.
 
 ---
 
-## 5. Promotion: `v2.0.0-rcN` → `v2.0.0` final
+## 5. Promotion: `v2.1.0-rcN` → `v2.0.0` final
 
 When an RC has soaked sufficiently and W7-7 attestation is complete:
 
-1. **Update CHANGELOG.md** — rename the `## [v2.0.0-rc1]` section to
+1. **Update CHANGELOG.md** — rename the `## [v2.1.0-rc1]` section to
    `## [v2.0.0] — <release date>` (or add a new `## [v2.0.0]` section that
    supersedes the rc entry). The new section is what `extract-release-notes.sh`
    will return for the `v2.0.0` tag.
@@ -189,7 +189,7 @@ When an RC has soaked sufficiently and W7-7 attestation is complete:
    - `iso/auto/config` (or equivalent live-build hook)
 
    Grep for the previous rc string to confirm coverage:
-   `git grep -n 'v2.0.0-rc1'`
+   `git grep -n 'v2.1.0-rc1'`
 3. **Land via the canonical chain on `develop`** — planner → guardian
    (provision) → implementer → reviewer → guardian (land). Do not hand-edit
    the bump on `main`. (Sacred Practice #2.)
@@ -215,15 +215,15 @@ The rollback path depends on whether the release has been **published**.
 The draft is operator-private; rolling it back is non-destructive:
 
 ```bash
-gh release delete v2.0.0-rc1            # deletes the draft + uploaded assets
+gh release delete v2.1.0-rc1            # deletes the draft + uploaded assets
 # Note: the underlying git tag is NOT deleted by `release delete`.
 ```
 
 To also remove the tag (when the tagged commit itself was wrong):
 
 ```bash
-git tag -d v2.0.0-rc1                   # local
-git push origin :refs/tags/v2.0.0-rc1   # remote
+git tag -d v2.1.0-rc1                   # local
+git push origin :refs/tags/v2.1.0-rc1   # remote
 ```
 
 ### 6.2. Post-publish retraction
@@ -286,3 +286,20 @@ Use a dry run when:
   - W7-7 — final-release attestation prerequisite
 - **Followups:**
   - Issue #41 — backend decode hygiene followup
+
+## 9. Phase 11 hotfix pattern (W11-Nx sub-slices)
+
+When a CI or hardware test reveals a gap in a landed W11-N slice, ship a
+sub-slice W11-Nx (where x = b, c, d, ...) rather than a follow-up patch on
+the next `--edit` cycle. Examples from the 2026-07-19 arc:
+
+- W11-2 landed the debloat + bootloader single-authority
+- W11-2b hotfixed a shellcheck SC2001 in the generator
+- W11-2c fixed 4 CI content-presence assertions
+- W11-2d rewrote a Python import test to be structural (not runtime)
+- W11-2e pinned the Qwen SHA256 (moved from TBD sentinel)
+- W11-2f disabled XFCE auto-lock
+
+Each sub-slice: full planner -> implementer -> reviewer -> guardian:land chain.
+Keeps the mainline W11-N Evaluation Contract stable; hotfix items don't drift
+the DEC.
