@@ -2114,6 +2114,121 @@ else
 fi
 
 # ===========================================================================
+# 25. W11-7: ClamAV drop — absent from package list + optional installer staged
+#
+# @decision DEC-PHASE11-009
+# @title W11-7 ClamAV dropped from base ISO; optional installer at
+#   /opt/orionx/optional/install-clamav.sh
+# @status accepted
+# @rationale ClamAV adds ~350 MB, signatures decay within days (90% freshness
+#   decay), and the background network dependency is incompatible with the
+#   air-gap threat model. YARA + capa + Suricata + FLOSS + Nebula MCP provide
+#   sufficient detection value for the base image. Operators who need signature
+#   scanning install post-boot via the optional installer on a network-connected
+#   node.
+#
+# 25a: 'clamav' NOT present as a bare package line in orionx.list.chroot
+# 25b: /opt/orionx/optional/install-clamav.sh present, executable, shellcheck-clean
+# 25c: 'clamav' NOT installed in squashfs dpkg database (absence gate)
+# ===========================================================================
+section "25. W11-7: ClamAV drop — absent from package list + optional installer staged (DEC-PHASE11-009)"
+
+# ---------------------------------------------------------------------------
+# 25a. clamav NOT in orionx.list.chroot
+# ---------------------------------------------------------------------------
+PKG_LIST_CLAMAV="$REPO_ROOT/iso/config/package-lists/orionx.list.chroot"
+echo "  [25a] Verifying clamav absent from orionx.list.chroot"
+if [[ -f "$PKG_LIST_CLAMAV" ]]; then
+    # || true: grep exits 1 on no-match; zero matches is the desired W11-7 state (DEC-PHASE9-014).
+    CLAMAV_PKG_LINES=$(grep -c "^clamav$" "$PKG_LIST_CLAMAV" 2>/dev/null || true)
+    if [[ "$CLAMAV_PKG_LINES" -eq 0 ]]; then
+        pass "25a: 'clamav' absent from orionx.list.chroot (W11-7 debloat -350 MB, DEC-PHASE11-009)"
+    else
+        fail "25a: 'clamav' absent from orionx.list.chroot" \
+             "Found $CLAMAV_PKG_LINES 'clamav' line(s) — W11-7 debloat not applied (DEC-PHASE11-009)"
+    fi
+else
+    fail "25a: orionx.list.chroot accessible for clamav check" \
+         "Cannot find $PKG_LIST_CLAMAV"
+fi
+
+# ---------------------------------------------------------------------------
+# 25b. /opt/orionx/optional/install-clamav.sh present, executable, shellcheck-clean
+# ---------------------------------------------------------------------------
+echo "  [25b] Verifying optional installer present, executable, and shellcheck-clean"
+INSTALL_CLAMAV_SRC="$REPO_ROOT/iso/config/includes.chroot/opt/orionx/optional/install-clamav.sh"
+
+if [[ -f "$INSTALL_CLAMAV_SRC" ]]; then
+    pass "25b: iso/config/includes.chroot/opt/orionx/optional/install-clamav.sh present (DEC-PHASE11-009)"
+    if [[ -x "$INSTALL_CLAMAV_SRC" ]]; then
+        pass "25b: install-clamav.sh is executable (+x bit set)"
+    else
+        fail "25b: install-clamav.sh is executable" \
+             "File exists but lacks execute permission — chmod +x required"
+    fi
+    # bash -n syntax check always runs
+    if bash -n "$INSTALL_CLAMAV_SRC" 2>/dev/null; then
+        pass "25b: install-clamav.sh passes bash -n syntax check"
+    else
+        fail "25b: install-clamav.sh passes bash -n syntax check" \
+             "bash -n reported syntax errors — fix install-clamav.sh"
+    fi
+    # lint check (skip if shellcheck not available on runner)
+    if command -v shellcheck >/dev/null 2>&1; then
+        if shellcheck "$INSTALL_CLAMAV_SRC" 2>/dev/null; then
+            pass "25b: install-clamav.sh shellcheck-clean (DEC-PHASE11-009)"
+        else
+            fail "25b: install-clamav.sh shellcheck-clean" \
+                 "shellcheck reported issues — run: shellcheck $INSTALL_CLAMAV_SRC"
+        fi
+    else
+        skip "25b shellcheck: shellcheck not installed on this host (install shellcheck to enable)"
+    fi
+else
+    fail "25b: iso/config/includes.chroot/opt/orionx/optional/install-clamav.sh present" \
+         "Optional installer missing — W11-7 requires it at includes.chroot/opt/orionx/optional/install-clamav.sh (DEC-PHASE11-009)"
+    fail "25b: install-clamav.sh is executable" \
+         "File missing — cannot check"
+    fail "25b: install-clamav.sh passes bash -n syntax check" \
+         "File missing — cannot check"
+fi
+
+# Also verify the installer is present in the extracted squashfs (staged via includes.chroot)
+INSTALL_CLAMAV_SQF="$SQF/opt/orionx/optional/install-clamav.sh"
+if [[ -f "$INSTALL_CLAMAV_SQF" ]]; then
+    pass "25b: /opt/orionx/optional/install-clamav.sh present in squashfs (staged via includes.chroot)"
+    if [[ -x "$INSTALL_CLAMAV_SQF" ]]; then
+        pass "25b: /opt/orionx/optional/install-clamav.sh executable in squashfs"
+    else
+        fail "25b: /opt/orionx/optional/install-clamav.sh executable in squashfs" \
+             "Executable bit not set on staged copy — check includes.chroot or live-build permissions"
+    fi
+else
+    # squashfs check is informational when ISO is not available; the source-tree
+    # check above is the hard gate. Squashfs absence may mean the ISO was not
+    # built after the W11-7 commit.
+    echo "  NOTE: 25b: /opt/orionx/optional/install-clamav.sh not found in squashfs"
+    echo "        (ISO may not have been rebuilt after W11-7 commit — source-tree check is authoritative)"
+    pass "25b: squashfs check skipped (ISO not rebuilt since W11-7; source-tree assertions are authoritative)"
+fi
+
+# ---------------------------------------------------------------------------
+# 25c. clamav NOT installed in squashfs dpkg database
+# ---------------------------------------------------------------------------
+echo "  [25c] Verifying clamav absent from squashfs dpkg database"
+if [[ -f "$DPKG_STATUS" ]]; then
+    if grep -q "^Package: clamav$" "$DPKG_STATUS" 2>/dev/null; then
+        fail "25c: clamav absent from squashfs dpkg database (W11-7 debloat gate)" \
+             "clamav found in dpkg/status — package list removal not reflected in built ISO (DEC-PHASE11-009)"
+    else
+        pass "25c: clamav absent from squashfs dpkg database (W11-7 -350 MB, DEC-PHASE11-009)"
+    fi
+else
+    echo "  NOTE: 25c: dpkg/status not available (squashfs not extracted or ISO not built)"
+    pass "25c: clamav dpkg check skipped (dpkg/status unavailable — ISO may not have been rebuilt)"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

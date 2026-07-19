@@ -108,7 +108,6 @@ apparmor-utils
 apparmor-profiles
 apparmor-profiles-extra
 aircrack-ng
-clamav
 cryptsetup
 # fail2ban — SSH brute-force defense; modernized replacement for the obsolete
 # denyhosts concept in gecko/bin/start-denyhosts.sh. The package postinst
