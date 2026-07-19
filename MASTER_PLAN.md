@@ -3078,6 +3078,79 @@ Then records `REVIEW_VERDICT=ready_for_guardian`.
 
 ---
 
+#### W11-2e — Detail plan (Qwen2.5-3B trust-on-first-use SHA-256 pin, closes #67)
+
+**Seeded:** 2026-07-19 planner amendment. **Status:** ready for `guardian:provision`. **Env:** local edit; no ISO build required (unit test only). **Wave:** post-W11-2d hygiene, pre-W11-3. **Gate:** review. **Weight:** S (very tiny — 3 in-scope files, 4 tasks, no new DEC). **Deps:** W11-1 (landed) + W11-2d (landed at `7759e84`, 2026-07-10). **Workflow ID:** `phase11-w11-2e-qwen-sha-pin`.
+
+**Slice intent.** Land the trust-on-first-use SHA-256 pin for the bundled Qwen2.5-3B-Instruct Q4_K_M GGUF per DEC-PHASE10-008 pattern. Manifest currently carries the `TBD-VERIFY-AT-DOWNLOAD` sentinel; multiple green CI builds since W11-1 have deterministically produced the same SHA — extracted from CI build log run `29305215942`: `9c9f56a391a3abbd5b89d0245bf6106081bcc3173119d4229235dd9d23253f94`. Sentinel is replaced with that hex value in the manifest, and `tests/unit/test_nebula_model_manifest.sh` T4 is tightened from "accept 64-char hex OR sentinel" to "REQUIRE 64-char hex" with an added T4b that asserts the exact pinned value (so the pin cannot silently drift). Closes issue #67. On next hardware boot, `nebula-integrity-check.service` passes and `nebula-runtime.service` starts — the current sentinel value is the root cause of the observed integrity failure that cascades to a runtime that never starts. No new DEC — this is the standard DEC-PHASE10-008 execution.
+
+**State authorities (unchanged):**
+
+| State domain | Canonical authority | Consumers |
+|--------------|---------------------|-----------|
+| Model SHA-256 pin | `iso/config/nebula-model-manifest.json::model_sha256` (SINGLE) | `stage_nebula_model()` build-time SHA-verify; `scripts/nebula/integrity.py` boot-time verify via `MANIFEST.sha256`; `tests/unit/test_nebula_model_manifest.sh` T4/T4b schema check. |
+| Manifest schema tests | `tests/unit/test_nebula_model_manifest.sh` (SINGLE) | `make test-unit-bash`; reviewer independent run. |
+
+No parallel authority created; the pin replaces sentinel in-place.
+
+**Tasks (4):**
+
+1. **T1 — Manifest pin.** Edit `iso/config/nebula-model-manifest.json`: change `"model_sha256": "TBD-VERIFY-AT-DOWNLOAD"` → `"model_sha256": "9c9f56a391a3abbd5b89d0245bf6106081bcc3173119d4229235dd9d23253f94"`. Update `_integrity_note` prose: replace the "trust-on-first-use / TBD" phrasing with a "pinned via CI build log run 29305215942 per DEC-PHASE10-008 + closes #67" note; keep the mention that model_filename is authoritative (unrelated invariant). Do NOT change any other field (URLs, filename, size, license, tag, schema_version). Commit: `chore(w11-2e): pin Qwen2.5-3B model_sha256 (DEC-PHASE10-008, closes #67)`.
+
+2. **T2 — Unit test tightening.** Edit `tests/unit/test_nebula_model_manifest.sh` T4 block (lines ~110-125): remove the sentinel-acceptance branch entirely — the `[[ "$SHA256" == "$SENTINEL" ]]` arm is deleted, its PASS message + NOTE line removed, and the SENTINEL local variable is removed. Retain the `^[0-9a-f]{64}$` regex assertion as the sole success path; failure message stays but drops the `or '$SENTINEL'` phrasing. ADD immediately after T4 a new T4b block that asserts the specific pinned value: `[[ "$SHA256" == "9c9f56a391a3abbd5b89d0245bf6106081bcc3173119d4229235dd9d23253f94" ]]` with a PASS message referencing DEC-PHASE10-008 + issue #67, and a FAIL message that names both the expected and actual hex (so drift is immediately diagnosable). Preserve T1/T2/T3/T5..T11 verbatim — no other assertions change. Commit: `test(w11-2e): tighten T4 to require 64-char hex + add T4b exact-SHA assertion`.
+
+3. **T3 — CHANGELOG entry.** Edit `CHANGELOG.md` `## [v2.1.0] - Unreleased` section: append a new `### W11-2e: Qwen2.5-3B model_sha256 pin (trust-on-first-use lockdown)` mini-subsection with one prose line naming the pinned SHA (first 16 chars for readability), the CI run source (`29305215942`), the DEC-PHASE10-008 pattern, and `closes #67`. Do NOT touch prior W11-* mini-subsections. Commit: `docs(w11-2e): CHANGELOG v2.1.0 — W11-2e Qwen SHA pin (closes #67)`.
+
+4. **T4 — Verify unit tests still green.** Run `bash tests/unit/test_nebula_model_manifest.sh` locally and confirm exit 0 with all assertions passing (T1–T11 plus new T4b — expected 12+ PASS lines, 0 FAIL). Then run `make test-unit-bash` end-to-end and confirm no regression (~45 suites still green). This task is verification-only; no file edits, no commit. Evidence is the pasted tail of both runs in the implementer/reviewer notes.
+
+**Commit shape:** 3 code/doc commits (T1 + T2 + T3) OR 1 consolidated `fix(w11-2e): Qwen2.5-3B model_sha256 pin + test tightening + CHANGELOG (closes #67)` — implementer's choice; a single consolidated commit is acceptable for a slice this tight and matches the W11-2b hotfix shape. Reviewer verifies scope compliance regardless of shape.
+
+**Evaluation Contract (5 items — testable, verbatim):**
+
+1. **Sentinel replaced with real hex (T1).** `python3 -c "import json; d=json.load(open('iso/config/nebula-model-manifest.json')); print(d['model_sha256'])"` prints exactly `9c9f56a391a3abbd5b89d0245bf6106081bcc3173119d4229235dd9d23253f94`. `grep -c 'TBD-VERIFY-AT-DOWNLOAD' iso/config/nebula-model-manifest.json` returns 0 (sentinel string absent from the manifest, including the prose `_integrity_note`).
+
+2. **Test T4 no longer accepts sentinel (T2).** `grep -c 'TBD-VERIFY-AT-DOWNLOAD' tests/unit/test_nebula_model_manifest.sh` returns 0 (sentinel string absent from the test). `grep -c 'is the trust-on-first-use sentinel' tests/unit/test_nebula_model_manifest.sh` returns 0 (PASS message for the sentinel branch is deleted).
+
+3. **T4b exact-SHA assertion present (T2).** `grep -c '9c9f56a391a3abbd5b89d0245bf6106081bcc3173119d4229235dd9d23253f94' tests/unit/test_nebula_model_manifest.sh` returns ≥1 (the pinned hex appears as the expected value in the T4b comparison). Reviewer independently runs `bash tests/unit/test_nebula_model_manifest.sh` and observes both `PASS: model_sha256 is a 64-char lowercase hex string` (T4) AND a PASS line for the T4b exact-SHA assertion.
+
+4. **All unit tests green after fix (T4).** `bash tests/unit/test_nebula_model_manifest.sh` exits 0 with `Results:` line reporting `0 failed`. `make test-unit-bash` exits 0 end-to-end (`ALL BASH UNIT TESTS PASSED` or equivalent summary line). Reviewer pastes both tails as evidence.
+
+5. **CHANGELOG entry present and scoped (T3).** `CHANGELOG.md` `[v2.1.0]` section contains a `### W11-2e` mini-subsection naming (a) the pinned Qwen SHA source (CI run `29305215942`), (b) DEC-PHASE10-008, (c) `closes #67`. `git diff --name-only develop..HEAD` returns only files inside the Scope Manifest `allowed_paths` (`iso/config/nebula-model-manifest.json`, `tests/unit/test_nebula_model_manifest.sh`, `CHANGELOG.md`, `MASTER_PLAN.md`, `tmp/**`).
+
+**Forbidden shortcuts:**
+
+- Do NOT keep the sentinel branch as a "backwards-compatible fallback" in T4. Sacred Practice #12: one authority per assertion. The pin IS the authority; the sentinel path is deleted, not commented out.
+- Do NOT touch `scripts/build-iso.sh::stage_nebula_model()` or `scripts/nebula/integrity.py`. Both are already manifest-driven — the pin flows through automatically. Editing either would introduce a parallel authority.
+- Do NOT change model URLs, filename, size, license, or ollama tag. This slice is SHA-only. Any accidental URL/filename edit would silently invalidate the pinned SHA.
+- Do NOT touch W10-1 systemd units (`nebula-integrity-check.service`, `nebula-runtime.service`, `nebula-warmup.service`), the AppArmor profile `usr.bin.ollama`, or any W11-2/2b/2c/2d/9a authority (bootloader configs, package lists, 0500/0700 hooks, branding assets). This slice's failure mode surfaces at boot-time integrity check; the fix is purely at the SHA-pin authority.
+- Do NOT alter any other T-block in `test_nebula_model_manifest.sh` (T1/T2/T3/T5..T11 are load-bearing invariants for the manifest schema — DEC-PHASE10-008 + DEC-PHASE11-002). Only T4 is modified and T4b is added.
+- Do NOT combine this fix with any unrelated hygiene edit that surfaces during T4's verification run. If additional test noise appears, file it for a separate slice; W11-2e closes only the SHA pin.
+
+**Ready-for-guardian definition:** All 5 Evaluation Contract items pass. Reviewer independently:
+1. Runs `bash tests/unit/test_nebula_model_manifest.sh` and confirms `Results: N passed, 0 failed` with the T4b PASS line present.
+2. Runs `make test-unit-bash` end-to-end and confirms clean exit.
+3. Runs `grep -c TBD-VERIFY-AT-DOWNLOAD iso/config/nebula-model-manifest.json tests/unit/test_nebula_model_manifest.sh` and confirms both return 0.
+4. Runs `python3 -c "import json; print(json.load(open('iso/config/nebula-model-manifest.json'))['model_sha256'])"` and confirms it prints the exact expected hex.
+5. Runs `git diff --name-only develop..HEAD` and confirms every changed file is inside the Scope Manifest `allowed_paths`.
+
+Then records `REVIEW_VERDICT=ready_for_guardian`.
+
+**Rollback boundary:** 1 commit. `git revert <sha>` cleanly restores the sentinel + the sentinel-accepting T4. No cascading dependencies. The DEC-PHASE10-008 trust-on-first-use pattern remains available for future model swaps.
+
+**Scope Manifest artifact:** `tmp/phase11-w11-2e-qwen-sha-pin-scope.json` (written 2026-07-19 by planner).
+
+**Cross-references:**
+- W11-1 detail plan (this file, section starting line 2443) — introduced the Qwen sentinel; W11-2e closes the trust-on-first-use loop opened there.
+- DEC-PHASE10-008 (trust-on-first-use pattern) — preserved verbatim; W11-2e is the standard execution, not a policy change.
+- DEC-PHASE11-002 (Qwen model swap) — preserved verbatim; only the SHA field changes.
+- Closed precedents: #56 (W10-1 Mistral-7B model_sha256 pin, same pattern), #57 (W10-1 OLLAMA_TGZ_SHA256 pin, same pattern).
+- Issue #67 (the tracking issue this slice closes).
+- Hardware failure mode: `nebula-integrity-check.service` was failing on hardware because `sha256sum -c MANIFEST.sha256` compared `TBD-VERIFY-AT-DOWNLOAD` against a real hash. That cascades to `nebula-runtime.service` never starting (`Requires=nebula-integrity-check.service` per DEC-PHASE10-009). W11-2e resolves both symptoms at their single root cause.
+
+**W11-2e iter-1 (planner detail-plan): 2026-07-19.** Detail plan appended to `MASTER_PLAN.md` on `develop`; NO new DEC (standard DEC-PHASE10-008 execution); Scope Manifest at `tmp/phase11-w11-2e-qwen-sha-pin-scope.json`. Ready for `guardian:provision` under workflow_id `phase11-w11-2e-qwen-sha-pin`.
+
+---
+
 #### W11-9 — Detail plan (Orion-X cyberdeck branding pipeline — UMBRELLA + split into W11-9a / W11-9b / W11-9c)
 
 **Seeded:** 2026-07-13 planner amendment. **Status:** umbrella plan authored; W11-9a ready for `guardian:provision`; W11-9b and W11-9c detail plans deferred to planner-dispatch at their own provisioning time. **Env:** Linux/CI + QEMU + hardware attestation. **Wave:** 6. **Gate:** review per sub-slice; operator sign-off on the cyberdeck acceptance gate at W11-10 rc-cut. **Weight:** XL (umbrella); L (9a) + L (9b) + S (9c). **Deps:** W11-2 (landed at `9fe8c4b`; W11-2b `98dfc2e`, W11-2c `0838a31`, W11-2d `7759e84`; hardware-attested at rc9 identity fix `e09efbf` on 2026-07-13).
