@@ -1001,6 +1001,50 @@ else
          "Cannot find $CC_SCRIPTS_PARENT"
 fi
 
+# ---------------------------------------------------------------------------
+# 16g. W11-2f: XFCE auto-lock disabled (issue #76, DEC-PHASE9-002)
+# ---------------------------------------------------------------------------
+# Layer 1: 0100-create-user.hook.chroot writes xfce4-screensaver.xml into
+#   /home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/ (single-authority,
+#   DEC-PHASE9-002). /etc/skel is explicitly NOT used.
+# Layer 2: /etc/xdg/autostart/orionx-disable-screen-lock.desktop runs
+#   xset s off + xset -dpms + xset s noblank at XFCE session start.
+# Assertion (a): Layer 1 XML present in squashfs (hook wrote it to /home/orionx).
+# Assertion (b): Layer 1 XML contains the lock-disabled property.
+# Assertion (c): Layer 2 .desktop present and contains xset s off + OnlyShowIn=XFCE.
+echo "  [16g] W11-2f: xfce4-screensaver.xml + disable-screen-lock.desktop (#76, DEC-PHASE9-002)"
+
+SCREENSAVER_XML="$SQF/home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml"
+SCREEN_LOCK_DESKTOP="$SQF/etc/xdg/autostart/orionx-disable-screen-lock.desktop"
+
+# (a) Layer 1 XML present
+if [[ -f "$SCREENSAVER_XML" ]]; then
+    pass "16g-a: xfce4-screensaver.xml present in squashfs /home/orionx xfconf dir (#76, DEC-PHASE9-002 single-authority)"
+else
+    fail "16g-a: xfce4-screensaver.xml present in squashfs /home/orionx xfconf dir" \
+         "Missing: $SCREENSAVER_XML — Layer 1 of W11-2f not written by 0100-create-user.hook.chroot"
+fi
+
+# (b) Layer 1 XML content: lock/enabled=false present
+if [[ -f "$SCREENSAVER_XML" ]] && \
+   grep -q 'name="lock"' "$SCREENSAVER_XML" && \
+   grep -q 'value="false"' "$SCREENSAVER_XML"; then
+    pass "16g-b: xfce4-screensaver.xml contains lock name with value=false (#76, DEC-PHASE9-002)"
+else
+    fail "16g-b: xfce4-screensaver.xml contains lock name with value=false" \
+         "lock/enabled=false property absent from $SCREENSAVER_XML — idle-lock bricking bug #76 not fixed"
+fi
+
+# (c) Layer 2 .desktop present and contains xset s off + OnlyShowIn=XFCE
+if [[ -f "$SCREEN_LOCK_DESKTOP" ]] && \
+   grep -q "xset s off" "$SCREEN_LOCK_DESKTOP" && \
+   grep -q "OnlyShowIn=XFCE" "$SCREEN_LOCK_DESKTOP"; then
+    pass "16g-c: orionx-disable-screen-lock.desktop present with xset s off + OnlyShowIn=XFCE (#76)"
+else
+    fail "16g-c: orionx-disable-screen-lock.desktop present with xset s off + OnlyShowIn=XFCE" \
+         "File missing or xset/OnlyShowIn lines absent: $SCREEN_LOCK_DESKTOP — Layer 2 of W11-2f not shipped"
+fi
+
 # ===========================================================================
 # 17. W11-9a: Boot chain branding — Plymouth + GRUB + isolinux + LightDM
 # ===========================================================================

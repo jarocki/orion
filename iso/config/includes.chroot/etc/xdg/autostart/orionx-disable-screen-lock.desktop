@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Orion-X: disable screen lock
+Comment=Belt-and-suspenders defense against xfce4-screensaver auto-lock (issue #76, DEC-PHASE9-002)
+Exec=sh -c "xset s off; xset -dpms; xset s noblank; xfce4-screensaver-command --exit >/dev/null 2>&1 || true"
+X-XFCE-Autostart-Enabled=true
+NoDisplay=true
+OnlyShowIn=XFCE

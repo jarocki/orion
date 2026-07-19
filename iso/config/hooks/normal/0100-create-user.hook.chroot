@@ -154,6 +154,31 @@ cat > /home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml <<
 </channel>
 EOF
 
+# W11-2f (issue #76): Disable xfce4-screensaver auto-lock for the passwordless
+# orionx account.  DEC-PHASE9-002 single-authority preserved: this block writes
+# xfce4-screensaver.xml into the same /home/orionx/.config/xfce4/xfconf/
+# xfce-perchannel-xml/ directory the xfce4-desktop.xml block above already owns.
+# /etc/skel is NOT used — that would introduce a dual authority (forbidden by
+# DEC-PHASE9-002 and CLAUDE.md Sacred Practice #12).
+# Layer 2 belt-and-suspenders: /etc/xdg/autostart/orionx-disable-screen-lock.desktop
+# (shipped via includes.chroot) runs xset s off + xset -dpms at XFCE session start.
+# Layer 3 (package purge) rejected — xfce4-screensaver is a transitive dep of
+# xfce4-goodies; removing it risks pulling the XFCE session.
+cat > /home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-screensaver" version="1.0">
+  <property name="lock" type="empty">
+    <property name="enabled" type="bool" value="false"/>
+  </property>
+  <property name="saver" type="empty">
+    <property name="enabled" type="bool" value="false"/>
+    <property name="idle-activation" type="empty">
+      <property name="enabled" type="bool" value="false"/>
+    </property>
+  </property>
+</channel>
+EOF
+
 # Set up Xfce4 terminal configuration
 mkdir -p /home/orionx/.config/xfce4/terminal
 cat > /home/orionx/.config/xfce4/terminal/terminalrc << EOF
