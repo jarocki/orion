@@ -2516,6 +2516,119 @@ else
 fi
 
 # ===========================================================================
+# 27. W11-11: orionx-diag in-ISO diagnostic tool + version-manifest
+#     KEY=VALUE extension (DEC-PHASE11-015)
+# ===========================================================================
+#
+# @decision DEC-PHASE11-015
+# @title W11-11 content-presence section 27: orionx-diag build-time source
+#   assertions (shell tool + hook extension + build-iso.sh exports)
+# @status accepted
+# @rationale Section 27 validates BUILD-TIME source presence and squashfs
+#   staging of the diagnostic tool. Runtime behavior (does it produce correct
+#   PASS/FAIL on a booted system?) is the domain of tests/unit/test_orionx_diag.sh
+#   (structural + arg-parse + JSON shape) and T-Verify QEMU boot smoke (runtime).
+#   Eight assertions cover: repo source executable + shellcheck, README, hook
+#   SCRIPT_MAP entry, hook ISO_VERSION manifest write, build-iso.sh export, and
+#   squashfs presence (guarded by SQF extraction success).
+
+section "27. W11-11: orionx-diag in-ISO diagnostic tool + version-manifest KEY=VALUE extension (DEC-PHASE11-015)"
+
+DIAG_SRC="$REPO_ROOT/iso/config/includes.chroot/opt/orionx/scripts/orionx-diag"
+HOOK_0700="$REPO_ROOT/iso/config/hooks/live/0700-orionx-setup.hook.chroot"
+BUILD_ISO="$REPO_ROOT/scripts/build-iso.sh"
+README_SRC="$REPO_ROOT/iso/config/includes.chroot/opt/orionx/scripts/README.md"
+
+# 27a: orionx-diag source present in repo + executable bit set
+if [[ -f "$DIAG_SRC" && -x "$DIAG_SRC" ]]; then
+    pass "27a: $DIAG_SRC present + executable"
+else
+    fail "27a: $DIAG_SRC present + executable" \
+         "file absent or not executable (run: chmod +x $DIAG_SRC)"
+fi
+
+# 27b: orionx-diag passes shellcheck -S error
+if command -v shellcheck &>/dev/null; then
+    if shellcheck -S error "$DIAG_SRC" 2>/dev/null; then
+        pass "27b: orionx-diag shellcheck -S error clean"
+    else
+        SHELLCHECK_OUT="$(shellcheck -S error "$DIAG_SRC" 2>&1 || true)"
+        fail "27b: orionx-diag shellcheck -S error clean" \
+             "shellcheck findings: $(echo "$SHELLCHECK_OUT" | head -5)"
+    fi
+else
+    skip "27b: orionx-diag shellcheck -S error (shellcheck not on PATH)"
+fi
+
+# 27c: README.md for scripts/ present in repo
+if [[ -f "$README_SRC" ]]; then
+    pass "27c: $README_SRC present"
+else
+    fail "27c: $README_SRC present" \
+         "README.md absent — operator guide missing from staging tree"
+fi
+
+# 27d: 0700 hook contains ["orionx-diag"]= SCRIPT_MAP entry
+if grep -qF '["orionx-diag"]=' "$HOOK_0700" 2>/dev/null; then
+    pass "27d: 0700 hook SCRIPT_MAP contains [\"orionx-diag\"]= entry"
+else
+    fail "27d: 0700 hook SCRIPT_MAP contains [\"orionx-diag\"]= entry" \
+         'grep -F [\"orionx-diag\"]= returned no match in 0700 hook'
+fi
+
+# 27e: 0700 hook contains ISO_VERSION= in version manifest write block
+if grep -q 'ISO_VERSION=' "$HOOK_0700" 2>/dev/null; then
+    pass "27e: 0700 hook contains ISO_VERSION= (KEY=VALUE manifest write)"
+else
+    fail "27e: 0700 hook contains ISO_VERSION= (KEY=VALUE manifest write)" \
+         "ISO_VERSION= not found in 0700 hook — manifest write block missing"
+fi
+
+# 27f: build-iso.sh exports ORIONX_GIT_SHA
+if grep -q 'ORIONX_GIT_SHA=' "$BUILD_ISO" 2>/dev/null; then
+    pass "27f: scripts/build-iso.sh exports ORIONX_GIT_SHA"
+else
+    fail "27f: scripts/build-iso.sh exports ORIONX_GIT_SHA" \
+         "ORIONX_GIT_SHA= not found in scripts/build-iso.sh"
+fi
+
+# 27g: squashfs check — orionx-diag present in extracted squashfs
+if [[ -d "$SQF/opt/orionx/scripts" ]]; then
+    if [[ -f "$SQF/opt/orionx/scripts/orionx-diag" ]]; then
+        pass "27g: /opt/orionx/scripts/orionx-diag present in squashfs"
+    else
+        fail "27g: /opt/orionx/scripts/orionx-diag present in squashfs" \
+             "orionx-diag absent from squashfs /opt/orionx/scripts/ — check stage_application_content rsync excludes"
+    fi
+    # Also verify /etc/orionx-version in squashfs has the KEY=VALUE format (compound 27g)
+    if [[ -f "$SQF/etc/orionx-version" ]]; then
+        if grep -q '^ISO_VERSION=' "$SQF/etc/orionx-version" 2>/dev/null; then
+            pass "27g(ext): /etc/orionx-version in squashfs contains ISO_VERSION= (KEY=VALUE format)"
+        else
+            fail "27g(ext): /etc/orionx-version in squashfs contains ISO_VERSION= (KEY=VALUE format)" \
+                 "ISO_VERSION= not found — 0700 hook manifest write may not have run"
+        fi
+    else
+        skip "27g(ext): /etc/orionx-version ISO_VERSION= check (file absent in squashfs — chroot phase may not have run)"
+    fi
+else
+    skip "27g: /opt/orionx/scripts/orionx-diag squashfs check (scripts dir absent — squashfs not extracted)"
+    skip "27g(ext): /etc/orionx-version ISO_VERSION= check (squashfs not extracted)"
+fi
+
+# 27h: squashfs check — /usr/bin/orionx-diag symlink present
+if [[ -d "$SQF/usr/bin" ]]; then
+    if [[ -L "$SQF/usr/bin/orionx-diag" || -f "$SQF/usr/bin/orionx-diag" ]]; then
+        pass "27h: /usr/bin/orionx-diag symlink present in squashfs"
+    else
+        fail "27h: /usr/bin/orionx-diag symlink present in squashfs" \
+             "/usr/bin/orionx-diag absent — 0700 hook SCRIPT_MAP loop did not create symlink"
+    fi
+else
+    skip "27h: /usr/bin/orionx-diag symlink squashfs check (squashfs not extracted)"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

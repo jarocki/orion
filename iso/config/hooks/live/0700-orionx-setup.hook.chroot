@@ -88,6 +88,14 @@ declare -A SCRIPT_MAP=(
     # automate this at build time and wire the Nebula tier selector. Single
     # PATH entry; no .desktop launcher needed (root-only maintenance command).
     ["orionx-freshen-suricata"]="/opt/orionx/scripts/orionx-freshen-suricata.sh"
+    # W11-11 Layer A: In-ISO diagnostic tool (DEC-PHASE11-015).
+    # Operators run `sudo orionx-diag` post-boot to verify that the running
+    # system matches the build manifest and all Phase 11 slice tools are present
+    # and functional. Supports --json (Control Center Awareness pane, W11-11b)
+    # and --category <name> for iterative debugging. No .desktop launcher
+    # (root-only diagnostic command). Source at /opt/orionx/scripts/ — no .sh
+    # suffix per the orionx-mesh precedent.
+    ["orionx-diag"]="/opt/orionx/scripts/orionx-diag"
 )
 
 for name in "${!SCRIPT_MAP[@]}"; do
@@ -188,19 +196,34 @@ DESKTOP_EOF
 echo "[orionx-setup] Installing MOTD..."
 mkdir -p /etc/update-motd.d/
 
-# Write /etc/orionx-version so MOTD and other runtime scripts can reference
-# the build-time version without hardcoding it in multiple places.
-# ORIONX_VERSION is passed from build-iso.sh → lb config → chroot env when
-# available; fall back to v2.0.0-rc8 (the current canonical default from
-# iso/auto/config and scripts/build-iso.sh, per DEC-PHASE7-002 single-
-# version-authority). Pattern 2 of Bug B.2 rc8 fix (DEC-PHASE10-017):
-# stage a version file so MOTD reads it at login, avoiding both a stale
-# literal and a chroot-env-propagation dependency.
-echo "${ORIONX_VERSION:-v2.0.0-rc8}" > /etc/orionx-version
+# Write /etc/orionx-version as a KEY=VALUE manifest so MOTD and orionx-diag
+# can read structured build metadata without adding jq/python dependencies.
+# Schema extended by W11-11 (DEC-PHASE11-015): ISO_VERSION is the first line
+# (backward-compat: MOTD grep-reads it; old `cat` readers see a multi-line file
+# and use fallback value per the grep reader change in T2c below).
+# Authority: 0700 hook is the ONLY writer of /etc/orionx-version; MOTD and
+# orionx-diag are readers. No second manifest file is created (DEC-PHASE11-015
+# single-authority discipline — rejected alternatives: /etc/orionx-manifest,
+# /etc/orionx-version.json).
+# Env vars (ORIONX_GIT_SHA, ORIONX_GIT_TITLE, ORIONX_PHASE_11_SLICES) are
+# exported by scripts/build-iso.sh at build time; fallback to 'unknown' when
+# built outside CI (orionx-diag emits SKIP for 'unknown' fields).
+cat > /etc/orionx-version << VERSION_EOF
+ISO_VERSION=${ORIONX_VERSION:-v2.0.0-rc8}
+BUILD_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+GIT_HEAD_SHA=${ORIONX_GIT_SHA:-unknown}
+GIT_HEAD_TITLE=${ORIONX_GIT_TITLE:-unknown}
+PHASE_11_SLICES=${ORIONX_PHASE_11_SLICES:-unknown}
+VERSION_EOF
+chmod 644 /etc/orionx-version
 
 cat > /etc/update-motd.d/10-orionx-welcome << 'MOTD_EOF'
 #!/bin/bash
-ORIONX_VER="$(cat /etc/orionx-version 2>/dev/null || echo v2.0.0)"
+# W11-11 T2c: grep-reads the ISO_VERSION key from the KEY=VALUE manifest written
+# by the 0700 hook. Backward-compat: if /etc/orionx-version is the legacy
+# single-line format (pre-W11-11), grep returns nothing and fallback 'v2.0.0'
+# is used — MOTD continues to render (acceptable degrade on legacy image).
+ORIONX_VER="$(grep '^ISO_VERSION=' /etc/orionx-version 2>/dev/null | cut -d= -f2 || echo v2.0.0)"
 cat << EOF
   ___      _               __  __
  / _ \ _ _(_)___ _ _      \ \/ /

@@ -41,6 +41,20 @@ set -euo pipefail
 VERSION="${ORIONX_VERSION:-v2.0.0-rc9}"
 
 # ---------------------------------------------------------------------------
+# W11-11 (DEC-PHASE11-015): Build metadata exports for /etc/orionx-version
+# KEY=VALUE manifest. The 0700 hook reads these from the chroot environment at
+# build time and writes them into /etc/orionx-version for orionx-diag + MOTD.
+# Fallback to 'unknown' when git is unavailable (e.g. CI Docker without .git).
+# PHASE_11_SLICES is hardcoded here — build-iso.sh is the authoritative seat
+# for the slice list (orionx-diag trusts the manifest, never hardcodes slices).
+# ---------------------------------------------------------------------------
+export ORIONX_GIT_SHA
+ORIONX_GIT_SHA="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
+export ORIONX_GIT_TITLE
+ORIONX_GIT_TITLE="$(git log -1 --format=%s 2>/dev/null || echo unknown)"
+export ORIONX_PHASE_11_SLICES="W11-1,W11-2,W11-2b,W11-2c,W11-2d,W11-2e,W11-2f,W11-3,W11-4,W11-5,W11-6,W11-7,W11-8,W11-9a,W11-9a2,W11-9b"
+
+# ---------------------------------------------------------------------------
 # Path setup
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -15,6 +15,39 @@ Merkle audit, auto-healing) are preserved. The tightening axes: smaller mission-
 mission-fit debloat, post-boot optional-installer framework, and a unique Orion-X cyberdeck
 visual identity. Target: ≤3.0 GB compressed ISO (~2.8 GB). See DEC-PHASE11-001.
 
+### W11-11 Layer A: in-ISO diagnostic tool `orionx-diag` (DEC-PHASE11-015)
+
+Ships `orionx-diag`, a 47-assertion in-ISO verification tool that an operator runs
+on a live booted system to confirm the running environment matches the build manifest
+and all Phase 11 slice tools are present and functional.
+
+**Operator invocation:** `sudo orionx-diag`
+
+**10 check categories:**
+- `identity` — `whoami == orionx-operator`, `hostname == orionx`, `/proc/cmdline` live-config tokens (4 assertions)
+- `version-manifest` — `/etc/orionx-version` KEY=VALUE fields: ISO_VERSION, BUILD_TIMESTAMP, GIT_HEAD_SHA, GIT_HEAD_TITLE, PHASE_11_SLICES (5 assertions)
+- `packages` — dpkg presence of radare2/ssdeep/md5deep/yara/python3-yara/suricata/pefile; clamav ABSENT gate (W11-7) (8 assertions)
+- `files` — Nebula model + MANIFEST.sha256, capa venv, comms/yara/suricata skeletons, optional lib, 6 installers, GTK/Plymouth/GRUB theme dirs (12 assertions)
+- `systemd` — nebula-integrity-check.service, nebula-runtime.socket, suricata lazy-start/masked, NetworkManager, lightdm (5 assertions)
+- `python` — `from control_center.app import run_app`, `import yara` (2 assertions)
+- `nebula` — ollama binary + version, model SHA-256 vs MANIFEST.sha256, integrity-check last-run status (4 assertions)
+- `branding` — Plymouth theme, xsettings.xml GTK theme, grub.cfg directive, MOTD wordmark (4 assertions)
+- `freshen` — `orionx-freshen-yara` + `orionx-freshen-suricata` symlinks + target executable (2 assertions)
+- `optional` — all 6 installers source common lib; common lib defines all 7 functions (2 assertions)
+
+**Flags:** `--json` (machine-readable for CI + Control Center W11-11b), `--category <name>` (single-category filter), `--verbose` (show SKIP reasons), `--version` (print ISO version string).
+
+**`/etc/orionx-version` extended to KEY=VALUE manifest** (backward-compatible):
+- Schema: `ISO_VERSION=`, `BUILD_TIMESTAMP=`, `GIT_HEAD_SHA=`, `GIT_HEAD_TITLE=`, `PHASE_11_SLICES=`
+- MOTD reader updated from `cat` to `grep '^ISO_VERSION=' | cut -d= -f2` (backward-compat: falls back to `v2.0.0` on pre-W11-11 images)
+- `scripts/build-iso.sh` exports `ORIONX_GIT_SHA`, `ORIONX_GIT_TITLE`, `ORIONX_PHASE_11_SLICES` into chroot env
+
+**Shipped as:** `/opt/orionx/scripts/orionx-diag` (no `.sh` suffix, per `orionx-mesh` precedent); symlinked to `/usr/bin/orionx-diag` by 0700 hook SCRIPT_MAP. Operator docs at `/opt/orionx/scripts/README.md`.
+
+**Tests:** `tests/unit/test_orionx_diag.sh` (16 assertions: structure, arg-parse, JSON shape, shellcheck); content-presence Section 27 (8 build-time assertions: source executable, shellcheck, README, hook SCRIPT_MAP, ISO_VERSION write, build-iso.sh export, squashfs presence, symlink).
+
+**Control Center Awareness pane launch button deferred to W11-11b** (Layer B). W11-11b will add a "Run Diagnostics" button to `scripts/control_center/sections/awareness.py` that spawns `pkexec orionx-diag --json`. This slice is Layer A only — no Control Center source edits. Reference: DEC-PHASE11-015.
+
 - feat(phase11): W11-8 Layer A — Optional installer framework (shared lib + 5 new stubs: ghidra/element/floss/trid/gomuks) + install-clamav.sh refactor. Layer B (Control Center badge) deferred to W11-8b.
 - fix(phase11): W11-7 — ClamAV dropped from base ISO (-350 MB); moved to /opt/orionx/optional/install-clamav.sh (DEC-PHASE11-009 LOCKED)
 - feat(phase11): W11-6 Layer A — Suricata IDS (lazy-start override + skeleton + orionx-freshen-suricata); Layer B (bundled rules + Nebula tier selector) deferred to W11-6b
