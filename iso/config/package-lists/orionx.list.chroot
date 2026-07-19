@@ -243,6 +243,13 @@ python3-capstone
 # python3-yara already added above in W11-3 Layer A.
 yara
 
+# W11-6 Layer A: Suricata IDS (DEC-PHASE11-008)
+# Lazy-start: suricata.service gated on /var/lib/suricata/orionx-enabled sentinel
+# (see /etc/systemd/system/suricata.service.d/orionx-lazy.conf).
+# Operator enables post-boot: sudo touch /var/lib/suricata/orionx-enabled && sudo systemctl start suricata
+# Layer B (W11-6b): bundled ET-Open ruleset snapshot + Nebula tier selector wiring deferred.
+suricata
+
 # Custom packages (will be installed from config/packages.chroot/)
 # orionx-custom-tools
 # orionx-theme
