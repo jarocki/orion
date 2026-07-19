@@ -1208,6 +1208,85 @@ else
 fi
 
 # ===========================================================================
+# 18. W11-9a2: GRUB theme activation — binary-tree assets + grub.cfg directives
+#
+# @decision DEC-PHASE11-013
+# @title Integration section 18: GRUB theme staged to binary-tree + generator
+#   directives present in grub.cfg (W11-9a2, closes #74)
+# @status accepted
+# @rationale W11-9a2 extends generate_bootloader_configs() to emit
+#   'set theme=/boot/grub/themes/orionx/theme.txt' (plus gfxmode + insmod png)
+#   and copies theme assets to iso/config/includes.binary/boot/grub/themes/orionx/.
+#   These assertions verify both the source-tree staging AND that the generated
+#   grub.cfg carries the required directives, proving the full chain is wired.
+#   ISO binary-partition extraction for /boot/grub/ is not part of the squashfs
+#   path so we assert against the source-tree includes.binary/ files here;
+#   the built ISO binary partition check is covered by qemu-test T9 (boot visual
+#   confirmation). isolinux MENU BACKGROUND is NOT asserted here (deferred to
+#   W11-9a3 which needs a 640x480 splash variant). DEC-PHASE11-013.
+# ===========================================================================
+section "18. W11-9a2: GRUB theme activation — binary-tree assets + grub.cfg (DEC-PHASE11-013)"
+
+GRUB_BINARY_THEME_DIR="$REPO_ROOT/iso/config/includes.binary/boot/grub/themes/orionx"
+GRUB_BINARY_CFG="$REPO_ROOT/iso/config/includes.binary/boot/grub/grub.cfg"
+
+# (a) theme.txt present in the binary tree (the live-boot GRUB path)
+if [[ -f "$GRUB_BINARY_THEME_DIR/theme.txt" ]]; then
+    pass "18a: iso/config/includes.binary/boot/grub/themes/orionx/theme.txt staged (DEC-PHASE11-013)"
+else
+    fail "18a: iso/config/includes.binary/boot/grub/themes/orionx/theme.txt staged" \
+         "generate_bootloader_configs() must copy theme.txt from the chroot tree to the binary tree"
+fi
+
+# (b) background.png present in the binary tree
+if [[ -f "$GRUB_BINARY_THEME_DIR/background.png" ]]; then
+    pass "18b: iso/config/includes.binary/boot/grub/themes/orionx/background.png staged (DEC-PHASE11-013)"
+else
+    fail "18b: iso/config/includes.binary/boot/grub/themes/orionx/background.png staged" \
+         "generate_bootloader_configs() must copy background.png from the chroot tree to the binary tree"
+fi
+
+# (c) generated grub.cfg contains 'set theme=' directive
+if [[ -f "$GRUB_BINARY_CFG" ]]; then
+    if grep -qF "set theme=/boot/grub/themes/orionx/theme.txt" "$GRUB_BINARY_CFG"; then
+        pass "18c: grub.cfg contains 'set theme=/boot/grub/themes/orionx/theme.txt' (closes #74)"
+    else
+        fail "18c: grub.cfg contains 'set theme=/boot/grub/themes/orionx/theme.txt'" \
+             "GRUB theme activation line missing — generate_bootloader_configs() did not inject it"
+    fi
+
+    # (d) grub.cfg contains insmod png
+    if grep -qF "insmod png" "$GRUB_BINARY_CFG"; then
+        pass "18d: grub.cfg contains 'insmod png' (required for PNG background rendering)"
+    else
+        fail "18d: grub.cfg contains 'insmod png'" \
+             "'insmod png' missing from grub.cfg — background.png will not render"
+    fi
+
+    # (e) grub.cfg contains set gfxmode
+    if grep -qF "set gfxmode=1024x768" "$GRUB_BINARY_CFG"; then
+        pass "18e: grub.cfg contains 'set gfxmode=1024x768' (VESA mode for theme)"
+    else
+        fail "18e: grub.cfg contains 'set gfxmode=1024x768'" \
+             "'set gfxmode' missing from grub.cfg — graphical theme mode not activated"
+    fi
+
+    # (f) W11-2 identity tokens preserved (regression guard)
+    if grep -qF "live-config.username=orionx-operator" "$GRUB_BINARY_CFG" && \
+       grep -qF "live-config.hostname=orionx" "$GRUB_BINARY_CFG"; then
+        pass "18f: W11-2 identity tokens preserved in grub.cfg after theme injection (DEC-PHASE11-012)"
+    else
+        fail "18f: W11-2 identity tokens preserved in grub.cfg after theme injection" \
+             "live-config.username/hostname missing — theme injection must not strip identity tokens"
+    fi
+else
+    fail "18c: grub.cfg accessible for theme directive check" "Not found: $GRUB_BINARY_CFG"
+    fail "18d: insmod png in grub.cfg" "grub.cfg missing"
+    fail "18e: set gfxmode in grub.cfg" "grub.cfg missing"
+    fail "18f: W11-2 identity tokens in grub.cfg" "grub.cfg missing"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

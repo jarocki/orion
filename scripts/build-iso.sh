@@ -543,6 +543,23 @@ ISOLINUX_EOF
 
     # -----------------------------------------------------------------------
     # Generate grub.cfg (UEFI bootloader)
+    #
+    # @decision DEC-PHASE11-013
+    # @title GRUB theme activation: set theme= + gfxmode + insmod png injected
+    #   by generator (W11-9a2, closes #74)
+    # @status accepted
+    # @rationale W11-9a2 activates the Orion-X Phoenix GRUB theme that was
+    #   staged at iso/config/includes.binary/boot/grub/themes/orionx/ (the path
+    #   live-build's GRUB UEFI loader reads at runtime, distinct from the
+    #   post-install path /usr/share/grub/themes/orionx/ staged by W11-9).
+    #   Three directives are inserted between "set default=0" and the first
+    #   menuentry so GRUB loads graphical mode before rendering the menu:
+    #     set gfxmode=1024x768   — VESA resolution for theme rendering
+    #     insmod png             — PNG decoder needed for background.png
+    #     set theme=…/theme.txt  — activates the orionx theme
+    #   The generator is the single authority (DEC-PHASE11-012); these lines
+    #   are regenerated on every build and cannot diverge from the staged assets.
+    #   isolinux MENU BACKGROUND is deferred to W11-9a3 (needs 640x480 variant).
     # -----------------------------------------------------------------------
     cat > "$grub_cfg" << GRUB_EOF
 # GENERATED — do not edit — regenerate via scripts/build-iso.sh
@@ -555,6 +572,13 @@ ISOLINUX_EOF
 #   will be overwritten on the next build. The rc7-rc9 dual-authority arc (where
 #   this file was hand-edited without effect on /proc/cmdline) is retired.
 #   References: DEC-PHASE11-012, DEC-PHASE10-018 (superseded), issue #64, issue #65.
+#
+# @decision DEC-PHASE11-013
+# @title GRUB theme activation (W11-9a2, closes #74)
+# @status accepted
+# @rationale set gfxmode + insmod png + set theme injected here by generator.
+#   Theme assets staged at iso/config/includes.binary/boot/grub/themes/orionx/.
+#   isolinux MENU BACKGROUND deferred to W11-9a3 (requires 640x480 splash variant).
 #
 # Generated from: iso/auto/config::--bootappend-live
 # Active cmdline (Orion-X Live menuentry):
@@ -569,6 +593,9 @@ terminal_output --append serial
 
 set timeout=1
 set default=0
+set gfxmode=1024x768
+insmod png
+set theme=/boot/grub/themes/orionx/theme.txt
 
 menuentry "Orion-X Live" {
     linux /live/vmlinuz $bootappend
@@ -582,6 +609,40 @@ menuentry "Orion-X Live (failsafe)" {
 GRUB_EOF
 
     log "  Generated: $grub_cfg"
+
+    # -----------------------------------------------------------------------
+    # Stage GRUB theme assets to the binary-tree path live-build's GRUB reads.
+    #
+    # @decision DEC-PHASE11-013 (continued)
+    # The chroot post-install path (/usr/share/grub/themes/orionx/ staged by
+    # W11-9) is distinct from the binary-partition path GRUB actually reads
+    # during live-boot (/boot/grub/themes/orionx/).  Both are needed:
+    #   - chroot path: for update-grub on an installed system
+    #   - binary path: for the live-boot GRUB menu (what we activate here)
+    # Source of truth: iso/config/includes.chroot/usr/share/grub/themes/orionx/
+    # Destination: iso/config/includes.binary/boot/grub/themes/orionx/
+    # We copy (not symlink) for reliability — live-build flattens symlinks and
+    # some toolchains do not preserve cross-layer symlinks during binary assembly.
+    # -----------------------------------------------------------------------
+    local grub_theme_src="$ISO_DIR/config/includes.chroot/usr/share/grub/themes/orionx"
+    local grub_theme_dst="$ISO_DIR/config/includes.binary/boot/grub/themes/orionx"
+
+    if [[ -d "$grub_theme_src" ]]; then
+        mkdir -p "$grub_theme_dst"
+        cp -f "$grub_theme_src/theme.txt" "$grub_theme_dst/theme.txt"
+        if [[ -f "$grub_theme_src/background.png" ]]; then
+            cp -f "$grub_theme_src/background.png" "$grub_theme_dst/background.png"
+        fi
+        log "  GRUB theme staged: $grub_theme_dst"
+        log "    theme.txt: $(wc -c < "$grub_theme_dst/theme.txt") bytes"
+        if [[ -f "$grub_theme_dst/background.png" ]]; then
+            log "    background.png: $(wc -c < "$grub_theme_dst/background.png") bytes"
+        fi
+    else
+        log "  WARN: GRUB theme source not found at $grub_theme_src — theme will not render"
+        log "        W11-9 must run before this step to stage the chroot theme assets."
+    fi
+
     log "Bootloader configs generated from single --bootappend-live source."
     log "  Identity tokens confirmed: $(echo "$bootappend" | grep -oE 'live-config\.(username|hostname)=[^ ]*' | tr '\n' ' ')"
 }
