@@ -17,6 +17,25 @@ visual identity. Target: ≤3.0 GB compressed ISO (~2.8 GB). See DEC-PHASE11-001
 
 - fix(phase11): W11-2e — Qwen SHA256 pinned in nebula-model-manifest.json (closes #67, unblocks nebula-integrity-check.service on hardware)
 
+### W11-2f: Disable XFCE auto-lock on passwordless live account (closes #76)
+
+Field evidence (2026-07-16): operator idle-timed-out on live desktop; xfce4-screensaver
+locked the screen with a password prompt against the `orionx` passwordless account; empty
+password was rejected; graphical session bricked until reboot. High-priority bricking bug
+for any long-running analysis (packet capture, YARA scan, memory dump).
+
+- fix(phase11): W11-2f — Layer 1: `0100-create-user.hook.chroot` extended to write
+  `/home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml` with
+  `lock/enabled=false`, `saver/enabled=false`, `saver/idle-activation/enabled=false`.
+  Single-authority pattern per DEC-PHASE9-002 preserved — NOT `/etc/skel`.
+- fix(phase11): W11-2f — Layer 2: `iso/config/includes.chroot/etc/xdg/autostart/orionx-disable-screen-lock.desktop`
+  runs `xset s off; xset -dpms; xset s noblank; xfce4-screensaver-command --exit` at XFCE
+  session start (belt-and-suspenders against future schema renames or tmpfs corruption).
+- fix(phase11): W11-2f — Layer 3 (package purge) explicitly rejected: `xfce4-screensaver`
+  is a transitive dependency of `xfce4-goodies`; purge risks pulling the XFCE session.
+  Layers 1+2 disable the harmful behavior without fighting the packaging graph.
+- closes #76
+
 ### W11-9a: Boot chain cyberdeck branding — Plymouth + GRUB + isolinux + LightDM
 
 Ship the pre-XFCE visual identity chain so Orion-X identity is visible from
