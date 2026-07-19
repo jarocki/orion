@@ -1913,6 +1913,103 @@ else
 fi
 
 # ===========================================================================
+# 23. W11-5 Layer A: matrix-commander comms skeleton
+#
+# @decision DEC-PHASE11-006
+# @title W11-5 Layer A content-presence section 23: matrix-commander pip venv +
+#   comms skeleton README + .desktop launcher
+# @status accepted
+# @rationale W11-5 Layer A stages the Matrix team comms infrastructure:
+#   (a) /opt/orionx/venv/comms/bin/matrix-commander installed (soft-fail — venv
+#       install may skip if network unavailable at build time);
+#   (b) /opt/orionx/comms/README.md documents Layer A/B/C plan;
+#   (c) /usr/share/applications/orionx-matrix-commander.desktop staged for XFCE
+#       application menu;
+#   (d) /usr/local/bin/matrix-commander symlink present when venv install succeeded;
+#   (e) /opt/orionx/comms/gomuks/ NOT present (Layer B sentinel — deferred to W11-5b).
+# ===========================================================================
+section "23. W11-5 Layer A: matrix-commander comms skeleton (DEC-PHASE11-006)"
+
+# ---------------------------------------------------------------------------
+# 23a. /opt/orionx/venv/comms/bin/matrix-commander present (soft-fail)
+# ---------------------------------------------------------------------------
+MATRIX_COMMANDER_BIN="$SQF/opt/orionx/venv/comms/bin/matrix-commander"
+if [[ -f "$MATRIX_COMMANDER_BIN" ]]; then
+    pass "23a: /opt/orionx/venv/comms/bin/matrix-commander installed (W11-5 Layer A, DEC-PHASE11-006)"
+else
+    # matrix-commander is installed by 0500 hook which is soft-fail when network
+    # unavailable. Record a note rather than a hard fail so builds without network
+    # connectivity (e.g. air-gap CI runs) are not blocked by this assertion.
+    echo "  NOTE: 23a: /opt/orionx/venv/comms/bin/matrix-commander not found — venv install"
+    echo "        may not have run (0500 hook soft-fails when network is unavailable; not a hard failure)"
+    pass "23a: matrix-commander venv check: soft-fail expected when network unavailable at build time (informational only)"
+fi
+
+# ---------------------------------------------------------------------------
+# 23b. /opt/orionx/comms/README.md present
+# ---------------------------------------------------------------------------
+COMMS_README="$SQF/opt/orionx/comms/README.md"
+if [[ -f "$COMMS_README" ]]; then
+    pass "23b: /opt/orionx/comms/README.md present in squashfs (W11-5 skeleton)"
+else
+    fail "23b: /opt/orionx/comms/README.md present in squashfs" \
+         "iso/config/includes.chroot/opt/orionx/comms/README.md not staged — check includes.chroot"
+fi
+
+# ---------------------------------------------------------------------------
+# 23c. /usr/share/applications/orionx-matrix-commander.desktop present
+# ---------------------------------------------------------------------------
+MATRIX_DESKTOP="$SQF/usr/share/applications/orionx-matrix-commander.desktop"
+if [[ -f "$MATRIX_DESKTOP" ]]; then
+    pass "23c: /usr/share/applications/orionx-matrix-commander.desktop present (W11-5 XFCE launcher)"
+    # Desktop entry must reference xfce4-terminal (not lxterminal — DEC-PHASE9-006)
+    # || true: DEC-PHASE9-014 — grep exits 1 on no-match; zero refs is the desired state.
+    LXTERM_IN_MATRIX=$(grep -c "lxterminal" "$MATRIX_DESKTOP" 2>/dev/null || true)
+    if [[ "$LXTERM_IN_MATRIX" -eq 0 ]]; then
+        pass "23c: orionx-matrix-commander.desktop has zero lxterminal references (DEC-PHASE9-006)"
+    else
+        fail "23c: orionx-matrix-commander.desktop has zero lxterminal references" \
+             "Found $LXTERM_IN_MATRIX lxterminal reference(s) — violates DEC-PHASE9-006; use xfce4-terminal"
+    fi
+else
+    fail "23c: /usr/share/applications/orionx-matrix-commander.desktop present" \
+         "iso/config/includes.chroot/usr/share/applications/orionx-matrix-commander.desktop not staged"
+fi
+
+# ---------------------------------------------------------------------------
+# 23d. /usr/local/bin/matrix-commander symlink (best-effort when venv installed)
+# ---------------------------------------------------------------------------
+# Only assert the symlink if the venv binary is present; if the venv install
+# was skipped (network unavailable), the symlink will also be absent — both
+# are expected and not a build failure. DEC-PHASE9-014 pipefail guard: we use
+# [[ -L ]] || [[ -f ]] which do not trigger pipefail.
+if [[ -f "$MATRIX_COMMANDER_BIN" ]]; then
+    if [[ -L "$SQF/usr/local/bin/matrix-commander" ]] || \
+       [[ -f "$SQF/usr/local/bin/matrix-commander" ]]; then
+        pass "23d: /usr/local/bin/matrix-commander symlink/file present (0500 hook ln -sf)"
+    else
+        fail "23d: /usr/local/bin/matrix-commander symlink present" \
+             "0500 hook should create ln -sf /opt/orionx/venv/comms/bin/matrix-commander /usr/local/bin/matrix-commander when venv is installed"
+    fi
+else
+    echo "  NOTE: 23d: /usr/local/bin/matrix-commander symlink check skipped (venv not installed — soft-fail)"
+    pass "23d: matrix-commander symlink check: skipped (venv not installed; soft-fail per DEC-PHASE11-006)"
+fi
+
+# ---------------------------------------------------------------------------
+# 23e. /opt/orionx/comms/gomuks/ NOT present (Layer B sentinel — W11-5b will flip)
+# ---------------------------------------------------------------------------
+# Layer A intentionally ships NO gomuks binary; operators wait for W11-5b.
+# When W11-5b lands and stages the gomuks static binary, this assertion should
+# be inverted to REQUIRE its presence.
+if [[ ! -d "$SQF/opt/orionx/comms/gomuks" ]]; then
+    pass "23e: /opt/orionx/comms/gomuks/ NOT present (Layer B sentinel — deferred to W11-5b)"
+else
+    fail "23e: /opt/orionx/comms/gomuks/ NOT present" \
+         "gomuks directory found — Layer A should not include gomuks. If W11-5b has landed, invert this assertion."
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
