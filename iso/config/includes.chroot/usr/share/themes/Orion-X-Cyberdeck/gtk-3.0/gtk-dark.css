@@ -1,0 +1,31 @@
+/*
+ * Orion-X-Cyberdeck GTK3 dark variant
+ *
+ * @decision DEC-PHASE11-010
+ * @title W11-9b: gtk-dark.css mirrors gtk.css for programs requesting the dark variant
+ * @status accepted
+ * @rationale Some GTK3 programs query gtk-dark.css directly (via
+ *   prefer-dark-theme=true or GDK_THEME env). This file applies the same
+ *   Phoenix accent overrides as gtk.css but references the Adwaita dark variant.
+ *   Upstream: Adwaita-dark LGPL-2.1+.
+ *   License: LGPL-2.1+ (derived from Adwaita-dark; same modification set as gtk.css).
+ */
+
+/* Import Adwaita dark base, then override accent tokens */
+@import url("resource:///org/gtk/libgtk/theme/Adwaita/gtk-dark.css");
+
+/* Phoenix accent tokens — same as gtk.css */
+@define-color theme_selected_bg_color #FF5722;
+@define-color theme_selected_fg_color #ffffff;
+@define-color accent_color #FF5722;
+@define-color accent_bg_color #FF5722;
+@define-color accent_fg_color #ffffff;
+
+/* Progress bar — Phoenix orange */
+progressbar trough { background-color: #2d2d2d; }
+progressbar progress { background-color: #FF5722; }
+entry selection { background-color: #FF5722; color: #ffffff; }
+*:focus { outline-color: alpha(#FF5722, 0.7); }
+button.suggested-action { background-color: #FF5722; color: #ffffff; }
+button.suggested-action:hover { background-color: #E64A19; color: #ffffff; }
+scrollbar slider:hover { background-color: alpha(#FF5722, 0.6); }

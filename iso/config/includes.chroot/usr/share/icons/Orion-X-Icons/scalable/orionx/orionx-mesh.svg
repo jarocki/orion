@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Orion-X Phoenix Edition — Mesh CLI icon -->
+<!-- @decision DEC-PHASE11-010 — Orion-X-Icons orionx-mesh symbol -->
+<!-- License: GPL-3.0+ (Orion-X project, original work) -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <circle cx="24" cy="24" r="23" fill="#1a1a1a" stroke="#FF5722" stroke-width="1"/>
+  <!-- Mesh network nodes + edges -->
+  <circle cx="24" cy="10" r="3.5" fill="#FF5722"/>
+  <circle cx="10" cy="24" r="3.5" fill="#FF5722"/>
+  <circle cx="38" cy="24" r="3.5" fill="#FF5722"/>
+  <circle cx="17" cy="36" r="3.5" fill="#FF5722"/>
+  <circle cx="31" cy="36" r="3.5" fill="#FF5722"/>
+  <circle cx="24" cy="24" r="3.5" fill="#E64A19"/>
+  <!-- Edges -->
+  <line x1="24" y1="13.5" x2="24" y2="20.5" stroke="#FF5722" stroke-width="1.5"/>
+  <line x1="13.5" y1="24" x2="20.5" y2="24" stroke="#FF5722" stroke-width="1.5"/>
+  <line x1="27.5" y1="24" x2="34.5" y2="24" stroke="#FF5722" stroke-width="1.5"/>
+  <line x1="21.5" y1="26.5" x2="18.5" y2="32.5" stroke="#FF5722" stroke-width="1.5"/>
+  <line x1="26.5" y1="26.5" x2="29.5" y2="32.5" stroke="#FF5722" stroke-width="1.5"/>
+  <line x1="22" y1="36" x2="13.5" y2="27" stroke="#555" stroke-width="1"/>
+  <line x1="26" y1="36" x2="36.5" y2="27" stroke="#555" stroke-width="1"/>
+</svg>

@@ -1,0 +1,76 @@
+/*
+ * Orion-X-Cyberdeck GTK3 theme
+ *
+ * @decision DEC-PHASE11-010
+ * @title W11-9b: Orion-X-Cyberdeck derived from Adwaita-dark (LGPL-2.1+)
+ * @status accepted
+ * @rationale Upstream source: Adwaita-dark from gtk3-engines-adwaita
+ *   Debian Bullseye package v3.24.24-4+deb11u5.
+ *   Upstream URL: https://gitlab.gnome.org/GNOME/gnome-themes-extra
+ *   License: LGPL-2.1+ (Lesser General Public License version 2.1 or later).
+ *   This file retains LGPL-2.1+ compliance.
+ *
+ *   MODIFICATIONS vs. Adwaita-dark (the only changes are listed here):
+ *     - @define-color theme_selected_bg_color changed to #FF5722 (Phoenix red-orange)
+ *     - @define-color theme_selected_fg_color set to #ffffff
+ *     - @define-color accent_color set to #FF5722 (Phoenix red-orange)
+ *     - @define-color accent_bg_color set to #FF5722
+ *     - @define-color accent_fg_color set to #ffffff
+ *   Everything else inherits from Adwaita-dark via @import below.
+ *   The original Adwaita-dark file is NOT shipped verbatim alongside this file
+ *   to avoid doubling the theme size; this file is a thin delta wrapper.
+ *
+ * @decision DEC-PHASE11-014
+ * @title R6 fix: theme name resolves because xsettings.xml is seeded to /etc/skel/
+ * @status accepted
+ * @rationale This theme file is inert unless ThemeName=Orion-X-Cyberdeck is set
+ *   in xfce4's xsettings channel. The xsettings.xml written to
+ *   /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml by
+ *   0100-create-user.hook.chroot (per DEC-PHASE11-014) carries that setting.
+ *   Live-config copies /etc/skel/ to /home/orionx-operator/ at boot, making
+ *   this theme the XFCE session default — the R6 fix end-to-end.
+ */
+
+/*
+ * Phoenix red-orange accent — supersedes GNOME blue across all accent targets.
+ * GTK CSS custom property resolution: last-writer wins per spec. We @import
+ * Adwaita-dark first so that our @define-color declarations below override
+ * any same-named tokens Adwaita defines. Correct ordering: IMPORT FIRST,
+ * then override — declarations after the import take precedence.
+ */
+@import url("resource:///org/gtk/libgtk/theme/Adwaita/gtk-dark.css");
+
+/* Orion-X Phoenix accent — overrides GNOME blue tokens from Adwaita-dark */
+@define-color theme_selected_bg_color #FF5722;
+@define-color theme_selected_fg_color #ffffff;
+@define-color accent_color #FF5722;
+@define-color accent_bg_color #FF5722;
+@define-color accent_fg_color #ffffff;
+
+/* Progress bar — Phoenix orange fill */
+progressbar trough { background-color: #2d2d2d; }
+progressbar progress { background-color: #FF5722; }
+
+/* Selected text highlight in entries */
+entry selection { background-color: #FF5722; color: #ffffff; }
+
+/* Focus ring / outline on interactive widgets */
+*:focus { outline-color: alpha(#FF5722, 0.7); }
+
+/* Notebook tab active — Phoenix accent underline */
+notebook > header > tabs > tab:checked {
+    border-bottom-color: #FF5722;
+}
+
+/* Button default/suggested-action accent */
+button.suggested-action {
+    background-color: #FF5722;
+    color: #ffffff;
+}
+button.suggested-action:hover {
+    background-color: #E64A19;
+    color: #ffffff;
+}
+
+/* Scrollbar slider — subtle Phoenix tint on hover */
+scrollbar slider:hover { background-color: alpha(#FF5722, 0.6); }

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Orion-X Phoenix Edition — Phoenix mark icon -->
+<!-- @decision DEC-PHASE11-010 — Orion-X-Icons orionx-phoenix symbol -->
+<!-- License: GPL-3.0+ (Orion-X project, original work) -->
+<!-- Phoenix red-orange (#FF5722) primary fill; dark background (#1a1a1a) -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- Dark background circle -->
+  <circle cx="24" cy="24" r="23" fill="#1a1a1a" stroke="#FF5722" stroke-width="1"/>
+  <!-- Phoenix silhouette — stylized rising bird shape -->
+  <!-- Body -->
+  <ellipse cx="24" cy="27" rx="7" ry="9" fill="#FF5722"/>
+  <!-- Left wing -->
+  <path d="M17 24 Q8 14 12 8 Q16 18 17 24Z" fill="#FF5722"/>
+  <!-- Right wing -->
+  <path d="M31 24 Q40 14 36 8 Q32 18 31 24Z" fill="#FF5722"/>
+  <!-- Tail feathers -->
+  <path d="M20 34 Q18 42 15 44 Q21 38 24 36 Q27 38 33 44 Q30 42 28 34Z" fill="#E64A19"/>
+  <!-- Head -->
+  <circle cx="24" cy="18" r="4" fill="#FF5722"/>
+  <!-- Beak -->
+  <path d="M24 14 L26 11 L22 11Z" fill="#FF8A65"/>
+  <!-- Eye -->
+  <circle cx="25" cy="17" r="1.2" fill="#1a1a1a"/>
+  <!-- Crest feathers -->
+  <path d="M24 14 Q22 9 20 7 Q23 11 24 14Z" fill="#FF5722"/>
+  <path d="M24 14 Q26 9 28 7 Q25 11 24 14Z" fill="#FF5722"/>
+</svg>

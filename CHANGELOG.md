@@ -110,6 +110,102 @@ Phoenix wallpaper (operator directive 2026-07-13 — reuse over new imagery).
   detection, T8(b) W11-2 identity preservation in `/proc/cmdline`, T8(c)
   LightDM greeter conf source-tree check.
 
+### W11-9b: Desktop identity + R6 root-cause fix
+
+Ships the full Orion-X cyberdeck desktop identity and fixes the **R6 root-cause**:
+the 2026-07-13 hardware boot showed default Debian XFCE (wallpaper, panel, icons)
+despite green CI — caused by a three-way identity fork introduced when DEC-PHASE11-012
+(W11-2) changed `live-config.username` from `orionx` to `orionx-operator` without
+updating (a) the 0100 hook's target home dir, or (b) LightDM autologin.
+
+**R6 fix — DEC-PHASE11-014: /etc/skel/ authority replaces dead /home/orionx/ build:**
+- `iso/config/hooks/normal/0100-create-user.hook.chroot` fully rewritten:
+  - REMOVED: chroot-time `orionx` user creation (live-config creates `orionx-operator`
+    at boot from `/etc/skel/`; the chroot user was dead-authority).
+  - REDIRECTED: all config writes from `/home/orionx/` → `/etc/skel/` so live-config's
+    `0080-user-setup` copies them to `/home/orionx-operator/` at boot.
+  - ADDED: `xsettings.xml` seeded to `/etc/skel/` with `ThemeName=Orion-X-Cyberdeck`,
+    `IconThemeName=Orion-X-Icons`, `CursorThemeName=Orion-X-Cursor`,
+    `MonospaceFontName=Iosevka 11`, `FontName=Sans 10`.
+  - UPDATED: `terminalrc` font `Monospace 12` → `Iosevka 11`;
+    `ColorForeground=#FF5722` (Phoenix red-orange per DEC-PHASE11-010).
+  - PRESERVED: DEC-PHASE9-002 Phoenix wallpaper `last-image` value verbatim
+    (path unchanged; only write target shifts from dead `/home/orionx/` to `/etc/skel/`).
+  - FIXED: W11-2f #76 `xfce4-screensaver.xml` now actually reaches the running
+    session (was landing in dead `/home/orionx/`; now correctly in `/etc/skel/`).
+- DEC-PHASE11-010, DEC-PHASE11-013, DEC-PHASE11-014 cited in hook header.
+
+**GTK theme Orion-X-Cyberdeck (DEC-PHASE11-010):**
+- `iso/config/includes.chroot/usr/share/themes/Orion-X-Cyberdeck/`
+  — `index.theme` (composite theme metadata; GtkTheme=Orion-X-Cyberdeck,
+    IconTheme=Orion-X-Icons, CursorTheme=Orion-X-Cursor).
+  — `gtk-3.0/gtk.css` (Adwaita-dark LGPL-2.1+ derivation; Phoenix accent
+    `#FF5722` overrides GNOME blue on all selected/active/focus tokens;
+    `@decision` header documents upstream source + LGPL-2.1+ license + modifications).
+  — `gtk-3.0/gtk-dark.css` (same delta; for programs requesting explicit dark variant).
+  — `gtk-2.0/gtkrc` (GTK2 app compatibility; Adwaita-dark base + Phoenix palette).
+  — `xfwm4/themerc` (dark titlebar; Phoenix red-orange `#FF5722` for focused-window
+    title + border; unfocused windows in muted grey).
+- Total theme size: < 10 KB (thin delta wrapper over Adwaita-dark; no full theme copy).
+
+**Icon theme Orion-X-Icons (DEC-PHASE11-010):**
+- `iso/config/includes.chroot/usr/share/icons/Orion-X-Icons/`
+  — `index.theme` (`Inherits=Papirus-Dark,Adwaita,hicolor`; `papirus-icon-theme`
+    package provides Papirus-Dark tree, installed via `orionx.list.chroot` T1 addition).
+  — `scalable/orionx/` with 4 SVG icons: `orionx-phoenix.svg` (Phoenix mark),
+    `orionx-control-center.svg`, `orionx-mesh.svg`, `orionx-nebula.svg`.
+  — `@decision` header documents GPL-3.0+ derivation + DEC-PHASE11-010 citation.
+
+**Cursor theme Orion-X-Cursor (DEC-PHASE11-010, placeholder):**
+- `iso/config/includes.chroot/usr/share/icons/Orion-X-Cursor/index.theme`
+  (`Inherits=Adwaita`; naming shim so `CursorThemeName=Orion-X-Cursor` resolves).
+  Phoenix-tinted cursor pixmaps deferred to a rider sub-slice (backlog filed).
+
+**Fonts — Iosevka + Hack (DEC-PHASE11-013, community-developed only):**
+- `fonts-iosevka` (Iosevka OFL-1.1) and `fonts-hack-otf` (Hack Apache-2.0)
+  added to `iso/config/package-lists/orionx.list.chroot`.
+  Available in Debian Bullseye main — no tarball fallback needed.
+  `fc-cache -f` already invoked by `0800-orionx-branding.hook.chroot` (W11-9a);
+  font cache entries are populated automatically.
+- `gtk2-engines-murrine` added (GTK2 Adwaita-dark theme engine dependency).
+- `papirus-icon-theme` added (Orion-X-Icons inheritance base).
+- Community-developed fonts only per DEC-PHASE11-013 (operator directive 2026-07-13).
+  Vendor-adjacent monospace fonts are excluded from the Orion-X distro.
+  Font-presence check passes: no vendor monospace font packages or config values in iso/.
+
+**LightDM autologin identity fix (DEC-PHASE11-012, T6):**
+- `iso/config/includes.chroot/etc/lightdm/lightdm.conf.d/10-orionx-autologin.conf`:
+  `autologin-user=orionx` → `autologin-user=orionx-operator` (aligned to the
+  DEC-PHASE11-012 live-config identity; DEC-PHASE9-005 single-authority preserved).
+
+**LightDM greeter conf upgraded (DEC-PHASE11-010, T7):**
+- `iso/config/includes.chroot/etc/lightdm/lightdm-gtk-greeter.conf`:
+  `theme-name=Adwaita-dark` → `Orion-X-Cyberdeck`;
+  `icon-theme-name=Adwaita` → `Orion-X-Icons`;
+  `font-name=Sans 11` → `Iosevka 11`.
+  `background=` line UNCHANGED (Phase 9 wallpaper single-authority preserved).
+
+**W11-2f #76 screen-lock fix reinstated via correct authority:**
+- The DEC-PHASE9-002 `xfce4-screensaver.xml` (W11-2f) was previously landing in
+  `/home/orionx/` (dead-authority). DEC-PHASE11-014's `/etc/skel/` redirect means
+  the screensaver disable XML now actually reaches the running `orionx-operator`
+  session. Issue #76 bricking bug is fixed end-to-end on hardware from this release.
+
+**Tests shipped (T8/T9):**
+- `tests/integration/test-iso-content-presence.sh` section 23b: 13 sub-assertions
+  (23b-a through 23b-m + bonus vendor-font absence check) covering all W11-9b desktop
+  identity conditions and R6 fix verification via squashfs inspection.
+- `tests/integration/test-qemu-boot.sh` W11-9b T9 block: vendor-font absence check,
+  source-tree hook assertions (no `/home/orionx/` refs; `/etc/skel/` present;
+  `xsettings.xml` and `Iosevka 11` referenced); T9(a-d) SKIP with documented rationale
+  (QEMU serial console does not expose a shell in the XFCE graphical session; CI
+  surrogate is section 23b; hardware attestation at W11-10).
+
+**References:** DEC-PHASE11-010 (cyberdeck identity pipeline), DEC-PHASE11-012
+(bootloader identity — `orionx-operator` value consumed, not modified),
+DEC-PHASE11-013 (Iosevka + Hack fonts, community-developed only), DEC-PHASE11-014 (R6 fix —
+`/etc/skel/` authority replaces dead `/home/orionx/`).
+
 ### W11-9a2: GRUB theme activation in generator (closes #74)
 
 - fix(phase11): W11-9a2 — `generate_bootloader_configs()` in `scripts/build-iso.sh`

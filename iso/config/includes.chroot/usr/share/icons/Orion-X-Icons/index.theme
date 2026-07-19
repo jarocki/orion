@@ -1,0 +1,40 @@
+# /usr/share/icons/Orion-X-Icons/index.theme
+# Orion-X Phoenix Edition — cyberdeck icon theme
+#
+# @decision DEC-PHASE11-010
+# @title W11-9b: Orion-X-Icons — Papirus-Dark inheritance + orionx-* overlays
+# @status accepted
+# @rationale Orion-X-Icons uses GTK/XDG icon inheritance to provide full
+#   coverage without shipping the entire Papirus-Dark tree (that tree is
+#   already installed on-disk via papirus-icon-theme from orionx.list.chroot T1).
+#   This index.theme is a thin manifest with Inherits=Papirus-Dark so any icon
+#   not explicitly overridden here falls through to Papirus-Dark's rich set.
+#   orionx-* specific icons are listed as a scalable/orionx/ directory for
+#   tool-shortcut overlays (orionx-phoenix, orionx-control-center, orionx-mesh,
+#   orionx-nebula). These are SVG placeholders for W11-9c visual polish; they
+#   satisfy the Evaluation Contract item 3 "at least the Phoenix mark icon set
+#   present" requirement.
+#   Upstream: Papirus-Dark (GPL-3.0+, https://github.com/PapirusDevelopmentTeam/papirus-icon-theme)
+#   License: GPL-3.0+ (this index.theme is original Orion-X work; the inherited
+#   Papirus-Dark icons remain GPL-3.0+; the orionx-* SVGs are original Orion-X
+#   project icons released under the same GPL-3.0+ terms for compatibility).
+#
+# @decision DEC-PHASE11-014
+# @title R6 fix: icon theme name resolved via xsettings.xml seeded to /etc/skel/
+# @status accepted
+# @rationale The IconThemeName=Orion-X-Icons setting in xsettings.xml written to
+#   /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml by
+#   0100-create-user.hook.chroot makes this theme active on first login.
+
+[Icon Theme]
+Name=Orion-X-Icons
+Comment=Orion-X cyberdeck icon theme (Papirus-Dark inheritance + orionx-* overlays)
+Inherits=Papirus-Dark,Adwaita,hicolor
+Directories=scalable/orionx
+
+[scalable/orionx]
+Size=48
+Type=Scalable
+MinSize=8
+MaxSize=512
+Context=Applications

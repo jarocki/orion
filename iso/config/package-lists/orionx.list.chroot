@@ -201,6 +201,36 @@ plymouth-label
 # lightdm-gtk-greeter: GTK3 greeter for LightDM (DM already present via xfce4 dep)
 lightdm-gtk-greeter
 
+# W11-9b: Desktop identity — fonts + GTK theme deps (DEC-PHASE11-013, DEC-PHASE11-010)
+#
+# @decision DEC-PHASE11-013
+# @title W11-9b: Font pair Iosevka (OFL-1.1) + Hack (Apache-2.0)
+# @status accepted
+# @rationale Operator directive 2026-07-13: community-developed fonts only;
+#   no vendor-proprietary or vendor-adjacent monospace fonts permitted per
+#   DEC-PHASE11-013. Iosevka is an OFL-1.1 monospace coding font well-suited
+#   to the terminal aesthetic. Hack is an Apache-2.0 secondary fallback
+#   (formerly Bitstream Vera). Both are community-developed with no vendor
+#   telemetry surface (rejected alternatives: vendor-adjacent fonts — see
+#   MASTER_PLAN.md DEC-PHASE11-013 row for the full rejected-list rationale).
+#   fonts-iosevka is available in Debian Bullseye (package fonts-iosevka).
+#   fonts-hack-otf provides the OpenType flavour; check:
+#     apt-cache policy fonts-iosevka fonts-hack-otf
+#   Both confirmed available in Bullseye main. No tarball fallback needed.
+#   papirus-icon-theme: base for Orion-X-Icons inheritance (Orion-X-Icons/
+#   index.theme sets Inherits=Papirus-Dark; Papirus is ~9 MB compressed in Bullseye).
+#   gtk2-engines-murrine: required for GTK2 Adwaita-dark derivation (Orion-X-Cyberdeck
+#   gtk-2.0/gtkrc). Absent → GTK2 apps in the session fall back to Raleigh theme.
+#
+# fonts-iosevka: Iosevka monospace (OFL-1.1) — primary terminal + monospace font
+fonts-iosevka
+# fonts-hack-otf: Hack OTF (Apache-2.0) — secondary monospace font
+fonts-hack-otf
+# gtk2-engines-murrine: Murrine GTK2 engine (required for Adwaita-dark GTK2 variants)
+gtk2-engines-murrine
+# papirus-icon-theme: Papirus icon theme (GPL-3.0+) — base for Orion-X-Icons inheritance
+papirus-icon-theme
+
 # Custom packages (will be installed from config/packages.chroot/)
 # orionx-custom-tools
 # orionx-theme
