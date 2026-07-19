@@ -735,12 +735,15 @@ HOOK_0100="${REPO_ROOT}/iso/config/hooks/normal/0100-create-user.hook.chroot"
 
 if [[ -f "${HOOK_0100}" ]]; then
     # The hook must write to /etc/skel/ — not /home/orionx/
-    _HOOK_HOME_ORIONX=$(grep -c "/home/orionx" "${HOOK_0100}" 2>/dev/null || true)
+    # Exclude comment lines (lines starting with optional whitespace then #) so that
+    # historical @decision annotation comments referencing /home/orionx/ (dead-authority
+    # notes, DEC-PHASE9-002 rationale) do not trigger a false positive.
+    _HOOK_HOME_ORIONX=$(grep -v "^[[:space:]]*#" "${HOOK_0100}" 2>/dev/null | grep -c "/home/orionx" || true)
     if [[ "${_HOOK_HOME_ORIONX}" -eq 0 ]]; then
-        _w119b_pass "T9(static-hook) 0100 hook: no /home/orionx/ references (DEC-PHASE11-014 R6 fix)"
+        _w119b_pass "T9(static-hook) 0100 hook: no /home/orionx/ references in non-comment lines (DEC-PHASE11-014 R6 fix)"
     else
-        _w119b_fail "T9(static-hook) 0100 hook: no /home/orionx/ references" \
-            "Found ${_HOOK_HOME_ORIONX} /home/orionx/ reference(s) — hook not fully migrated to /etc/skel/ (DEC-PHASE11-014)"
+        _w119b_fail "T9(static-hook) 0100 hook: no /home/orionx/ references in non-comment lines" \
+            "Found ${_HOOK_HOME_ORIONX} non-comment /home/orionx/ reference(s) — hook not fully migrated to /etc/skel/ (DEC-PHASE11-014)"
     fi
 
     # The hook must write to /etc/skel/

@@ -279,6 +279,24 @@ ColorCursor=#aaaaaa
 ColorPalette=#2e3436;#cc0000;#4e9a06;#c4a000;#3465a4;#75507b;#06989a;#d3d7cf;#555753;#ef2929;#8ae234;#fce94f;#729fcf;#ad7fa8;#34e2e2;#eeeeec
 EOF
 
+# ---
+# xfwm4.xml — window decoration theme (Fix 2, W11-9b iter-2).
+# Sets xfwm4 theme to Orion-X-Cyberdeck and title font to Iosevka Bold 10.
+# DEC-PHASE11-010: Orion-X-Cyberdeck is the single GTK + window decoration theme.
+# xfwm4's xfconf channel is the single authority for window manager theme selection.
+# Without this XML, xfwm4 falls back to the XFCE default (Adwaita/Default) even
+# when xsettings.xml correctly sets GTK ThemeName=Orion-X-Cyberdeck.
+# ---
+cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfwm4" version="1.0">
+  <property name="general" type="empty">
+    <property name="theme" type="string" value="Orion-X-Cyberdeck"/>
+    <property name="title_font" type="string" value="Iosevka Bold 10"/>
+  </property>
+</channel>
+EOF
+
 # MOTD authority: /etc/update-motd.d/10-orionx-welcome is written by
 # iso/config/hooks/live/0700-orionx-setup.hook.chroot (single authority).
 # Do NOT write it here.

@@ -33,11 +33,10 @@
 
 /*
  * Phoenix red-orange accent — supersedes GNOME blue across all accent targets.
- * These @define-color declarations are evaluated BEFORE the Adwaita-dark import
- * and override the same tokens if Adwaita-dark's resource CSS also defines them.
- * GTK CSS custom property resolution: last-writer wins per spec; since we @import
- * after our own definitions, Adwaita's blue definitions would overwrite ours.
- * Correct ordering: IMPORT FIRST, then override.
+ * GTK CSS custom property resolution: last-writer wins per spec. We @import
+ * Adwaita-dark first so that our @define-color declarations below override
+ * any same-named tokens Adwaita defines. Correct ordering: IMPORT FIRST,
+ * then override — declarations after the import take precedence.
  */
 @import url("resource:///org/gtk/libgtk/theme/Adwaita/gtk-dark.css");
 
