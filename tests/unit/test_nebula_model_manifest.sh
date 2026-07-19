@@ -108,19 +108,35 @@ fi
 echo ""
 
 # ===========================================================================
-# T4: model_sha256 is a 64-char lowercase hex string OR the allowed sentinel
+# T4: model_sha256 is a 64-char lowercase hex string (sentinel no longer accepted)
+#     W11-2e: SHA is now pinned; TBD-VERIFY-AT-DOWNLOAD is a hard failure.
 # ===========================================================================
-echo "[T4] model_sha256 is 64-char lowercase hex or TBD sentinel"
+echo "[T4] model_sha256 is 64-char lowercase hex (sentinel string rejected)"
 SHA256="$(python3 -c "import json; print(json.load(open('$MANIFEST'))['model_sha256'])" 2>/dev/null)"
 SENTINEL="TBD-VERIFY-AT-DOWNLOAD"
 if [[ "$SHA256" == "$SENTINEL" ]]; then
-    pass "model_sha256 is the trust-on-first-use sentinel ($SENTINEL)"
-    echo "  NOTE: Pin the real SHA-256 after the first successful build (DEC-PHASE10-008)."
+    fail "model_sha256 must be a pinned 64-char lowercase hex string" \
+         "Got sentinel '$SENTINEL' — pin the real SHA-256 from CI build log (DEC-PHASE10-008, W11-2e, closes #67)"
 elif [[ ${#SHA256} -eq 64 ]] && echo "$SHA256" | grep -qE '^[0-9a-f]{64}$'; then
     pass "model_sha256 is a 64-char lowercase hex string"
 else
-    fail "model_sha256 is 64-char hex or TBD sentinel" \
-         "Got: '$SHA256' (len=${#SHA256}) — expected 64-char hex or '$SENTINEL'"
+    fail "model_sha256 is 64-char lowercase hex" \
+         "Got: '$SHA256' (len=${#SHA256}) — expected 64-char lowercase hex"
+fi
+echo ""
+
+# ===========================================================================
+# T4b: model_sha256 matches the specific pinned value from CI run 29305215942
+#      (DEC-PHASE10-008, DEC-PHASE11-002; deterministic GGUF SHA, W11-2e)
+# ===========================================================================
+echo "[T4b] model_sha256 matches pinned CI SHA from build run 29305215942"
+EXPECTED_SHA="9c9f56a391a3abbd5b89d0245bf6106081bcc3173119d4229235dd9d23253f94"
+SHA256_B="$(python3 -c "import json; print(json.load(open('$MANIFEST'))['model_sha256'])" 2>/dev/null)"
+if [[ "$SHA256_B" == "$EXPECTED_SHA" ]]; then
+    pass "model_sha256 == $EXPECTED_SHA (CI run 29305215942, DEC-PHASE10-008)"
+else
+    fail "model_sha256 == expected pinned SHA" \
+         "Got: '$SHA256_B' — expected '$EXPECTED_SHA' (from CI build log run 29305215942)"
 fi
 echo ""
 
