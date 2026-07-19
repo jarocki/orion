@@ -1,0 +1,40 @@
+# /usr/share/themes/Orion-X-Cyberdeck/index.theme
+# Orion-X Phoenix Edition — cyberdeck GTK theme metadata
+#
+# @decision DEC-PHASE11-010
+# @title W11-9b: Orion-X-Cyberdeck GTK theme — Adwaita-dark derivation + Phoenix accent
+# @status accepted
+# @rationale Orion-X-Cyberdeck is derived from Adwaita-dark (LGPL-2.1+,
+#   gtk3-engines-adwaita Debian Bullseye package v3.24.24-4+deb11u5).
+#   Modifications: accent_color (#FF5722 Phoenix red-orange) overrides GNOME blue
+#   in gtk-3.0/gtk.css; xfwm4/themerc carries the same accent for focused-window
+#   titlebar; gtk-2.0/gtkrc provides GTK2 app compatibility.
+#   This index.theme registers the composite theme under one Orion-X-Cyberdeck name
+#   so xfconf ThemeName=Orion-X-Cyberdeck resolves consistently.
+#   Icon theme and cursor theme are companion themes (separate directories).
+#   Upstream: https://gitlab.gnome.org/GNOME/gnome-themes-extra (-dark branch)
+#   License: LGPL-2.1+ (see gtk-3.0/gtk.css header).
+#
+# @decision DEC-PHASE11-014
+# @title R6 fix: /etc/skel/ authority — theme referenced in xsettings.xml via skel
+# @status accepted
+# @rationale This theme name is referenced in the xsettings.xml written to
+#   /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml by
+#   0100-create-user.hook.chroot. Live-config copies /etc/skel/ to
+#   /home/orionx-operator/ at boot, so xfce4 session reads ThemeName=Orion-X-Cyberdeck
+#   from xsettings.xml — the R6 wiring fix that makes this theme actually visible
+#   on the running desktop for the first time. DEC-PHASE9-002 /home/orionx/ path
+#   was dead-authority (wrong user); /etc/skel/ is the correct Debian live-config path.
+
+[Desktop Entry]
+Type=X-GNOME-Metatheme
+Name=Orion-X-Cyberdeck
+Comment=Orion-X cyberdeck dark theme — Phoenix red-orange accent on Adwaita-dark base
+Encoding=UTF-8
+
+[X-GNOME-Metatheme]
+GtkTheme=Orion-X-Cyberdeck
+MetacityTheme=Orion-X-Cyberdeck
+IconTheme=Orion-X-Icons
+CursorTheme=Orion-X-Cursor
+ButtonLayout=close,minimize,maximize:

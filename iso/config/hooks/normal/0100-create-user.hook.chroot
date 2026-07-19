@@ -1,52 +1,79 @@
 #!/bin/sh
 #
-# Orion-X Phoenix Edition — User creation hook for live-build
+# Orion-X Phoenix Edition — /etc/skel/ home-dir seed hook for live-build
 # (Version label removed per DEC-PHASE7-002 single-version-authority;
 #  iso/auto/config and scripts/build-iso.sh are the sole ORIONX_VERSION owners.)
 #
-# This script creates the default live user and sets up the home directory.
+# This script seeds /etc/skel/ with the default home-directory state that
+# live-config's 0080-user-setup will copy into /home/orionx-operator/ at boot.
 #
-# @decision DEC-PHASE9-002
+# @decision DEC-PHASE9-002 (superseded by DEC-PHASE11-014 — see below)
 # @title XFCE wallpaper authority: 0100-create-user direct /home/orionx build
+# @status SUPERSEDED — retained for historical reference only
+# @rationale The original pattern (writing directly to /home/orionx/ at chroot
+#   time) was the single authority for the live user's default backdrop. This
+#   was broken by DEC-PHASE11-012 (W11-2, 2026-07-05) which changed the live
+#   username from 'orionx' to 'orionx-operator'. Live-config creates
+#   'orionx-operator' at boot from /etc/skel/; it never reads /home/orionx/.
+#   The /home/orionx/ writes became dead-authority — nothing in the running
+#   session ever saw them (R6 root cause identified 2026-07-13).
+#   See DEC-PHASE11-014 for the fix.
+#
+# @decision DEC-PHASE11-014
+# @title R6 fix: /etc/skel/ authority replaces DEC-PHASE9-002 /home/orionx/ build
 # @status accepted
-# @rationale The established pattern in this hook is to build /home/orionx
-#   directly at ISO build time (not via /etc/skel). The XFCE backdrop is set
-#   by writing the xfconf XML config into /home/orionx/.config/xfce4/xfconf/
-#   xfce-perchannel-xml/xfce4-desktop.xml in this hook. This is the SINGLE
-#   authority for the live user's default backdrop. /etc/skel is NOT used
-#   (it would duplicate the authority). toggle-theme.sh uses xfconf-query at
-#   runtime to change the live value; this static XML is the default that
-#   xfce4-desktop reads on first login. The xfconf property path pattern is
-#   taken from toggle-theme.sh: /backdrop/screen0/monitor0/workspace0/last-image.
-#   The wallpaper asset is staged by stage_application_content() in build-iso.sh
-#   to /opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png.
+# @rationale R6 root-cause (2026-07-13 hardware boot): DEC-PHASE11-012 (W11-2)
+#   changed live-config.username from 'orionx' to 'orionx-operator'. Live-config's
+#   0080-user-setup creates 'orionx-operator' at boot by copying /etc/skel/ into
+#   a fresh /home/orionx-operator/. The chroot hook was still writing to /home/orionx/
+#   which is a dead path — 'orionx' never gets created, so the xfconf XML,
+#   screensaver disable, terminal profile, wallpaper backdrop, and all other
+#   config files were never seen by the running session. The correct Debian
+#   live-config pattern: seed /etc/skel/ in the chroot; live-config copies it
+#   at boot. DEC-PHASE9-002's /etc/skel/ prohibition was the LOAD-BEARING BUG.
+#   This fix:
+#     (a) REMOVES chroot-time 'orionx' user creation (live-config creates
+#         'orionx-operator' at boot with sudo group + empty password by default
+#         per Debian live-config 0080-user-setup specification).
+#     (b) REDIRECTS all home-dir writes to /etc/skel/ (copied to
+#         /home/orionx-operator/ at boot by live-config).
+#     (c) EXTENDS the xfconf XML to include xsettings.xml with GTK theme,
+#         icon theme, cursor theme, and monospace font defaults.
+#     (d) UPDATES xfce4-terminal profile: Iosevka 11 font, Phoenix accent.
+#     (e) PRESERVES DEC-PHASE9-002 Phoenix wallpaper last-image value verbatim
+#         (same path, now in the correct authority path).
+#     (f) PRESERVES W11-2f #76 screensaver disable XML (also previously landing
+#         in dead-authority /home/orionx/; now correctly in /etc/skel/).
+#   Authority: this hook (single-authority for /etc/skel/ default home state).
+#   Consumer: live-config 0080-user-setup (copies /etc/skel/* to /home/orionx-operator/).
+#   Reference: /usr/lib/live/config/0080-user-setup bullseye package v5.20210204.
+#   DEC-PHASE11-012: identity value 'orionx-operator' is derived from
+#     live-config.username=orionx-operator in iso/auto/config --bootappend-live.
 
 set -e
 
-# Create the orionx user and group
-if ! getent group orionx > /dev/null; then
-    addgroup --system orionx
-fi
+# ---------------------------------------------------------------------------
+# NOTE: No chroot-time user creation.
+# live-config's 0080-user-setup creates 'orionx-operator' at boot from
+# /etc/skel/. The old 'adduser --system ... orionx' block was removed as part
+# of DEC-PHASE11-014 (R6 fix). The 'id orionx' guard in 0700-orionx-setup
+# becomes a graceful no-op (its chown /usr/share/doc/orionx branch is inert;
+# docs remain root-owned which is Debian default). See MASTER_PLAN.md T5 note.
+# ---------------------------------------------------------------------------
 
-if ! getent passwd orionx > /dev/null; then
-    adduser --system --shell /bin/bash --ingroup orionx --home /home/orionx orionx
-    adduser orionx sudo
-    passwd -d orionx
-fi
+# ---------------------------------------------------------------------------
+# Seed /etc/skel/ — live-config copies this to /home/orionx-operator/ at boot
+# ---------------------------------------------------------------------------
 
-# Create home directory if it doesn't exist
-if [ ! -d /home/orionx ]; then
-    mkdir -p /home/orionx
-    chown orionx:orionx /home/orionx
-fi
+# Standard skeleton directories
+mkdir -p /etc/skel/Desktop
+mkdir -p /etc/skel/Documents
+mkdir -p /etc/skel/Analysis
 
-# Set up skeleton directories
-mkdir -p /home/orionx/Desktop
-mkdir -p /home/orionx/Documents
-mkdir -p /home/orionx/Analysis
-
-# Create desktop shortcuts
-cat > /home/orionx/Desktop/terminal.desktop << EOF
+# ---------------------------------------------------------------------------
+# Desktop shortcuts (path: /etc/skel/Desktop/ → /home/orionx-operator/Desktop/)
+# ---------------------------------------------------------------------------
+cat > /etc/skel/Desktop/terminal.desktop << EOF
 [Desktop Entry]
 Name=Terminal
 Comment=Terminal for Orion-X
@@ -57,7 +84,7 @@ Type=Application
 Categories=System;TerminalEmulator;
 EOF
 
-cat > /home/orionx/Desktop/wireshark.desktop << EOF
+cat > /etc/skel/Desktop/wireshark.desktop << EOF
 [Desktop Entry]
 Name=Wireshark
 Comment=Network Protocol Analyzer
@@ -68,7 +95,7 @@ Type=Application
 Categories=Network;Analysis;
 EOF
 
-cat > /home/orionx/Desktop/orionx-guide.desktop << EOF
+cat > /etc/skel/Desktop/orionx-guide.desktop << EOF
 [Desktop Entry]
 Name=Orion-X User Guide
 Comment=Documentation for Orion-X Phoenix Edition
@@ -79,26 +106,14 @@ Type=Application
 Categories=Documentation;
 EOF
 
-# Set correct permissions for desktop shortcuts
-chmod +x /home/orionx/Desktop/*.desktop
-chown -R orionx:orionx /home/orionx/Desktop
+chmod +x /etc/skel/Desktop/*.desktop
 
-# Copy documentation to user's Documents folder
-if [ -d /usr/share/doc/orionx ]; then
-    cp -r /usr/share/doc/orionx/* /home/orionx/Documents/
-    chown -R orionx:orionx /home/orionx/Documents
-fi
-
-# Set up bash configuration
+# ---------------------------------------------------------------------------
+# bash configuration
 # NOTE: welcome message → /etc/update-motd.d/10-orionx-welcome (MOTD authority)
 # NOTE: orionx-help() → /etc/profile.d/orionx-help.sh (function authority)
-# The .bashrc is intentionally limited to interactive-shell hygiene + prompt +
-# aliases. Redefining the welcome echo or orionx-help() here creates a dual
-# authority and the .bashrc definition WINS (bash sources ~/.bashrc after
-# /etc/profile.d/*.sh), silently overriding the correct v2.0 content with
-# stale v1.5.5 content. Single-authority rule: CLAUDE.md Sacred Practice #12.
-# (rc8 fix for stale v1.5.5 dual-authority bug, DEC-PHASE10-017)
-cat > /home/orionx/.bashrc << EOF
+# ---------------------------------------------------------------------------
+cat > /etc/skel/.bashrc << EOF
 # Orion-X Phoenix Edition — interactive shell config
 # NOTE: welcome message comes from /etc/update-motd.d/10-orionx-welcome
 # NOTE: orionx-help function comes from /etc/profile.d/orionx-help.sh
@@ -131,14 +146,28 @@ alias cls='clear'
 [ -f /etc/bash_completion ] && . /etc/bash_completion
 EOF
 
-# Set up XFCE4 desktop wallpaper via xfconf XML (default backdrop authority).
-# The xfce4-desktop daemon reads this XML on session start to set the wallpaper.
-# Property: /backdrop/screen0/monitor0/workspace0/last-image (same path used
-# by toggle-theme.sh's xfconf-query calls at runtime).
+echo "dark" > /etc/skel/.orionx_theme
+
+# ---------------------------------------------------------------------------
+# xfce4 xfconf XML configuration
+# (DEC-PHASE11-014 authority: /etc/skel/ — live-config copies at boot)
+#
+# All three XML files land under:
+#   /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/
+# and are copied to:
+#   /home/orionx-operator/.config/xfce4/xfconf/xfce-perchannel-xml/
+# by live-config's 0080-user-setup before xfce4 starts.
+# ---------------------------------------------------------------------------
+mkdir -p /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml
+
+# ---
+# xfce4-desktop.xml — XFCE wallpaper backdrop (DEC-PHASE9-002 preserved verbatim;
+# only the write target shifts from /home/orionx/ to /etc/skel/ per DEC-PHASE11-014).
+# Property: /backdrop/screen0/monitor0/workspace0/last-image
 # Asset staged by stage_application_content() to:
 #   /opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png
-mkdir -p /home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml
-cat > /home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml << EOF
+# ---
+cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <channel name="xfce4-desktop" version="1.0">
   <property name="backdrop" type="empty">
@@ -154,17 +183,15 @@ cat > /home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml <<
 </channel>
 EOF
 
-# W11-2f (issue #76): Disable xfce4-screensaver auto-lock for the passwordless
-# orionx account.  DEC-PHASE9-002 single-authority preserved: this block writes
-# xfce4-screensaver.xml into the same /home/orionx/.config/xfce4/xfconf/
-# xfce-perchannel-xml/ directory the xfce4-desktop.xml block above already owns.
-# /etc/skel is NOT used — that would introduce a dual authority (forbidden by
-# DEC-PHASE9-002 and CLAUDE.md Sacred Practice #12).
-# Layer 2 belt-and-suspenders: /etc/xdg/autostart/orionx-disable-screen-lock.desktop
-# (shipped via includes.chroot) runs xset s off + xset -dpms at XFCE session start.
-# Layer 3 (package purge) rejected — xfce4-screensaver is a transitive dep of
-# xfce4-goodies; removing it risks pulling the XFCE session.
-cat > /home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml << EOF
+# ---
+# xfce4-screensaver.xml — W11-2f (#76) screen-lock disable.
+# Previously landing in dead-authority /home/orionx/; now correctly in /etc/skel/
+# so it actually reaches the running orionx-operator session (DEC-PHASE11-014 fix).
+# DEC-PHASE9-002 single-authority preserved: this is the only writer of screensaver
+# XML. /etc/xdg/autostart/orionx-disable-screen-lock.desktop is Layer 2 belt-and-
+# suspenders (remains unchanged by this hook rewrite).
+# ---
+cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <channel name="xfce4-screensaver" version="1.0">
   <property name="lock" type="empty">
@@ -179,11 +206,48 @@ cat > /home/orionx/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xm
 </channel>
 EOF
 
-# Set up Xfce4 terminal configuration
-mkdir -p /home/orionx/.config/xfce4/terminal
-cat > /home/orionx/.config/xfce4/terminal/terminalrc << EOF
+# ---
+# xsettings.xml — GTK theme, icon theme, cursor theme, font defaults.
+# NEW in W11-9b (DEC-PHASE11-014 + DEC-PHASE11-010):
+#   ThemeName=Orion-X-Cyberdeck (GTK3 dark theme with Phoenix accent)
+#   IconThemeName=Orion-X-Icons (Papirus-Dark inheritance + orionx-* overlays)
+#   CursorThemeName=Orion-X-Cursor (Adwaita inheritance placeholder)
+#   MonospaceFontName=Iosevka 11 (OFL-1.1, fonts-iosevka Debian package)
+#   FontName=Sans 10 (general UI font; Iosevka reserved for terminal/monospace)
+# xfce4's xsettings channel is the single authority for these XFCE-wide defaults.
+# Reference: xfconf-query -c xsettings -l -v on a live XFCE session.
+# ---
+cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xsettings" version="1.0">
+  <property name="Net" type="empty">
+    <property name="ThemeName" type="string" value="Orion-X-Cyberdeck"/>
+    <property name="IconThemeName" type="string" value="Orion-X-Icons"/>
+    <property name="SoundThemeName" type="string" value="default"/>
+    <property name="EnableEventSounds" type="bool" value="false"/>
+    <property name="EnableInputFeedbackSounds" type="bool" value="false"/>
+  </property>
+  <property name="Gtk" type="empty">
+    <property name="CursorThemeName" type="string" value="Orion-X-Cursor"/>
+    <property name="CursorThemeSize" type="int" value="24"/>
+    <property name="MonospaceFontName" type="string" value="Iosevka 11"/>
+    <property name="FontName" type="string" value="Sans 10"/>
+    <property name="DecorationLayout" type="string" value="close,minimize,maximize:"/>
+  </property>
+</channel>
+EOF
+
+# ---------------------------------------------------------------------------
+# xfce4-terminal configuration
+# DEC-PHASE11-014 + DEC-PHASE11-013: Iosevka 11 primary font (OFL-1.1),
+# community-developed fonts only per operator directive (DEC-PHASE11-013).
+# Phoenix accent (#FF5722) as ColorForeground to match Orion-X-Cyberdeck.
+# Previously landing in dead-authority /home/orionx/; now /etc/skel/ (R6 fix).
+# ---------------------------------------------------------------------------
+mkdir -p /etc/skel/.config/xfce4/terminal
+cat > /etc/skel/.config/xfce4/terminal/terminalrc << EOF
 [Configuration]
-FontName=Monospace 12
+FontName=Iosevka 11
 MiscAlwaysShowTabs=FALSE
 MiscBell=FALSE
 MiscBellUrgent=FALSE
@@ -209,26 +273,14 @@ MiscRewrapOnResize=TRUE
 MiscUseShiftArrowsToScroll=FALSE
 MiscSlimTabs=FALSE
 MiscNewTabAdjacent=FALSE
-ColorForeground=#ff9900
+ColorForeground=#FF5722
 ColorBackground=#1a1a1a
 ColorCursor=#aaaaaa
 ColorPalette=#2e3436;#cc0000;#4e9a06;#c4a000;#3465a4;#75507b;#06989a;#d3d7cf;#555753;#ef2929;#8ae234;#fce94f;#729fcf;#ad7fa8;#34e2e2;#eeeeec
 EOF
 
-# Set file permissions
-chown -R orionx:orionx /home/orionx/.config
-
-# Set default theme preference
-echo "dark" > /home/orionx/.orionx_theme
-chown orionx:orionx /home/orionx/.orionx_theme
-
 # MOTD authority: /etc/update-motd.d/10-orionx-welcome is written by
 # iso/config/hooks/live/0700-orionx-setup.hook.chroot (single authority).
-# Do NOT write it here — this hook ran first and the 0700 hook runs later
-# and overwrites it anyway, but having a stale v1.5.5 definition here is
-# confusing and violated single-authority rule. (rc8 fix, DEC-PHASE10-017)
-
-# Ensure proper permissions
-chown -R orionx:orionx /home/orionx
+# Do NOT write it here.
 
 exit 0

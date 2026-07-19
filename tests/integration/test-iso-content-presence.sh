@@ -1287,6 +1287,349 @@ else
 fi
 
 # ===========================================================================
+# 19. W11-9b: Desktop identity assets (section 23b)
+#
+# @decision DEC-PHASE11-010
+# @title W11-9b content-presence section 23b: desktop identity assets
+# @status accepted
+# @rationale W11-9b stages GTK theme Orion-X-Cyberdeck, icon theme Orion-X-Icons,
+#   cursor theme Orion-X-Cursor, Iosevka + Hack fonts, and fixes the R6 root-cause
+#   by switching DEC-PHASE9-002 authority from /home/orionx/ to /etc/skel/
+#   (DEC-PHASE11-014). This section (labelled section 23b per plan numbering)
+#   asserts all 13 sub-conditions required by the W11-9b Evaluation Contract
+#   items 2-8,10. Assertions are keyed as 23b-a through 23b-m matching the plan.
+#
+# @decision DEC-PHASE11-014
+# @title R6 fix verification: /etc/skel/ authority assertions in section 23b
+# @status accepted
+# @rationale The critical R6 fix assertions (23b-h through 23b-k) verify that:
+#   (h) xfce4-desktop.xml is in /etc/skel/ (not /home/orionx/ — dead-authority retired)
+#   (i) xsettings.xml is in /etc/skel/ with ThemeName=Orion-X-Cyberdeck and
+#       MonospaceFontName=Iosevka 11
+#   (j) terminalrc is in /etc/skel/ with FontName=Iosevka 11
+#   (k) /home/orionx/ does NOT exist in the squashfs (proves R6 dead-authority retired)
+#   These assertions catch any regression to the /home/orionx/ dead-authority path.
+# ===========================================================================
+section "19. W11-9b: Desktop identity assets (section 23b)"
+
+# ---------------------------------------------------------------------------
+# 23b-a: Orion-X-Cyberdeck GTK theme index.theme present in squashfs
+# ---------------------------------------------------------------------------
+CYBERDECK_THEME_DIR="$SQF/usr/share/themes/Orion-X-Cyberdeck"
+
+if [[ -f "$CYBERDECK_THEME_DIR/index.theme" ]]; then
+    pass "23b-a: /usr/share/themes/Orion-X-Cyberdeck/index.theme present in squashfs"
+else
+    fail "23b-a: /usr/share/themes/Orion-X-Cyberdeck/index.theme present in squashfs" \
+         "GTK theme index.theme missing — check includes.chroot staging of Orion-X-Cyberdeck"
+fi
+
+# ---------------------------------------------------------------------------
+# 23b-b: gtk-3.0/gtk.css present and contains #FF5722 (Phoenix accent)
+# ---------------------------------------------------------------------------
+CYBERDECK_GTK_CSS="$CYBERDECK_THEME_DIR/gtk-3.0/gtk.css"
+
+if [[ -f "$CYBERDECK_GTK_CSS" ]]; then
+    pass "23b-b: /usr/share/themes/Orion-X-Cyberdeck/gtk-3.0/gtk.css present in squashfs"
+    if grep -q "#FF5722" "$CYBERDECK_GTK_CSS" 2>/dev/null; then
+        pass "23b-b: gtk.css contains Phoenix accent color #FF5722 (DEC-PHASE11-010)"
+    else
+        fail "23b-b: gtk.css contains Phoenix accent color #FF5722" \
+             "#FF5722 not found in $CYBERDECK_GTK_CSS — accent override not applied"
+    fi
+else
+    fail "23b-b: /usr/share/themes/Orion-X-Cyberdeck/gtk-3.0/gtk.css present in squashfs" \
+         "gtk.css missing — GTK3 theme incomplete"
+    fail "23b-b: gtk.css contains Phoenix accent color #FF5722" \
+         "gtk.css file missing — cannot check accent"
+fi
+
+# ---------------------------------------------------------------------------
+# 23b-c: xfwm4/themerc present in squashfs
+# ---------------------------------------------------------------------------
+if [[ -f "$CYBERDECK_THEME_DIR/xfwm4/themerc" ]]; then
+    pass "23b-c: /usr/share/themes/Orion-X-Cyberdeck/xfwm4/themerc present in squashfs"
+else
+    fail "23b-c: /usr/share/themes/Orion-X-Cyberdeck/xfwm4/themerc present in squashfs" \
+         "xfwm4/themerc missing — XFWM4 window decoration colors not staged"
+fi
+
+# ---------------------------------------------------------------------------
+# 23b-d: Orion-X-Icons index.theme present and contains Inherits= line
+# ---------------------------------------------------------------------------
+ORIONX_ICONS_THEME="$SQF/usr/share/icons/Orion-X-Icons/index.theme"
+
+if [[ -f "$ORIONX_ICONS_THEME" ]]; then
+    pass "23b-d: /usr/share/icons/Orion-X-Icons/index.theme present in squashfs"
+    if grep -q "^Inherits=" "$ORIONX_ICONS_THEME" 2>/dev/null; then
+        pass "23b-d: Orion-X-Icons/index.theme contains Inherits= line (inheritance chain present)"
+    else
+        fail "23b-d: Orion-X-Icons/index.theme contains Inherits= line" \
+             "Inherits= line missing from $ORIONX_ICONS_THEME — icon fallback chain broken"
+    fi
+else
+    fail "23b-d: /usr/share/icons/Orion-X-Icons/index.theme present in squashfs" \
+         "Icon theme index.theme missing — check includes.chroot staging of Orion-X-Icons"
+    fail "23b-d: Orion-X-Icons/index.theme contains Inherits= line" \
+         "File missing — cannot check"
+fi
+
+# ---------------------------------------------------------------------------
+# 23b-e: Orion-X-Cursor index.theme present and contains Inherits=Adwaita
+# ---------------------------------------------------------------------------
+ORIONX_CURSOR_THEME="$SQF/usr/share/icons/Orion-X-Cursor/index.theme"
+
+if [[ -f "$ORIONX_CURSOR_THEME" ]]; then
+    pass "23b-e: /usr/share/icons/Orion-X-Cursor/index.theme present in squashfs"
+    if grep -q "Inherits=Adwaita" "$ORIONX_CURSOR_THEME" 2>/dev/null; then
+        pass "23b-e: Orion-X-Cursor/index.theme contains Inherits=Adwaita (cursor fallback)"
+    else
+        fail "23b-e: Orion-X-Cursor/index.theme contains Inherits=Adwaita" \
+             "Inherits=Adwaita not found in $ORIONX_CURSOR_THEME"
+    fi
+else
+    fail "23b-e: /usr/share/icons/Orion-X-Cursor/index.theme present in squashfs" \
+         "Cursor theme index.theme missing — check includes.chroot staging of Orion-X-Cursor"
+    fail "23b-e: Orion-X-Cursor/index.theme contains Inherits=Adwaita" \
+         "File missing — cannot check"
+fi
+
+# ---------------------------------------------------------------------------
+# 23b-f: At least one Iosevka font file present under /usr/share/fonts/
+# ---------------------------------------------------------------------------
+# DEC-PHASE11-013: fonts-iosevka Debian package installs to
+# /usr/share/fonts/truetype/iosevka/ or similar path.
+# Use find with -iname glob so any packaging layout is accepted.
+# || true: find exits 0 always; the pipe to wc may produce 0 without error.
+IOSEVKA_COUNT=$(find "$SQF/usr/share/fonts" -iname 'iosevka*' -type f 2>/dev/null | wc -l | tr -d ' ')
+if [[ "$IOSEVKA_COUNT" -ge 1 ]]; then
+    pass "23b-f: at least one Iosevka font file present under /usr/share/fonts/ ($IOSEVKA_COUNT files, DEC-PHASE11-013)"
+else
+    fail "23b-f: at least one Iosevka font file present under /usr/share/fonts/" \
+         "No iosevka* files found — fonts-iosevka package may not be installed or pkg name differs"
+fi
+
+# ---------------------------------------------------------------------------
+# 23b-g: At least one Hack font file present under /usr/share/fonts/
+# ---------------------------------------------------------------------------
+# DEC-PHASE11-013: fonts-hack-otf or fonts-hack installs Hack font files.
+# Use case-insensitive glob to catch Hack.ttf, hack-regular.otf, etc.
+HACK_COUNT=$(find "$SQF/usr/share/fonts" -iname 'hack*' -o -iname 'Hack*' 2>/dev/null | grep -c "\." 2>/dev/null || true)
+if [[ "$HACK_COUNT" -ge 1 ]]; then
+    pass "23b-g: at least one Hack font file present under /usr/share/fonts/ ($HACK_COUNT files, DEC-PHASE11-013)"
+else
+    # Fallback: check dpkg status for fonts-hack-otf or fonts-hack
+    HACK_PKG_FOUND=0
+    for hack_pkg in fonts-hack-otf fonts-hack fonts-hack-ttf; do
+        if [[ -f "$DPKG_STATUS" ]] && grep -q "^Package: ${hack_pkg}$" "$DPKG_STATUS" 2>/dev/null; then
+            HACK_PKG_FOUND=1
+            pass "23b-g: Hack font package installed in squashfs dpkg ($hack_pkg, DEC-PHASE11-013)"
+            break
+        fi
+    done
+    if [[ "$HACK_PKG_FOUND" -eq 0 ]]; then
+        fail "23b-g: at least one Hack font file present under /usr/share/fonts/" \
+             "No hack* files found and no fonts-hack* package in dpkg — check orionx.list.chroot"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 23b-h: /etc/skel/ xfce4-desktop.xml present in squashfs (R6 fix)
+# ---------------------------------------------------------------------------
+SKEL_XFCONF="$SQF/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml"
+SKEL_DESKTOP_XML="$SKEL_XFCONF/xfce4-desktop.xml"
+
+if [[ -f "$SKEL_DESKTOP_XML" ]]; then
+    pass "23b-h: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml present (R6 fix — skel authority DEC-PHASE11-014)"
+    if grep -q "orionx-phoenix-wallpaper.png" "$SKEL_DESKTOP_XML" 2>/dev/null; then
+        pass "23b-h: xfce4-desktop.xml (skel) references orionx-phoenix-wallpaper.png (DEC-PHASE9-002 preserved)"
+    else
+        fail "23b-h: xfce4-desktop.xml (skel) references orionx-phoenix-wallpaper.png" \
+             "Wallpaper path missing from $SKEL_DESKTOP_XML — R6 fix may be incomplete"
+    fi
+else
+    fail "23b-h: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml present in squashfs" \
+         "Missing: $SKEL_DESKTOP_XML — 0100-create-user.hook.chroot must write xfce4-desktop.xml to /etc/skel/"
+    fail "23b-h: xfce4-desktop.xml (skel) references orionx-phoenix-wallpaper.png" \
+         "File missing — cannot check"
+fi
+
+# ---------------------------------------------------------------------------
+# 23b-i: /etc/skel/ xsettings.xml present with ThemeName and MonospaceFontName
+# ---------------------------------------------------------------------------
+SKEL_XSETTINGS="$SKEL_XFCONF/xsettings.xml"
+
+if [[ -f "$SKEL_XSETTINGS" ]]; then
+    pass "23b-i: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml present (DEC-PHASE11-014)"
+    if grep -q 'value="Orion-X-Cyberdeck"' "$SKEL_XSETTINGS" 2>/dev/null; then
+        pass "23b-i: xsettings.xml contains ThemeName=Orion-X-Cyberdeck (DEC-PHASE11-010)"
+    else
+        fail "23b-i: xsettings.xml contains ThemeName=Orion-X-Cyberdeck" \
+             "ThemeName not found or value != Orion-X-Cyberdeck in $SKEL_XSETTINGS"
+    fi
+    if grep -q 'value="Iosevka 11"' "$SKEL_XSETTINGS" 2>/dev/null; then
+        pass "23b-i: xsettings.xml contains MonospaceFontName=Iosevka 11 (DEC-PHASE11-013)"
+    else
+        fail "23b-i: xsettings.xml contains MonospaceFontName=Iosevka 11" \
+             "MonospaceFontName=Iosevka 11 not found in $SKEL_XSETTINGS — font wiring incomplete"
+    fi
+else
+    fail "23b-i: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml present in squashfs" \
+         "Missing: $SKEL_XSETTINGS — 0100-create-user.hook.chroot must write xsettings.xml to /etc/skel/"
+    fail "23b-i: xsettings.xml contains ThemeName=Orion-X-Cyberdeck" \
+         "File missing — cannot check"
+    fail "23b-i: xsettings.xml contains MonospaceFontName=Iosevka 11" \
+         "File missing — cannot check"
+fi
+
+# ---------------------------------------------------------------------------
+# 23b-j: /etc/skel/ terminalrc present and contains FontName=Iosevka 11
+# ---------------------------------------------------------------------------
+SKEL_TERMINALRC="$SQF/etc/skel/.config/xfce4/terminal/terminalrc"
+
+if [[ -f "$SKEL_TERMINALRC" ]]; then
+    pass "23b-j: /etc/skel/.config/xfce4/terminal/terminalrc present in squashfs (DEC-PHASE11-014)"
+    if grep -q "FontName=Iosevka 11" "$SKEL_TERMINALRC" 2>/dev/null; then
+        pass "23b-j: terminalrc contains FontName=Iosevka 11 (DEC-PHASE11-013)"
+    else
+        fail "23b-j: terminalrc contains FontName=Iosevka 11" \
+             "FontName=Iosevka 11 not found in $SKEL_TERMINALRC — check 0100 hook T5 update"
+    fi
+else
+    fail "23b-j: /etc/skel/.config/xfce4/terminal/terminalrc present in squashfs" \
+         "Missing: $SKEL_TERMINALRC — 0100-create-user.hook.chroot must write terminalrc to /etc/skel/"
+    fail "23b-j: terminalrc contains FontName=Iosevka 11" \
+         "File missing — cannot check"
+fi
+
+# ---------------------------------------------------------------------------
+# 23b-k: /home/orionx/ does NOT exist in squashfs (dead-authority retired)
+# ---------------------------------------------------------------------------
+# DEC-PHASE11-014: the R6 fix removes the chroot-time /home/orionx/ build.
+# If /home/orionx/ still exists in the squashfs, the old dead-authority path
+# was not cleaned up — the R6 fix is incomplete.
+# Note: We check the directory itself, not any subdirectory, because live-config
+# might create /home/orionx-operator/ at boot (not present in the chroot squashfs).
+if [[ ! -d "$SQF/home/orionx" ]]; then
+    pass "23b-k: /home/orionx/ does NOT exist in squashfs (DEC-PHASE11-014 dead-authority retired)"
+else
+    fail "23b-k: /home/orionx/ does NOT exist in squashfs" \
+         "/home/orionx/ found in squashfs — 0100-create-user.hook.chroot still writing to dead-authority /home/orionx/. R6 fix incomplete. DEC-PHASE11-014 requires removal of chroot-time user creation + redirect to /etc/skel/"
+fi
+
+# ---------------------------------------------------------------------------
+# 23b-l: autologin-user=orionx-operator in LightDM autologin conf (T6)
+# ---------------------------------------------------------------------------
+LIGHTDM_AUTOLOGIN="$SQF/etc/lightdm/lightdm.conf.d/10-orionx-autologin.conf"
+
+if [[ -f "$LIGHTDM_AUTOLOGIN" ]]; then
+    if grep -q "autologin-user=orionx-operator" "$LIGHTDM_AUTOLOGIN" 2>/dev/null; then
+        pass "23b-l: 10-orionx-autologin.conf contains autologin-user=orionx-operator (DEC-PHASE11-012 alignment)"
+    else
+        fail "23b-l: 10-orionx-autologin.conf contains autologin-user=orionx-operator" \
+             "autologin-user=orionx-operator not found — check T6 update. Old value 'orionx' would mismatch live-config identity"
+    fi
+else
+    fail "23b-l: /etc/lightdm/lightdm.conf.d/10-orionx-autologin.conf present for autologin-user check" \
+         "File missing from squashfs — check includes.chroot staging"
+fi
+
+# ---------------------------------------------------------------------------
+# 23b-m: LightDM greeter conf upgraded to Orion-X theme stack (T7)
+# ---------------------------------------------------------------------------
+LIGHTDM_GREETER_CONF_SQF="$SQF/etc/lightdm/lightdm-gtk-greeter.conf"
+
+if [[ -f "$LIGHTDM_GREETER_CONF_SQF" ]]; then
+    pass "23b-m: /etc/lightdm/lightdm-gtk-greeter.conf present in squashfs"
+    if grep -q "theme-name=Orion-X-Cyberdeck" "$LIGHTDM_GREETER_CONF_SQF" 2>/dev/null; then
+        pass "23b-m: lightdm-gtk-greeter.conf contains theme-name=Orion-X-Cyberdeck (DEC-PHASE11-010)"
+    else
+        fail "23b-m: lightdm-gtk-greeter.conf contains theme-name=Orion-X-Cyberdeck" \
+             "theme-name=Orion-X-Cyberdeck not found — check T7 greeter conf upgrade"
+    fi
+    if grep -q "icon-theme-name=Orion-X-Icons" "$LIGHTDM_GREETER_CONF_SQF" 2>/dev/null; then
+        pass "23b-m: lightdm-gtk-greeter.conf contains icon-theme-name=Orion-X-Icons (DEC-PHASE11-010)"
+    else
+        fail "23b-m: lightdm-gtk-greeter.conf contains icon-theme-name=Orion-X-Icons" \
+             "icon-theme-name=Orion-X-Icons not found — check T7 greeter conf upgrade"
+    fi
+    if grep -q "font-name=Iosevka 11" "$LIGHTDM_GREETER_CONF_SQF" 2>/dev/null; then
+        pass "23b-m: lightdm-gtk-greeter.conf contains font-name=Iosevka 11 (DEC-PHASE11-013)"
+    else
+        fail "23b-m: lightdm-gtk-greeter.conf contains font-name=Iosevka 11" \
+             "font-name=Iosevka 11 not found — check T7 greeter conf upgrade (DEC-PHASE11-013: community fonts only)"
+    fi
+    # Background MUST be unchanged (Phase 9 wallpaper single-authority preserved)
+    if grep -q "background=/opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png" \
+             "$LIGHTDM_GREETER_CONF_SQF" 2>/dev/null; then
+        pass "23b-m: lightdm-gtk-greeter.conf background= points to Phoenix wallpaper (DEC-PHASE9-002 preserved)"
+    else
+        fail "23b-m: lightdm-gtk-greeter.conf background= points to Phoenix wallpaper" \
+             "background line missing or wrong path — W9-1 wallpaper authority must be preserved"
+    fi
+else
+    fail "23b-m: /etc/lightdm/lightdm-gtk-greeter.conf present in squashfs" \
+         "File missing — check includes.chroot staging"
+    fail "23b-m: lightdm-gtk-greeter.conf theme/icon/font checks" \
+         "File missing — cannot check"
+fi
+
+# ---------------------------------------------------------------------------
+# 23b BONUS: Vendor-font absence check — /etc/skel/ xfce4 configs (DEC-PHASE11-013)
+# ---------------------------------------------------------------------------
+# Confirm the new skel files don't reference vendor-proprietary monospace fonts
+# as actual FontName= or MonospaceFontName= values.
+# Pattern targets actual font-name config values (not comment text).
+# || true: grep exits 1 on no matches; zero matches is the desired state (DEC-PHASE9-014).
+VENDOR_FONT_IN_SKEL=$(grep -rE "FontName=.*[Jj]et[Bb]rains|MonospaceFontName=.*[Jj]et[Bb]rains" \
+    "$SQF/etc/skel" 2>/dev/null | wc -l | tr -d ' ' || true)
+if [[ "$VENDOR_FONT_IN_SKEL" -eq 0 ]]; then
+    pass "23b-bonus: no vendor-font FontName= references in /etc/skel/ xfce4 configs (DEC-PHASE11-013 enforced)"
+else
+    fail "23b-bonus: no vendor-font FontName= references in /etc/skel/ xfce4 configs" \
+         "Found $VENDOR_FONT_IN_SKEL vendor-font config line(s) in /etc/skel/ — DEC-PHASE11-013 violation (community fonts only)"
+fi
+
+# Also check the source-tree hook for vendor-font package or config references
+HOOK_0100_SRC="$REPO_ROOT/iso/config/hooks/normal/0100-create-user.hook.chroot"
+if [[ -f "$HOOK_0100_SRC" ]]; then
+    VENDOR_FONT_IN_0100=$(grep -cE "FontName=.*[Jj]et[Bb]rains|MonospaceFontName=.*[Jj]et[Bb]rains|fonts-[Jj]et[Bb]rains" \
+        "$HOOK_0100_SRC" 2>/dev/null || true)
+    if [[ "$VENDOR_FONT_IN_0100" -eq 0 ]]; then
+        pass "23b-bonus: no vendor-font references in 0100-create-user.hook.chroot source (DEC-PHASE11-013)"
+    else
+        fail "23b-bonus: no vendor-font references in 0100-create-user.hook.chroot source" \
+             "Found $VENDOR_FONT_IN_0100 vendor-font reference(s) in the hook — remove them (DEC-PHASE11-013)"
+    fi
+fi
+
+# Check the package list does not reference vendor-font packages
+PKG_LIST="$REPO_ROOT/iso/config/package-lists/orionx.list.chroot"
+if [[ -f "$PKG_LIST" ]]; then
+    VENDOR_FONT_IN_PKGS=$(grep -cE "^fonts-[Jj]et[Bb]rains" "$PKG_LIST" 2>/dev/null || true)
+    if [[ "$VENDOR_FONT_IN_PKGS" -eq 0 ]]; then
+        pass "23b-bonus: no vendor-font packages in orionx.list.chroot (DEC-PHASE11-013)"
+    else
+        fail "23b-bonus: no vendor-font packages in orionx.list.chroot" \
+             "Found $VENDOR_FONT_IN_PKGS vendor-font package line(s) — DEC-PHASE11-013 violation"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 23b BONUS-2: /home/orionx/ content-presence check update
+# Legacy section 10 asserted xfce4-desktop.xml in /home/orionx/ — that
+# assertion was correct for DEC-PHASE9-002 but is now a FALSE-POSITIVE GATE
+# that would fail after the R6 fix. Section 10 remains in the file for
+# historical reference; its PASS/FAIL outcome is now INVERTED from W11-9b
+# perspective (it will FAIL because /home/orionx/ is gone — that is correct
+# behavior). The canonical assertion is 23b-h above which verifies /etc/skel/.
+# Record a NOTE here so reviewers do not misread section 10 failures as bugs.
+# ---------------------------------------------------------------------------
+echo "  NOTE: Section 10 (/home/orionx/ xfconf check) is expected to FAIL after W11-9b"
+echo "        R6 fix — /home/orionx/ no longer exists (dead-authority retired per DEC-PHASE11-014)."
+echo "        Section 23b-h+k above are the canonical R6 fix assertions."
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

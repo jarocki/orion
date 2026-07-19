@@ -1,0 +1,23 @@
+# /usr/share/icons/Orion-X-Cursor/index.theme
+# Orion-X Phoenix Edition — cursor theme (placeholder)
+#
+# @decision DEC-PHASE11-010
+# @title W11-9b: Orion-X-Cursor placeholder — Adwaita inheritance, polish deferred
+# @status accepted
+# @rationale This is a naming-only shim so CursorTheme=Orion-X-Cursor in
+#   the xsettings.xml resolves cleanly. Full cursor resolution falls through to
+#   Adwaita (already installed as part of the GNOME/GTK3 base packages).
+#   No cursor pixmaps are shipped in this W11-9b slice — cursor visual polish
+#   (actual Phoenix-tinted cursors) is deferred to a follow-up rider sub-slice.
+#   The rider sub-slice will provide:
+#     - /usr/share/icons/Orion-X-Cursor/cursors/ directory with
+#       X11 binary cursor files in Bibata-Modern-Ice or custom Phoenix-tinted
+#       cursor shapes at 24, 32, 48 px hotspot variants.
+#   Backlog issue filed per T10 instructions.
+#   Upstream cursor fallback: Adwaita (GNOME project, LGPL-2.1+).
+#   This index.theme file: original Orion-X project work.
+
+[Icon Theme]
+Name=Orion-X-Cursor
+Comment=Orion-X cyberdeck cursor theme (Adwaita inheritance placeholder; polish deferred)
+Inherits=Adwaita
