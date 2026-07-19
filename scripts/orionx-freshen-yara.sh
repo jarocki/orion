@@ -26,6 +26,13 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# Network check (R2 mitigation) — refuse cleanly on air-gap
+if ! getent hosts github.com >/dev/null 2>&1; then
+    echo "ERROR: orionx-freshen-yara requires network access (github.com unreachable)" >&2
+    echo "       Orion-X is designed for air-gap operation. Run this on a network-connected node only." >&2
+    exit 1
+fi
+
 if [[ ! -f "$LOCKFILE" ]]; then
     echo "ERROR: LOCKFILE.json not found at $LOCKFILE" >&2
     exit 1

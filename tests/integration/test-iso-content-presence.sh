@@ -66,6 +66,10 @@ section() {
     echo "--- $1 ---"
 }
 
+skip() {
+    echo "  SKIP: $1"
+}
+
 # shellcheck disable=SC2329  # cleanup is invoked indirectly via trap EXIT
 cleanup() {
     if [[ -n "$WORK" && -d "$WORK" ]]; then
@@ -1855,6 +1859,16 @@ if [[ -f "$YARA_FRESHEN" ]]; then
     else
         fail "22d: orionx-freshen-yara.sh is executable" \
              "0700 hook sets chmod 755 on all scripts/ files — check hook execution"
+    fi
+    if command -v shellcheck >/dev/null 2>&1; then
+        if shellcheck -S error "$SQF/opt/orionx/scripts/orionx-freshen-yara.sh" >/dev/null 2>&1; then
+            pass "22d(shellcheck): orionx-freshen-yara.sh clean (severity=error)"
+        else
+            fail "22d(shellcheck): orionx-freshen-yara.sh clean" \
+                 "shellcheck reported errors — see output"
+        fi
+    else
+        skip "22d(shellcheck): shellcheck not available on runner"
     fi
 else
     fail "22d: /opt/orionx/scripts/orionx-freshen-yara.sh present in squashfs" \

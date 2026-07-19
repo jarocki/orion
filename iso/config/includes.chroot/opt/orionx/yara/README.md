@@ -26,6 +26,14 @@ sudo orionx-freshen-yara
 yara -r /opt/orionx/yara/rules-yara-rules/ /path/to/sample
 ```
 
+## Non-qualifying rulesets (fetched post-boot via `orionx-freshen-yara`)
+
+The following are NOT bundled in the base ISO due to licensing constraints. Operators may fetch them post-boot on a network-connected node ONLY if they accept the license terms.
+
+| Source | License | Path (if fetched) |
+|---|---|---|
+| Neo23x0/signature-base | CC-BY-NC (non-commercial) | `rules-neo23x0-signature-base/` |
+
 ## Layer B (W11-4b) — DEFERRED
 
 Layer B will commit ruleset snapshots at build time (git clone during ISO build). Until then, `orionx-freshen-yara` must be run once post-boot to populate the rules directories.

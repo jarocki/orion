@@ -1,4 +1,6 @@
 {
+  "_schema_notes": "TBD-VERIFY-AT-FIRST-FRESHEN is a sentinel string; orionx-freshen-yara will replace with actual commit SHAs on first run.",
+  "generated_by": "orionx-freshen-yara (template ships from W11-4; SHAs pinned on first freshen run)",
   "schema_version": 1,
   "description": "Orion-X YARA ruleset lockfile — records commit SHAs of last freshen run",
   "layer": "A",
