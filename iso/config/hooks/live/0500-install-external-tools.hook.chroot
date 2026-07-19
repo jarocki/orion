@@ -213,4 +213,32 @@ if [[ -f /opt/orionx/venv/re/bin/pip ]]; then
 fi
 echo "=== W11-3 capa venv install complete ==="
 
+# ---------------------------------------------------------------------------
+# W11-5 Layer A: matrix-commander pip venv (DEC-PHASE11-006)
+#
+# matrix-commander is a CLI Matrix client installed into a dedicated virtual
+# environment at /opt/orionx/venv/comms/ to avoid system-Python conflicts.
+# This install is SOFT-FAIL: if the network is unavailable during the chroot
+# build phase (e.g. air-gap build or transient network failure), the install
+# is skipped with a loud warning. matrix-commander is not load-bearing for
+# any daemon — its absence at build time does not abort the build.
+#
+# After a successful install, /usr/local/bin/matrix-commander is symlinked
+# for convenience. Layer B (gomuks static binary) is deferred to W11-5b.
+# ---------------------------------------------------------------------------
+echo "=== W11-5: Installing matrix-commander to /opt/orionx/venv/comms/ ==="
+python3 -m venv /opt/orionx/venv/comms/ 2>&1 || {
+    echo "[W11-5] WARN: venv creation failed"
+}
+if [[ -f /opt/orionx/venv/comms/bin/pip ]]; then
+    /opt/orionx/venv/comms/bin/pip install --no-input matrix-commander 2>&1 || {
+        echo "[W11-5] WARN: matrix-commander install failed"
+    }
+    if [[ -f /opt/orionx/venv/comms/bin/matrix-commander ]]; then
+        ln -sf /opt/orionx/venv/comms/bin/matrix-commander /usr/local/bin/matrix-commander
+        echo "[W11-5] matrix-commander installed"
+    fi
+fi
+echo "=== W11-5 matrix-commander install complete ==="
+
 echo "=== External tools installation complete ==="
