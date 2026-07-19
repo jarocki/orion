@@ -5,12 +5,12 @@
   "model_filename": "Qwen2.5-3B-Instruct-Q4_K_M.gguf",
   "model_url_primary": "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q4_K_M.gguf",
   "model_url_fallback": "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
-  "model_sha256": "TBD-VERIFY-AT-DOWNLOAD",
+  "model_sha256": "9c9f56a391a3abbd5b89d0245bf6106081bcc3173119d4229235dd9d23253f94",
   "model_size_bytes": 1940000000,
   "model_quantization": "Q4_K_M",
   "model_license": "Apache-2.0",
   "ollama_model_tag": "qwen2.5:3b-instruct-q4_K_M",
-  "_integrity_note": "model_sha256 is 'TBD-VERIFY-AT-DOWNLOAD' — the first successful build will compute the real SHA-256 from the downloaded file and a follow-up commit will pin the verified value. This is the standard trust-on-first-use pattern with subsequent integrity lockdown (DEC-PHASE10-008). Once verified, the SHA-256 must be a 64-char lowercase hex string. model_filename governs the on-disk name written by wget -O in stage_nebula_model(); source URL filenames may differ in case — the manifest filename field is authoritative.",
+  "_integrity_note": "model_sha256 is pinned to the verified SHA-256 extracted from CI build log run 29305215942 (DEC-PHASE10-008 trust-on-first-use pattern; W11-2e follow-up commit, closes #67). Value is deterministic per DEC-PHASE10-008. model_filename governs the on-disk name written by wget -O in stage_nebula_model(); source URL filenames may differ in case — the manifest filename field is authoritative.",
   "_size_note": "model_size_bytes is the expected on-disk size of the Qwen2.5-3B-Instruct Q4_K_M GGUF (approximately 1.9 GB). ISO size target ≤3.0 GB compressed (Phase 11 lean-release goal ~2.8 GB per DEC-PHASE11-001). A WARN (not fail) is emitted by build-iso.sh if the final ISO exceeds 7 GB (DEC-PHASE10-012); effective warn threshold for content-presence size check relaxed to 3 GB for this smaller model per DEC-PHASE10-012.",
   "_mirror_note": "Primary: bartowski/Qwen2.5-3B-Instruct-GGUF — post-TheBloke community standard for GGUF mirrors, non-gated for Apache-2.0 models. Fallback: Qwen/Qwen2.5-3B-Instruct-GGUF — official upstream Qwen team mirror, non-gated. hf_commit_sha deferred — pin in same follow-up commit that pins model_sha256 per #56 / #57 pattern."
 }

@@ -15,6 +15,8 @@ Merkle audit, auto-healing) are preserved. The tightening axes: smaller mission-
 mission-fit debloat, post-boot optional-installer framework, and a unique Orion-X cyberdeck
 visual identity. Target: ≤3.0 GB compressed ISO (~2.8 GB). See DEC-PHASE11-001.
 
+- fix(phase11): W11-2e — Qwen SHA256 pinned in nebula-model-manifest.json (closes #67, unblocks nebula-integrity-check.service on hardware)
+
 ### W11-9a: Boot chain cyberdeck branding — Plymouth + GRUB + isolinux + LightDM
 
 Ship the pre-XFCE visual identity chain so Orion-X identity is visible from
