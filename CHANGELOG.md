@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v2.1.0] - Unreleased
 
+### Fixed
+
+- **P0 QA hotfix (tmp/QA_AUDIT_2026-07-21.md)**: xfconf package now present
+  (toggle-theme.sh runtime works); artifact-analyzer.py self-heals its log dir
+  (`/var/log/orionx`); 0200-copy-samples.hook.chroot rewritten to seed
+  `/etc/skel/Analysis/` (cascade fix for DEC-PHASE11-014 identity fork R6).
+  Missing base utilities (iproute2, perl, socat, dpkg) now explicit in package
+  list. Adds content-presence assertions (test-iso-content-presence.sh §28).
+  Also removes the superseded `iso/config/hooks/normal/0200-copy-samples.hook.chroot`
+  (dual-authority hook that would abort `lb chroot` via `chown orionx:orionx` to a
+  now-nonexistent user post-DEC-PHASE11-014 R6). Adds negative-guard assertion §28g.
+
 Phase 11 lean-release tightening pass (v2.1.0 arc — W11-1 through W11-10). All Phase 10
 capabilities (Nebula chat, MCP tool server, Constraint Layer, Ralph Loop, ATT&CK/ATLAS,
 Merkle audit, auto-healing) are preserved. The tightening axes: smaller mission-fit LLM,

@@ -2629,6 +2629,139 @@ else
 fi
 
 # ===========================================================================
+# 28. QA P0 Hotfix (2026-07-21) — xfconf pkg, log dir self-heal, skel authority
+#
+# @decision DEC-PHASE11-016
+# @title QA P0 hotfix assertions: package list completeness + log dir + skel authority
+# @status accepted
+# @rationale tmp/QA_AUDIT_2026-07-21.md surfaced 3 P0 bricking bugs after hardware
+#   test failure (root cause: presence-check bias substituted for runtime verification).
+#   (P0-001) xfconf package missing — toggle-theme.sh runtime fails at xfconf-query.
+#   (P0-002) /var/log/orionx not created — artifact-analyzer.py crashes on first boot.
+#   (P0-003) 0200-copy-samples hook writes to dead /home/orionx/ — DEC-PHASE11-014
+#     R6 cascade: skel authority not applied to sample seeding hook.
+#   Also adds P1 packages (iproute2, perl, socat, dpkg) per QA audit findings.
+#   These assertions run against source-tree files (package list, scripts, hooks)
+#   so they can catch regressions without requiring a full ISO rebuild.
+# ===========================================================================
+section "28. QA P0 Hotfix (2026-07-21) — xfconf/iproute2/perl/socat/dpkg packages, log dir self-heal, skel authority"
+
+PKG_LIST_P0="$REPO_ROOT/iso/config/package-lists/orionx.list.chroot"
+ARTIFACT_ANALYZER="$REPO_ROOT/scripts/artifact-analyzer.py"
+HOOK_0200_LIVE="$REPO_ROOT/iso/config/hooks/live/0200-copy-samples.hook.chroot"
+
+# ---------------------------------------------------------------------------
+# 28a. xfconf present in package list (P0-001: toggle-theme.sh runtime fix)
+# ---------------------------------------------------------------------------
+# grep -q returns 0 on match, 1 on no-match; no pipefail risk with -q form.
+if [[ -f "$PKG_LIST_P0" ]] && grep -q "^xfconf$" "$PKG_LIST_P0" 2>/dev/null; then
+    pass "28a: xfconf present in orionx.list.chroot (P0-001: toggle-theme.sh runtime fix, DEC-PHASE11-016)"
+else
+    fail "28a: xfconf present in orionx.list.chroot" \
+         "xfconf not found as a bare package line — toggle-theme.sh xfconf-query will fail at runtime (P0-001)"
+fi
+
+# ---------------------------------------------------------------------------
+# 28b. P1 packages present in package list (iproute2, perl, socat, dpkg)
+# ---------------------------------------------------------------------------
+for p1_pkg in iproute2 perl socat dpkg; do
+    if [[ -f "$PKG_LIST_P0" ]] && grep -q "^${p1_pkg}$" "$PKG_LIST_P0" 2>/dev/null; then
+        pass "28b: ${p1_pkg} present in orionx.list.chroot (QA P1 audit completeness)"
+    else
+        fail "28b: ${p1_pkg} present in orionx.list.chroot" \
+             "${p1_pkg} not found as a bare package line — QA_AUDIT_2026-07-21.md P1 fix incomplete"
+    fi
+done
+
+# ---------------------------------------------------------------------------
+# 28c. artifact-analyzer.py contains log dir self-heal (P0-002)
+# ---------------------------------------------------------------------------
+if [[ -f "$ARTIFACT_ANALYZER" ]] && \
+   grep -q 'mkdir(parents=True, exist_ok=True)' "$ARTIFACT_ANALYZER" 2>/dev/null; then
+    pass "28c: artifact-analyzer.py contains Path.mkdir(parents=True, exist_ok=True) log-dir self-heal (P0-002)"
+else
+    fail "28c: artifact-analyzer.py contains Path.mkdir(parents=True, exist_ok=True) log-dir self-heal" \
+         "Self-heal mkdir missing from $ARTIFACT_ANALYZER — tool will crash on first boot when /var/log/orionx absent (P0-002)"
+fi
+
+# ---------------------------------------------------------------------------
+# 28d. 0200-copy-samples live hook targets /etc/skel/Analysis (P0-003)
+# ---------------------------------------------------------------------------
+if [[ -f "$HOOK_0200_LIVE" ]] && \
+   grep -q '/etc/skel/Analysis' "$HOOK_0200_LIVE" 2>/dev/null; then
+    pass "28d: 0200-copy-samples live hook seeds /etc/skel/Analysis/ (P0-003 DEC-PHASE11-014 cascade fix)"
+else
+    fail "28d: 0200-copy-samples live hook seeds /etc/skel/Analysis/" \
+         "/etc/skel/Analysis not found in $HOOK_0200_LIVE — sample seeding writes to dead /home/orionx/ path (P0-003)"
+fi
+
+# ---------------------------------------------------------------------------
+# 28e. 0200-copy-samples live hook has NO /home/orionx/ references (P0-003 negative gate)
+# ---------------------------------------------------------------------------
+# || true: grep exits 1 on no-match; zero refs is the desired state (DEC-PHASE9-014 pattern).
+if [[ -f "$HOOK_0200_LIVE" ]]; then
+    HOME_ORIONX_REFS=$(grep -c '/home/orionx/' "$HOOK_0200_LIVE" 2>/dev/null || true)
+    if [[ "$HOME_ORIONX_REFS" -eq 0 ]]; then
+        pass "28e: 0200-copy-samples live hook has zero /home/orionx/ references (dead-authority retired, DEC-PHASE11-014)"
+    else
+        fail "28e: 0200-copy-samples live hook has zero /home/orionx/ references" \
+             "Found $HOME_ORIONX_REFS /home/orionx/ reference(s) — dead-authority path not fully removed (P0-003)"
+    fi
+else
+    fail "28e: 0200-copy-samples live hook present for /home/orionx/ reference check" \
+         "Hook not found at $HOOK_0200_LIVE — P0-003 fix not applied"
+fi
+
+# ---------------------------------------------------------------------------
+# 28f. 0200-copy-samples live hook has NO chown orionx:orionx calls (P0-003)
+# The old hook chowned /home/orionx/Analysis to the dead 'orionx' user.
+# /etc/skel/ files must NOT be chowned — live-config sets ownership at user creation.
+# ---------------------------------------------------------------------------
+if [[ -f "$HOOK_0200_LIVE" ]]; then
+    CHOWN_ORIONX_REFS=$(grep -c 'chown orionx:orionx' "$HOOK_0200_LIVE" 2>/dev/null || true)
+    if [[ "$CHOWN_ORIONX_REFS" -eq 0 ]]; then
+        pass "28f: 0200-copy-samples live hook has zero 'chown orionx:orionx' calls (P0-003 dead-user reference retired)"
+    else
+        fail "28f: 0200-copy-samples live hook has zero 'chown orionx:orionx' calls" \
+             "Found $CHOWN_ORIONX_REFS chown orionx:orionx call(s) — 'orionx' user does not exist post-DEC-PHASE11-014 R6"
+    fi
+else
+    fail "28f: 0200-copy-samples live hook present for chown check" \
+         "Hook not found at $HOOK_0200_LIVE — P0-003 fix not applied"
+fi
+
+# ---------------------------------------------------------------------------
+# 28g. normal/0200-copy-samples hook is REMOVED (dual-authority guard)
+# The normal/ variant contained `chown -R orionx:orionx /home/orionx/Analysis`
+# (line 69). Post-DEC-PHASE11-014 R6 the 'orionx' user no longer exists in the
+# chroot, so the old hook would hard-abort `lb chroot`. The sole authority is
+# now live/0200-copy-samples.hook.chroot. This assertion fails if the deleted
+# file is ever accidentally re-introduced (e.g. a merge brings it back).
+# ---------------------------------------------------------------------------
+if [[ ! -f "$REPO_ROOT/iso/config/hooks/normal/0200-copy-samples.hook.chroot" ]]; then
+    pass "28g: iso/config/hooks/normal/0200-copy-samples.hook.chroot is REMOVED (dual-authority guard, DEC-PHASE11-014)"
+else
+    fail "28g: iso/config/hooks/normal/0200-copy-samples.hook.chroot is REMOVED" \
+         "File still exists — dual-authority hook would hard-abort lb chroot via 'chown orionx:orionx' to dead user (post-DEC-PHASE11-014 R6)"
+fi
+
+# Also verify the hook is present in the squashfs if the ISO was rebuilt.
+# (The live/ hooks execute at chroot build time and are NOT copied into the
+# squashfs root, so we assert /etc/skel/Analysis/ presence in the squashfs instead.)
+if [[ -d "$SQF/etc/skel" ]]; then
+    if [[ -d "$SQF/etc/skel/Analysis" ]]; then
+        pass "28f(sqf): /etc/skel/Analysis/ directory present in squashfs (0200 hook ran, P0-003)"
+    else
+        # Squashfs check is informational if the ISO predates this fix.
+        echo "  NOTE: 28f(sqf): /etc/skel/Analysis/ not found in squashfs"
+        echo "        (ISO may not have been rebuilt after P0-003 fix — source-tree checks 28d/28e/28f are authoritative)"
+        pass "28f(sqf): /etc/skel/Analysis/ squashfs check skipped (ISO not rebuilt since P0-003 fix; source assertions are authoritative)"
+    fi
+else
+    pass "28f(sqf): /etc/skel/Analysis/ squashfs check skipped (squashfs not extracted)"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

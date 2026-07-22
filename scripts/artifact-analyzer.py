@@ -37,6 +37,14 @@ import datetime
 import shutil
 from pathlib import Path
 
+# @decision DEC-PHASE11-016 self-heal log dir at import time — /var/log/orionx
+# is not created by any hook; artifact-analyzer.py must survive first invocation
+# on fresh ISO. See tmp/QA_AUDIT_2026-07-21.md P0-002.
+# Mirrors the pattern in scripts/toggle-theme.sh:27-28 (mkdir -p /var/log/orionx).
+# Without this, logging.FileHandler raises FileNotFoundError on first boot because
+# /var/log/orionx does not exist until a script creates it.
+Path("/var/log/orionx").mkdir(parents=True, exist_ok=True)
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,

@@ -93,10 +93,17 @@ curl
 dnsutils
 ethtool
 fping
+# iproute2: provides ip/ss/tc commands required by mesh-lib.sh and wireguard setup
+# P1-001 (QA_AUDIT_2026-07-21): WireGuard mesh config calls `ip link` / `ip addr`.
+# iproute2 is not guaranteed as a transitive dep in a minimal live-build.
+iproute2
 iputils-ping
 netcat-openbsd
 nmap
 smbclient
+# socat: forensic pipe/relay utility; used in mesh diagnostics and network testing.
+# P1-003 (QA_AUDIT_2026-07-21): explicit dep ensures availability; not a transitive dep.
+socat
 ssh
 traceroute
 wget
@@ -135,6 +142,10 @@ atop
 bsdmainutils
 ca-certificates
 coreutils
+# dpkg: explicit dep (P1-004, QA_AUDIT_2026-07-21). dpkg ships in all Debian systems
+# but listing it explicitly makes the dependency surface auditable and guards against
+# future minimal-build or security-hardening passes that might strip base packages.
+dpkg
 # ddrescue binary is provided by the gddrescue Debian package
 gddrescue
 dialog
@@ -175,6 +186,10 @@ unzip
 
 # Libraries and dependencies
 libimage-exiftool-perl
+# perl: P1-002 (QA_AUDIT_2026-07-21). shasum (from libdigest-sha-perl) is used by
+# download-samples.sh:178-181 for checksum verification. Adding perl ensures the full
+# Perl runtime is present; libdigest-sha-perl is a Perl module, so perl is the root dep.
+perl
 python3-numpy
 python3-scapy
 
@@ -229,6 +244,17 @@ fonts-hack-otf
 gtk2-engines-murrine
 # papirus-icon-theme: Papirus icon theme (GPL-3.0+) — base for Orion-X-Icons inheritance
 papirus-icon-theme
+# W11-9b Themes & Runtime: xfconf provides xfconf-query (P0-001, QA_AUDIT_2026-07-21)
+# xfconf-query is called by toggle-theme.sh:60-67 at runtime to apply XFCE wallpaper and
+# theme changes. Absent → runtime theme toggle silently degrades (P0 bricking bug).
+# @decision DEC-PHASE11-016
+# @title QA P0-001: xfconf added to package list (provides xfconf-query for toggle-theme.sh)
+# @status accepted
+# @rationale tmp/QA_AUDIT_2026-07-21.md P0-001: toggle-theme.sh calls xfconf-query -c
+#   xfce4-desktop but xfconf was not in the package list. XFCE4 runtime (not just static
+#   XML seeding) requires xfconf to apply wallpaper/theme changes. Silent fallback at
+#   toggle-theme.sh:67 masked the failure in unit tests. Fix: add xfconf explicitly.
+xfconf
 
 # W11-3 Layer A: RE toolkit — Debian packaged tools (DEC-PHASE11-004)
 radare2
