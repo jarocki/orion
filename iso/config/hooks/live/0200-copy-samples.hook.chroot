@@ -1,0 +1,106 @@
+#!/bin/sh
+#
+# Orion-X Phoenix Edition — Sample data seeding hook (live-build chroot phase)
+#
+# @decision DEC-PHASE11-014 cascade fix (QA P0-003, tmp/QA_AUDIT_2026-07-21.md)
+# @title 0200-copy-samples: rewritten to seed /etc/skel/Analysis/ (DEC-PHASE11-014 R6)
+# @status accepted
+# @rationale After DEC-PHASE11-014 (W11-9b R6 fix), the live user is
+#   'orionx-operator', not 'orionx'. The dead 'orionx' home directory is never
+#   created by live-config; any chroot-time writes to that dead path are silently
+#   lost at runtime. The Debian live-config canonical pattern is to seed /etc/skel/
+#   so that live-config copies the tree to /home/orionx-operator/ during first-boot
+#   user creation. This hook rewrites to that pattern:
+#     - Target: /etc/skel/Analysis/ (and subtrees)
+#     - No chown calls: /etc/skel/ files inherit ownership at live-config user creation
+#     - Preserves 0755 dirs / 0644 files convention
+#   The old normal/0200-copy-samples.hook.chroot wrote to the dead-user path and called
+#   chown to the dead user — both are dead-authority references retired by DEC-PHASE11-014.
+#   This live/ hook supersedes the normal/ hook for the skel-seeding concern.
+#
+# Hook location: iso/config/hooks/live/ (runs in chroot build phase)
+# Ref: QA_AUDIT_2026-07-21.md P0-003, P2-001; DEC-PHASE11-014
+#
+
+set -e
+
+# ---------------------------------------------------------------------------
+# Target: /etc/skel/Analysis/ — live-config copies this tree to the live
+# user's home directory at first-boot user creation. The old 'orionx' user
+# path is dead authority (DEC-PHASE11-014 R6 fix retired the 'orionx' identity).
+# ---------------------------------------------------------------------------
+SKEL_ANALYSIS_DIR="/etc/skel/Analysis"
+
+# Create canonical Analysis subdirectory structure under /etc/skel/
+# Modes: 0755 for directories (live-config inherits on copy)
+mkdir -p "${SKEL_ANALYSIS_DIR}/pcaps"
+mkdir -p "${SKEL_ANALYSIS_DIR}/memory"
+mkdir -p "${SKEL_ANALYSIS_DIR}/logs"
+mkdir -p "${SKEL_ANALYSIS_DIR}/firmware"
+
+chmod 755 "${SKEL_ANALYSIS_DIR}"
+chmod 755 "${SKEL_ANALYSIS_DIR}/pcaps"
+chmod 755 "${SKEL_ANALYSIS_DIR}/memory"
+chmod 755 "${SKEL_ANALYSIS_DIR}/logs"
+chmod 755 "${SKEL_ANALYSIS_DIR}/firmware"
+
+# ---------------------------------------------------------------------------
+# Seed sample data from build environment if available.
+# Samples directory at /opt/orionx/data/samples/ is staged by
+# stage_application_content() in scripts/build-iso.sh.
+# ---------------------------------------------------------------------------
+SAMPLES_DIR="/opt/orionx/data/samples"
+
+if [ -d "${SAMPLES_DIR}/pcaps" ]; then
+    cp -r "${SAMPLES_DIR}/pcaps"/. "${SKEL_ANALYSIS_DIR}/pcaps/"
+fi
+
+if [ -d "${SAMPLES_DIR}/memory" ]; then
+    cp -r "${SAMPLES_DIR}/memory"/. "${SKEL_ANALYSIS_DIR}/memory/"
+fi
+
+if [ -d "${SAMPLES_DIR}/logs" ]; then
+    cp -r "${SAMPLES_DIR}/logs"/. "${SKEL_ANALYSIS_DIR}/logs/"
+fi
+
+if [ -d "${SAMPLES_DIR}/firmware" ]; then
+    cp -r "${SAMPLES_DIR}/firmware"/. "${SKEL_ANALYSIS_DIR}/firmware/"
+fi
+
+# ---------------------------------------------------------------------------
+# Seed README so the operator sees the Analysis structure on first boot even
+# when no sample data was available at build time. Mode: 0644 (world-readable).
+# ---------------------------------------------------------------------------
+if [ ! -f "${SKEL_ANALYSIS_DIR}/README.txt" ]; then
+    cat > "${SKEL_ANALYSIS_DIR}/README.txt" << 'SKELEOF'
+Orion-X Phoenix Edition — Analysis Working Directory
+=====================================================
+
+This directory is pre-seeded by the ISO build. Subdirectories:
+  pcaps/     — Network traffic captures (.pcap / .pcapng)
+  memory/    — Memory dump artifacts (.raw / .dmp / .mem)
+  logs/      — Log file collections
+  firmware/  — Firmware images for binary analysis
+
+To populate with training/sample data post-boot:
+  sudo download-samples.sh --output ~/Analysis/
+
+Forensic workflow entry points (all in PATH):
+  artifact-analyzer.py <file>   — automated triage
+  pcap-analyzer.py <file>       — PCAP-focused analysis
+  yara -r /opt/orionx/yara/     — YARA scanning
+  nebula                        — Nebula AI assistant
+SKELEOF
+    chmod 644 "${SKEL_ANALYSIS_DIR}/README.txt"
+fi
+
+# ---------------------------------------------------------------------------
+# Apply correct file permissions to any seeded content.
+# Directories 0755, files 0644. No chown — /etc/skel/ files are owned by root
+# at build time; live-config sets ownership to the created user during
+# first-boot user creation (standard Debian live-config behavior).
+# ---------------------------------------------------------------------------
+find "${SKEL_ANALYSIS_DIR}" -type d -exec chmod 755 {} \;
+find "${SKEL_ANALYSIS_DIR}" -type f -exec chmod 644 {} \;
+
+exit 0
