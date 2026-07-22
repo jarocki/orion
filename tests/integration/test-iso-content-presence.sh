@@ -2730,6 +2730,21 @@ else
          "Hook not found at $HOOK_0200_LIVE — P0-003 fix not applied"
 fi
 
+# ---------------------------------------------------------------------------
+# 28g. normal/0200-copy-samples hook is REMOVED (dual-authority guard)
+# The normal/ variant contained `chown -R orionx:orionx /home/orionx/Analysis`
+# (line 69). Post-DEC-PHASE11-014 R6 the 'orionx' user no longer exists in the
+# chroot, so the old hook would hard-abort `lb chroot`. The sole authority is
+# now live/0200-copy-samples.hook.chroot. This assertion fails if the deleted
+# file is ever accidentally re-introduced (e.g. a merge brings it back).
+# ---------------------------------------------------------------------------
+if [[ ! -f "$REPO_ROOT/iso/config/hooks/normal/0200-copy-samples.hook.chroot" ]]; then
+    pass "28g: iso/config/hooks/normal/0200-copy-samples.hook.chroot is REMOVED (dual-authority guard, DEC-PHASE11-014)"
+else
+    fail "28g: iso/config/hooks/normal/0200-copy-samples.hook.chroot is REMOVED" \
+         "File still exists — dual-authority hook would hard-abort lb chroot via 'chown orionx:orionx' to dead user (post-DEC-PHASE11-014 R6)"
+fi
+
 # Also verify the hook is present in the squashfs if the ISO was rebuilt.
 # (The live/ hooks execute at chroot build time and are NOT copied into the
 # squashfs root, so we assert /etc/skel/Analysis/ presence in the squashfs instead.)

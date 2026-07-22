@@ -51,13 +51,13 @@ EXIT CODES
   1  One or more expected hooks not found in the build log.
 
 EXPECTED HOOKS (iso/config/hooks/ — post-move canonical paths)
+  live/0200-copy-samples.hook.chroot
   live/0500-install-external-tools.hook.chroot
   live/0600-filesystem-hardening.hook.chroot
   live/0610-apparmor-setup.hook.chroot
   live/0615-install-systemd-units.hook.chroot
   live/0620-service-hardening.hook.chroot
   normal/0100-create-user.hook.chroot
-  normal/0200-copy-samples.hook.chroot
   normal/0500-bootloader-serial.hook.binary
 EOF
     exit 0
@@ -154,13 +154,13 @@ fi
 # Chroot-stage hooks: live-build emits "P: Executing hook" prefix lines for
 # each hook discovered in config/hooks/{live,normal}/ during the chroot stage.
 CHROOT_HOOKS=(
+    "live/0200-copy-samples.hook.chroot"
     "live/0500-install-external-tools.hook.chroot"
     "live/0600-filesystem-hardening.hook.chroot"
     "live/0610-apparmor-setup.hook.chroot"
     "live/0615-install-systemd-units.hook.chroot"
     "live/0620-service-hardening.hook.chroot"
     "normal/0100-create-user.hook.chroot"
-    "normal/0200-copy-samples.hook.chroot"
 )
 
 # Binary-stage hooks: live-build's binary stage does NOT reliably emit the
