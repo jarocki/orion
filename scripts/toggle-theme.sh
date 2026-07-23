@@ -19,6 +19,14 @@
 #   Theme dir corrected from /usr/share/orionx/theme to /opt/orionx/theme (the
 #   actual staging path used by stage_application_content).
 
+# @decision DEC-PHASE11-014 dependency
+# This script operates on the live operator's XFCE session, which was
+# seeded from /etc/skel/ at first-boot user creation. Per DEC-PHASE11-014,
+# /etc/skel/ is the single authority for home-directory config. Any changes
+# to XFCE panel/wallpaper/theme paths here MUST also be reflected in
+# iso/config/hooks/normal/0100-create-user.hook.chroot which writes the
+# /etc/skel/ seeds.
+
 # Define paths
 THEME_DIR="/opt/orionx/theme"
 WALLPAPER_DIR="$THEME_DIR/wallpapers"
