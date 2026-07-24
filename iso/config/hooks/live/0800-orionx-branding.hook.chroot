@@ -137,4 +137,38 @@ else
     # The -R flag already embedded orionx-phoenix in the initramfs.
 fi
 
+# ---------------------------------------------------------------------------
+# Final+1: Verify Plymouth theme is embedded in the initramfs
+#
+# @decision DEC-PHASE11-018
+# @title verify Plymouth theme in initramfs, not just config
+# @status accepted
+# @rationale The plymouthd.conf check confirms configuration; this check
+#   confirms the theme was actually embedded into the initrd via
+#   update-initramfs. Silent initramfs regeneration failure was the likely
+#   cause of "splash did not paint" on the 2026-07-21 hardware test.
+#   plymouth-set-default-theme -R should trigger update-initramfs -u, but
+#   if it exits early (missing initramfs-tools, chroot environment quirks,
+#   or plymouth packaging changes) the config is written but the initrd is
+#   stale. This check catches that failure class and aborts the build loudly
+#   rather than shipping an ISO that silently fails to display the splash.
+# ---------------------------------------------------------------------------
+if command -v lsinitramfs >/dev/null 2>&1; then
+    # Try each initrd — there may be multiple kernel versions
+    _INITRD_MATCHED=0
+    for _INITRD in /boot/initrd.img-*; do
+        [ -f "${_INITRD}" ] || continue
+        if lsinitramfs "${_INITRD}" 2>/dev/null | grep -q "plymouth/themes/orionx-phoenix"; then
+            _INITRD_MATCHED=1
+            echo "${LOG_PREFIX} Plymouth theme verified in ${_INITRD}"
+        fi
+    done
+    if [ "${_INITRD_MATCHED}" -eq 0 ]; then
+        echo "${LOG_PREFIX} ERROR: Plymouth theme NOT found in any initrd — splash will not paint on boot" >&2
+        exit 1
+    fi
+else
+    echo "${LOG_PREFIX} WARNING: lsinitramfs not available; cannot verify Plymouth theme embedding" >&2
+fi
+
 echo "${LOG_PREFIX} W11-9a boot-chain branding hook complete"

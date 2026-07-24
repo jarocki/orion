@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **P2/P3 QA hotfix follow-up (tmp/QA_AUDIT_2026-07-21.md)**: Sample data
+  honesty (P2-002) — synthetic placeholders renamed with `_SYNTHETIC` suffix
+  and README emitted. `toggle-theme.sh` now annotates its DEC-PHASE11-014
+  dependency (P3-001). Plymouth splash acceptance now fails the build if the
+  theme is not embedded in initramfs (P3-002 / DEC-PHASE11-018) — root-cause
+  fix for the operator-reported "Plymouth Phoenix splash did NOT paint at
+  boot" hardware regression. §29 content-presence assertions added.
+
 - **P0 QA hotfix (tmp/QA_AUDIT_2026-07-21.md)**: xfconf package now present
   (toggle-theme.sh runtime works); artifact-analyzer.py self-heals its log dir
   (`/var/log/orionx`); 0200-copy-samples.hook.chroot rewritten to seed

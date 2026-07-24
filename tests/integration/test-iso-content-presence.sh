@@ -2762,6 +2762,94 @@ else
 fi
 
 # ===========================================================================
+# 29. QA P2/P3 Hotfix follow-up (2026-07-22) — sample honesty, @decision
+#     annotations, Plymouth initramfs verification
+#
+# @decision DEC-PHASE11-017 dependency
+# @title P2-002 sample honesty: _SYNTHETIC suffix + README
+# @status accepted
+# @rationale tmp/QA_AUDIT_2026-07-21.md P2-002: operators could mistake
+#   the randomly-generated placeholder in create_memory_sample() for real
+#   forensic data. Renamed to mini_sample_SYNTHETIC.raw and co-located a
+#   README.txt that explicitly labels the file as synthetic. These
+#   source-tree assertions catch regressions without requiring a full ISO
+#   rebuild.
+#
+# @decision DEC-PHASE11-014 dependency (P3-001)
+# @title P3-001 toggle-theme.sh DEC-PHASE11-014 annotation
+# @status accepted
+# @rationale toggle-theme.sh operates on the live session seeded from
+#   /etc/skel/. A missing annotation caused reviewers to miss that a
+#   change to this script also requires a change to 0100-create-user.hook.
+#   DEC-PHASE11-014 is now explicitly cited in the script header.
+#
+# @decision DEC-PHASE11-018
+# @title P3-002 Plymouth initramfs verification: build-time fail-loud gate
+# @status accepted
+# @rationale The operator-reported "Plymouth Phoenix splash did NOT paint"
+#   on hardware was caused by a silent initramfs regeneration failure.
+#   0800-orionx-branding.hook.chroot now calls lsinitramfs and aborts the
+#   build (exit 1) if the theme is absent from the initrd. This section
+#   asserts the check mechanism and its DEC annotation are present in the
+#   hook source.
+# ===========================================================================
+section "29. QA P2/P3 Hotfix follow-up (2026-07-22) — sample honesty, @decision annotations, Plymouth initramfs verification"
+
+DOWNLOAD_SAMPLES="$REPO_ROOT/scripts/download-samples.sh"
+TOGGLE_THEME="$REPO_ROOT/scripts/toggle-theme.sh"
+HOOK_0800="$REPO_ROOT/iso/config/hooks/live/0800-orionx-branding.hook.chroot"
+
+# ---------------------------------------------------------------------------
+# 29a. P2-002: mini_sample_SYNTHETIC.raw filename present in download-samples.sh
+# ---------------------------------------------------------------------------
+if [[ -f "$DOWNLOAD_SAMPLES" ]] && grep -q 'mini_sample_SYNTHETIC\.raw' "$DOWNLOAD_SAMPLES" 2>/dev/null; then
+    pass "29a: mini_sample_SYNTHETIC.raw filename present in download-samples.sh (P2-002 rename, DEC-PHASE11-017)"
+else
+    fail "29a: mini_sample_SYNTHETIC.raw filename present in download-samples.sh" \
+         "_SYNTHETIC suffix not found in $DOWNLOAD_SAMPLES — honesty rename incomplete (P2-002)"
+fi
+
+# ---------------------------------------------------------------------------
+# 29b. P2-002: SYNTHETIC PLACEHOLDER README content present in download-samples.sh
+# ---------------------------------------------------------------------------
+if [[ -f "$DOWNLOAD_SAMPLES" ]] && grep -q 'SYNTHETIC PLACEHOLDER' "$DOWNLOAD_SAMPLES" 2>/dev/null; then
+    pass "29b: SYNTHETIC PLACEHOLDER README content present in download-samples.sh (P2-002 honesty README, DEC-PHASE11-017)"
+else
+    fail "29b: SYNTHETIC PLACEHOLDER README content present in download-samples.sh" \
+         "README text absent from $DOWNLOAD_SAMPLES — operators won't see honesty warning (P2-002)"
+fi
+
+# ---------------------------------------------------------------------------
+# 29c. P3-001: DEC-PHASE11-014 annotation present in toggle-theme.sh
+# ---------------------------------------------------------------------------
+if [[ -f "$TOGGLE_THEME" ]] && grep -q 'DEC-PHASE11-014' "$TOGGLE_THEME" 2>/dev/null; then
+    pass "29c: DEC-PHASE11-014 annotation present in toggle-theme.sh (P3-001, skel dependency documented)"
+else
+    fail "29c: DEC-PHASE11-014 annotation present in toggle-theme.sh" \
+         "DEC-PHASE11-014 not cited in $TOGGLE_THEME — reviewers cannot see the /etc/skel/ dependency (P3-001)"
+fi
+
+# ---------------------------------------------------------------------------
+# 29d. P3-002: lsinitramfs check present in 0800-orionx-branding.hook.chroot
+# ---------------------------------------------------------------------------
+if [[ -f "$HOOK_0800" ]] && grep -q 'lsinitramfs' "$HOOK_0800" 2>/dev/null; then
+    pass "29d: lsinitramfs Plymouth initramfs verification present in 0800 hook (P3-002, DEC-PHASE11-018)"
+else
+    fail "29d: lsinitramfs Plymouth initramfs verification present in 0800 hook" \
+         "lsinitramfs check absent from $HOOK_0800 — silent initramfs failure remains undetected (P3-002)"
+fi
+
+# ---------------------------------------------------------------------------
+# 29e. P3-002: DEC-PHASE11-018 annotation present in 0800-orionx-branding.hook.chroot
+# ---------------------------------------------------------------------------
+if [[ -f "$HOOK_0800" ]] && grep -q 'DEC-PHASE11-018' "$HOOK_0800" 2>/dev/null; then
+    pass "29e: DEC-PHASE11-018 annotation present in 0800-orionx-branding.hook.chroot (P3-002 decision documented)"
+else
+    fail "29e: DEC-PHASE11-018 annotation present in 0800-orionx-branding.hook.chroot" \
+         "DEC-PHASE11-018 not cited in $HOOK_0800 — @decision annotation missing (P3-002)"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

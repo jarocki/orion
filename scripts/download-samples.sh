@@ -477,6 +477,16 @@ download_pcaps() {
 
 # ---------------------------------------------------------------------------
 # Create memory sample placeholder (online mode)
+#
+# @decision DEC-PHASE11-017
+# @title Sample data honesty: synthetic placeholder uses _SYNTHETIC suffix
+# @status accepted
+# @rationale P2-002 audit finding: operators downloading this file for the
+#   first time may mistake the randomly-generated placeholder for real
+#   forensic memory data. The _SYNTHETIC suffix and co-located README.txt
+#   make the synthetic nature unambiguous at filesystem-level inspection.
+#   Real memory dumps are 100 MB+ and legally encumbered; the placeholder
+#   exists solely for tool-plumbing smoke-tests in air-gapped environments.
 # ---------------------------------------------------------------------------
 create_memory_sample() {
     local dir="$SAMPLES_DIR/memory"
@@ -484,16 +494,34 @@ create_memory_sample() {
 
     log "Creating memory sample placeholder..."
     # Create a small placeholder — real memory dumps are too large for default download
+    # File is named _SYNTHETIC to signal this is not real forensic data (DEC-PHASE11-017)
     python3 -c "
 import sys
 data = bytearray(5 * 1024 * 1024)  # 5 MB placeholder
 data[0:4] = b'\\x4d\\x5a\\x90\\x00'  # MZ header
 sys.stdout.buffer.write(bytes(data))
-" > "$dir/mini_sample.raw" 2>/dev/null || {
+" > "$dir/mini_sample_SYNTHETIC.raw" 2>/dev/null || {
         # Fallback if python3 is not available
-        dd if=/dev/urandom of="$dir/mini_sample.raw" bs=1M count=5 2>/dev/null
+        dd if=/dev/urandom of="$dir/mini_sample_SYNTHETIC.raw" bs=1M count=5 2>/dev/null
     }
-    log "Created memory sample: $dir/mini_sample.raw"
+    log "Created memory sample: $dir/mini_sample_SYNTHETIC.raw"
+
+    # Emit README so operators immediately understand the synthetic nature
+    cat > "$dir/README.txt" << 'MEMREADME'
+SYNTHETIC PLACEHOLDER — NOT REAL FORENSIC DATA
+
+Files marked _SYNTHETIC in this directory are randomly-generated placeholders
+used for tool-plumbing tests only. Real memory dumps, PCAPs, and forensic
+artifacts must be sourced separately (e.g., from CTF challenges, live
+incident captures, or open datasets like the Volatility sample-images
+repository).
+
+This limitation exists because real forensic datasets are large (100 MB+)
+and legally-encumbered; the Orion-X ISO ships with air-gap-friendly
+synthetic samples so first-boot operators can smoke-test toolchains
+without an internet connection.
+MEMREADME
+    log "Created memory README.txt: $dir/README.txt"
 }
 
 # ---------------------------------------------------------------------------
