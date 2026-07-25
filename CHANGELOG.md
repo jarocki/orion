@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **orionx-imager macOS SD-reader detection (#77)**: `_list_devices_macos()`
+  now enumerates all disks and filters per-disk on `RemovableMedia`/`Ejectable`
+  instead of the coarse `diskutil list external`. PCIe-attached built-in card
+  readers with removable SD cards inserted are now visible (DEC-PHASE11-IMAGER-001).
+
 - **P2/P3 QA hotfix follow-up (tmp/QA_AUDIT_2026-07-21.md)**: Sample data
   honesty (P2-002) — synthetic placeholders renamed with `_SYNTHETIC` suffix
   and README emitted. `toggle-theme.sh` now annotates its DEC-PHASE11-014

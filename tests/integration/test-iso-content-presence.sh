@@ -2850,6 +2850,75 @@ else
 fi
 
 # ===========================================================================
+# 30. orionx-imager macOS SD-reader detection fix (DEC-PHASE11-IMAGER-001, #77)
+#
+# @decision DEC-PHASE11-IMAGER-001
+# @title Enumerate all disks, filter on RemovableMedia/Ejectable per-disk
+# @status active
+# @rationale `diskutil list external` excludes built-in card readers even when
+#   a removable SD card is inserted (macOS classifies the reader as internal/
+#   physical). The fix drops the `external` arg and adds per-disk
+#   RemovableMedia/Ejectable filtering via `diskutil info -plist <disk>`.
+#   These assertions verify the change is present in the source tree without
+#   requiring a full ISO rebuild or macOS hardware.
+# ===========================================================================
+section "30. orionx-imager macOS SD-reader detection fix (DEC-PHASE11-IMAGER-001, #77)"
+
+DEVICES_PY="$REPO_ROOT/scripts/orionx-imager/lib/devices.py"
+
+# ---------------------------------------------------------------------------
+# 30a. `external` argument removed from diskutil list call
+# ---------------------------------------------------------------------------
+if [[ -f "$DEVICES_PY" ]] && \
+   grep -qE '"diskutil", "list", "-plist"\]|"diskutil", "list", "-plist",$' "$DEVICES_PY" 2>/dev/null; then
+    pass "30a: diskutil list -plist called without 'external' arg (DEC-PHASE11-IMAGER-001)"
+else
+    fail "30a: diskutil list -plist called without 'external' arg" \
+         "Expected ['diskutil', 'list', '-plist'] (no 'external') in $DEVICES_PY"
+fi
+
+# ---------------------------------------------------------------------------
+# 30b. Negative guard: 'external' argument must NOT be present
+# ---------------------------------------------------------------------------
+if [[ -f "$DEVICES_PY" ]] && \
+   ! grep -q '"diskutil", "list", "-plist", "external"' "$DEVICES_PY" 2>/dev/null; then
+    pass "30b: 'diskutil list -plist external' call absent (removed by DEC-PHASE11-IMAGER-001)"
+else
+    fail "30b: 'diskutil list -plist external' call absent" \
+         "Found the old 'external' arg still in $DEVICES_PY — issue #77 fix not applied"
+fi
+
+# ---------------------------------------------------------------------------
+# 30c. @decision annotation present
+# ---------------------------------------------------------------------------
+if [[ -f "$DEVICES_PY" ]] && grep -q 'DEC-PHASE11-IMAGER-001' "$DEVICES_PY" 2>/dev/null; then
+    pass "30c: DEC-PHASE11-IMAGER-001 decision annotation present in devices.py"
+else
+    fail "30c: DEC-PHASE11-IMAGER-001 decision annotation present in devices.py" \
+         "Decision annotation missing from $DEVICES_PY"
+fi
+
+# ---------------------------------------------------------------------------
+# 30d. RemovableMedia per-disk filter present
+# ---------------------------------------------------------------------------
+if [[ -f "$DEVICES_PY" ]] && grep -q 'RemovableMedia' "$DEVICES_PY" 2>/dev/null; then
+    pass "30d: RemovableMedia per-disk filter present in devices.py (DEC-PHASE11-IMAGER-001)"
+else
+    fail "30d: RemovableMedia per-disk filter present in devices.py" \
+         "RemovableMedia key not found in $DEVICES_PY — per-disk filter not implemented"
+fi
+
+# ---------------------------------------------------------------------------
+# 30e. Ejectable per-disk filter present
+# ---------------------------------------------------------------------------
+if [[ -f "$DEVICES_PY" ]] && grep -q 'Ejectable' "$DEVICES_PY" 2>/dev/null; then
+    pass "30e: Ejectable per-disk filter present in devices.py (DEC-PHASE11-IMAGER-001)"
+else
+    fail "30e: Ejectable per-disk filter present in devices.py" \
+         "Ejectable key not found in $DEVICES_PY — per-disk filter incomplete"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

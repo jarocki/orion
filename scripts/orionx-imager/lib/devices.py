@@ -110,10 +110,31 @@ def refuse_write(path: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 def _list_devices_macos() -> list[dict]:
-    """Enumerate removable disks on macOS via diskutil list -plist."""
+    # @decision DEC-PHASE11-IMAGER-001 detect SD cards on internal PCIe readers
+    # @title Enumerate all disks, filter on RemovableMedia/Ejectable per-disk
+    # @status active
+    # @rationale `diskutil list external` excludes built-in card readers even
+    #   when a removable SD card is inserted (macOS classifies the reader as
+    #   internal/physical). Per-disk RemovableMedia check picks up the card
+    #   via `diskutil info -plist <disk>`. Fixes issue #77 — user reported
+    #   SD card at /dev/disk4 invisible to orionx-imager 2026-07-21.
+    """Enumerate removable disks on macOS via diskutil list -plist.
+
+    Enumerates ALL disks (not just ``external``) so that SD cards seated in
+    PCIe-attached built-in readers — which macOS classifies as internal/physical
+    — are visible.  Each disk is then individually checked via
+    ``diskutil info -plist <disk>`` and admitted only when:
+
+    * ``RemovableMedia`` or ``Ejectable`` is True (it is a user-removable device)
+    * ``WritableMedia`` is True (we will write to it)
+    * ``is_system_disk()`` returns False
+
+    This replaces the former ``diskutil list external`` coarse filter that was
+    blind to built-in card readers (DEC-PHASE11-IMAGER-001, issue #77).
+    """
     try:
         raw = subprocess.check_output(
-            ["diskutil", "list", "-plist", "external"],
+            ["diskutil", "list", "-plist"],
             stderr=subprocess.DEVNULL,
             timeout=15,
         )
@@ -127,23 +148,59 @@ def _list_devices_macos() -> list[dict]:
 
     devices: list[dict] = []
     for disk_path in plist.get("AllDisksAndPartitions", []):
-        path = "/dev/" + disk_path.get("DeviceIdentifier", "")
-        if not path or path == "/dev/":
+        disk_id = disk_path.get("DeviceIdentifier", "")
+        path = "/dev/" + disk_id
+        if not disk_id or path == "/dev/":
             continue
-        # Skip if system disk
+        # Skip if system disk (e.g. /dev/disk0 on macOS)
         if is_system_disk(path):
+            continue
+        # Per-disk removability check: call diskutil info for accurate flags
+        if not _macos_disk_is_removable(disk_id):
             continue
         size_bytes = disk_path.get("Size", 0)
         devices.append({
             "path": path,
             "size": _fmt_bytes(size_bytes),
             "size_bytes": size_bytes,
-            "model": _macos_disk_model(disk_path.get("DeviceIdentifier", "")),
+            "model": _macos_disk_model(disk_id),
             "vendor": "",
             "removable": True,
             "mounted": _macos_is_mounted(disk_path),
         })
     return sorted(devices, key=lambda d: d["path"])
+
+
+def _macos_disk_is_removable(disk_id: str) -> bool:
+    """Return True if *disk_id* is a writable removable/ejectable device.
+
+    Calls ``diskutil info -plist <disk_id>`` and checks three flags:
+
+    * ``RemovableMedia`` (bool) — True for SD cards, USB drives, optical media
+    * ``Ejectable``     (bool) — True for anything the OS can eject
+    * ``WritableMedia`` (bool) — must be True (we are going to write to it)
+
+    If ``diskutil info`` fails for any reason (e.g. the device was removed
+    between enumeration and info calls), we skip the disk with a warning rather
+    than crashing the entire listing.  Returns False on any failure.
+    """
+    try:
+        raw = subprocess.check_output(
+            ["diskutil", "info", "-plist", disk_id],
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+        info = plistlib.loads(raw)
+    except Exception as exc:
+        import sys
+        print(f"orionx-imager: warning: diskutil info failed for {disk_id}: {exc}", file=sys.stderr)
+        return False
+
+    removable = bool(info.get("RemovableMedia", False))
+    ejectable = bool(info.get("Ejectable", False))
+    writable = bool(info.get("WritableMedia", True))  # default True: assume writable if key absent
+
+    return (removable or ejectable) and writable
 
 
 def _macos_disk_model(disk_id: str) -> str:
