@@ -94,11 +94,7 @@ test-qemu-boot: ## Run QEMU boot harness (UEFI + BIOS) on the latest ISO; overri
 docker-build: ## Build Docker development environment
 	docker build -t orionx-dev .
 
-iso-build: test-unit ## Build ISO image (Linux only); runs unit tests first per Evaluation Contract
-	@if [ "$$(uname)" != "Linux" ]; then \
-		echo "ERROR: ISO build requires Linux. Use 'make docker-build' then build inside container."; \
-		exit 1; \
-	fi
+iso-build: test-unit ## Build ISO image; auto-wraps in Docker on macOS
 	bash scripts/build-iso.sh
 
 lynis: ## Run Lynis security audit

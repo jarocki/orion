@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v2.1.0] - Unreleased
 
+### Added
+
+- **macOS build support (#75-related)**: `scripts/build-iso.sh` now auto-detects
+  Darwin hosts and re-execs inside a `debian:bullseye-slim` Docker container matching
+  the `release.yml` CI pattern. macOS operators can now run `bash scripts/build-iso.sh`
+  directly without knowing the docker run incantation
+  (DEC-PHASE11-MACOS-BUILD-001).
+
+- **Default version is now git-derived (#75)**: `ORIONX_VERSION` defaults to
+  `git describe --tags --always --dirty` instead of the stale hardcoded
+  `v2.0.0-rc9`. Post-tag develop builds now produce accurately-named ISOs
+  (DEC-PHASE11-VERSION-DEFAULT-001).
+
 ### Fixed
 
 - **orionx-imager macOS SD-reader detection (#77)**: `_list_devices_macos()`

@@ -2919,6 +2919,102 @@ else
 fi
 
 # ===========================================================================
+# 31. macOS Docker auto-wrap + git-derived version default (build-iso.sh)
+#
+# @decision DEC-PHASE11-MACOS-BUILD-001
+# @title macOS host auto-wraps in debian:bullseye-slim Docker
+# @status active
+# @rationale These source-tree assertions verify the macOS Docker auto-wrap
+#   and git-derived version changes without requiring a full ISO build or
+#   Docker/macOS hardware. They prove the implementation is present and
+#   consistent with the CI release.yml pattern.
+# ===========================================================================
+section "31. macOS Docker auto-wrap + git-derived version (DEC-PHASE11-MACOS-BUILD-001)"
+
+BUILD_SH="$REPO_ROOT/scripts/build-iso.sh"
+
+# ---------------------------------------------------------------------------
+# 31a. Darwin detection present
+# ---------------------------------------------------------------------------
+if grep -q 'uname -s.*Darwin\|Darwin.*uname' "$BUILD_SH" 2>/dev/null || \
+   grep -q '"Darwin"' "$BUILD_SH" 2>/dev/null; then
+    pass "31a: build-iso.sh detects Darwin host (DEC-PHASE11-MACOS-BUILD-001)"
+else
+    fail "31a: build-iso.sh detects Darwin host" \
+         "Expected Darwin uname check in $BUILD_SH"
+fi
+
+# ---------------------------------------------------------------------------
+# 31b. ORIONX_BUILD_IN_DOCKER recursion guard present
+# ---------------------------------------------------------------------------
+if grep -q 'ORIONX_BUILD_IN_DOCKER' "$BUILD_SH" 2>/dev/null; then
+    pass "31b: build-iso.sh has ORIONX_BUILD_IN_DOCKER recursion guard"
+else
+    fail "31b: build-iso.sh has ORIONX_BUILD_IN_DOCKER recursion guard" \
+         "ORIONX_BUILD_IN_DOCKER guard not found in $BUILD_SH"
+fi
+
+# ---------------------------------------------------------------------------
+# 31c. debian:bullseye-slim used (matches release.yml)
+# ---------------------------------------------------------------------------
+if grep -q 'debian:bullseye' "$BUILD_SH" 2>/dev/null; then
+    pass "31c: build-iso.sh uses debian:bullseye (matches release.yml)"
+else
+    fail "31c: build-iso.sh uses debian:bullseye (matches release.yml)" \
+         "debian:bullseye not found in $BUILD_SH — Docker image must match CI"
+fi
+
+# ---------------------------------------------------------------------------
+# 31d. Stale hardcoded default v2.0.0-rc9 removed
+# ---------------------------------------------------------------------------
+if ! grep -qF 'ORIONX_VERSION:-v2.0.0-rc9' "$BUILD_SH" 2>/dev/null; then
+    pass "31d: build-iso.sh no longer hardcodes stale default v2.0.0-rc9"
+else
+    fail "31d: build-iso.sh no longer hardcodes stale default v2.0.0-rc9" \
+         "Found ORIONX_VERSION:-v2.0.0-rc9 still present in $BUILD_SH — issue #75 not fixed"
+fi
+
+# ---------------------------------------------------------------------------
+# 31e. git describe used for version derivation
+# ---------------------------------------------------------------------------
+if grep -q 'git describe --tags' "$BUILD_SH" 2>/dev/null; then
+    pass "31e: build-iso.sh derives default version from git describe --tags"
+else
+    fail "31e: build-iso.sh derives default version from git describe --tags" \
+         "git describe --tags not found in $BUILD_SH — version default not git-derived"
+fi
+
+# ---------------------------------------------------------------------------
+# 31f. DEC-PHASE11-MACOS-BUILD-001 annotation present
+# ---------------------------------------------------------------------------
+if grep -q 'DEC-PHASE11-MACOS-BUILD-001' "$BUILD_SH" 2>/dev/null; then
+    pass "31f: DEC-PHASE11-MACOS-BUILD-001 annotation present in build-iso.sh"
+else
+    fail "31f: DEC-PHASE11-MACOS-BUILD-001 annotation present in build-iso.sh" \
+         "Decision annotation missing from $BUILD_SH"
+fi
+
+# ---------------------------------------------------------------------------
+# 31g. DEC-PHASE11-VERSION-DEFAULT-001 annotation present
+# ---------------------------------------------------------------------------
+if grep -q 'DEC-PHASE11-VERSION-DEFAULT-001' "$BUILD_SH" 2>/dev/null; then
+    pass "31g: DEC-PHASE11-VERSION-DEFAULT-001 annotation present in build-iso.sh"
+else
+    fail "31g: DEC-PHASE11-VERSION-DEFAULT-001 annotation present in build-iso.sh" \
+         "Decision annotation missing from $BUILD_SH"
+fi
+
+# ---------------------------------------------------------------------------
+# 31h. Makefile iso-build no longer errors on non-Linux
+# ---------------------------------------------------------------------------
+if ! grep -qE 'uname.*!=.*Linux|uname.*!=.*"Linux"' "$REPO_ROOT/Makefile" 2>/dev/null; then
+    pass "31h: Makefile iso-build no longer errors on non-Linux hosts"
+else
+    fail "31h: Makefile iso-build no longer errors on non-Linux hosts" \
+         "Found uname != Linux check still in Makefile — macOS block not removed"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
