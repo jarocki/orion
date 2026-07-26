@@ -3015,6 +3015,39 @@ else
 fi
 
 # ===========================================================================
+# 32. iso/auto/config execute bit (#82 root cause fix)
+#
+# lb config invokes ./auto/config directly from the iso/ directory.
+# If the file is tracked without the execute bit (100644) lb exits with
+# "Permission denied" and every build fails. This section asserts:
+#   §32a — git tracked mode is 100755 (the fix is in the index)
+#   §32b — the working-tree copy is executable (the bit propagated)
+#
+# Root cause: iso/auto/config was committed 100644 at initial bootstrap.
+# Every CI build since rc8 (2026-06-19) died before lb config ran.
+# This single mode change unblocks the entire release pipeline (#82).
+# ===========================================================================
+section "32. iso/auto/config execute bit — #82 root cause fix"
+
+# §32a: git tracked mode must be 100755
+# git ls-files -s prints "<mode> <hash> <stage>\t<path>"; awk extracts mode.
+TRACKED_MODE="$(git -C "$REPO_ROOT" ls-files -s iso/auto/config 2>/dev/null | awk '{print $1}')"
+if [[ "$TRACKED_MODE" == "100755" ]]; then
+    pass "32a: iso/auto/config has execute bit in git tracked mode (100755 — #82 root cause fix)"
+else
+    fail "32a: iso/auto/config has execute bit in git tracked mode" \
+         "Got: '${TRACKED_MODE:-<not tracked>}' — expected 100755; run: git update-index --chmod=+x iso/auto/config"
+fi
+
+# §32b: working-tree copy must be executable
+if [[ -x "$REPO_ROOT/iso/auto/config" ]]; then
+    pass "32b: iso/auto/config is executable in working tree"
+else
+    fail "32b: iso/auto/config is executable in working tree" \
+         "File not executable: $REPO_ROOT/iso/auto/config — lb config will fail with Permission denied"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

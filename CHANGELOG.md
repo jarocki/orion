@@ -24,6 +24,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **iso/auto/config now executable (#82)**: The tracked mode was 100644
+  since initial bootstrap. `lb config` invokes `./auto/config` directly, so
+  every build (local + CI) died with Permission denied. This single mode
+  change unblocks the entire release pipeline that has been broken since
+  rc8 (2026-06-19). Adds §32 content-presence assertions to guard against
+  regression.
+
 - **orionx-imager macOS SD-reader detection (#77)**: `_list_devices_macos()`
   now enumerates all disks and filters per-disk on `RemovableMedia`/`Ejectable`
   instead of the coarse `diskutil list external`. PCIe-attached built-in card
