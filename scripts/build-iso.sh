@@ -34,11 +34,85 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Version authority — single constant, never duplicated.
-# Downstream consumers (iso/auto/config, iso-volume label) read ORIONX_VERSION
-# from the environment when this script exports it.
+# @decision DEC-PHASE11-MACOS-BUILD-001
+# @title macOS host auto-wraps in debian:bullseye-slim Docker
+# @status active
+# @rationale live-build is Debian-native (dpkg, debootstrap, chroot). macOS
+#   hosts cannot run it natively. Prior UX required the user to know the
+#   docker run incantation; now the script detects Darwin and auto-re-execs
+#   itself inside the same debian:bullseye-slim container that release.yml
+#   uses. Preserves reproducibility with CI and eliminates the "you must be
+#   on Linux" wall. The ORIONX_BUILD_IN_DOCKER guard prevents infinite
+#   recursion when the script is re-invoked inside the container.
+#   Package list mirrors release.yml step "Build ISO in debian:bullseye container".
+#   --dry-run bypasses Docker delegation so path-validation works on macOS
+#   without Docker (same behaviour as pre-DEC-PHASE11-MACOS-BUILD-001).
 # ---------------------------------------------------------------------------
-VERSION="${ORIONX_VERSION:-v2.0.0-rc9}"
+_IS_DRY_RUN_ARG=false
+for _arg in "$@"; do
+    [[ "$_arg" == "--dry-run" ]] && _IS_DRY_RUN_ARG=true && break
+done
+
+if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
+    if [[ -z "${ORIONX_BUILD_IN_DOCKER:-}" ]]; then
+        if ! command -v docker >/dev/null 2>&1; then
+            echo "ERROR: macOS host detected but 'docker' command not found." >&2
+            echo "       Install Docker Desktop and start it, then re-run." >&2
+            echo "       (build-iso.sh auto-delegates to debian:bullseye-slim on macOS.)" >&2
+            exit 1
+        fi
+        if ! docker info >/dev/null 2>&1; then
+            echo "ERROR: Docker daemon not reachable. Start Docker Desktop and re-run." >&2
+            exit 1
+        fi
+        REPO_ROOT_MACOS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] macOS host detected — delegating to debian:bullseye-slim container"
+        exec docker run --rm --privileged \
+            -v "${REPO_ROOT_MACOS}:/workspace" \
+            -w /workspace \
+            -e ORIONX_BUILD_IN_DOCKER=1 \
+            -e ORIONX_VERSION="${ORIONX_VERSION:-}" \
+            -e ORIONX_ISO_VERSION="${ORIONX_ISO_VERSION:-}" \
+            -e ORIONX_MODEL_LOCAL="${ORIONX_MODEL_LOCAL:-}" \
+            debian:bullseye-slim \
+            bash -c '
+                set -e
+                apt-get update -q
+                apt-get install -y -q --no-install-recommends \
+                    live-build debootstrap xorriso isolinux \
+                    ca-certificates wget gnupg python3 \
+                    squashfs-tools rsync cpio
+                exec bash scripts/build-iso.sh "$@"
+            ' -- "$@"
+    fi
+fi
+unset _IS_DRY_RUN_ARG _arg
+
+# ---------------------------------------------------------------------------
+# @decision DEC-PHASE11-VERSION-DEFAULT-001
+# @title Post-tag develop builds default to descriptive git-derived version string
+# @status active
+# @rationale Hardcoded `v2.0.0-rc9` default confused post-tag builds —
+#   ISO filenames did not reflect actual source. Now derives from
+#   `git describe --tags --always --dirty` if inside a git repo, falls
+#   back to `dev-unknown` otherwise. ORIONX_VERSION env override still
+#   wins (used by release.yml tag-triggered builds). The --version CLI
+#   flag (enforces v-prefix) overrides the derived value for manual builds.
+# ---------------------------------------------------------------------------
+if [[ -z "${ORIONX_VERSION:-}" ]]; then
+    _SCRIPT_DIR_TMP="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    _REPO_ROOT_TMP="$(dirname "$_SCRIPT_DIR_TMP")"
+    if command -v git >/dev/null 2>&1 && \
+       git -C "$_REPO_ROOT_TMP" rev-parse --git-dir >/dev/null 2>&1; then
+        _GIT_VERSION="$(git -C "$_REPO_ROOT_TMP" describe --tags --always --dirty 2>/dev/null || echo "")"
+        VERSION="${_GIT_VERSION:-dev-unknown}"
+    else
+        VERSION="dev-unknown"
+    fi
+    unset _SCRIPT_DIR_TMP _REPO_ROOT_TMP _GIT_VERSION
+else
+    VERSION="${ORIONX_VERSION}"
+fi
 
 # ---------------------------------------------------------------------------
 # W11-11 (DEC-PHASE11-015): Build metadata exports for /etc/orionx-version
