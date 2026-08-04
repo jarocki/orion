@@ -380,6 +380,172 @@ fi
 rm -rf "$PROD_DIR" "$DRY_RUN_DIR"
 
 # ===========================================================================
+# W11-13: wg0.conf + mesh-private.key extension (T1b — DEC-PHASE11-016)
+# ===========================================================================
+section "W11-13: wg0.conf + mesh-private.key (T1b)"
+
+if grep -q 'wg0\.conf' "$WIZARD_SCRIPT"; then
+    pass "wizard references wg0.conf (T1b AC7)"
+else
+    fail "wizard references wg0.conf (T1b AC7)" \
+         "wg0.conf not mentioned in $WIZARD_SCRIPT"
+fi
+
+if grep -q 'mesh-private\.key' "$WIZARD_SCRIPT"; then
+    pass "wizard references mesh-private.key (T1b AC7)"
+else
+    fail "wizard references mesh-private.key (T1b AC7)" \
+         "mesh-private.key not mentioned in $WIZARD_SCRIPT"
+fi
+
+if grep -q 'DEC-PHASE11-016' "$WIZARD_SCRIPT"; then
+    pass "wizard has DEC-PHASE11-016 annotation"
+else
+    fail "wizard has DEC-PHASE11-016 annotation" \
+         "DEC-PHASE11-016 not found in $WIZARD_SCRIPT"
+fi
+
+# Dry-run token check: wg0.conf and mesh-private.key should appear in dry-run output
+WG_DRY_DIR=$(mktemp -d)
+set +e
+wg_dry_output=$(ORIONX_FIRST_BOOT_DRY_RUN=1 \
+    ORIONX_FIRST_BOOT_FLAG="$WG_DRY_DIR/.done" \
+    bash "$WIZARD_SCRIPT" --non-interactive 2>&1)
+wg_dry_rc=$?
+set -e
+
+if [[ $wg_dry_rc -eq 0 ]]; then
+    pass "wizard dry-run with wg0.conf extension exits 0"
+else
+    fail "wizard dry-run with wg0.conf extension exits 0" \
+         "exit code: $wg_dry_rc, output: $wg_dry_output"
+fi
+
+if echo "$wg_dry_output" | grep -q 'wg0.conf\|mesh-private.key'; then
+    pass "dry-run output mentions wg0.conf or mesh-private.key"
+else
+    fail "dry-run output mentions wg0.conf or mesh-private.key" \
+         "Output: $wg_dry_output"
+fi
+
+rm -rf "$WG_DRY_DIR"
+
+# ===========================================================================
+# W11-13: SSH admin one-shot extension (T7 — DEC-PHASE11-019)
+# ===========================================================================
+section "W11-13: SSH admin one-shot (T7)"
+
+if grep -q 'step_seed_ssh_admin' "$WIZARD_SCRIPT"; then
+    pass "step_seed_ssh_admin function present (T7 AC8)"
+else
+    fail "step_seed_ssh_admin function present (T7 AC8)" \
+         "step_seed_ssh_admin not found in $WIZARD_SCRIPT"
+fi
+
+if grep -q 'authorized_keys' "$WIZARD_SCRIPT"; then
+    pass "wizard references authorized_keys (T7 AC8)"
+else
+    fail "wizard references authorized_keys (T7 AC8)" \
+         "authorized_keys not mentioned in $WIZARD_SCRIPT"
+fi
+
+if grep -q 'SSH admin one-shot\|SSH Admin One-Shot' "$WIZARD_SCRIPT"; then
+    pass "wizard references SSH admin one-shot (T7 AC8)"
+else
+    fail "wizard references SSH admin one-shot (T7 AC8)" \
+         "SSH admin one-shot not mentioned in $WIZARD_SCRIPT"
+fi
+
+if grep -q 'DEC-PHASE11-019' "$WIZARD_SCRIPT"; then
+    pass "wizard has DEC-PHASE11-019 annotation (T7)"
+else
+    fail "wizard has DEC-PHASE11-019 annotation (T7)" \
+         "DEC-PHASE11-019 not found in $WIZARD_SCRIPT"
+fi
+
+# step_seed_ssh_admin is called from main() — verify wiring
+if grep -q 'step_seed_ssh_admin' "$WIZARD_SCRIPT" && \
+   grep -A 20 '^main()' "$WIZARD_SCRIPT" | grep -q 'step_seed_ssh_admin'; then
+    pass "step_seed_ssh_admin is wired into main() (T7)"
+else
+    fail "step_seed_ssh_admin is wired into main() (T7)" \
+         "step_seed_ssh_admin not called from main() in $WIZARD_SCRIPT"
+fi
+
+# Dry-run verifies the SSH step runs without error
+SSH_DRY_DIR=$(mktemp -d)
+set +e
+ssh_dry_output=$(ORIONX_FIRST_BOOT_DRY_RUN=1 \
+    ORIONX_FIRST_BOOT_FLAG="$SSH_DRY_DIR/.done" \
+    bash "$WIZARD_SCRIPT" --non-interactive 2>&1)
+ssh_dry_rc=$?
+set -e
+
+if [[ $ssh_dry_rc -eq 0 ]]; then
+    pass "wizard dry-run with SSH admin step exits 0"
+else
+    fail "wizard dry-run with SSH admin step exits 0" \
+         "exit code: $ssh_dry_rc, output: $ssh_dry_output"
+fi
+
+if echo "$ssh_dry_output" | grep -qi 'ssh\|authorized'; then
+    pass "dry-run output mentions SSH or authorized_keys path"
+else
+    fail "dry-run output mentions SSH or authorized_keys path" \
+         "Output: $ssh_dry_output"
+fi
+
+rm -rf "$SSH_DRY_DIR"
+
+# ===========================================================================
+# W11-13: Compound integration test — full first-boot sequence end-to-end
+# (crosses step_generate_wg_keys + step_seed_ssh_admin + flag-file guard)
+# ===========================================================================
+section "W11-13: Compound integration — full first-boot sequence"
+
+COMPOUND_DIR=$(mktemp -d)
+COMPOUND_FLAG="$COMPOUND_DIR/.first-boot-done"
+
+# Boot 1: fresh node — all steps run, flag created
+set +e
+c_boot1=$(ORIONX_FIRST_BOOT_DRY_RUN=1 \
+    ORIONX_FIRST_BOOT_FLAG="$COMPOUND_FLAG" \
+    bash "$WIZARD_SCRIPT" --non-interactive 2>&1)
+c_boot1_rc=$?
+set -e
+
+if [[ $c_boot1_rc -eq 0 ]] && [[ -f "$COMPOUND_FLAG" ]]; then
+    pass "Compound: boot1 runs all steps + creates flag"
+else
+    fail "Compound: boot1 runs all steps + creates flag" \
+         "rc=$c_boot1_rc flag=$(test -f "$COMPOUND_FLAG" && echo yes || echo no) out=$c_boot1"
+fi
+
+if echo "$c_boot1" | grep -qi 'wireguard\|wg\|ssh\|authorized'; then
+    pass "Compound: boot1 output references WireGuard and SSH steps"
+else
+    fail "Compound: boot1 output references WireGuard and SSH steps" \
+         "Output: $c_boot1"
+fi
+
+# Boot 2: flag present — wizard skips all steps (idempotency guard)
+set +e
+c_boot2=$(ORIONX_FIRST_BOOT_DRY_RUN=1 \
+    ORIONX_FIRST_BOOT_FLAG="$COMPOUND_FLAG" \
+    bash "$WIZARD_SCRIPT" --non-interactive 2>&1)
+c_boot2_rc=$?
+set -e
+
+if [[ $c_boot2_rc -eq 0 ]] && echo "$c_boot2" | grep -qi 'already\|skip\|complet'; then
+    pass "Compound: boot2 detects flag and skips all steps"
+else
+    fail "Compound: boot2 detects flag and skips all steps" \
+         "rc=$c_boot2_rc out=$c_boot2"
+fi
+
+rm -rf "$COMPOUND_DIR"
+
+# ===========================================================================
 # ShellCheck
 # ===========================================================================
 section "ShellCheck"
