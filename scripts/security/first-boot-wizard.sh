@@ -206,14 +206,27 @@ step_set_password() {
 # ---------------------------------------------------------------------------
 
 step_generate_wg_keys() {
+    # @decision DEC-PHASE11-016
+    # @title first-boot wizard authors wg0.conf + mesh-private.key at exact paths
+    # @status accepted
+    # @rationale Hardware attestation (2026-08-03) showed that even with the wizard
+    #   running, wg-quick@wg0 failed because wg0.conf did not exist, and
+    #   orionx-mesh-beacon failed because mesh-lib.sh:39 reads mesh-private.key
+    #   (not 'privatekey'). This step authors both files immediately after key
+    #   generation so the mesh cascade starts green on first boot without requiring
+    #   a manual 'orionx-mesh join' pre-configuration step.
     log_step "Generating WireGuard keypair for mesh networking"
 
     local wg_dir="/etc/wireguard"
     local privkey_path="$wg_dir/privatekey"
     local pubkey_path="$wg_dir/publickey"
+    local mesh_privkey_path="$wg_dir/mesh-private.key"
+    local wg0_conf_path="$wg_dir/wg0.conf"
 
     if [[ "$DRY_RUN" -eq 1 ]]; then
         log_dry "wg genkey | tee $privkey_path | wg pubkey > $pubkey_path"
+        log_dry "cp $privkey_path $mesh_privkey_path  # path expected by mesh-lib.sh:39"
+        log_dry "author $wg0_conf_path  # [Interface] stanza for wg-quick@wg0"
         return 0
     fi
 
@@ -227,6 +240,46 @@ step_generate_wg_keys() {
     chmod 600 "$privkey_path"
     chmod 644 "$pubkey_path"
     log_info "WireGuard keys written to $wg_dir"
+
+    # Copy private key to the exact path mesh-lib.sh:39 and orionx-mesh-beacon
+    # expect. Using cp rather than a symlink keeps key material in one canonical
+    # location with the same ACL, and avoids broken-symlink edge cases on fresh
+    # mounts (DEC-PHASE11-016).
+    cp "$privkey_path" "$mesh_privkey_path"
+    chmod 600 "$mesh_privkey_path"
+    log_info "mesh-private.key written (path expected by orionx-mesh-beacon)"
+
+    # Derive the host-specific mesh address from the host's first IPv4 address.
+    # Use the fourth octet for a /24 inside 10.100.0.0/24. Fallback to .1 when
+    # no IPv4 is yet available (e.g., pre-DHCP early-boot context). Peer entries
+    # are added dynamically by 'orionx-mesh join' — this conf only brings wg0 up
+    # so wg-quick@wg0 succeeds (DEC-PHASE11-016, R1: host-octet collision risk is
+    # documented and mitigated by DHCP uniqueness on a real LAN).
+    local host_ip
+    host_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    local host_octet
+    host_octet="$(echo "$host_ip" | awk -F. '{print $4}')"
+    if [[ -z "$host_octet" || "$host_octet" == "0" ]]; then
+        host_octet="1"
+        log_warn "Could not derive host IPv4 octet; wg0 Address defaulting to 10.100.0.1/24"
+    fi
+
+    local privkey_value
+    privkey_value="$(cat "$privkey_path")"
+
+    cat > "$wg0_conf_path" <<WG0_EOF
+# Orion-X mesh VPN interface
+# Authored by first-boot-wizard.sh on $(date -u '+%Y-%m-%dT%H:%M:%SZ')
+# Peer entries are added by 'orionx-mesh join' — do not hand-edit Address or PrivateKey.
+# @decision DEC-PHASE11-016
+
+[Interface]
+PrivateKey = ${privkey_value}
+Address = 10.100.0.${host_octet}/24
+ListenPort = 51820
+WG0_EOF
+    chmod 600 "$wg0_conf_path"
+    log_info "wg0.conf written at $wg0_conf_path (Address=10.100.0.${host_octet}/24)"
 }
 
 # ---------------------------------------------------------------------------
