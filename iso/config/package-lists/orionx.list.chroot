@@ -150,7 +150,16 @@ dpkg
 gddrescue
 dialog
 file
+# firefox-esr: graphical web browser; required by operators for web-based triage,
+# threat intel lookups, and vendor portals from within the live ISO. firefox-esr
+# (Extended Support Release) is in Debian Bullseye main and receives security
+# updates without breaking API changes (W11-13, DEC-PHASE11-018).
+firefox-esr
 gawk
+# git: version control CLI required for in-ISO development, operator patch work,
+# and toolchain scripts that invoke 'git' directly. Also a transitive requirement
+# for any pip install that fetches VCS sources during hook 0500 (W11-13, DEC-PHASE11-018).
+git
 gnupg
 gparted
 gzip
@@ -190,6 +199,12 @@ libimage-exiftool-perl
 # download-samples.sh:178-181 for checksum verification. Adding perl ensures the full
 # Perl runtime is present; libdigest-sha-perl is a Perl module, so perl is the root dep.
 perl
+# python3-pip: pip package manager required by hook 0500-install-external-tools.hook.chroot
+# to install matrix-commander and capa into their respective venvs. Without this package
+# in the base image the hook's hard-fail path (DEC-PHASE11-018) triggers immediately
+# because pip is unavailable. python3-pip also pulls python3-venv as a dep, unblocking
+# the venv creation step in the same hook (W11-13, DEC-PHASE11-018).
+python3-pip
 python3-numpy
 python3-scapy
 
@@ -237,7 +252,13 @@ lightdm-gtk-greeter
 #   gtk-2.0/gtkrc). Absent → GTK2 apps in the session fall back to Raleigh theme.
 #
 # fonts-iosevka: Iosevka monospace (OFL-1.1) — primary terminal + monospace font
-fonts-iosevka
+# TEMPORARILY COMMENTED — fonts-iosevka is NOT in bullseye (first packaged in bookworm).
+# The historical comment at line 230 claiming "available in Debian Bullseye" was wrong;
+# `apt-cache policy fonts-iosevka` returns Candidate: (none) in bullseye main/contrib/
+# non-free/backports. Reinstate via one of: (a) sideload bookworm .deb into
+# iso/config/packages.chroot/, (b) upstream Iosevka .deb from GitHub release, or
+# (c) move base image to bookworm (larger project change). Tracked as GH issue.
+#fonts-iosevka
 # fonts-hack-otf: Hack OTF (Apache-2.0) — secondary monospace font
 fonts-hack-otf
 # gtk2-engines-murrine: Murrine GTK2 engine (required for Adwaita-dark GTK2 variants)
@@ -257,7 +278,12 @@ papirus-icon-theme
 xfconf
 
 # W11-3 Layer A: RE toolkit — Debian packaged tools (DEC-PHASE11-004)
-radare2
+# TEMPORARILY COMMENTED — radare2 was REMOVED from bullseye (RC bugs); not in main,
+# contrib, non-free, or bullseye-backports. `apt-cache policy radare2` returns
+# Candidate: (none). Reinstate via one of: (a) radare's official APT repo added under
+# iso/config/archives/ with signing key, (b) sideload upstream .deb into
+# iso/config/packages.chroot/, or (c) move base to bookworm. Tracked as GH issue.
+#radare2
 ssdeep
 md5deep
 python3-pefile
