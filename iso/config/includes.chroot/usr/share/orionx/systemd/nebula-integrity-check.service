@@ -30,6 +30,11 @@ ExecStart=/usr/bin/python3 /opt/orionx/scripts/nebula/integrity.py \
     --status-file /run/orionx/nebula-integrity.status
 # Create /run/orionx/ if absent (tmpfs at boot; dir may not exist yet).
 ExecStartPre=/bin/mkdir -p /run/orionx
+# LogsDirectory instructs systemd to create /var/log/orionx (owner root:root,
+# mode 0755) before opening StandardOutput=append:. Without this directive the
+# unit fails 209/STDOUT on fresh boots where /var/log/orionx does not yet exist
+# (DEC-PHASE11-017 — W11-13 hardware attestation 2026-08-03 root cause #2).
+LogsDirectory=orionx
 # Logging destination for the integrity check output (DEC-PHASE10-009).
 StandardOutput=append:/var/log/orionx/nebula-integrity.log
 StandardError=append:/var/log/orionx/nebula-integrity.log
