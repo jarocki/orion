@@ -120,6 +120,9 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
              -e ORIONX_VERSION="${HOST_VERSION}" \
              -e ORIONX_ISO_VERSION="${ORIONX_ISO_VERSION:-}" \
              -e ORIONX_MODEL_LOCAL="${ORIONX_MODEL_LOCAL:-}" \
+             -e ORIONX_GIT_SHA="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)" \
+             -e ORIONX_GIT_TITLE="$(git log -1 --format=%s 2>/dev/null || echo unknown)" \
+             -e ORIONX_PHASE_11_SLICES="${ORIONX_PHASE_11_SLICES:-W11-1,W11-2,W11-2b,W11-2c,W11-2d,W11-2e,W11-2f,W11-3,W11-4,W11-5,W11-6,W11-7,W11-8,W11-9a,W11-9a2,W11-9b,W11-11,W11-12,W11-13}" \
              -e APT_OPTIONS="--yes -o Acquire::Retries=5 --allow-remove-essential" \
              -e APTITUDE_OPTIONS="--assume-yes -o Acquire::Retries=5 --allow-remove-essential" \
              debian:bullseye-slim \
@@ -231,7 +234,7 @@ export ORIONX_GIT_SHA
 ORIONX_GIT_SHA="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
 export ORIONX_GIT_TITLE
 ORIONX_GIT_TITLE="$(git log -1 --format=%s 2>/dev/null || echo unknown)"
-export ORIONX_PHASE_11_SLICES="W11-1,W11-2,W11-2b,W11-2c,W11-2d,W11-2e,W11-2f,W11-3,W11-4,W11-5,W11-6,W11-7,W11-8,W11-9a,W11-9a2,W11-9b"
+export ORIONX_PHASE_11_SLICES="W11-1,W11-2,W11-2b,W11-2c,W11-2d,W11-2e,W11-2f,W11-3,W11-4,W11-5,W11-6,W11-7,W11-8,W11-9a,W11-9a2,W11-9b,W11-11,W11-12,W11-13"
 
 # ---------------------------------------------------------------------------
 # Path setup
