@@ -203,7 +203,8 @@ python3 -m venv /opt/orionx/venv/re/ 2>&1 || {
 }
 if [[ -f /opt/orionx/venv/re/bin/pip ]]; then
     /opt/orionx/venv/re/bin/pip install --no-input flare-capa python-magic 2>&1 || {
-        echo "[W11-3] WARN: pip install failed — capa install skipped"
+        echo "[W11-3] FATAL: capa pip install failed — hard-failing build per DEC-PHASE11-018" >&2
+        exit 1
     }
     if [[ -f /opt/orionx/venv/re/bin/capa ]]; then
         echo "[W11-3] capa installed: $(/opt/orionx/venv/re/bin/capa --version 2>&1 | head -1)"
@@ -232,7 +233,8 @@ python3 -m venv /opt/orionx/venv/comms/ 2>&1 || {
 }
 if [[ -f /opt/orionx/venv/comms/bin/pip ]]; then
     /opt/orionx/venv/comms/bin/pip install --no-input matrix-commander 2>&1 || {
-        echo "[W11-5] WARN: matrix-commander install failed"
+        echo "[W11-5] FATAL: matrix-commander pip install failed — hard-failing build per DEC-PHASE11-018" >&2
+        exit 1
     }
     if [[ -f /opt/orionx/venv/comms/bin/matrix-commander ]]; then
         ln -sf /opt/orionx/venv/comms/bin/matrix-commander /usr/local/bin/matrix-commander
