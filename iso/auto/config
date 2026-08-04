@@ -44,6 +44,15 @@ set -e
 # Version authority: read from environment; scripts/build-iso.sh exports it.
 ORIONX_VERSION="${ORIONX_VERSION:-v2.0.0-rc9}"
 
+# ISO9660 --iso-volume field is capped at 32 characters. Compose the desired
+# label and truncate defensively so long git-describe outputs
+# (e.g. v2.1.0-rc1-7-g5d52a8e-dirty on post-tag develop) don't blow the
+# limit and abort xorriso at the very last build step. This is cosmetic
+# (only visible in blkid/os-prober output). We use `printf '%.32s'` for the
+# truncation because auto/config runs under /bin/sh (dash on Debian), which
+# does not support bash's ${var:0:32} substring syntax.
+ORIONX_ISO_VOLUME="$(printf '%.32s' "OrionX-${ORIONX_VERSION}")"
+
 # Base distribution
 DISTRIBUTION="bullseye"
 MIRROR_URL="http://deb.debian.org/debian/"
@@ -66,7 +75,7 @@ lb config noauto \
     --bootloader "syslinux,grub-efi" \
     --iso-application "Orion-X Phoenix Edition" \
     --iso-publisher "Orion-X Project" \
-    --iso-volume "OrionX-${ORIONX_VERSION}" \
+    --iso-volume "$ORIONX_ISO_VOLUME" \
     --memtest none \
     --security true \
     --updates true \
