@@ -1,0 +1,5 @@
+Orion-X first-boot in progress — wizard has not yet completed.
+SSH admin one-shot password will be printed here after first-boot wizard completes.
+
+This file is replaced by first-boot-wizard.sh step_seed_ssh_admin() on first boot.
+See /opt/orionx/scripts/security/first-boot-wizard.sh for details (DEC-PHASE11-019).

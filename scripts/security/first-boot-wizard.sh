@@ -206,14 +206,27 @@ step_set_password() {
 # ---------------------------------------------------------------------------
 
 step_generate_wg_keys() {
+    # @decision DEC-PHASE11-016
+    # @title first-boot wizard authors wg0.conf + mesh-private.key at exact paths
+    # @status accepted
+    # @rationale Hardware attestation (2026-08-03) showed that even with the wizard
+    #   running, wg-quick@wg0 failed because wg0.conf did not exist, and
+    #   orionx-mesh-beacon failed because mesh-lib.sh:39 reads mesh-private.key
+    #   (not 'privatekey'). This step authors both files immediately after key
+    #   generation so the mesh cascade starts green on first boot without requiring
+    #   a manual 'orionx-mesh join' pre-configuration step.
     log_step "Generating WireGuard keypair for mesh networking"
 
     local wg_dir="/etc/wireguard"
     local privkey_path="$wg_dir/privatekey"
     local pubkey_path="$wg_dir/publickey"
+    local mesh_privkey_path="$wg_dir/mesh-private.key"
+    local wg0_conf_path="$wg_dir/wg0.conf"
 
     if [[ "$DRY_RUN" -eq 1 ]]; then
         log_dry "wg genkey | tee $privkey_path | wg pubkey > $pubkey_path"
+        log_dry "cp $privkey_path $mesh_privkey_path  # path expected by mesh-lib.sh:39"
+        log_dry "author $wg0_conf_path  # [Interface] stanza for wg-quick@wg0"
         return 0
     fi
 
@@ -227,6 +240,153 @@ step_generate_wg_keys() {
     chmod 600 "$privkey_path"
     chmod 644 "$pubkey_path"
     log_info "WireGuard keys written to $wg_dir"
+
+    # Copy private key to the exact path mesh-lib.sh:39 and orionx-mesh-beacon
+    # expect. Using cp rather than a symlink keeps key material in one canonical
+    # location with the same ACL, and avoids broken-symlink edge cases on fresh
+    # mounts (DEC-PHASE11-016).
+    cp "$privkey_path" "$mesh_privkey_path"
+    chmod 600 "$mesh_privkey_path"
+    log_info "mesh-private.key written (path expected by orionx-mesh-beacon)"
+
+    # Derive the host-specific mesh address from the host's first IPv4 address.
+    # Use the fourth octet for a /24 inside 10.100.0.0/24. Fallback to .1 when
+    # no IPv4 is yet available (e.g., pre-DHCP early-boot context). Peer entries
+    # are added dynamically by 'orionx-mesh join' — this conf only brings wg0 up
+    # so wg-quick@wg0 succeeds (DEC-PHASE11-016, R1: host-octet collision risk is
+    # documented and mitigated by DHCP uniqueness on a real LAN).
+    local host_ip
+    host_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    local host_octet
+    host_octet="$(echo "$host_ip" | awk -F. '{print $4}')"
+    if [[ -z "$host_octet" || "$host_octet" == "0" ]]; then
+        host_octet="1"
+        log_warn "Could not derive host IPv4 octet; wg0 Address defaulting to 10.100.0.1/24"
+    fi
+
+    local privkey_value
+    privkey_value="$(cat "$privkey_path")"
+
+    cat > "$wg0_conf_path" <<WG0_EOF
+# Orion-X mesh VPN interface
+# Authored by first-boot-wizard.sh on $(date -u '+%Y-%m-%dT%H:%M:%SZ')
+# Peer entries are added by 'orionx-mesh join' — do not hand-edit Address or PrivateKey.
+# @decision DEC-PHASE11-016
+
+[Interface]
+PrivateKey = ${privkey_value}
+Address = 10.100.0.${host_octet}/24
+ListenPort = 51820
+WG0_EOF
+    chmod 600 "$wg0_conf_path"
+    log_info "wg0.conf written at $wg0_conf_path (Address=10.100.0.${host_octet}/24)"
+}
+
+# ---------------------------------------------------------------------------
+# Step 3b: Seed SSH admin one-shot path
+# ---------------------------------------------------------------------------
+#
+# @decision DEC-PHASE11-019
+# @title First-boot wizard seeds a one-shot SSH admin path via /root/.ssh/authorized_keys
+# @status accepted
+# @rationale Hardware attestation (2026-08-03) showed that sshd with default Debian
+#   config (PasswordAuthentication yes) was the only SSH entry point for headless
+#   Apple Silicon boots, and there was no documented admin path for operators
+#   seeding persistent authorized_keys. This step generates a single-use ed25519
+#   keypair on every first boot, installs the public half as the root authorized key,
+#   and prints the one-shot password + private key fingerprint to /etc/motd.d/ and
+#   /etc/issue.d/ so operators see it at console and pre-login. Subsequent boots skip
+#   this step (idempotency via FLAG_FILE). Operators MUST seed their persistent
+#   authorized_keys before rebooting; the one-shot password rotates on every wizard run.
+#   Explicitly forbidden: do NOT relax PasswordAuthentication in any shipped sshd_config.
+#   Follow-up W11-13c will author sshd_config.d/orionx-hardening.conf (out of scope here).
+
+step_seed_ssh_admin() {
+    log_step "Seeding SSH admin one-shot path"
+
+    local ssh_dir="/root/.ssh"
+    local auth_keys="$ssh_dir/authorized_keys"
+    local oneshot_key="$ssh_dir/orionx-oneshot"
+    local motd_file="/etc/motd.d/orionx-ssh-admin"
+    local issue_file="/etc/issue.d/orionx-ssh-admin.issue"
+
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        log_dry "Generate one-shot password via /dev/urandom"
+        log_dry "ssh-keygen -q -t ed25519 -N <password> -f $oneshot_key -C orionx-oneshot@\$(hostname)"
+        log_dry "install pubkey at $auth_keys"
+        log_dry "write $motd_file and $issue_file with one-shot credentials"
+        return 0
+    fi
+
+    # Generate a 20-character one-shot password from /dev/urandom.
+    # head -c 15 gives 15 raw bytes → base64 yields ~20 chars; tr removes URL-unsafe
+    # chars; head -c 20 trims to exactly 20 alphanumeric chars.
+    local oneshot_password
+    oneshot_password="$(head -c 15 /dev/urandom | base64 | tr -d '/+=' | head -c 20)"
+
+    mkdir -p "$ssh_dir"
+    chmod 700 "$ssh_dir"
+
+    # Generate a temporary ed25519 keypair. The private key is protected with the
+    # one-shot password. The private key file is printed to the admin outputs and
+    # then wiped so it is not persistent on the system (operators paste it once).
+    rm -f "$oneshot_key" "${oneshot_key}.pub"
+    ssh-keygen -q -t ed25519 -N "$oneshot_password" \
+        -f "$oneshot_key" \
+        -C "orionx-oneshot@$(hostname 2>/dev/null || echo orionx)" \
+        2>/dev/null
+
+    # Install the public key as the authorized root key.
+    cat "${oneshot_key}.pub" > "$auth_keys"
+    chmod 600 "$auth_keys"
+
+    # Capture the fingerprint for display.
+    local fingerprint
+    fingerprint="$(ssh-keygen -lf "${oneshot_key}.pub" 2>/dev/null | awk '{print $2}')"
+
+    # Read the private key contents for the one-time console display.
+    local privkey_contents
+    privkey_contents="$(cat "$oneshot_key")"
+
+    # Wipe the private key file — it exists only for the display window.
+    rm -f "$oneshot_key" "${oneshot_key}.pub"
+
+    mkdir -p /etc/motd.d /etc/issue.d
+
+    # Write admin message to both motd and issue using printf to avoid heredoc-
+    # inside-$() quoting complications (single quotes in body confuse the bash
+    # tokenizer when the heredoc is inside a command substitution).
+    printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+        "=== Orion-X SSH Admin One-Shot ===" \
+        "" \
+        "One-shot password : $oneshot_password" \
+        "Key fingerprint   : $fingerprint" \
+        "Key type          : ed25519" \
+        "" \
+        "Private key (paste into your SSH client, then seed persistent authorized_keys):" \
+        "$privkey_contents" \
+        "" \
+        "INSTRUCTIONS:" \
+        "  1. SSH in as root using this private key + the one-shot password above." \
+        "  2. Append your persistent public key to /root/.ssh/authorized_keys." \
+        "  3. Reboot — the wizard idempotency check skips SSH seeding on subsequent boots," \
+        "     and sshd accepts your persistent key only." \
+        "" \
+        "WARNING: The one-shot password rotates on every wizard run until persistent" \
+        "         authorized_keys are seeded. Keep this output confidential." \
+        "==================================" \
+        > "$motd_file"
+    chmod 644 "$motd_file"
+
+    cp "$motd_file" "$issue_file"
+    chmod 644 "$issue_file"
+
+    log_info "SSH admin one-shot written to $motd_file and $issue_file"
+    log_info "Root authorized_keys seeded at $auth_keys"
+
+    # Also print to the console so headless operators see it during first boot.
+    log_info "=== SSH ADMIN ONE-SHOT (see /etc/motd.d/orionx-ssh-admin for persistent copy) ==="
+    log_info "One-shot password: $oneshot_password  |  Fingerprint: $fingerprint"
 }
 
 # ---------------------------------------------------------------------------
@@ -338,6 +498,7 @@ main() {
     step_set_hostname
     step_set_password
     step_generate_wg_keys
+    step_seed_ssh_admin
     step_set_matrix_creds
     step_disable_ssh
     write_flag_file

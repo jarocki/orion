@@ -3015,36 +3015,175 @@ else
 fi
 
 # ===========================================================================
-# 32. iso/auto/config execute bit (#82 root cause fix)
+# 32. Phase 11 W11-13 Runtime Cascade Fix — content-presence assertions
 #
-# lb config invokes ./auto/config directly from the iso/ directory.
-# If the file is tracked without the execute bit (100644) lb exits with
-# "Permission denied" and every build fails. This section asserts:
-#   §32a — git tracked mode is 100755 (the fix is in the index)
-#   §32b — the working-tree copy is executable (the bit propagated)
-#
-# Root cause: iso/auto/config was committed 100644 at initial bootstrap.
-# Every CI build since rc8 (2026-06-19) died before lb config ran.
-# This single mode change unblocks the entire release pipeline (#82).
+# @decision DEC-PHASE11-016 DEC-PHASE11-017 DEC-PHASE11-018 DEC-PHASE11-019
+# @title W11-13 seven-fix bundle: source-tree assertions for all AC1-AC11 checks
+# @status active
+# @rationale These source-tree assertions verify the seven W11-13 runtime cascade
+#   fixes are present and consistent without requiring a full ISO build. They
+#   mirror the Layer A acceptance criteria (AC1-AC11) from the Evaluation Contract
+#   at tmp/eval-wi-phase11-runtime-cascade-fix.json.
 # ===========================================================================
-section "32. iso/auto/config execute bit — #82 root cause fix"
+section "32. Phase 11 W11-13 Runtime Cascade Fix (DEC-PHASE11-016..019)"
 
-# §32a: git tracked mode must be 100755
-# git ls-files -s prints "<mode> <hash> <stage>\t<path>"; awk extracts mode.
-TRACKED_MODE="$(git -C "$REPO_ROOT" ls-files -s iso/auto/config 2>/dev/null | awk '{print $1}')"
-if [[ "$TRACKED_MODE" == "100755" ]]; then
-    pass "32a: iso/auto/config has execute bit in git tracked mode (100755 — #82 root cause fix)"
+# ---------------------------------------------------------------------------
+# 32a. AC1 — --exclude='security/' removed from build-iso.sh stage_application_content
+# ---------------------------------------------------------------------------
+if ! grep -qF -- "--exclude='security/'" "$REPO_ROOT/scripts/build-iso.sh" 2>/dev/null; then
+    pass "32a: --exclude='security/' removed from build-iso.sh stage_application_content (AC1)"
 else
-    fail "32a: iso/auto/config has execute bit in git tracked mode" \
-         "Got: '${TRACKED_MODE:-<not tracked>}' — expected 100755; run: git update-index --chmod=+x iso/auto/config"
+    fail "32a: --exclude='security/' removed from build-iso.sh stage_application_content (AC1)" \
+         "Found --exclude='security/' still present in scripts/build-iso.sh — P0 fix T1 not applied"
 fi
 
-# §32b: working-tree copy must be executable
-if [[ -x "$REPO_ROOT/iso/auto/config" ]]; then
-    pass "32b: iso/auto/config is executable in working tree"
+# ---------------------------------------------------------------------------
+# 32b. AC2 — LogsDirectory=orionx in nebula-integrity-check.service
+# ---------------------------------------------------------------------------
+NEBULA_SVC="$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/nebula-integrity-check.service"
+if grep -q 'LogsDirectory=orionx' "$NEBULA_SVC" 2>/dev/null; then
+    pass "32b: LogsDirectory=orionx present in nebula-integrity-check.service (AC2)"
 else
-    fail "32b: iso/auto/config is executable in working tree" \
-         "File not executable: $REPO_ROOT/iso/auto/config — lb config will fail with Permission denied"
+    fail "32b: LogsDirectory=orionx present in nebula-integrity-check.service (AC2)" \
+         "LogsDirectory=orionx not found in $NEBULA_SVC — 209/STDOUT fix T2 not applied"
+fi
+
+# ---------------------------------------------------------------------------
+# 32c. AC3 — XDG autostart .desktop present and references Phoenix wallpaper
+# ---------------------------------------------------------------------------
+WALLPAPER_DESKTOP="$REPO_ROOT/iso/config/includes.chroot/etc/xdg/autostart/orionx-wallpaper.desktop"
+if [[ -f "$WALLPAPER_DESKTOP" ]]; then
+    pass "32c: orionx-wallpaper.desktop exists (AC3)"
+else
+    fail "32c: orionx-wallpaper.desktop exists (AC3)" \
+         "File not found: $WALLPAPER_DESKTOP — XDG autostart fix T3 not applied"
+fi
+
+if grep -q 'orionx-phoenix-wallpaper.png' "$WALLPAPER_DESKTOP" 2>/dev/null; then
+    pass "32c2: orionx-wallpaper.desktop references Phoenix wallpaper path (AC3)"
+else
+    fail "32c2: orionx-wallpaper.desktop references Phoenix wallpaper path (AC3)" \
+         "orionx-phoenix-wallpaper.png not found in $WALLPAPER_DESKTOP"
+fi
+
+if grep -q 'OnlyShowIn=XFCE' "$WALLPAPER_DESKTOP" 2>/dev/null; then
+    pass "32c3: orionx-wallpaper.desktop has OnlyShowIn=XFCE (AC3)"
+else
+    fail "32c3: orionx-wallpaper.desktop has OnlyShowIn=XFCE (AC3)" \
+         "OnlyShowIn=XFCE not found in $WALLPAPER_DESKTOP"
+fi
+
+# ---------------------------------------------------------------------------
+# 32d. AC4 — Three ORIONX_GIT_* env vars plumbed into docker run in build-iso.sh
+# ---------------------------------------------------------------------------
+BUILD_SH="$REPO_ROOT/scripts/build-iso.sh"
+GIT_ENV_COUNT=$(grep -cE -- '-e ORIONX_GIT_SHA|-e ORIONX_GIT_TITLE|-e ORIONX_PHASE_11_SLICES' "$BUILD_SH" 2>/dev/null || echo 0)
+if [[ "$GIT_ENV_COUNT" -ge 3 ]]; then
+    pass "32d: Three ORIONX_GIT_* env vars plumbed into docker run (AC4)"
+else
+    fail "32d: Three ORIONX_GIT_* env vars plumbed into docker run (AC4)" \
+         "Expected >=3 matches for ORIONX_GIT_SHA|ORIONX_GIT_TITLE|ORIONX_PHASE_11_SLICES in $BUILD_SH, got: $GIT_ENV_COUNT"
+fi
+
+# ---------------------------------------------------------------------------
+# 32e. AC5 — hook 0500 hard-fail lines for capa + matrix-commander
+# ---------------------------------------------------------------------------
+HOOK_0500="$REPO_ROOT/iso/config/hooks/live/0500-install-external-tools.hook.chroot"
+FATAL_COUNT=$(grep -cE 'FATAL:.*(matrix-commander|capa)' "$HOOK_0500" 2>/dev/null || echo 0)
+if [[ "$FATAL_COUNT" -ge 2 ]]; then
+    pass "32e: hook 0500 has FATAL hard-fail for capa + matrix-commander (AC5)"
+else
+    fail "32e: hook 0500 has FATAL hard-fail for capa + matrix-commander (AC5)" \
+         "Expected >=2 FATAL lines in $HOOK_0500, got: $FATAL_COUNT — T5 not applied"
+fi
+
+# ---------------------------------------------------------------------------
+# 32f. AC6 — git, python3-pip, firefox-esr in package list
+# ---------------------------------------------------------------------------
+PKG_LIST="$REPO_ROOT/iso/config/package-lists/orionx.list.chroot"
+PKG_COUNT=$(grep -cE '^(git|python3-pip|firefox-esr)$' "$PKG_LIST" 2>/dev/null || echo 0)
+if [[ "$PKG_COUNT" -ge 3 ]]; then
+    pass "32f: git + python3-pip + firefox-esr in base package list (AC6)"
+else
+    fail "32f: git + python3-pip + firefox-esr in base package list (AC6)" \
+         "Expected 3 bare package lines in $PKG_LIST, got: $PKG_COUNT — T6 not applied"
+fi
+
+# ---------------------------------------------------------------------------
+# 32g. AC7 — wizard writes wg0.conf + mesh-private.key filenames
+# ---------------------------------------------------------------------------
+WIZARD="$REPO_ROOT/scripts/security/first-boot-wizard.sh"
+WG_PATHS=$(grep -cE 'wg0\.conf|mesh-private\.key' "$WIZARD" 2>/dev/null || echo 0)
+if [[ "$WG_PATHS" -ge 2 ]]; then
+    pass "32g: wizard references wg0.conf + mesh-private.key (AC7)"
+else
+    fail "32g: wizard references wg0.conf + mesh-private.key (AC7)" \
+         "Expected >=2 matches for wg0.conf|mesh-private.key in $WIZARD, got: $WG_PATHS — T1b not applied"
+fi
+
+# ---------------------------------------------------------------------------
+# 32h. AC8 — wizard writes authorized_keys + SSH admin one-shot
+# ---------------------------------------------------------------------------
+AUTH_COUNT=$(grep -cE 'authorized_keys|SSH admin one-shot' "$WIZARD" 2>/dev/null || echo 0)
+if [[ "$AUTH_COUNT" -ge 2 ]]; then
+    pass "32h: wizard references authorized_keys + SSH admin one-shot (AC8)"
+else
+    fail "32h: wizard references authorized_keys + SSH admin one-shot (AC8)" \
+         "Expected >=2 matches for authorized_keys|SSH admin one-shot in $WIZARD, got: $AUTH_COUNT — T7 not applied"
+fi
+
+# ---------------------------------------------------------------------------
+# 32i. AC9 — /etc/motd.d/orionx-ssh-admin + /etc/issue.d/orionx-ssh-admin.issue present
+# ---------------------------------------------------------------------------
+MOTD_FILE="$REPO_ROOT/iso/config/includes.chroot/etc/motd.d/orionx-ssh-admin"
+ISSUE_FILE="$REPO_ROOT/iso/config/includes.chroot/etc/issue.d/orionx-ssh-admin.issue"
+if [[ -f "$MOTD_FILE" ]]; then
+    pass "32i: /etc/motd.d/orionx-ssh-admin placeholder present (AC9)"
+else
+    fail "32i: /etc/motd.d/orionx-ssh-admin placeholder present (AC9)" \
+         "File not found: $MOTD_FILE — T7 not applied"
+fi
+if [[ -f "$ISSUE_FILE" ]]; then
+    pass "32i2: /etc/issue.d/orionx-ssh-admin.issue placeholder present (AC9)"
+else
+    fail "32i2: /etc/issue.d/orionx-ssh-admin.issue placeholder present (AC9)" \
+         "File not found: $ISSUE_FILE — T7 not applied"
+fi
+
+# ---------------------------------------------------------------------------
+# 32j. AC12 — bash -n syntax check on wizard and build-iso.sh
+# ---------------------------------------------------------------------------
+set +e
+_wiz_syntax=$(bash -n "$WIZARD" 2>&1)
+_wiz_rc=$?
+set -e
+if [[ $_wiz_rc -eq 0 ]]; then
+    pass "32j: first-boot-wizard.sh passes bash -n syntax check (AC12)"
+else
+    fail "32j: first-boot-wizard.sh passes bash -n syntax check (AC12)" \
+         "$_wiz_syntax"
+fi
+
+set +e
+_build_syntax=$(bash -n "$BUILD_SH" 2>&1)
+_build_rc=$?
+set -e
+if [[ $_build_rc -eq 0 ]]; then
+    pass "32j2: build-iso.sh passes bash -n syntax check (AC12)"
+else
+    fail "32j2: build-iso.sh passes bash -n syntax check (AC12)" \
+         "$_build_syntax"
+fi
+
+set +e
+_hook_syntax=$(bash -n "$HOOK_0500" 2>&1)
+_hook_rc=$?
+set -e
+if [[ $_hook_rc -eq 0 ]]; then
+    pass "32j3: hook 0500 passes bash -n syntax check (AC12)"
+else
+    fail "32j3: hook 0500 passes bash -n syntax check (AC12)" \
+         "$_hook_syntax"
 fi
 
 # ===========================================================================

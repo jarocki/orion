@@ -1,0 +1,21 @@
+[Desktop Entry]
+# Orion-X Phoenix Edition — wallpaper autostart entry
+#
+# @decision DEC-PHASE11-017
+# @title XDG autostart re-asserts Phoenix wallpaper on every XFCE session start
+# @status accepted
+# @rationale Hardware attestation (2026-08-03) showed xfconf retained the Debian
+#   default wallpaper after a session re-init, because the DEC-PHASE11-014
+#   /etc/skel/ xfconf XML only seeds the wallpaper at fresh-home creation time.
+#   This XDG autostart entry re-asserts all four XFCE backdrop keys on every
+#   session start, making the Phoenix branding survive any xfconf reset or
+#   session-init race. Sits alongside nm-applet.desktop, orionx-control-center.desktop,
+#   and orionx-disable-screen-lock.desktop in the same directory.
+#   Belt-and-suspenders companion to DEC-PHASE11-014 (skel authority).
+Type=Application
+Name=Orion-X Phoenix Wallpaper
+Comment=Ensure Phoenix branding wallpaper survives session re-init
+Exec=/bin/sh -c 'xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/image-path -s /opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png && xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/last-image -s /opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png && xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/last-single-image -s /opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png && xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/image-show -s true'
+OnlyShowIn=XFCE;
+X-GNOME-Autostart-enabled=true
+NoDisplay=true

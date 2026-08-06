@@ -9,6 +9,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [v2.1.0] - Unreleased
 
+### W11-13: Runtime Cascade Fix + Build-Wrapper Landing (2026-08-03)
+
+Seven-fix bundle closing all five failed systemd units found in hardware attestation
+on 192.168.4.159 (Apple Silicon target, ISO SHA-256 `443a838ab4560cf0b592db2fdc211fe7f944d1f3c1a4fe3250590c5abc74df0a`),
+plus four P1-P3 runtime/cosmetic fixes. References: DEC-PHASE11-016, DEC-PHASE11-017,
+DEC-PHASE11-018, DEC-PHASE11-019.
+
+**Fixed (P0 — systemctl --failed cascade closed, 5 units cured by 3 root fixes):**
+
+- **`orionx-first-boot.service` 203/EXEC** — Removed `--exclude='security/'` from
+  `stage_application_content` rsync in `scripts/build-iso.sh`. The wizard at
+  `/opt/orionx/scripts/security/first-boot-wizard.sh` now lands in the ISO correctly
+  (DEC-PHASE11-016, T1).
+
+- **`wg-quick@wg0` + `orionx-mesh-beacon` + `orionx-mesh-health` cascade** —
+  Extended `first-boot-wizard.sh:step_generate_wg_keys()` to author
+  `/etc/wireguard/wg0.conf` (minimal `[Interface]` stanza with host-derived address
+  in `10.100.0.0/24`, `ListenPort=51820`) and `/etc/wireguard/mesh-private.key`
+  (the exact path `mesh-lib.sh:39` and `orionx-mesh-beacon` read). Peers added
+  on-demand by `orionx-mesh join`. Known limitation R1: host-octet address collision
+  risk documented for multi-node same-LAN scenarios (DEC-PHASE11-016, T1b).
+
+- **`nebula-integrity-check.service` 209/STDOUT** — Added `LogsDirectory=orionx`
+  to `[Service]` section. systemd now creates `/var/log/orionx` before opening
+  `StandardOutput=append:` (DEC-PHASE11-017, T2).
+
+**Fixed (P1 — runtime/cosmetic):**
+
+- **XFCE wallpaper reverts to Debian default** — New XDG autostart entry
+  `iso/config/includes.chroot/etc/xdg/autostart/orionx-wallpaper.desktop`
+  re-asserts all four XFCE backdrop keys (`image-path`, `last-image`,
+  `last-single-image`, `image-show`) on every session start. Belt-and-suspenders
+  companion to the DEC-PHASE11-014 `/etc/skel/` xfconf XML authority
+  (DEC-PHASE11-017, T3).
+
+- **`/etc/orionx-version` reports `GIT_HEAD_SHA=unknown`** — Plumbed
+  `-e ORIONX_GIT_SHA`, `-e ORIONX_GIT_TITLE`, `-e ORIONX_PHASE_11_SLICES`
+  into the macOS Docker wrapper's `docker run` block in `scripts/build-iso.sh`.
+  Updated `ORIONX_PHASE_11_SLICES` to include W11-11, W11-12, W11-13
+  (DEC-PHASE11-017, T4).
+
+**Fixed (P2 — hard-fail discipline + package list):**
+
+- **Empty venvs shipped silently** — Converted `matrix-commander` and `capa`
+  pip installs in `iso/config/hooks/live/0500-install-external-tools.hook.chroot`
+  from `|| echo "WARN: ..."` soft-fail to `|| { echo "FATAL: ..."; exit 1; }`.
+  Extends DEC-PHASE10-007 hard-fail discipline consistently to all external tool
+  installs (DEC-PHASE11-018, T5, R2: air-gapped builds intentionally break).
+
+- **`git`, `python3-pip`, `firefox-esr` added to base package list** — `python3-pip`
+  unblocks hook 0500 pip installs under the new hard-fail regime; `git` supports
+  in-ISO operator development; `firefox-esr` provides a graphical triage browser
+  (DEC-PHASE11-018, T6).
+
+**Added (P3 — SSH admin one-shot path):**
+
+- **First-boot SSH admin one-shot** — New `step_seed_ssh_admin()` step in
+  `first-boot-wizard.sh` generates a 20-char `/dev/urandom`-derived password,
+  a single-use ed25519 keypair, installs the public key at `/root/.ssh/authorized_keys`,
+  and writes credentials to `/etc/motd.d/orionx-ssh-admin` (post-login) and
+  `/etc/issue.d/orionx-ssh-admin.issue` (pre-login getty). Static placeholder files
+  staged in the squashfs show "wizard has not yet completed" before first boot.
+  One-shot password rotates until an operator seeds persistent authorized_keys.
+  No relaxation of `PasswordAuthentication` in any shipped sshd_config.
+  Follow-up W11-13c will author `sshd_config.d/orionx-hardening.conf`
+  (DEC-PHASE11-019, T7).
+
+**Tests:**
+
+- Content-presence section 32 (15 source-tree assertions, sub-checks 32a-32j)
+  mirrors Layer A AC1-AC11 from the Evaluation Contract (T8).
+- `tests/unit/test_first_boot_wizard.sh` extended with W11-13 sections: wg0.conf
+  + mesh-private.key token checks, SSH admin one-shot assertions, compound
+  integration test crossing both new steps (45 assertions total, T9).
+
 ### Added
 
 - **macOS build support (#75-related)**: `scripts/build-iso.sh` now auto-detects
@@ -23,13 +98,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (DEC-PHASE11-VERSION-DEFAULT-001).
 
 ### Fixed
-
-- **iso/auto/config now executable (#82)**: The tracked mode was 100644
-  since initial bootstrap. `lb config` invokes `./auto/config` directly, so
-  every build (local + CI) died with Permission denied. This single mode
-  change unblocks the entire release pipeline that has been broken since
-  rc8 (2026-06-19). Adds §32 content-presence assertions to guard against
-  regression.
 
 - **orionx-imager macOS SD-reader detection (#77)**: `_list_devices_macos()`
   now enumerates all disks and filters per-disk on `RemovableMedia`/`Ejectable`
