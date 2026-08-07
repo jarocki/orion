@@ -189,11 +189,17 @@ DEBIAN_FRONTEND=noninteractive apt-get purge -y --autoremove \
 #
 # capa (Apache-2.0) and python-magic are installed into a dedicated virtual
 # environment at /opt/orionx/venv/re/ to avoid system-Python conflicts.
-# This install is SOFT-FAIL: if the network is unavailable during the chroot
-# build phase (e.g. air-gap build or transient network failure), the install
-# is skipped with a loud warning and the package-list tools (radare2, ssdeep,
-# etc.) remain available. capa is not load-bearing for any daemon — its
-# absence at build time does not abort the build.
+# The pip install is HARD-FAIL per DEC-PHASE11-018: capa is load-bearing for
+# the operator's `triage` verb, and a silently-empty venv shipping to
+# production is a worse failure mode than a build the developer must fix.
+# Accepted risk R2: an air-gapped build (no PyPI reachability) now breaks the
+# whole build. That is intended — air-gapped builds are not in the supported
+# build matrix; adding them is a separate slice with its own DEC.
+#
+# The venv-CREATE step above remains soft (diagnostic warning, block skipped).
+# That is a deliberate carve-out per T5: a missing python3-venv is a different
+# failure class, and it is structurally near-impossible now that python3-pip
+# is in the base package list and pulls python3-venv as a dependency.
 #
 # After a successful install, /usr/bin/capa is symlinked for convenience.
 # ---------------------------------------------------------------------------
@@ -219,10 +225,14 @@ echo "=== W11-3 capa venv install complete ==="
 #
 # matrix-commander is a CLI Matrix client installed into a dedicated virtual
 # environment at /opt/orionx/venv/comms/ to avoid system-Python conflicts.
-# This install is SOFT-FAIL: if the network is unavailable during the chroot
-# build phase (e.g. air-gap build or transient network failure), the install
-# is skipped with a loud warning. matrix-commander is not load-bearing for
-# any daemon — its absence at build time does not abort the build.
+# The pip install is HARD-FAIL per DEC-PHASE11-018: matrix-commander is
+# load-bearing for the operator's `defend` verb (scripted coordinated-IR
+# comms), and a silently-empty venv shipping to production is a worse failure
+# mode than a build the developer must fix. Accepted risk R2 applies here as
+# it does to capa above: air-gapped builds break, intentionally.
+#
+# The venv-CREATE step above remains soft, for the same T5 reason given in the
+# capa block: missing python3-venv is a different failure class.
 #
 # After a successful install, /usr/local/bin/matrix-commander is symlinked
 # for convenience. Layer B (gomuks static binary) is deferred to W11-5b.

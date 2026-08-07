@@ -99,6 +99,13 @@ DEC-PHASE11-018, DEC-PHASE11-019.
 
 ### Fixed
 
+- **iso/auto/config now executable (#82)**: The tracked mode was 100644
+  since initial bootstrap. `lb config` invokes `./auto/config` directly, so
+  every build (local + CI) died with Permission denied. This single mode
+  change unblocks the entire release pipeline that has been broken since
+  rc8 (2026-06-19). Regression guard: content-presence §33 (33a tracked mode,
+  33b working-tree execute bit).
+
 - **orionx-imager macOS SD-reader detection (#77)**: `_list_devices_macos()`
   now enumerates all disks and filters per-disk on `RemovableMedia`/`Ejectable`
   instead of the coarse `diskutil list external`. PCIe-attached built-in card

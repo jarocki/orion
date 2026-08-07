@@ -257,7 +257,7 @@ lightdm-gtk-greeter
 # `apt-cache policy fonts-iosevka` returns Candidate: (none) in bullseye main/contrib/
 # non-free/backports. Reinstate via one of: (a) sideload bookworm .deb into
 # iso/config/packages.chroot/, (b) upstream Iosevka .deb from GitHub release, or
-# (c) move base image to bookworm (larger project change). Tracked as GH issue.
+# (c) move base image to bookworm (larger project change). Tracked as GH issue #85.
 #fonts-iosevka
 # fonts-hack-otf: Hack OTF (Apache-2.0) — secondary monospace font
 fonts-hack-otf
@@ -282,7 +282,7 @@ xfconf
 # contrib, non-free, or bullseye-backports. `apt-cache policy radare2` returns
 # Candidate: (none). Reinstate via one of: (a) radare's official APT repo added under
 # iso/config/archives/ with signing key, (b) sideload upstream .deb into
-# iso/config/packages.chroot/, or (c) move base to bookworm. Tracked as GH issue.
+# iso/config/packages.chroot/, or (c) move base to bookworm. Tracked as GH issue #85.
 #radare2
 ssdeep
 md5deep
