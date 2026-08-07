@@ -3186,6 +3186,31 @@ else
          "$_hook_syntax"
 fi
 
+section "33. iso/auto/config execute bit — #82 root cause fix"
+
+# Restored after W11-13: T8 reused section number 32 (and sub-check IDs 32a/32b)
+# for the runtime-cascade assertions, overwriting the original #82 guards that
+# had shipped in e13f1cd. The #82 code fix (tracked mode 100755) was never lost,
+# but its regression guard was. Renumbered to 33 because 32 is now W11-13's.
+
+# §33a: git tracked mode must be 100755
+# git ls-files -s prints "<mode> <hash> <stage>\t<path>"; awk extracts mode.
+TRACKED_MODE="$(git -C "$REPO_ROOT" ls-files -s iso/auto/config 2>/dev/null | awk '{print $1}')"
+if [[ "$TRACKED_MODE" == "100755" ]]; then
+    pass "33a: iso/auto/config has execute bit in git tracked mode (100755 — #82 root cause fix)"
+else
+    fail "33a: iso/auto/config has execute bit in git tracked mode" \
+         "Got: '${TRACKED_MODE:-<not tracked>}' — expected 100755; run: git update-index --chmod=+x iso/auto/config"
+fi
+
+# §33b: working-tree copy must be executable
+if [[ -x "$REPO_ROOT/iso/auto/config" ]]; then
+    pass "33b: iso/auto/config is executable in working tree"
+else
+    fail "33b: iso/auto/config is executable in working tree" \
+         "File not executable: $REPO_ROOT/iso/auto/config — lb config will fail with Permission denied"
+fi
+
 # ===========================================================================
 # Summary
 # ===========================================================================
