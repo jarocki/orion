@@ -3211,6 +3211,95 @@ else
          "File not executable: $REPO_ROOT/iso/auto/config — lb config will fail with Permission denied"
 fi
 
+section "34. W11-14 runtime-operational assertions (OUTCOMES in the ISO, not strings in source)"
+
+# Every W11-13 acceptance check was a source-string grep, so section 32 passed 15/15
+# on an ISO whose venvs were empty, whose ollama unit pointed at a nonexistent path,
+# and whose /etc/orionx-version said GIT_HEAD_SHA=unknown. These assertions inspect
+# the built squashfs instead: they fail if the tool is not actually there.
+
+# --- 34a/b: venvs must contain pip (the silent-empty-venv defect) ---
+_vid=a
+for _v in re comms; do
+    if [[ -x "$SQF/opt/orionx/venv/$_v/bin/pip" ]]; then
+        pass "34${_vid}: /opt/orionx/venv/$_v has pip (venv was created with ensurepip)"
+    else
+        fail "34${_vid}: /opt/orionx/venv/$_v has pip" \
+             "No pip in venv — python3-venv missing from package list; hook 0500 would skip its install block and ship an empty venv"
+    fi
+    _vid=b
+done
+
+# --- 34c: capa actually installed (not merely FATAL-string-present in the hook) ---
+if [[ -x "$SQF/opt/orionx/venv/re/bin/capa" ]]; then
+    pass "34c: capa binary present in /opt/orionx/venv/re/bin (DEC-PHASE11-018 satisfied)"
+else
+    fail "34c: capa binary present in /opt/orionx/venv/re/bin" \
+         "capa absent — the DEC-PHASE11-018 hard-fail did not fire because the pip guard skipped the block"
+fi
+
+# --- 34d: matrix-commander actually installed ---
+if [[ -x "$SQF/opt/orionx/venv/comms/bin/matrix-commander" ]]; then
+    pass "34d: matrix-commander present in /opt/orionx/venv/comms/bin (DEC-PHASE11-018 satisfied)"
+else
+    fail "34d: matrix-commander present in /opt/orionx/venv/comms/bin" \
+         "matrix-commander absent — same silent-skip defect as capa"
+fi
+
+# --- 34e: the ollama binary must exist at the path nebula-runtime.service invokes ---
+_ollama_exec="$(grep -m1 '^ExecStart=' "$SQF/lib/systemd/system/nebula-runtime.service" 2>/dev/null | sed 's/^ExecStart=//' | awk '{print $1}')"
+if [[ -n "$_ollama_exec" && -x "$SQF$_ollama_exec" ]]; then
+    pass "34e: nebula-runtime ExecStart path exists in squashfs ($_ollama_exec)"
+else
+    fail "34e: nebula-runtime ExecStart path exists in squashfs" \
+         "Unit invokes '${_ollama_exec:-<unparsed>}' but that path is not an executable in the image — service dies 203/EXEC"
+fi
+
+# --- 34f: units writing to /var/log/orionx must declare LogsDirectory ---
+_missing_logdir=""
+for _u in nebula-runtime.service nebula-warmup.service nebula-integrity-check.service; do
+    _uf="$SQF/lib/systemd/system/$_u"
+    [[ -f "$_uf" ]] || continue
+    if grep -q "append:/var/log/orionx" "$_uf" && ! grep -q "^LogsDirectory=" "$_uf"; then
+        _missing_logdir="$_missing_logdir $_u"
+    fi
+done
+if [[ -z "$_missing_logdir" ]]; then
+    pass "34f: all units using append:/var/log/orionx declare LogsDirectory= (no 209/STDOUT)"
+else
+    fail "34f: all units using append:/var/log/orionx declare LogsDirectory=" \
+         "Missing LogsDirectory in:$_missing_logdir — systemd opens StandardOutput before ExecStartPre, so these die 209/STDOUT"
+fi
+
+# --- 34g: /etc/orionx-version must carry real metadata, not defaults ---
+_ver_sha="$(grep -m1 '^GIT_HEAD_SHA=' "$SQF/etc/orionx-version" 2>/dev/null | cut -d= -f2)"
+if [[ -n "$_ver_sha" && "$_ver_sha" != "unknown" ]]; then
+    pass "34g: /etc/orionx-version GIT_HEAD_SHA is real ($_ver_sha)"
+else
+    fail "34g: /etc/orionx-version GIT_HEAD_SHA is real" \
+         "GIT_HEAD_SHA='${_ver_sha:-<absent>}' — build metadata did not cross into the chroot (DEC-PHASE11-020)"
+fi
+
+# --- 34h: tshark must be present (wireshark alone does not provide it) ---
+if [[ -x "$SQF/usr/bin/tshark" ]]; then
+    pass "34h: tshark present in squashfs"
+else
+    fail "34h: tshark present in squashfs" \
+         "tshark absent — the 'wireshark' package is the GUI only; tshark is a separate Debian binary package"
+fi
+
+# --- 34i: debloat must survive the python3-pip Recommends pull-in ---
+_rebloat=""
+for _p in make python3-dev build-essential dpkg-dev; do
+    grep -q "^Package: ${_p}$" "$SQF/var/lib/dpkg/status" 2>/dev/null && _rebloat="$_rebloat $_p"
+done
+if [[ -z "$_rebloat" ]]; then
+    pass "34i: build toolchain absent from ISO (DEC-PHASE11-003 debloat intact)"
+else
+    fail "34i: build toolchain absent from ISO (DEC-PHASE11-003 debloat intact)" \
+         "Present:$_rebloat — python3-pip Recommends build-essential+python3-dev and iso/auto/config uses --apt-recommends true"
+fi
+
 # ===========================================================================
 # Summary
 # ===========================================================================

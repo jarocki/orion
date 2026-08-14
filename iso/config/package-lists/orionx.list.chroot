@@ -64,6 +64,12 @@ tcpdump
 testdisk
 # EXTERNAL: volatility3      — install via: pip3 install volatility3
 wireshark
+# tshark: the CLI capture/analysis tool. NOT pulled in by the `wireshark` package —
+# in Debian, `wireshark` is the GUI and `tshark` is a separate binary package, so
+# `wireshark` alone ships dumpcap but no tshark. Verified absent from the
+# 2026-08-07 ISO. tshark is the interface the MCP tool-server design and the
+# operator's `triage` verb actually call, so its absence is load-bearing.
+tshark
 # EXTERNAL: zeek             — install via https://zeek.org/get-zeek/
 
 # GUI Networking (rc4: Wi-Fi and wired connectivity via NetworkManager)
@@ -202,9 +208,22 @@ perl
 # python3-pip: pip package manager required by hook 0500-install-external-tools.hook.chroot
 # to install matrix-commander and capa into their respective venvs. Without this package
 # in the base image the hook's hard-fail path (DEC-PHASE11-018) triggers immediately
-# because pip is unavailable. python3-pip also pulls python3-venv as a dep, unblocking
-# the venv creation step in the same hook (W11-13, DEC-PHASE11-018).
+# because pip is unavailable.
 python3-pip
+# python3-venv: REQUIRED for `python3 -m venv` to produce a venv containing pip.
+#
+# W11-13 assumed python3-pip pulls python3-venv transitively. It does NOT — verified
+# against bullseye:
+#   python3-pip Depends: ca-certificates, python3-distutils, python3-setuptools,
+#                        python3-wheel, python-pip-whl, python3:any
+# With python3-venv absent, `python3 -m venv` still creates bin/python* but ensurepip
+# fails, so the venv has NO pip. Hook 0500 then skipped its install block entirely
+# (the `if [ -f .../bin/pip ]` guard was false), which made the DEC-PHASE11-018
+# hard-fail unreachable and shipped EMPTY venvs while the build exited 0 — the exact
+# silent-empty-venv defect DEC-PHASE11-018 exists to prevent. Proven on the
+# 2026-08-07 build: /opt/orionx/venv/{re,comms}/bin contained only python,python3,
+# python3.9 — no pip, no capa, no matrix-commander.
+python3-venv
 python3-numpy
 python3-scapy
 
