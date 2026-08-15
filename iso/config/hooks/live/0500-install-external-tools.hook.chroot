@@ -184,6 +184,18 @@ echo "[0500] W11-2c: purging gcc/g++ Recommends residue (DEC-PHASE11-003 enforce
 DEBIAN_FRONTEND=noninteractive apt-get purge -y --autoremove \
     gcc gcc-10 g++ g++-10 || true
 
+# W11-14 debloat repair: python3-pip Recommends build-essential + python3-dev, and
+# iso/auto/config runs --apt-recommends true, so adding python3-pip in W11-13 (T6)
+# silently reinstated the toolchain DEC-PHASE11-003 purges. Measured against the
+# 2026-08-03 baseline, the 2026-08-07 ISO regressed exactly two debloat assertions:
+# `make` and `python3-dev` were present again. The gcc/g++ purge above did not cover
+# them. This purge runs AFTER the list-driven install and BEFORE the venv pip
+# installs below — capa and matrix-commander install from wheels and do not need a
+# compiler (proven by the 2026-08-07 build, which completed with gcc already purged).
+echo "[0500] W11-14: purging python3-pip build-toolchain Recommends (DEC-PHASE11-003 repair)"
+DEBIAN_FRONTEND=noninteractive apt-get purge -y --autoremove \
+    build-essential dpkg-dev make python3-dev || true
+
 # ---------------------------------------------------------------------------
 # W11-3 Layer A: capa + python-magic venv (DEC-PHASE11-004)
 #
@@ -197,27 +209,39 @@ DEBIAN_FRONTEND=noninteractive apt-get purge -y --autoremove \
 # build matrix; adding them is a separate slice with its own DEC.
 #
 # The venv-CREATE step above remains soft (diagnostic warning, block skipped).
-# That is a deliberate carve-out per T5: a missing python3-venv is a different
-# failure class, and it is structurally near-impossible now that python3-pip
-# is in the base package list and pulls python3-venv as a dependency.
+# The venv-CREATE step is ALSO hard-fail as of 2026-08-12. It was previously soft,
+# guarded by `if [ -f .../bin/pip ]`, on the assumption that python3-pip pulls
+# python3-venv transitively. It does not (see orionx.list.chroot). The result: venv
+# creation half-succeeded (bin/python* but no pip), the guard evaluated false, the
+# whole install block was SKIPPED, and the build exited 0 shipping empty venvs —
+# defeating DEC-PHASE11-018 entirely. A guard that can silently skip a hard-fail is
+# not a hard-fail. Every step below now fails loudly.
 #
 # After a successful install, /usr/bin/capa is symlinked for convenience.
 # ---------------------------------------------------------------------------
 echo "=== W11-3: Installing capa + python-magic to /opt/orionx/venv/re/ ==="
 python3 -m venv /opt/orionx/venv/re/ 2>&1 || {
-    echo "[W11-3] WARN: venv creation failed — capa install skipped (network may be unavailable)"
+    echo "[W11-3] FATAL: venv creation failed for /opt/orionx/venv/re — hard-failing per DEC-PHASE11-018" >&2
+    echo "[W11-3]        python3-venv must be installed for ensurepip to succeed." >&2
+    exit 1
 }
-if [[ -f /opt/orionx/venv/re/bin/pip ]]; then
-    /opt/orionx/venv/re/bin/pip install --no-input flare-capa python-magic 2>&1 || {
-        echo "[W11-3] FATAL: capa pip install failed — hard-failing build per DEC-PHASE11-018" >&2
-        exit 1
-    }
-    if [[ -f /opt/orionx/venv/re/bin/capa ]]; then
-        echo "[W11-3] capa installed: $(/opt/orionx/venv/re/bin/capa --version 2>&1 | head -1)"
-        # Symlink for user convenience
-        ln -sf /opt/orionx/venv/re/bin/capa /usr/bin/capa
-    fi
+if [[ ! -x /opt/orionx/venv/re/bin/pip ]]; then
+    echo "[W11-3] FATAL: venv created but has no pip — hard-failing per DEC-PHASE11-018" >&2
+    echo "[W11-3]        This is the silent-empty-venv defect: python3-venv is missing" >&2
+    echo "[W11-3]        from the base package list, so ensurepip could not run." >&2
+    exit 1
 fi
+/opt/orionx/venv/re/bin/pip install --no-input flare-capa python-magic 2>&1 || {
+    echo "[W11-3] FATAL: capa pip install failed — hard-failing build per DEC-PHASE11-018" >&2
+    exit 1
+}
+if [[ ! -x /opt/orionx/venv/re/bin/capa ]]; then
+    echo "[W11-3] FATAL: pip reported success but /opt/orionx/venv/re/bin/capa is absent" >&2
+    exit 1
+fi
+echo "[W11-3] capa installed: $(/opt/orionx/venv/re/bin/capa --version 2>&1 | head -1)"
+# Symlink for user convenience
+ln -sf /opt/orionx/venv/re/bin/capa /usr/bin/capa
 echo "=== W11-3 capa venv install complete ==="
 
 # ---------------------------------------------------------------------------
@@ -231,26 +255,32 @@ echo "=== W11-3 capa venv install complete ==="
 # mode than a build the developer must fix. Accepted risk R2 applies here as
 # it does to capa above: air-gapped builds break, intentionally.
 #
-# The venv-CREATE step above remains soft, for the same T5 reason given in the
-# capa block: missing python3-venv is a different failure class.
+# The venv-CREATE step is hard-fail for the same reason as the capa block above:
+# a guard that silently skips the install defeats DEC-PHASE11-018.
 #
 # After a successful install, /usr/local/bin/matrix-commander is symlinked
 # for convenience. Layer B (gomuks static binary) is deferred to W11-5b.
 # ---------------------------------------------------------------------------
 echo "=== W11-5: Installing matrix-commander to /opt/orionx/venv/comms/ ==="
 python3 -m venv /opt/orionx/venv/comms/ 2>&1 || {
-    echo "[W11-5] WARN: venv creation failed"
+    echo "[W11-5] FATAL: venv creation failed for /opt/orionx/venv/comms — hard-failing per DEC-PHASE11-018" >&2
+    exit 1
 }
-if [[ -f /opt/orionx/venv/comms/bin/pip ]]; then
-    /opt/orionx/venv/comms/bin/pip install --no-input matrix-commander 2>&1 || {
-        echo "[W11-5] FATAL: matrix-commander pip install failed — hard-failing build per DEC-PHASE11-018" >&2
-        exit 1
-    }
-    if [[ -f /opt/orionx/venv/comms/bin/matrix-commander ]]; then
-        ln -sf /opt/orionx/venv/comms/bin/matrix-commander /usr/local/bin/matrix-commander
-        echo "[W11-5] matrix-commander installed"
-    fi
+if [[ ! -x /opt/orionx/venv/comms/bin/pip ]]; then
+    echo "[W11-5] FATAL: venv created but has no pip — hard-failing per DEC-PHASE11-018" >&2
+    echo "[W11-5]        python3-venv missing from base package list (ensurepip could not run)." >&2
+    exit 1
 fi
+/opt/orionx/venv/comms/bin/pip install --no-input matrix-commander 2>&1 || {
+    echo "[W11-5] FATAL: matrix-commander pip install failed — hard-failing build per DEC-PHASE11-018" >&2
+    exit 1
+}
+if [[ ! -x /opt/orionx/venv/comms/bin/matrix-commander ]]; then
+    echo "[W11-5] FATAL: pip reported success but matrix-commander binary is absent" >&2
+    exit 1
+fi
+ln -sf /opt/orionx/venv/comms/bin/matrix-commander /usr/local/bin/matrix-commander
+echo "[W11-5] matrix-commander installed"
 echo "=== W11-5 matrix-commander install complete ==="
 
 echo "=== External tools installation complete ==="

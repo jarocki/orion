@@ -205,9 +205,19 @@ mkdir -p /etc/update-motd.d/
 # orionx-diag are readers. No second manifest file is created (DEC-PHASE11-015
 # single-authority discipline — rejected alternatives: /etc/orionx-manifest,
 # /etc/orionx-version.json).
-# Env vars (ORIONX_GIT_SHA, ORIONX_GIT_TITLE, ORIONX_PHASE_11_SLICES) are
-# exported by scripts/build-iso.sh at build time; fallback to 'unknown' when
-# built outside CI (orionx-diag emits SKIP for 'unknown' fields).
+# Build metadata arrives as a STAGED FILE, not as environment variables
+# (DEC-PHASE11-020). Chroot hooks do not inherit the invoking shell's environment,
+# so the previous env-only path always produced ISO_VERSION=v2.0.0-rc8 and
+# GIT_HEAD_SHA=unknown regardless of what build-iso.sh exported. The fragment is
+# written by stage_build_env() and consumed (then deleted) here, so this hook
+# remains the single writer of /etc/orionx-version per DEC-PHASE11-015.
+if [ -r /etc/orionx-build-env ]; then
+    # shellcheck disable=SC1091  # generated at build time; not present in the repo
+    . /etc/orionx-build-env
+    echo "[0700] build env loaded: ORIONX_VERSION=${ORIONX_VERSION:-unset} GIT_SHA=${ORIONX_GIT_SHA:-unset}"
+else
+    echo "[0700] WARNING: /etc/orionx-build-env absent — /etc/orionx-version will report defaults" >&2
+fi
 cat > /etc/orionx-version << VERSION_EOF
 ISO_VERSION=${ORIONX_VERSION:-v2.0.0-rc8}
 BUILD_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -216,6 +226,9 @@ GIT_HEAD_TITLE=${ORIONX_GIT_TITLE:-unknown}
 PHASE_11_SLICES=${ORIONX_PHASE_11_SLICES:-unknown}
 VERSION_EOF
 chmod 644 /etc/orionx-version
+# The fragment is a build-time input, not shipped state — remove it so the ISO
+# carries exactly one metadata surface (DEC-PHASE11-015 single-authority).
+rm -f /etc/orionx-build-env
 
 cat > /etc/update-motd.d/10-orionx-welcome << 'MOTD_EOF'
 #!/bin/bash

@@ -24,6 +24,9 @@ ConditionPathExists=/opt/orionx/nebula/models/MANIFEST.sha256
 
 [Service]
 Type=oneshot
+# See nebula-runtime.service: LogsDirectory must exist before StandardOutput=append:
+# is opened, or the unit dies 209/STDOUT before ExecStart runs (DEC-PHASE11-017).
+LogsDirectory=orionx
 # Use absolute path — no PATH dependency at boot.
 ExecStart=/usr/bin/python3 /opt/orionx/scripts/nebula/warmup.py
 StandardOutput=append:/var/log/orionx/nebula-warmup.log

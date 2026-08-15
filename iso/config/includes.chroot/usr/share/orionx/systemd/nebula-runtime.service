@@ -30,8 +30,15 @@ Type=notify
 Environment=OLLAMA_HOST=127.0.0.1:11434
 # Model storage location — must match where stage_nebula_model() staged the GGUF.
 Environment=OLLAMA_MODELS=/opt/orionx/nebula/models
-ExecStart=/usr/bin/ollama serve
+ExecStart=/usr/local/bin/ollama serve
 # Ensure log directory exists before starting.
+# LogsDirectory= makes systemd create /var/log/orionx BEFORE it opens the
+# StandardOutput=append: target. ExecStartPre= alone is NOT sufficient: systemd
+# opens stdout/stderr for the unit before running ExecStartPre, so a missing
+# directory yields 209/STDOUT and the mkdir never executes. Same root cause and
+# same fix as nebula-integrity-check.service (W11-13 T2, DEC-PHASE11-017); that
+# slice fixed only one of the three units that needed it.
+LogsDirectory=orionx
 ExecStartPre=/bin/mkdir -p /var/log/orionx
 StandardOutput=append:/var/log/orionx/nebula-runtime.log
 StandardError=append:/var/log/orionx/nebula-runtime.log
