@@ -3300,6 +3300,38 @@ else
          "Present:$_rebloat — python3-pip Recommends build-essential+python3-dev and iso/auto/config uses --apt-recommends true"
 fi
 
+# --- 34j: the bundled model must be REGISTERED with ollama, not just present ---
+# A bare .gguf in OLLAMA_MODELS is invisible to ollama. Registration materialises
+# blobs/ + manifests/. Without these, warmup.py exits 1 "No models found".
+if [[ -d "$SQF/opt/orionx/nebula/models/blobs" && -d "$SQF/opt/orionx/nebula/models/manifests" ]]; then
+    pass "34j: ollama store present (blobs/ + manifests/) — model registered at build time"
+else
+    fail "34j: ollama store present (blobs/ + manifests/) — model registered at build time" \
+         "No ollama store under /opt/orionx/nebula/models — the GGUF was staged but never imported (DEC-PHASE11-021); ollama list will be empty and warm-up cannot work"
+fi
+
+# --- 34k: the registered manifest must carry the tag the runtime expects ---
+_want_tag="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['ollama_model_tag'])" \
+              "$REPO_ROOT/iso/config/nebula-model-manifest.json" 2>/dev/null)"
+_tag_name="${_want_tag%%:*}"
+if [[ -n "$_tag_name" ]] && find "$SQF/opt/orionx/nebula/models/manifests" -type f -path "*${_tag_name}*" 2>/dev/null | grep -q .; then
+    pass "34k: ollama manifest exists for the manifest-declared tag ($_want_tag)"
+else
+    fail "34k: ollama manifest exists for the manifest-declared tag ($_want_tag)" \
+         "No manifest entry matching '${_tag_name:-<unresolved>}' — registered tag disagrees with nebula-model-manifest.json"
+fi
+
+# --- 34l: AppArmor profile must attach to the real ollama path ---
+_aa="$SQF/etc/apparmor.d/usr.bin.ollama"
+_aa_path="$(grep -m1 -oE '^profile[[:space:]]+ollama[[:space:]]+\S+' "$_aa" 2>/dev/null | awk '{print $3}')"
+_exec_path="$(grep -m1 '^ExecStart=' "$SQF/lib/systemd/system/nebula-runtime.service" 2>/dev/null | sed 's/^ExecStart=//' | awk '{print $1}')"
+if [[ -n "$_aa_path" && "$_aa_path" == "$_exec_path" ]]; then
+    pass "34l: AppArmor profile attaches to the ollama path the unit runs ($_aa_path)"
+else
+    fail "34l: AppArmor profile attaches to the ollama path the unit runs" \
+         "profile='${_aa_path:-<none>}' vs ExecStart='${_exec_path:-<none>}' — AppArmor keys on executable path, so a mismatch means ollama runs UNCONFINED (DEC-006/DEC-007 not enforced)"
+fi
+
 # ===========================================================================
 # Summary
 # ===========================================================================

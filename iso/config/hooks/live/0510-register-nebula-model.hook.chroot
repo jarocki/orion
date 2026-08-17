@@ -1,0 +1,174 @@
+#!/bin/bash
+# shellcheck shell=bash
+#
+# Orion-X Phoenix Edition — register the bundled GGUF with ollama at BUILD time.
+#
+# @decision DEC-PHASE11-021
+# @title Bundled model is imported into ollama's store at build time, not left as a bare GGUF
+# @status accepted
+# @rationale W10-1 staged the model file and set
+#     Environment=OLLAMA_MODELS=/opt/orionx/nebula/models
+#   in nebula-runtime.service, and stopped there. That variable points ollama at
+#   its OWN store layout (blobs/ + manifests/); a bare .gguf sitting in that
+#   directory is invisible to it. Nothing in the repo ever ran `ollama create`,
+#   `ollama pull`, or shipped a Modelfile, so no model was ever registered.
+#   Proven on the 2026-08-07 ISO: no blobs/ and no manifests/ anywhere in the
+#   image. Consequence: `ollama list` is empty, /api/tags returns no models, and
+#   scripts/nebula/warmup.py takes its `_get_first_model() is None` branch and
+#   exits 1 with "No models found in ollama — cannot warm up." The Nebula
+#   headline feature could never have worked on any ISO built to date.
+#
+#   BUILD-TIME import (this hook) rather than first-boot import, because:
+#     (a) the live filesystem is a read-only squashfs with a tmpfs overlay, so a
+#         first-boot `ollama create` would copy ~1.9 GB into RAM on every boot
+#         and lose it at shutdown;
+#     (b) importing here puts blobs/ inside the squashfs, where it is read-only,
+#         verified, and costs no runtime RAM;
+#     (c) mksquashfs deduplicates identical files by default, so the imported
+#         blob and the original GGUF collapse to one copy — the size cost of
+#         keeping both is close to zero.
+#   The original GGUF is deliberately RETAINED: it is what MANIFEST.sha256 and
+#   nebula-integrity-check.service verify at boot (DEC-PHASE10-009). Deleting it
+#   to save space would break the boot integrity gate.
+#
+#   Feasibility of running an amd64 ollama inside the chroot on an Apple Silicon
+#   host was confirmed before writing this hook: the 2026-08-07 build log shows
+#   `ollama --version` executing under QEMU emulation and emitting ollama's own
+#   "could not connect to a running Ollama instance" warning.
+#
+#   HARD-FAIL per DEC-PHASE10-007: ollama is load-bearing for the Nebula feature.
+#   A soft-fail here would reproduce exactly the silent-empty-venv class of defect
+#   that DEC-PHASE11-018 exists to prevent — a green build shipping a dead feature.
+#
+# Ordering: runs after 0500 (which installs the ollama binary) and before 0700
+# (which consumes and deletes /etc/orionx-build-env).
+#
+# Rollback: revert this hook and the stage_build_env() model fields. The ISO
+# returns to shipping an unregistered GGUF (i.e. a non-functional Nebula).
+
+set -euo pipefail
+
+LOG_PREFIX="[0510-nebula-model]"
+MODELS_DIR="/opt/orionx/nebula/models"
+OLLAMA_BIN="/usr/local/bin/ollama"
+BUILD_ENV="/etc/orionx-build-env"
+SERVE_LOG="/tmp/ollama-build-serve.log"
+MODELFILE="/tmp/orionx-nebula.Modelfile"
+
+echo "${LOG_PREFIX} === Registering bundled model with ollama (DEC-PHASE11-021) ==="
+
+# --- Inputs -----------------------------------------------------------------
+if [ ! -r "$BUILD_ENV" ]; then
+    echo "${LOG_PREFIX} FATAL: $BUILD_ENV absent — cannot resolve the ollama model tag." >&2
+    echo "${LOG_PREFIX}        stage_build_env() in scripts/build-iso.sh must run first." >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091  # generated at build time; not in the repo
+. "$BUILD_ENV"
+
+MODEL_TAG="${ORIONX_OLLAMA_MODEL_TAG:-}"
+MODEL_FILE="${ORIONX_MODEL_FILENAME:-}"
+if [ -z "$MODEL_TAG" ] || [ -z "$MODEL_FILE" ]; then
+    echo "${LOG_PREFIX} FATAL: ORIONX_OLLAMA_MODEL_TAG / ORIONX_MODEL_FILENAME not set in $BUILD_ENV" >&2
+    exit 1
+fi
+
+GGUF="${MODELS_DIR}/${MODEL_FILE}"
+if [ ! -x "$OLLAMA_BIN" ]; then
+    echo "${LOG_PREFIX} FATAL: $OLLAMA_BIN missing or not executable (hook 0500 should have installed it)." >&2
+    exit 1
+fi
+if [ ! -f "$GGUF" ]; then
+    echo "${LOG_PREFIX} FATAL: staged model not found at $GGUF" >&2
+    echo "${LOG_PREFIX}        stage_nebula_model() in scripts/build-iso.sh should have placed it." >&2
+    exit 1
+fi
+
+echo "${LOG_PREFIX} model : $GGUF ($(du -h "$GGUF" | cut -f1))"
+echo "${LOG_PREFIX} tag   : $MODEL_TAG"
+
+# --- Environment ------------------------------------------------------------
+# OLLAMA_MODELS must match nebula-runtime.service exactly, or the model gets
+# imported into a store the runtime never reads.
+export OLLAMA_MODELS="$MODELS_DIR"
+export OLLAMA_HOST="127.0.0.1:11434"
+export HOME="${HOME:-/root}"
+
+# --- Start a throwaway server ----------------------------------------------
+# `ollama create` is a client command; it needs a server on OLLAMA_HOST.
+echo "${LOG_PREFIX} starting temporary ollama server..."
+"$OLLAMA_BIN" serve >"$SERVE_LOG" 2>&1 &
+SERVE_PID=$!
+
+cleanup() {
+    if kill -0 "$SERVE_PID" 2>/dev/null; then
+        echo "${LOG_PREFIX} stopping temporary ollama server (pid $SERVE_PID)..."
+        kill "$SERVE_PID" 2>/dev/null || true
+        for _ in $(seq 1 30); do
+            kill -0 "$SERVE_PID" 2>/dev/null || break
+            sleep 1
+        done
+        kill -9 "$SERVE_PID" 2>/dev/null || true
+    fi
+    rm -f "$MODELFILE"
+}
+trap cleanup EXIT
+
+# --- Wait for readiness -----------------------------------------------------
+# Under QEMU emulation startup is slow; poll rather than sleeping a fixed amount.
+echo "${LOG_PREFIX} waiting for ollama API to accept connections..."
+READY=0
+for i in $(seq 1 90); do
+    if ! kill -0 "$SERVE_PID" 2>/dev/null; then
+        echo "${LOG_PREFIX} FATAL: ollama server exited during startup. Server log:" >&2
+        sed 's/^/    /' "$SERVE_LOG" >&2 || true
+        exit 1
+    fi
+    if "$OLLAMA_BIN" list >/dev/null 2>&1; then
+        READY=1
+        echo "${LOG_PREFIX} server ready after ${i} poll(s)."
+        break
+    fi
+    sleep 2
+done
+if [ "$READY" -ne 1 ]; then
+    echo "${LOG_PREFIX} FATAL: ollama API did not become ready within 180s. Server log:" >&2
+    sed 's/^/    /' "$SERVE_LOG" >&2 || true
+    exit 1
+fi
+
+# --- Import -----------------------------------------------------------------
+# An absolute FROM path keeps the import independent of the working directory.
+cat > "$MODELFILE" <<MODELFILE_EOF
+FROM ${GGUF}
+MODELFILE_EOF
+
+echo "${LOG_PREFIX} importing model as '${MODEL_TAG}' (copies ~$(du -h "$GGUF" | cut -f1) into the blob store; slow under emulation)..."
+if ! "$OLLAMA_BIN" create "$MODEL_TAG" -f "$MODELFILE"; then
+    echo "${LOG_PREFIX} FATAL: 'ollama create ${MODEL_TAG}' failed — hard-failing per DEC-PHASE10-007." >&2
+    echo "${LOG_PREFIX} Server log:" >&2
+    sed 's/^/    /' "$SERVE_LOG" >&2 || true
+    exit 1
+fi
+
+# --- Verify the OUTCOME, not the exit code ----------------------------------
+# The whole class of defect this hook fixes was a green build shipping a dead
+# feature, so confirm the model is actually listed and on disk.
+echo "${LOG_PREFIX} verifying registration..."
+if ! "$OLLAMA_BIN" list | grep -q -- "$(printf '%s' "$MODEL_TAG" | cut -d: -f1)"; then
+    echo "${LOG_PREFIX} FATAL: '${MODEL_TAG}' absent from 'ollama list' after a successful create." >&2
+    "$OLLAMA_BIN" list >&2 || true
+    exit 1
+fi
+if [ ! -d "${MODELS_DIR}/blobs" ] || [ ! -d "${MODELS_DIR}/manifests" ]; then
+    echo "${LOG_PREFIX} FATAL: ollama store not materialised under ${MODELS_DIR} (blobs/ + manifests/ expected)." >&2
+    ls -la "$MODELS_DIR" >&2 || true
+    exit 1
+fi
+
+echo "${LOG_PREFIX} registered models:"
+"$OLLAMA_BIN" list | sed 's/^/    /'
+echo "${LOG_PREFIX} store size: $(du -sh "${MODELS_DIR}/blobs" 2>/dev/null | cut -f1)"
+echo "${LOG_PREFIX} NOTE: the original GGUF is retained on purpose — MANIFEST.sha256 and"
+echo "${LOG_PREFIX}       nebula-integrity-check.service verify it at boot (DEC-PHASE10-009)."
+echo "${LOG_PREFIX} === Model registration complete ==="
