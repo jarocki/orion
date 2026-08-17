@@ -18,7 +18,15 @@
 #   Style follows usr.bin.tshark (Phase 7 AppArmor convention).
 #   References: DEC-007, DEC-006, DEC-PHASE10-011.
 
-profile ollama /usr/bin/ollama {
+# ATTACHMENT PATH (2026-08-15 fix): ollama lives at /usr/local/bin/ollama, not
+# /usr/bin/ollama. Hook 0500 installs it by extracting the official .tar.zst into
+# /usr/local/ — W10-1 iter-7 changed the distribution form from a (never-existent)
+# .deb to .tar.zst but did not update this profile's attachment path or
+# nebula-runtime.service's ExecStart. AppArmor keys profiles by executable path, so
+# this profile silently never attached: ollama has run unconfined on every build to
+# date, and the DEC-006 LOCAL-ONLY / DEC-007 sandbox guarantees were not enforced.
+# Keep this path in sync with nebula-runtime.service ExecStart=.
+profile ollama /usr/local/bin/ollama {
   #include <abstractions/base>
 
   # Model files: read-only — ollama may read GGUF files but must not modify them.
