@@ -192,10 +192,6 @@ DEBIAN_FRONTEND=noninteractive apt-get purge -y --autoremove \
 # them. This purge runs AFTER the list-driven install and BEFORE the venv pip
 # installs below — capa and matrix-commander install from wheels and do not need a
 # compiler (proven by the 2026-08-07 build, which completed with gcc already purged).
-echo "[0500] W11-14: purging python3-pip build-toolchain Recommends (DEC-PHASE11-003 repair)"
-DEBIAN_FRONTEND=noninteractive apt-get purge -y --autoremove \
-    build-essential dpkg-dev make python3-dev || true
-
 # ---------------------------------------------------------------------------
 # W11-3 Layer A: capa + python-magic venv (DEC-PHASE11-004)
 #
@@ -282,5 +278,26 @@ fi
 ln -sf /opt/orionx/venv/comms/bin/matrix-commander /usr/local/bin/matrix-commander
 echo "[W11-5] matrix-commander installed"
 echo "=== W11-5 matrix-commander install complete ==="
+
+# ---------------------------------------------------------------------------
+# W11-14 debloat repair — MUST BE LAST IN THIS HOOK.
+#
+# python3-pip Recommends build-essential + python3-dev, and iso/auto/config runs
+# --apt-recommends true, so adding python3-pip in W11-13 (T6) silently reinstated
+# the toolchain DEC-PHASE11-003 purges. Measured against the 2026-08-03 baseline,
+# the 2026-08-07 ISO regressed exactly two debloat assertions: `make` and
+# `python3-dev` were present again. The W11-2c gcc/g++ purge above did not cover them.
+#
+# Ordering is deliberate: this runs AFTER the capa and matrix-commander venv
+# installs, never before. Those installs are hard-fail (DEC-PHASE11-018), so
+# removing the toolchain ahead of them would couple a debloat step to a
+# build-breaking failure if any wheel ever needed to compile. Install everything
+# first, then strip. No --allow-remove-essential is passed here (the APT_OPTIONS
+# env var used by live-build is deliberately not referenced), so apt will refuse
+# to remove essential packages rather than cascade.
+# ---------------------------------------------------------------------------
+echo "[0500] W11-14: purging python3-pip build-toolchain Recommends (DEC-PHASE11-003 repair)"
+DEBIAN_FRONTEND=noninteractive apt-get purge -y --autoremove \
+    build-essential dpkg-dev make python3-dev || true
 
 echo "=== External tools installation complete ==="
