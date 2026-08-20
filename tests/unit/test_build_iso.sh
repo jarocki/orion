@@ -1098,6 +1098,49 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
+# T37: stage_build_env() must emit a SOURCEABLE fragment for hostile git subjects
+#
+# /etc/orionx-build-env is sourced by hooks 0510 and 0700, and ORIONX_GIT_TITLE
+# is an arbitrary commit subject. The 2026-08-19 build died with
+#   /etc/orionx-build-env: line 6: syntax error near unexpected token `('
+# because the merge-commit subject was written unquoted. This test extracts the
+# real heredoc block from build-iso.sh, feeds it a subject containing every
+# shell-hostile character class, sources the result, and asserts the value
+# round-trips byte-identical.
+# ---------------------------------------------------------------------------
+_t37_tmp="$(mktemp -d)"
+# Extract the generator: the _shq definition + the heredoc that writes the fragment.
+sed -n '/_shq() {/,/^BUILDENV$/p' "$BUILD_SCRIPT" > "$_t37_tmp/gen.sh"
+if [[ ! -s "$_t37_tmp/gen.sh" ]] || ! grep -q "_shq()" "$_t37_tmp/gen.sh"; then
+    fail "T37: could not extract _shq/heredoc block from build-iso.sh (generator refactored? update this test)"
+else
+    _t37_title="Merge x into develop (DEC-1) with 'quotes', \"dquotes\", \$dollar, \`ticks\` & ;semicolons;"
+    (
+        cd "$_t37_tmp" || exit 1
+        VERSION="vT37" ORIONX_GIT_SHA="cafe1234" ORIONX_GIT_TITLE="$_t37_title" \
+        ORIONX_PHASE_11_SLICES="W-T37" ollama_tag="tag:t37" model_filename="t37.gguf" \
+        stage_dir="$_t37_tmp" bash -c '
+            set -euo pipefail
+            stage_dir="$0"
+            . ./gen.sh 2>/dev/null || true   # defines _shq, then heredoc writes $stage_dir/orionx-build-env
+        ' "$_t37_tmp" 2>/dev/null
+    ) || true
+    if [[ -f "$_t37_tmp/orionx-build-env" ]]; then
+        _t37_got="$(bash -c ". '$_t37_tmp/orionx-build-env' && printf '%s' \"\$ORIONX_GIT_TITLE\"" 2>&1)" || _t37_got="<SOURCE FAILED: $_t37_got>"
+        if [[ "$_t37_got" == "$_t37_title" ]]; then
+            pass "T37: orionx-build-env sources cleanly with shell-hostile git subject (round-trip exact)"
+        else
+            fail "T37: orionx-build-env round-trip mismatch — got: $_t37_got"
+        fi
+    else
+        fail "T37: generator did not produce orionx-build-env fragment"
+    fi
+fi
+rm -rf "$_t37_tmp"
+
+echo ""
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo "================================================================"
