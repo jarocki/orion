@@ -334,6 +334,67 @@ else
 fi
 
 # ===========================================================================
+# W11-14b: hostname lifecycle (hardware attestation 2026-08-21)
+# ===========================================================================
+section "W11-14b: hostname lifecycle"
+
+# The wizard renames the host; a rename racing the display manager invalidates
+# hostname-keyed X authority cookies and kills the autologin session.
+if grep -q '^Before=display-manager.service' "$SYSTEMD_UNIT" 2>/dev/null; then
+    pass "systemd unit orders Before=display-manager.service (autologin race fix)"
+else
+    fail "systemd unit orders Before=display-manager.service (autologin race fix)" \
+         "Without this, the hostname rename races LightDM and the autologin session dies"
+fi
+
+# The unit exists in two hand-synced copies: systemd/ (tested here) and
+# iso/config/includes.chroot/usr/share/orionx/systemd/ (what the ISO ships via
+# hook 0615). They MUST be identical or tests pass against a unit the image
+# does not contain.
+ISO_UNIT="$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/orionx-first-boot.service"
+if cmp -s "$SYSTEMD_UNIT" "$ISO_UNIT"; then
+    pass "systemd/ and includes.chroot unit copies are byte-identical"
+else
+    fail "systemd/ and includes.chroot unit copies are byte-identical" \
+         "Dual-authority divergence: the ISO ships $ISO_UNIT, tests check $SYSTEMD_UNIT"
+fi
+
+# An unresolvable hostname makes every sudo print "unable to resolve host" and
+# stall. The wizard must upsert 127.0.1.1 into /etc/hosts alongside the rename.
+if grep -q '127\.0\.1\.1' "$WIZARD_SCRIPT" 2>/dev/null && grep -q '/etc/hosts' "$WIZARD_SCRIPT" 2>/dev/null; then
+    pass "wizard upserts 127.0.1.1 into /etc/hosts after hostname change"
+else
+    fail "wizard upserts 127.0.1.1 into /etc/hosts after hostname change" \
+         "sudo will warn 'unable to resolve host <name>' on every invocation"
+fi
+
+# Dry-run must surface the hosts upsert so the sequence is testable.
+hosts_dry_output=$(ORIONX_FIRST_BOOT_DRY_RUN=1 ORIONX_FIRST_BOOT_FLAG="$DRY_RUN_DIR/.fb-hosts-test" bash "$WIZARD_SCRIPT" --non-interactive 2>&1 || true)
+if printf '%s' "$hosts_dry_output" | grep -q "upsert '127.0.1.1"; then
+    pass "dry-run logs the /etc/hosts upsert step"
+else
+    fail "dry-run logs the /etc/hosts upsert step"
+fi
+
+# Hostname stability: MAC-derived names must not change across runs (the
+# date-derived form minted a new identity every boot on a persistence-less
+# live system). Only assertable where /sys/class/net exposes a MAC.
+_mac_avail="$(cat /sys/class/net/*/address 2>/dev/null | grep -v '^00:00:00:00:00:00$' | head -1 || true)"
+if [[ -n "$_mac_avail" ]]; then
+    _hn1=$(ORIONX_FIRST_BOOT_DRY_RUN=1 ORIONX_FIRST_BOOT_FLAG="$DRY_RUN_DIR/.fb-hn1" bash "$WIZARD_SCRIPT" --non-interactive 2>&1 | grep -oE 'orionx-[0-9a-f]{8}' | head -1 || true)
+    sleep 1
+    _hn2=$(ORIONX_FIRST_BOOT_DRY_RUN=1 ORIONX_FIRST_BOOT_FLAG="$DRY_RUN_DIR/.fb-hn2" bash "$WIZARD_SCRIPT" --non-interactive 2>&1 | grep -oE 'orionx-[0-9a-f]{8}' | head -1 || true)
+    if [[ -n "$_hn1" && "$_hn1" == "$_hn2" ]]; then
+        pass "generated hostname is stable across runs ($_hn1)"
+    else
+        fail "generated hostname is stable across runs" \
+             "Got '$_hn1' then '$_hn2' — per-boot identity churn regressed"
+    fi
+else
+    skip "generated hostname stability" "no MAC exposed in this environment (non-Linux test host)"
+fi
+
+# ===========================================================================
 # Production sequence: first-boot on a fresh node
 # ===========================================================================
 section "Production Sequence: First Boot"

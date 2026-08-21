@@ -162,7 +162,23 @@ step_set_hostname() {
 
     if [[ -z "$hostname" ]]; then
         if [[ "$NON_INTERACTIVE" -eq 1 ]]; then
-            hostname="orionx-$(date +%s | shasum | cut -c1-8)"
+            # Derive from the first non-loopback MAC so the name is STABLE per
+            # device. The previous `date +%s | shasum` form minted a different
+            # hostname on every boot: a live system has no persistence for the
+            # first-boot sentinel, so the wizard re-runs each boot and the node
+            # changed identity every time (hardware attestation 2026-08-21
+            # observed orionx-218419db). Fallback to the timestamp form only
+            # when no NIC exposes an address (e.g. minimal CI containers).
+            # `|| true` is load-bearing: under set -euo pipefail an empty grep
+            # result would otherwise kill the wizard mid-step (no /sys on
+            # non-Linux test hosts; only-lo systems on real hardware).
+            local _mac
+            _mac="$(cat /sys/class/net/*/address 2>/dev/null | grep -v '^00:00:00:00:00:00$' | head -1 || true)"
+            if [[ -n "$_mac" ]]; then
+                hostname="orionx-$(printf '%s' "$_mac" | shasum | cut -c1-8)"
+            else
+                hostname="orionx-$(date +%s | shasum | cut -c1-8)"
+            fi
         else
             printf "Enter hostname for this node [orionx-node]: "
             read -r hostname
@@ -174,10 +190,24 @@ step_set_hostname() {
 
     if [[ "$DRY_RUN" -eq 1 ]]; then
         log_dry "hostnamectl set-hostname $hostname"
+        log_dry "upsert '127.0.1.1 $hostname' in /etc/hosts"
     else
         hostnamectl set-hostname "$hostname" 2>/dev/null || \
             hostname "$hostname" 2>/dev/null || \
             log_warn "Could not set hostname (not running as root?)"
+        # Keep /etc/hosts in sync. An unresolvable hostname makes every sudo
+        # invocation print "unable to resolve host <name>" and stall on the
+        # lookup timeout (hardware attestation 2026-08-21). Replace an existing
+        # 127.0.1.1 line if present, append otherwise.
+        if [[ -w /etc/hosts ]]; then
+            if grep -qE '^127\.0\.1\.1[[:space:]]' /etc/hosts; then
+                sed -i -E "s/^127\.0\.1\.1[[:space:]].*/127.0.1.1\t${hostname}/" /etc/hosts
+            else
+                printf '127.0.1.1\t%s\n' "$hostname" >> /etc/hosts
+            fi
+        else
+            log_warn "/etc/hosts not writable — hostname will not resolve locally (sudo will warn)"
+        fi
     fi
 }
 

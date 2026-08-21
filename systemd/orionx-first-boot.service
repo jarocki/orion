@@ -9,6 +9,15 @@
 [Unit]
 Description=Orion-X First-Boot Setup Wizard
 After=multi-user.target
+# Before=display-manager.service: the wizard renames the host (step 1). X
+# authority cookies are keyed by hostname, so a rename racing LightDM's session
+# start invalidates the cookie and the autologin session dies within seconds
+# (hardware attestation 2026-08-21: hostname flipped localhost.localdomain ->
+# orionx-218419db at 22:38:39-42, autologin session opened 22:38:42, greeter
+# fallback 22:38:45, while a later startx under the settled hostname worked).
+# display-manager.service is the canonical alias every DM installs, so this
+# stays correct if lightdm is ever swapped out.
+Before=display-manager.service
 ConditionPathExists=!/var/lib/orionx/.first-boot-done
 
 [Service]
