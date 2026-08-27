@@ -285,8 +285,15 @@ step_generate_wg_keys() {
     # are added dynamically by 'orionx-mesh join' — this conf only brings wg0 up
     # so wg-quick@wg0 succeeds (DEC-PHASE11-016, R1: host-octet collision risk is
     # documented and mitigated by DHCP uniqueness on a real LAN).
+    # Derived via ip(8), NOT `hostname -I`: the hostname binary is diverted by
+    # live-build during image builds and was shipped MISSING on rc1-31 (divert
+    # never restored across resumed builds). `hostname -I` then dies 127 under
+    # set -euo pipefail — the exact first-boot failure of the 2026-08-23
+    # attestation, killing the wizard between key generation and wg0.conf and
+    # cascading into wg-quick@wg0 + both mesh units. ip(8) is iproute2, which
+    # nothing diverts. `|| true` guards the empty-result pipefail case.
     local host_ip
-    host_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    host_ip="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1 || true)"
     local host_octet
     host_octet="$(echo "$host_ip" | awk -F. '{print $4}')"
     if [[ -z "$host_octet" || "$host_octet" == "0" ]]; then

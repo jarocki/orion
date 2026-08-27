@@ -1,0 +1,14 @@
+# Orion-X Phoenix Edition — canonical /etc/hosts (DEC-PHASE11-022)
+#
+# Shipped in includes.chroot so live-build's chroot_hosts remove restores THIS
+# file into the image deterministically. Without it, the restore falls back to
+# the .orig saved at build start — and across interrupted/resumed builds that
+# leaked the BUILD CONTAINER's hosts file into the shipped ISO (observed
+# 2026-08-23: a "172.17.0.2 d48450a52def" Docker entry on real hardware).
+# The first-boot wizard appends the runtime "127.0.1.1 <generated-name>" line.
+127.0.0.1	localhost localhost.localdomain orionx
+::1		localhost ip6-localhost ip6-loopback
+fe00::0		ip6-localnet
+ff00::0		ip6-mcastprefix
+ff02::1		ip6-allnodes
+ff02::2		ip6-allrouters
