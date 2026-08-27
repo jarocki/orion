@@ -394,6 +394,22 @@ else
     skip "generated hostname stability" "no MAC exposed in this environment (non-Linux test host)"
 fi
 
+# The wizard must not depend on the hostname BINARY for anything load-bearing:
+# live-build diverts it during image builds and rc1-25/rc1-31 shipped without
+# it entirely, killing the real (non-dry) run with status=127 at the
+# `hostname -I` in wg0.conf authoring. IP derivation must come from ip(8).
+if grep -vE '^[[:space:]]*#' "$WIZARD_SCRIPT" | grep -qE 'hostname -I'; then
+    fail "wizard does not use 'hostname -I' (binary may be absent from the image)" \
+         "Found 'hostname -I' — this died 127 on the 2026-08-23 hardware attestation"
+else
+    pass "wizard does not use 'hostname -I' (binary may be absent from the image)"
+fi
+if grep -qE 'ip -4 -o addr show' "$WIZARD_SCRIPT"; then
+    pass "wizard derives host IPv4 via ip(8)"
+else
+    fail "wizard derives host IPv4 via ip(8)"
+fi
+
 # ===========================================================================
 # Production sequence: first-boot on a fresh node
 # ===========================================================================

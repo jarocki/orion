@@ -280,6 +280,42 @@ echo "[W11-5] matrix-commander installed"
 echo "=== W11-5 matrix-commander install complete ==="
 
 # ---------------------------------------------------------------------------
+# W11-14c: re-anchor the diverted hostname binary (DEC-PHASE11-022).
+#
+# live-build's chroot_hostname stage diverts /bin/hostname to
+# /bin/hostname.distrib for the whole build (a stub that echoes
+# localhost.localdomain sits in its place — including RIGHT NOW, while this
+# hook runs) and renames the real binary back at teardown. Across
+# interrupted/resumed builds that dance lost the .distrib: rc1-25 AND rc1-31
+# both shipped with NO /bin/hostname at all while dpkg recorded the package
+# as installed. On hardware that broke live-config's own hostname setup
+# (0020-hostname: hostname: not found) and killed the first-boot wizard with
+# status=127. Reinstalling here writes the real binary THROUGH the active
+# diversion into /bin/hostname.distrib, guaranteeing teardown has a real file
+# to restore no matter what earlier build states did. Hard-fail per
+# DEC-PHASE10-007: a build without a restorable hostname binary ships a
+# broken image.
+# ---------------------------------------------------------------------------
+echo "[0500] W11-14c: re-anchoring diverted /bin/hostname (DEC-PHASE11-022)"
+DEBIAN_FRONTEND=noninteractive apt-get install --reinstall -y hostname || {
+    echo "[0500] FATAL: hostname package reinstall failed — image would ship without /bin/hostname" >&2
+    exit 1
+}
+# Accept either valid post-reinstall state: diversion active (real binary at
+# .distrib, stub at /bin/hostname) or no diversion (real binary in place).
+# "Real" = non-empty and not a #! script (the live-build stub is a script).
+_real() { [[ -s "$1" ]] && ! head -c2 "$1" | grep -q '#!'; }
+if _real /bin/hostname.distrib || _real /bin/hostname; then
+    echo "[0500] hostname binary re-anchored OK"
+    stat -c '[0500]   %n: %s bytes' /bin/hostname.distrib /bin/hostname 2>/dev/null || true
+else
+    echo "[0500] FATAL: no real hostname binary at /bin/hostname or /bin/hostname.distrib after reinstall." >&2
+    echo "[0500]        Refusing to ship an image whose hostname binary cannot be restored at teardown." >&2
+    ls -la /bin/hostname* >&2 || true
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # W11-14 debloat repair — MUST BE LAST IN THIS HOOK.
 #
 # python3-pip Recommends build-essential + python3-dev, and iso/auto/config runs

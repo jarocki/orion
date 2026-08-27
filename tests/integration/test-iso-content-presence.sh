@@ -3332,6 +3332,45 @@ else
          "profile='${_aa_path:-<none>}' vs ExecStart='${_exec_path:-<none>}' — AppArmor keys on executable path, so a mismatch means ollama runs UNCONFINED (DEC-006/DEC-007 not enforced)"
 fi
 
+# --- 34m: the hostname binary must be a real ELF, not absent or a stub ---
+# live-build diverts /bin/hostname for the whole build and restores it at
+# teardown; rc1-25 and rc1-31 both shipped with NO binary (divert dance broke
+# across resumed builds), which broke live-config's hostname setup and killed
+# the first-boot wizard with status=127 (2026-08-23 hardware attestation).
+_hn="$SQF/usr/bin/hostname"
+if [[ -s "$_hn" ]] && ! head -c2 "$_hn" | grep -q '#!'; then
+    pass "34m: /usr/bin/hostname is a real binary ($(stat -c%s "$_hn" 2>/dev/null || wc -c < "$_hn") bytes)"
+else
+    fail "34m: /usr/bin/hostname is a real binary" \
+         "Absent or a shell stub — live-build's hostname diversion was not restored; live-config and the first-boot wizard will fail"
+fi
+
+# --- 34n: /etc/hosts must not leak build-container state ---
+if grep -qE "172\.17\.|d48450a52def|^127\.0\.1\.1[[:space:]]+debian" "$SQF/etc/hosts" 2>/dev/null; then
+    fail "34n: /etc/hosts free of build-container leakage" \
+         "Baked hosts contains Docker/build-chroot entries: $(grep -E '172\.17\.|debian' "$SQF/etc/hosts" | head -2 | tr '\n' ' ')"
+else
+    pass "34n: /etc/hosts free of build-container leakage"
+fi
+
+# --- 34o: baked /etc/hostname is the canonical identity ---
+_bhn="$(cat "$SQF/etc/hostname" 2>/dev/null | head -1)"
+if [[ "$_bhn" == "orionx" ]]; then
+    pass "34o: baked /etc/hostname is 'orionx'"
+else
+    fail "34o: baked /etc/hostname is 'orionx'" \
+         "Got '${_bhn:-<absent>}' — includes.chroot/etc/hostname not restored by chroot_hostname teardown"
+fi
+
+# --- 34p: tmpfiles.d fragment guarantees the log/run dirs (the real 209 fix) ---
+if grep -qE "^d /var/log/orionx" "$SQF/usr/lib/tmpfiles.d/orionx.conf" 2>/dev/null && \
+   grep -qE "^d /run/orionx" "$SQF/usr/lib/tmpfiles.d/orionx.conf" 2>/dev/null; then
+    pass "34p: tmpfiles.d/orionx.conf creates /var/log/orionx + /run/orionx at boot"
+else
+    fail "34p: tmpfiles.d/orionx.conf creates /var/log/orionx + /run/orionx at boot" \
+         "LogsDirectory= alone is proven insufficient on systemd 247 (209/STDOUT on 2026-08-03 and 2026-08-23)"
+fi
+
 # ===========================================================================
 # Summary
 # ===========================================================================
