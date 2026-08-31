@@ -3,8 +3,10 @@
 # Shipped in includes.chroot so live-build's chroot_hosts remove restores THIS
 # file into the image deterministically. Without it, the restore falls back to
 # the .orig saved at build start — and across interrupted/resumed builds that
-# leaked the BUILD CONTAINER's hosts file into the shipped ISO (observed
-# 2026-08-23: a "172.17.0.2 d48450a52def" Docker entry on real hardware).
+# leaked the BUILD CONTAINER's hosts file into the shipped ISO (a Docker
+# bridge-network container entry was observed on real hardware, 2026-08-23).
+# NB: do not quote literal leak signatures in this comment — assertion 34n
+# greps this file for them.
 # The first-boot wizard appends the runtime "127.0.1.1 <generated-name>" line.
 127.0.0.1	localhost localhost.localdomain orionx
 ::1		localhost ip6-localhost ip6-loopback
