@@ -55,7 +55,12 @@ ORIONX_ISO_VOLUME="$(printf '%.32s' "OrionX-${ORIONX_VERSION}")"
 
 # Base distribution
 DISTRIBUTION="bullseye"
-MIRROR_URL="http://deb.debian.org/debian/"
+# Mirrors are env-overridable so a build can pin snapshot.debian.org when the
+# live Fastly index and pool go inconsistent (observed 2026-09-06: bullseye-
+# security index stuck on gnupg deb11u3 while the pool had purged it -> 404).
+# Defaults are unchanged, so normal builds are byte-identical.
+MIRROR_URL="${ORIONX_MIRROR:-http://deb.debian.org/debian/}"
+MIRROR_SECURITY_URL="${ORIONX_SECURITY_MIRROR:-http://security.debian.org/}"
 
 # Configure live-build
 lb config noauto \
@@ -64,6 +69,9 @@ lb config noauto \
     --distribution "$DISTRIBUTION" \
     --mirror-bootstrap "$MIRROR_URL" \
     --mirror-binary "$MIRROR_URL" \
+    --mirror-chroot "$MIRROR_URL" \
+    --mirror-chroot-security "$MIRROR_SECURITY_URL" \
+    --mirror-binary-security "$MIRROR_SECURITY_URL" \
     --archive-areas "main contrib non-free" \
     --apt-indices false \
     --apt-recommends true \

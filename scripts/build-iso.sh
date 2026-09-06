@@ -120,6 +120,8 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
              -e ORIONX_VERSION="${HOST_VERSION}" \
              -e ORIONX_ISO_VERSION="${ORIONX_ISO_VERSION:-}" \
              -e ORIONX_MODEL_LOCAL="${ORIONX_MODEL_LOCAL:-}" \
+             -e ORIONX_MIRROR="${ORIONX_MIRROR:-}" \
+             -e ORIONX_SECURITY_MIRROR="${ORIONX_SECURITY_MIRROR:-}" \
              -e ORIONX_GIT_SHA="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)" \
              -e ORIONX_GIT_TITLE="$(git log -1 --format=%s 2>/dev/null || echo unknown)" \
              -e ORIONX_PHASE_11_SLICES="${ORIONX_PHASE_11_SLICES:-W11-1,W11-2,W11-2b,W11-2c,W11-2d,W11-2e,W11-2f,W11-3,W11-4,W11-5,W11-6,W11-7,W11-8,W11-9a,W11-9a2,W11-9b,W11-11,W11-12,W11-13}" \
@@ -128,6 +130,16 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
              debian:bullseye-slim \
              bash -c '
                  set -e
+                 # When a mirror override is set (e.g. snapshot.debian.org to dodge a
+                 # broken live security index), repoint the build container apt too
+                 # so the host toolchain (gnupg etc.) resolves consistently.
+                 if [ -n "$ORIONX_MIRROR" ]; then
+                     {
+                       echo "deb $ORIONX_MIRROR bullseye main contrib non-free"
+                       echo "deb ${ORIONX_SECURITY_MIRROR:-$ORIONX_MIRROR} bullseye-security main contrib non-free"
+                       echo "deb $ORIONX_MIRROR bullseye-updates main contrib non-free"
+                     } > /etc/apt/sources.list
+                 fi
                  apt-get update -q
                  apt-get install -y -q --no-install-recommends \
                      live-build debootstrap xorriso isolinux \
