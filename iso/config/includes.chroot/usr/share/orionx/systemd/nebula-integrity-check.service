@@ -19,7 +19,7 @@ Documentation=file:///opt/orionx/scripts/nebula/integrity.py
 # nebula-runtime.service (and the socket unit) pull this in via Requires=.
 Before=nebula-runtime.service nebula-runtime.socket
 DefaultDependencies=no
-After=local-fs.target
+After=local-fs.target systemd-tmpfiles-setup.service
 
 [Service]
 Type=oneshot
