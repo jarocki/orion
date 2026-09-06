@@ -141,10 +141,14 @@ contains "console=tty0 in --bootappend-live" "console=tty0" "$BOOTAPPEND_LINE"
 echo ""
 
 # ---------------------------------------------------------------------------
-# T5: splash and persistence still present (existing UX not broken)
+# T5: splash REMOVED (DEC-PHASE11-023 boot-loop fix), persistence preserved
 # ---------------------------------------------------------------------------
-echo "[T5] UX params preserved (splash, persistence)"
-contains "splash still in --bootappend-live" "splash" "$BOOTAPPEND_LINE"
+# splash was dropped from --bootappend-live: on rc1-35 hardware plymouth grabbed
+# DRM master from initramfs, lightdms X could not become master, and
+# Restart=always looped the cold boot forever (2026-09-06). Verbose text boot
+# also aids future field diagnosis on this appliance.
+echo "[T5] splash removed, persistence preserved (DEC-PHASE11-023)"
+not_contains "splash removed from --bootappend-live (boot-loop fix)" "splash" "$BOOTAPPEND_LINE"
 contains "persistence still in --bootappend-live" "persistence" "$BOOTAPPEND_LINE"
 echo ""
 

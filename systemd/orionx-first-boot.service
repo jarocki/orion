@@ -23,10 +23,8 @@ ConditionPathExists=!/var/lib/orionx/.first-boot-done
 [Service]
 Type=oneshot
 ExecStart=/opt/orionx/scripts/security/first-boot-wizard.sh --non-interactive
-StandardInput=tty
-StandardOutput=tty
-StandardError=tty
-TTYPath=/dev/tty1
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

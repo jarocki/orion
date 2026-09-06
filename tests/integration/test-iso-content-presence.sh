@@ -3371,6 +3371,15 @@ else
          "LogsDirectory= alone is proven insufficient on systemd 247 (209/STDOUT on 2026-08-03 and 2026-08-23)"
 fi
 
+
+# --- 34q: lightdm restart is bounded (no infinite cold-boot loop) ---
+_dropin="$SQF/etc/systemd/system/lightdm.service.d/10-orionx-noloop.conf"
+if [[ -f "$_dropin" ]] && grep -q "Restart=on-failure" "$_dropin" && grep -q "StartLimitBurst=" "$_dropin"; then
+    pass "34q: lightdm no-loop drop-in present (DEC-PHASE11-023 — bounded restart)"
+else
+    fail "34q: lightdm no-loop drop-in present (DEC-PHASE11-023 — bounded restart)" \
+         "Missing/incomplete $_dropin — a failing X could loop the cold boot forever (Restart=always default)"
+fi
 # ===========================================================================
 # Summary
 # ===========================================================================

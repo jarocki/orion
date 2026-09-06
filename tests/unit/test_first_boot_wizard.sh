@@ -641,6 +641,23 @@ else
     skip "ShellCheck" "shellcheck not installed"
 fi
 
+
+# ===========================================================================
+# W11-14d: wizard must not seize tty1 (DEC-PHASE11-023 boot-loop fix)
+# ===========================================================================
+section "W11-14d: wizard off tty1"
+if grep -qE '^(StandardInput=tty|TTYPath=/dev/tty1)' "$SYSTEMD_UNIT"; then
+    fail "wizard unit does not seize tty1" \
+         "StandardInput=tty/TTYPath=/dev/tty1 present — collides with plymouth/lightdm on a splash cold boot"
+else
+    pass "wizard unit does not seize tty1 (journal-logged, no VT contention)"
+fi
+if grep -qE '^StandardOutput=journal' "$SYSTEMD_UNIT"; then
+    pass "wizard logs to journal"
+else
+    fail "wizard logs to journal"
+fi
+
 # ===========================================================================
 # Summary
 # ===========================================================================
