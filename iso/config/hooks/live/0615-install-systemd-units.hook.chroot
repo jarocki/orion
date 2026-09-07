@@ -95,4 +95,17 @@ for unit in "${AUTOSTART_UNITS[@]}"; do
     echo "[install-systemd-units] enabled: $unit"
 done
 
+# ---------------------------------------------------------------------------
+# W11-14g: mask plymouth boot units (DEC-PHASE11-025).
+# splash is already off the cmdline and plymouth.enable=0 is set, but
+# plymouth-start.service still launches plymouthd on a normal boot, and
+# plymouth-quit-wait.service ("Hold until boot process finishes up") then
+# blocks the boot FOREVER (no timeout) waiting for a quit that never arrives on
+# this DM/getty flow — observed on hardware 2026-09-07 (21+ min, no limit).
+# This is a verbose-text-boot forensic appliance; plymouth is pure cosmetics.
+# Masking both removes the daemon and the boot-completion wait entirely.
+for punit in plymouth-start.service plymouth-quit.service plymouth-quit-wait.service plymouth-read-write.service; do
+    systemctl mask "$punit" 2>/dev/null && echo "[install-systemd-units] masked: $punit"
+done
+
 echo "[install-systemd-units] systemd unit installation complete"
