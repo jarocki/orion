@@ -56,6 +56,18 @@ assert_file_contains() {
     fi
 }
 
+# W11-14f: assert an ACTIVE directive (non-comment line) is ABSENT.
+assert_file_not_contains() {
+    local file="$1"
+    local pattern="$2"
+    local desc="${3:-$file lacks \"$pattern\"}"
+    if grep -vE "^[[:space:]]*#" "$PROJECT_ROOT/$file" 2>/dev/null | grep -qE "$pattern"; then
+        fail "$desc" "Unexpected active directive in $file: $pattern"
+    else
+        pass "$desc"
+    fi
+}
+
 # ============================================================
 # Test Group 1: File Existence
 # ============================================================
@@ -78,14 +90,18 @@ assert_file_contains "$UNIT_FILE" '^\[Unit\]' \
 assert_file_contains "$UNIT_FILE" 'Description=.*Matrix Synapse' \
     "Has Matrix Synapse description"
 
-assert_file_contains "$UNIT_FILE" 'After=network-online\.target' \
-    "Has After=network-online.target"
+# W11-14f offline-safe: Matrix must NOT pull network-online (blocks offline boot)
+assert_file_not_contains "$UNIT_FILE" '^(After|Wants|Requires)=.*network-online' \
+    "No active network-online dependency (offline-boot safe)"
 
 assert_file_contains "$UNIT_FILE" 'After=wg-quick@wg0\.service' \
     "Has After=wg-quick@wg0.service (ordering preserved)"
 
-assert_file_contains "$UNIT_FILE" 'Wants=network-online\.target' \
-    "Has Wants=network-online.target"
+# Opt-in + bounded: only start when configured; never loop forever
+assert_file_contains "$UNIT_FILE" 'ConditionPathExists=/etc/matrix-synapse/homeserver\.yaml' \
+    "Gated on homeserver.yaml (opt-in, does not run unconfigured)"
+assert_file_contains "$UNIT_FILE" 'StartLimitBurst=' \
+    "Has StartLimit (bounded restart, no infinite loop)"
 
 # rc4 fix (DEC-PHASE9-006): wg-quick dependency downgraded from Requires= to Wants=
 # mesh-join.sh uses raw ip/wg (not wg-quick), so wg-quick@wg0 never activates.
