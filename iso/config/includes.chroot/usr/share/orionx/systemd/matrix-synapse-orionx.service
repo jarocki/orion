@@ -24,9 +24,12 @@
 [Unit]
 Description=Orion-X Matrix Synapse Homeserver
 Documentation=https://matrix-org.github.io/synapse/latest/
-After=network-online.target
+# W11-14f offline-safe: opt-in (not in AUTOSTART); no network-online pull that
+# would block an offline boot; only start when configured; bounded restart.
+ConditionPathExists=/etc/matrix-synapse/homeserver.yaml
+StartLimitIntervalSec=300
+StartLimitBurst=3
 After=wg-quick@wg0.service
-Wants=network-online.target
 # Soft dependency on wg-quick@wg0 (DEC-PHASE9-006): mesh-join.sh uses raw
 # ip/wg to bring up wg0, not wg-quick, so wg-quick@wg0.service never activates.
 # Wants= + After= gives correct ordering when wg-quick IS used, without

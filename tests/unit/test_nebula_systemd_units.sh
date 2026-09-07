@@ -109,8 +109,8 @@ if [[ -f "$RUNTIME_SVC" ]]; then
         fail "Type=notify or Type=simple" \
              "nebula-runtime.service must be Type=notify or Type=simple, not forking/oneshot"
     fi
-    contains_in_file "ExecStart uses /usr/bin/ollama" \
-        "^ExecStart=/usr/bin/ollama" "$RUNTIME_SVC"
+    contains_in_file "ExecStart uses /usr/local/bin/ollama" \
+        "^ExecStart=/usr/local/bin/ollama" "$RUNTIME_SVC"
     contains_in_file "Requires=nebula-integrity-check.service" \
         "^Requires=.*nebula-integrity-check" "$RUNTIME_SVC"
     contains_in_file "After=nebula-integrity-check.service" \

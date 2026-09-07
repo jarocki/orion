@@ -34,12 +34,10 @@ TARGET_DIR="/lib/systemd/system"
 # Unit files to install
 # ---------------------------------------------------------------------------
 UNIT_FILES=(
-    "matrix-synapse-orionx.service"
     "orionx-mesh-health.service"
     "orionx-mesh-health.timer"
     "orionx-mesh-discover.service"
     "orionx-mesh-discover.timer"
-    "orionx-mesh-beacon.service"
     "orionx-firewall.service"
     "orionx-first-boot.service"
     # W10-1: Nebula AI runtime units (DEC-PHASE10-009, DEC-PHASE10-010)
@@ -58,10 +56,8 @@ UNIT_FILES=(
 # Enable .timer (not the underlying .service) for periodic units.
 # ---------------------------------------------------------------------------
 AUTOSTART_UNITS=(
-    "matrix-synapse-orionx.service"
     "orionx-mesh-discover.timer"
     "orionx-mesh-health.timer"
-    "orionx-mesh-beacon.service"
     "orionx-firewall.service"
     "orionx-first-boot.service"
     # W10-1 Nebula: enable integrity-check (runs at boot, gates nebula-runtime)

@@ -1,7 +1,8 @@
 [Unit]
 Description=Orion-X Mesh Peer Discovery Listener
-After=network-online.target
-Wants=network-online.target
+# W11-14f offline-safe: no network-online pull; gated on mesh interface.
+After=network.target
+ConditionPathExists=/sys/class/net/wg0
 
 [Service]
 Type=simple

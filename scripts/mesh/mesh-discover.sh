@@ -209,18 +209,22 @@ mesh_beacon_send() {
     local pubkey vpn_ip wg_port hostname_val broadcast_addr
 
     pubkey="$(mesh_get_pubkey)" || {
-        mesh_log ERROR "Cannot send beacon: no public key available"
-        return 1
+        # W11-14f offline-safe: no keys = node not set up for mesh; a boot-time
+        # beacon is normal here, not an error. Skip so the timer does not fail-loop.
+        mesh_log INFO "Mesh not configured (no public key); skipping beacon"
+        return 0
     }
 
     vpn_ip="$(mesh_state_read vpn_ip 2>/dev/null)" || {
-        mesh_log ERROR "Cannot send beacon: no VPN IP in state file"
-        return 1
+        # W11-14f offline-safe: no VPN IP = mesh not joined (normal on a
+        # standalone/offline boot). Skip cleanly; prevents the 10s beacon loop.
+        mesh_log INFO "Mesh not joined (no VPN IP); skipping beacon"
+        return 0
     }
 
     if [[ -z "$vpn_ip" ]]; then
-        mesh_log ERROR "Cannot send beacon: VPN IP is empty"
-        return 1
+        mesh_log INFO "Mesh not joined (VPN IP empty); skipping beacon"
+        return 0
     fi
 
     wg_port="${MESH_WG_PORT}"
