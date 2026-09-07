@@ -149,6 +149,7 @@ echo ""
 # also aids future field diagnosis on this appliance.
 echo "[T5] splash removed, persistence preserved (DEC-PHASE11-023)"
 not_contains "splash removed from --bootappend-live (boot-loop fix)" "splash" "$BOOTAPPEND_LINE"
+contains "plymouth.enable=0 in --bootappend-live (no plymouth boot hang)" "plymouth.enable=0" "$BOOTAPPEND_LINE"
 contains "persistence still in --bootappend-live" "persistence" "$BOOTAPPEND_LINE"
 echo ""
 

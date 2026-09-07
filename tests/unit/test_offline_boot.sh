@@ -49,6 +49,19 @@ for u in orionx-mesh-beacon orionx-mesh-health; do
     fi
 done
 
+# Plymouth must be disabled: plymouth-quit-wait.service blocks boot forever
+# ("Hold until boot process finishes up", no timeout) on a normal boot.
+if grep -q 'systemctl mask "$punit"' "$HOOK" && grep -q "plymouth-quit-wait.service" "$HOOK"; then
+    pass "plymouth boot units masked in 0615 hook (no plymouth-quit-wait boot hang)"
+else
+    fail "plymouth boot units masked in 0615 hook" "plymouth-quit-wait can hang boot forever"
+fi
+if grep -q "plymouth.enable=0" "$REPO_ROOT/iso/auto/config"; then
+    pass "plymouth.enable=0 on kernel cmdline"
+else
+    fail "plymouth.enable=0 on kernel cmdline"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
