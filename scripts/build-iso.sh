@@ -111,6 +111,12 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
         done
         unset _stale _stale_path
 
+        # Snapshot builds pin an old snapshot whose security Release is past its
+        # short Valid-Until; tell apt (live-build's chroot + binary stages, via
+        # APT_OPTIONS) to tolerate that. Empty for normal deb.debian.org builds.
+        APT_VALID_UNTIL=""
+        [ -n "${ORIONX_MIRROR:-}" ] && APT_VALID_UNTIL=" -o Acquire::Check-Valid-Until=false"
+
         exec docker run --rm --privileged --platform linux/amd64 \
              -v "${REPO_ROOT_MACOS}:/host-src:ro" \
              -v "${REPO_ROOT_MACOS}/output:/host-output" \
@@ -125,8 +131,8 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
              -e ORIONX_GIT_SHA="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)" \
              -e ORIONX_GIT_TITLE="$(git log -1 --format=%s 2>/dev/null || echo unknown)" \
              -e ORIONX_PHASE_11_SLICES="${ORIONX_PHASE_11_SLICES:-W11-1,W11-2,W11-2b,W11-2c,W11-2d,W11-2e,W11-2f,W11-3,W11-4,W11-5,W11-6,W11-7,W11-8,W11-9a,W11-9a2,W11-9b,W11-11,W11-12,W11-13}" \
-             -e APT_OPTIONS="--yes -o Acquire::Retries=5 --allow-remove-essential" \
-             -e APTITUDE_OPTIONS="--assume-yes -o Acquire::Retries=5 --allow-remove-essential" \
+             -e APT_OPTIONS="--yes -o Acquire::Retries=5 --allow-remove-essential${APT_VALID_UNTIL}" \
+             -e APTITUDE_OPTIONS="--assume-yes -o Acquire::Retries=5 --allow-remove-essential${APT_VALID_UNTIL}" \
              debian:bullseye-slim \
              bash -c '
                  set -e
@@ -164,14 +170,6 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
                  # --allow-remove-essential. Inject it into APT_OPTIONS default.
                  sed -i "s|Acquire::Retries=5|Acquire::Retries=5 --allow-remove-essential|" \
                      /usr/share/live/build/functions/configuration.sh
-
-                 # When building against a snapshot mirror (ORIONX_MIRROR set), its
-                 # Release files are past Valid-Until — tell the live-build chroot +
-                 # binary apt to tolerate that. Build-time only; not shipped.
-                 if [ -n "$ORIONX_MIRROR" ]; then
-                     sed -i "s|Acquire::Retries=5|Acquire::Retries=5 -o Acquire::Check-Valid-Until=false|" \
-                         /usr/share/live/build/functions/configuration.sh
-                 fi
 
                  # Self-heal a stranded binary/ from a prior failed binary_iso
                  # run. binary_iso does `mv binary chroot` (into the chroot) so
