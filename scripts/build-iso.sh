@@ -139,6 +139,9 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
                        echo "deb ${ORIONX_SECURITY_MIRROR:-$ORIONX_MIRROR} bullseye-security main contrib non-free"
                        echo "deb $ORIONX_MIRROR bullseye-updates main contrib non-free"
                      } > /etc/apt/sources.list
+                     # snapshot.debian.org serves original security Release files
+                     # whose Valid-Until has since passed; tolerate for this build.
+                     echo "Acquire::Check-Valid-Until \"false\";" > /etc/apt/apt.conf.d/99snapshot-valid-until
                  fi
                  apt-get update -q
                  apt-get install -y -q --no-install-recommends \
@@ -161,6 +164,14 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
                  # --allow-remove-essential. Inject it into APT_OPTIONS default.
                  sed -i "s|Acquire::Retries=5|Acquire::Retries=5 --allow-remove-essential|" \
                      /usr/share/live/build/functions/configuration.sh
+
+                 # When building against a snapshot mirror (ORIONX_MIRROR set), its
+                 # Release files are past Valid-Until — tell the live-build chroot +
+                 # binary apt to tolerate that. Build-time only; not shipped.
+                 if [ -n "$ORIONX_MIRROR" ]; then
+                     sed -i "s|Acquire::Retries=5|Acquire::Retries=5 -o Acquire::Check-Valid-Until=false|" \
+                         /usr/share/live/build/functions/configuration.sh
+                 fi
 
                  # Self-heal a stranded binary/ from a prior failed binary_iso
                  # run. binary_iso does `mv binary chroot` (into the chroot) so
