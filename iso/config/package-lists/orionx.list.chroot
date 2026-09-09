@@ -175,6 +175,8 @@ htop
 zstd
 iotop
 jq
+# xdg-utils: xdg-open, used by Control Center Comms button to open the Matrix URL
+xdg-utils
 less
 lsof
 man-db

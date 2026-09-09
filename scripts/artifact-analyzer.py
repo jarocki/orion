@@ -43,16 +43,19 @@ from pathlib import Path
 # Mirrors the pattern in scripts/toggle-theme.sh:27-28 (mkdir -p /var/log/orionx).
 # Without this, logging.FileHandler raises FileNotFoundError on first boot because
 # /var/log/orionx does not exist until a script creates it.
-Path("/var/log/orionx").mkdir(parents=True, exist_ok=True)
-
-# Configure logging
+# Resilient logging (DEC-PHASE11-027): a forensic tool must NEVER crash because
+# a log dir is missing or unwritable (e.g. run as the operator with the dir
+# root-owned). Try a file handler; fall back to console-only on any OSError.
+_log_handlers = [logging.StreamHandler(sys.stdout)]
+try:
+    Path("/var/log/orionx").mkdir(parents=True, exist_ok=True)
+    _log_handlers.insert(0, logging.FileHandler("/var/log/orionx/artifact_analyzer.log"))
+except OSError:
+    pass  # console logging still works; the tool proceeds normally
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler("/var/log/orionx/artifact_analyzer.log"),
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=_log_handlers,
 )
 logger = logging.getLogger("orionx-artifact-analyzer")
 
