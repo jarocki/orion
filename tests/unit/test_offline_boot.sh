@@ -62,6 +62,22 @@ else
     fail "plymouth.enable=0 on kernel cmdline"
 fi
 
+# W11-14j: tmpfiles must not chown /var/log/orionx to a group that does not exist
+# at early boot (systemd-tmpfiles runs before live-config creates orionx-operator),
+# or the dir is never created and nebula-integrity-check dies 209/STDOUT.
+if grep -qE "^d /var/log/orionx .* orionx-operator " "$REPO_ROOT/iso/config/includes.chroot/usr/lib/tmpfiles.d/orionx.conf"; then
+    fail "tmpfiles /var/log/orionx uses only early-boot users (root)" "references orionx-operator group — absent when tmpfiles runs"
+else
+    pass "tmpfiles /var/log/orionx uses only early-boot users (root)"
+fi
+# W11-14j: nebula-runtime must set HOME (ollama needs it) and not use Type=notify
+NR="$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/nebula-runtime.service"
+if grep -q "^Environment=HOME=" "$NR" && ! grep -q "^Type=notify" "$NR"; then
+    pass "nebula-runtime sets HOME and is not Type=notify (ollama serves)"
+else
+    fail "nebula-runtime sets HOME and is not Type=notify" "ollama exits on undefined \$HOME / notify timeout"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]
