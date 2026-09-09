@@ -25,7 +25,10 @@ After=nebula-integrity-check.service network.target
 Wants=network.target
 
 [Service]
-Type=notify
+# W11-14j: ollama needs $HOME for its key store, and does not sd_notify;
+# without these it exits 1 ($HOME undefined) or Type=notify times out.
+Environment=HOME=/root
+Type=simple
 # ollama listens only on localhost — DEC-006 LOCAL-ONLY + DEC-PHASE10-011 AppArmor.
 Environment=OLLAMA_HOST=127.0.0.1:11434
 # Model storage location — must match where stage_nebula_model() staged the GGUF.

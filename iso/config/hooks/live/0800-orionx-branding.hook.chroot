@@ -171,4 +171,22 @@ else
     echo "${LOG_PREFIX} WARNING: lsinitramfs not available; cannot verify Plymouth theme embedding" >&2
 fi
 
+# ---------------------------------------------------------------------------
+# W11-14j: populate the Orion-X-Cyberdeck xfwm4 theme with decoration assets.
+# The theme ships only a themerc (custom colors/offsets) but no titlebar/button/
+# border pixmaps, so xfwm4 loads it and renders NO window decorations (confirmed
+# on hardware 2026-09-09: xfwm4 running, valid theme set, but borderless windows).
+# xfwm4 always needs the pixmap set; seed it from the stock Default theme while
+# keeping the custom themerc. (DEC-PHASE11-026)
+# ---------------------------------------------------------------------------
+_XFWM_THEME="/usr/share/themes/Orion-X-Cyberdeck/xfwm4"
+if [ -f "${_XFWM_THEME}/themerc" ] && [ "$(ls "${_XFWM_THEME}"/*.xpm 2>/dev/null | wc -l)" -eq 0 ]; then
+    if [ -d /usr/share/themes/Default/xfwm4 ]; then
+        cp -n /usr/share/themes/Default/xfwm4/*.xpm "${_XFWM_THEME}/" 2>/dev/null || true
+        echo "${LOG_PREFIX} xfwm4 theme assets seeded: $(ls "${_XFWM_THEME}"/*.xpm 2>/dev/null | wc -l) pixmaps (DEC-PHASE11-026)"
+    else
+        echo "${LOG_PREFIX} WARNING: Default xfwm4 theme absent; Orion-X-Cyberdeck decorations will be missing" >&2
+    fi
+fi
+
 echo "${LOG_PREFIX} W11-9a boot-chain branding hook complete"
