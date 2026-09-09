@@ -38,14 +38,19 @@ import json
 import datetime
 import re
 
-# Configure logging
+# Resilient logging (DEC-PHASE11-027): a forensic tool must NEVER crash because
+# the log dir is missing or unwritable (e.g. run as operator, dir root-owned).
+import os as _os
+_log_handlers = [logging.StreamHandler(sys.stdout)]
+try:
+    _os.makedirs("/var/log/orionx", exist_ok=True)
+    _log_handlers.insert(0, logging.FileHandler("/var/log/orionx/storyboard_gen.log"))
+except OSError:
+    pass  # console logging still works; the tool proceeds normally
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler("/var/log/orionx/storyboard_gen.log"),
-        logging.StreamHandler(sys.stdout)
-    ]
+    handlers=_log_handlers,
 )
 logger = logging.getLogger("orionx-storyboard-gen")
 
