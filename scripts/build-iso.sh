@@ -936,9 +936,30 @@ prepare_build_env() {
     log "Preparing build environment..."
     mkdir -p "$OUTPUT_DIR"
 
-    if [[ -d "$ISO_DIR/build" ]]; then
-        log "Cleaning previous build artifacts..."
-        (cd "$ISO_DIR" && lb clean --purge)
+    # @decision DEC-PHASE11-029
+    # @title Clean guard must detect the REAL live-build tree, not iso/build/
+    # @status accepted
+    # @rationale The prior guard tested `iso/build/` — a directory live-build
+    #   NEVER creates (it uses iso/chroot, iso/binary, iso/.build, iso/cache).
+    #   In the persistent Docker build volume (orionx-lb-work) this made the
+    #   clean dead code: `lb build` found the previous run's completed
+    #   .build/chroot_hooks + .build/binary_* stamps and printed
+    #   "W: Skipping chroot_hooks, already done" / "Skipping binary_hooks",
+    #   reusing a stale chroot and emitting a byte-identical ISO. Proof:
+    #   rc1-55 built in ~8 min with SHA ebc4e645… IDENTICAL to rc1-49, so none
+    #   of the committed fixes (wallpaper, W11-14j/k, greeter) were baked.
+    #   Fix: detect chroot/.build/binary and run `lb clean` (NOT --purge) so
+    #   the chroot + hooks + includes + squashfs all rebuild, while the
+    #   bootstrap + package caches survive (skips re-debootstrap for speed).
+    #   Use --purge only when ORIONX_FULL_CLEAN=1 (drops caches too).
+    if [[ -d "$ISO_DIR/chroot" || -d "$ISO_DIR/.build" || -d "$ISO_DIR/binary" ]]; then
+        if [[ "${ORIONX_FULL_CLEAN:-0}" == "1" ]]; then
+            log "Cleaning previous live-build tree (FULL purge — drops bootstrap+package caches)..."
+            (cd "$ISO_DIR" && lb clean --purge)
+        else
+            log "Cleaning previous chroot/binary (force fresh chroot+hooks+includes; keep caches)..."
+            (cd "$ISO_DIR" && lb clean)
+        fi
     fi
 
     log "Build environment ready."
