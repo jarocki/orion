@@ -26,11 +26,14 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # type: ignore[import]  # noqa: E402
 
-# Placeholder text checked by W9-2 reviewer and referenced by W10-5 implementer.
+# Operator-facing text.  Internal plug-in marker (referenced by the W10-5
+# implementer): the threat-posture tier selector lands in W10-5.  Kept in this
+# comment so the visible copy stays free of internal slice codenames.
 PLACEHOLDER_TEXT = (
     "Situational Awareness\n\n"
-    "Threat-posture: not yet enabled (lands in W10-5).\n"
-    "Tier selector will appear here."
+    "Coming soon.\n\n"
+    "This is where you'll set the deck's threat posture — from quiet\n"
+    "monitoring to active defense — and see what it's watching."
 )
 
 

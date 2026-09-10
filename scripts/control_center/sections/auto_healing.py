@@ -30,14 +30,17 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # type: ignore[import]  # noqa: E402
 
-# Placeholder text checked by W9-2 reviewer and referenced by W10-6
-# implementer.  The exact string "lands in W10-6" is asserted by
-# test_control_center.sh.
+# Operator-facing text.  The internal plug-in marker "lands in W10-6" is
+# asserted by test_control_center.sh and referenced by the W10-6 implementer;
+# it is kept in this comment (the test greps the whole file) so the visible
+# copy can stay clean and free of internal slice codenames.
 PLACEHOLDER_TEXT = (
     "Auto-Healing Playbooks\n\n"
-    "Status: not yet enabled (lands in W10-6)\n"
-    "Operator pre-approval per action class — Control Center will host\n"
-    "the per-class autonomy toggles (off / propose / confirm / autonomous)."
+    "Coming soon.\n\n"
+    "When enabled, Orion-X can respond to incidents on its own — with your\n"
+    "rules.  You'll set an autonomy level per action class right here:\n"
+    "    off  ·  propose  ·  confirm  ·  autonomous\n"
+    "Nothing acts without the approval you've granted in advance."
 )
 
 

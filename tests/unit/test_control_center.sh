@@ -244,7 +244,7 @@ fi
 # ===========================================================================
 section "No third-party imports (stdlib + gi.repository only)"
 
-_ALLOWED_PREFIXES="(os|sys|subprocess|typing|argparse|gi|__future__|control_center|\\.\\.)"
+_ALLOWED_PREFIXES="(os|sys|subprocess|shutil|typing|argparse|gi|__future__|control_center|\\.\\.)"
 
 _found_violation=0
 while IFS= read -r -d '' pyfile; do
@@ -266,7 +266,8 @@ while IFS= read -r -d '' pyfile; do
         # Check against allowed prefixes.
         # W10-1 adds JSON parsing (status.py output), logging (audit), and
         # pathlib (cross-platform paths) — all stdlib. (DEC-PHASE10-005)
-        if ! [[ "$top" =~ ^(os|sys|subprocess|typing|argparse|gi|__future__|json|logging|pathlib)$ ]]; then
+        # W11-15 adds shutil (which() preflight in helpers/ux.py) — stdlib. (DEC-PHASE11-030)
+        if ! [[ "$top" =~ ^(os|sys|subprocess|shutil|typing|argparse|gi|__future__|json|logging|pathlib)$ ]]; then
             fail "no third-party import: ${pyfile#"$REPO_ROOT/"} imports '$top'" \
                  "Only stdlib + gi.repository allowed in shipped Python"
             _found_violation=1

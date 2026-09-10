@@ -19,8 +19,8 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # type: ignore[import]  # noqa: E402
 
+from ..helpers import ux  # noqa: E402
 from ..helpers.state_polling import DEFAULT_POLL_MS, add_poll, get_active_connections  # noqa: E402
-from ..helpers.subprocess_runner import run  # noqa: E402
 
 
 def build_section() -> Gtk.Widget:
@@ -64,10 +64,13 @@ def build_section() -> Gtk.Widget:
     box.pack_start(sep, False, False, 4)
 
     btn = Gtk.Button(label="Open Network Manager")
+    btn.get_style_context().add_class("orionx-tool")
     btn.set_tooltip_text("Launch nm-connection-editor to manage connections")
 
     def _open_nm(_widget: Gtk.Widget) -> None:
-        run(["nm-connection-editor"], timeout=2)
+        # Detached launch — never run() with a timeout here: that blocks the
+        # GTK loop and then SIGKILLs the editor at the deadline (DEC-PHASE11-030).
+        ux.launch_detached(["nm-connection-editor"], friendly="Network Manager")
 
     btn.connect("clicked", _open_nm)
     box.pack_start(btn, False, False, 0)

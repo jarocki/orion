@@ -17,12 +17,12 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # type: ignore[import]  # noqa: E402
 
+from ..helpers import ux  # noqa: E402
 from ..helpers.state_polling import (  # noqa: E402
     DEFAULT_POLL_MS,
     add_poll,
     get_matrix_service_state,
 )
-from ..helpers.subprocess_runner import run  # noqa: E402
 
 _MATRIX_CHAT_URL = "https://localhost:8008/"
 
@@ -43,10 +43,13 @@ def build_section() -> Gtk.Widget:
     box.pack_start(status_label, False, False, 4)
 
     chat_btn = Gtk.Button(label="Open Matrix Chat")
+    chat_btn.get_style_context().add_class("orionx-tool")
     chat_btn.set_tooltip_text(f"Open {_MATRIX_CHAT_URL} in the default browser")
 
     def _open_chat(_widget: Gtk.Widget) -> None:
-        run(["xdg-open", _MATRIX_CHAT_URL], timeout=2)
+        ux.launch_detached(
+            ["xdg-open", _MATRIX_CHAT_URL], needs="xdg-open", friendly="Matrix chat"
+        )
 
     chat_btn.connect("clicked", _open_chat)
     box.pack_start(chat_btn, False, False, 0)
