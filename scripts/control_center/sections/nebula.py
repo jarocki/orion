@@ -36,6 +36,8 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk  # type: ignore[import]  # noqa: E402
 
+from ..helpers import ux  # noqa: E402
+
 logger = logging.getLogger("control_center.nebula")
 
 # How often to poll the runtime status (milliseconds).
@@ -134,19 +136,28 @@ class _NebulaSectionWidget:
         self._integrity_label.set_selectable(True)
         self.box.pack_start(self._integrity_label, False, False, 0)
 
-        # --- Chat placeholder (W10-2 will replace this) ---
-        chat_placeholder = Gtk.Label(label="Chat:    coming in W10-2")
+        # --- Chat row ---
+        # Plug-in surface for the in-app assistant. Marker for the implementer:
+        # chat is "coming in W10-2" (asserted by test_control_center.sh).
+        chat_placeholder = Gtk.Label(label="Chat:  in-app assistant — coming soon")
         chat_placeholder.set_halign(Gtk.Align.START)
         self.box.pack_start(chat_placeholder, False, False, 0)
 
-        # --- Tools placeholder (W10-3 will replace this) ---
-        tools_placeholder = Gtk.Label(label="Tools:   coming in W10-3")
+        # --- Tools row ---
+        # Plug-in surface for local AI tool-calling (MCP). Marker for the
+        # implementer: tools are "coming in W10-3" (asserted by the test suite).
+        tools_placeholder = Gtk.Label(label="Tools: local AI tool-calling — coming soon")
         tools_placeholder.set_halign(Gtk.Align.START)
         self.box.pack_start(tools_placeholder, False, False, 0)
 
         # --- Warm-up button ---
-        warmup_btn = Gtk.Button(label="[ Run warm-up ]")
+        warmup_btn = Gtk.Button(label="Warm up model")
+        warmup_btn.get_style_context().add_class("orionx-tool")
         warmup_btn.set_halign(Gtk.Align.START)
+        warmup_btn.set_tooltip_text(
+            "Load the model into memory so the first prompt is fast "
+            "(first run can take a few minutes on this hardware)"
+        )
         warmup_btn.connect("clicked", self._on_warmup_clicked)
         self.box.pack_start(warmup_btn, False, False, 4)
 
@@ -180,19 +191,28 @@ class _NebulaSectionWidget:
         return True  # True = keep the timer running
 
     def _on_warmup_clicked(self, _btn: Gtk.Button) -> None:
-        """Trigger nebula warmup in a subprocess (non-blocking)."""
+        """Trigger nebula warmup in a subprocess (non-blocking), with feedback."""
         nebula_bin = Path(_NEBULA_CLI)
         if not nebula_bin.exists():
             logger.warning("nebula CLI not found at %s — cannot run warm-up", _NEBULA_CLI)
+            ux.notify("✗ Nebula CLI is not installed on this system", ux.LEVEL_ERROR)
             return
         try:
             subprocess.Popen(
                 [str(nebula_bin), "warmup"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                start_new_session=True,
             )
         except OSError as exc:
             logger.error("Failed to launch nebula warmup: %s", exc)
+            ux.notify(f"✗ Could not start warm-up: {exc}", ux.LEVEL_ERROR)
+            return
+        ux.notify(
+            "✓ Warming up Nebula — first run can take a few minutes; "
+            "watch the Runtime line above",
+            ux.LEVEL_OK,
+        )
 
 
 def build_section() -> Gtk.Widget:

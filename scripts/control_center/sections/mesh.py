@@ -19,8 +19,8 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # type: ignore[import]  # noqa: E402
 
+from ..helpers import ux  # noqa: E402
 from ..helpers.state_polling import DEFAULT_POLL_MS, add_poll, get_mesh_status  # noqa: E402
-from ..helpers.subprocess_runner import run  # noqa: E402
 
 
 def build_section() -> Gtk.Widget:
@@ -66,34 +66,30 @@ def build_section() -> Gtk.Widget:
     box.pack_start(btn_box, False, False, 0)
 
     start_btn = Gtk.Button(label="Start Mesh")
-    start_btn.set_tooltip_text("Run: sudo orionx-mesh join (in terminal)")
+    start_btn.get_style_context().add_class("orionx-tool")
+    start_btn.set_tooltip_text("Join the WireGuard mesh (opens a terminal)")
 
     def _start_mesh(_widget: Gtk.Widget) -> None:
-        run(
-            [
-                "xfce4-terminal",
-                "--hold",
-                "-e",
-                "bash -c 'sudo orionx-mesh join; exec bash'",
-            ],
-            timeout=2,
+        ux.launch_in_terminal(
+            ["sudo", "orionx-mesh", "join"],
+            needs="orionx-mesh",
+            friendly="Mesh join",
+            title="Orion-X Mesh — join",
         )
 
     start_btn.connect("clicked", _start_mesh)
     btn_box.pack_start(start_btn, False, False, 0)
 
     stop_btn = Gtk.Button(label="Stop Mesh")
-    stop_btn.set_tooltip_text("Run: sudo orionx-mesh leave (in terminal)")
+    stop_btn.get_style_context().add_class("orionx-tool")
+    stop_btn.set_tooltip_text("Leave the WireGuard mesh (opens a terminal)")
 
     def _stop_mesh(_widget: Gtk.Widget) -> None:
-        run(
-            [
-                "xfce4-terminal",
-                "--hold",
-                "-e",
-                "bash -c 'sudo orionx-mesh leave; exec bash'",
-            ],
-            timeout=2,
+        ux.launch_in_terminal(
+            ["sudo", "orionx-mesh", "leave"],
+            needs="orionx-mesh",
+            friendly="Mesh leave",
+            title="Orion-X Mesh — leave",
         )
 
     stop_btn.connect("clicked", _stop_mesh)
