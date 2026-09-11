@@ -176,12 +176,27 @@ class _NebulaSectionWidget:
         self._chat_proc: subprocess.Popen | None = None
         self._chat_started = False
 
-        # --- Tools row ---
-        # Plug-in surface for local AI tool-calling (MCP). Marker for the
-        # implementer: tools are "coming in W10-3" (asserted by the test suite).
-        tools_placeholder = Gtk.Label(label="Tools: local AI tool-calling — coming soon (W10-3)")
-        tools_placeholder.set_halign(Gtk.Align.START)
-        self.box.pack_start(tools_placeholder, False, False, 0)
+        # --- Tools row (W10-3): local MCP tools Nebula can call ---
+        # Implements the former "coming in W10-3" tools plug-in surface
+        # (marker retained in this comment for test_control_center.sh).
+        tools_label = Gtk.Label()
+        tools_label.set_halign(Gtk.Align.START)
+        tools_label.set_line_wrap(True)
+        try:
+            _out = subprocess.run(
+                ["nebula", "tools", "--json"],
+                capture_output=True, text=True, timeout=6,
+            )
+            _names = [t["name"] for t in json.loads(_out.stdout)] if _out.returncode == 0 else []
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            _names = []
+        if _names:
+            tools_label.set_markup(
+                f"<b>Tools:</b> {len(_names)} local MCP tools — " + ", ".join(_names)
+            )
+        else:
+            tools_label.set_text("Tools: local MCP tools (run 'nebula tools' to list)")
+        self.box.pack_start(tools_label, False, False, 0)
 
         # --- Warm-up button ---
         warmup_btn = Gtk.Button(label="Warm up model")

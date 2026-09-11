@@ -118,6 +118,36 @@ def cmd_chat(args: argparse.Namespace) -> int:
     return run_cli(prompt=prompt, pcap=args.pcap, session_id=args.session)
 
 
+def cmd_tools(args: argparse.Namespace) -> int:
+    """List local MCP tools, or run the MCP server (W10-3). Lazy import."""
+    _ensure_package_on_path()
+    if getattr(args, "serve", False):
+        try:
+            from nebula.mcp_server import serve_stdio  # noqa: PLC0415
+        except ImportError as exc:
+            print(f"ERROR: cannot import nebula.mcp_server: {exc}", file=sys.stderr)
+            return 1
+        return serve_stdio()
+
+    try:
+        from nebula.mcp_server import list_tools  # noqa: PLC0415
+    except ImportError as exc:
+        print(f"ERROR: cannot import nebula.mcp_server: {exc}", file=sys.stderr)
+        return 1
+
+    import json  # noqa: PLC0415
+    tools = list_tools()
+    if getattr(args, "json", False):
+        print(json.dumps(tools, indent=2))
+        return 0
+    print("Nebula MCP tools (local, sandboxed):")
+    for t in tools:
+        flag = " (active)" if t["active"] else ""
+        avail = "" if t["available"] else "  [not installed]"
+        print(f"  {t['name']}{flag} — {t['description']}{avail}")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
@@ -177,6 +207,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Resume or continue a named session id (default: new timestamped session).",
     )
 
+    # nebula tools (W10-3)
+    sp_tools = subparsers.add_parser(
+        "tools",
+        help="List the local MCP tools Nebula can use (or --serve the MCP server).",
+    )
+    sp_tools.add_argument("--json", action="store_true", help="Output the tool list as JSON.")
+    sp_tools.add_argument(
+        "--serve",
+        action="store_true",
+        help="Run the MCP tool server over stdio (JSON-RPC 2.0).",
+    )
+
     # nebula version (as a subcommand, mirrors --version)
     subparsers.add_parser(
         "version",
@@ -201,6 +243,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.subcommand == "chat":
         return cmd_chat(args)
+
+    if args.subcommand == "tools":
+        return cmd_tools(args)
 
     # No subcommand given — print help and exit 0
     parser.print_help()
