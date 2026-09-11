@@ -52,10 +52,19 @@ ProgressCallback = Optional[Callable[[int, int], None]]
 # progress_cb(bytes_written_estimate: int, total_bytes: int)
 
 
-def unmount_target(path: str) -> None:
+def _sudo(args: list[str], password: Optional[str]) -> list[str]:
+    """Return an argv prefixed with sudo. When a *password* is supplied use
+    ``sudo -S`` (reads the password from stdin — see DEC-PHASE11-032), so the
+    GUI can collect it in a dialog instead of the controlling terminal. When
+    *password* is None, plain ``sudo`` is used (CLI/terminal path prompts as
+    before)."""
+    return ["sudo", "-S", *args] if password is not None else ["sudo", *args]
+
+
+def unmount_target(path: str, password: Optional[str] = None) -> None:
     """Unmount all partitions on *path* before writing.
 
-    macOS: ``diskutil unmountDisk <path>``
+    macOS: ``diskutil unmountDisk <path>`` (no elevation needed)
     Linux: attempts ``umount`` on the device and common partition suffixes.
 
     Does NOT raise on failure — unmounting is best-effort; if a partition
@@ -69,7 +78,7 @@ def unmount_target(path: str) -> None:
         for suffix in ("", "1", "2", "3", "4"):
             candidate = path + suffix
             if os.path.exists(candidate):
-                _run_silent(["sudo", "umount", candidate])
+                _run_silent(_sudo(["umount", candidate], password), password=password)
 
 
 def write_iso(
@@ -77,6 +86,7 @@ def write_iso(
     target: str,
     progress_cb: ProgressCallback = None,
     dry_run: bool = False,
+    password: Optional[str] = None,
 ) -> None:
     """Write *iso_path* to *target* block device via dd.
 
@@ -122,9 +132,9 @@ def write_iso(
     system = platform.system()
 
     if system == "Darwin":
-        _write_macos(iso_path, target, total_bytes, progress_cb, dry_run)
+        _write_macos(iso_path, target, total_bytes, progress_cb, dry_run, password)
     elif system == "Linux":
-        _write_linux(iso_path, target, total_bytes, progress_cb, dry_run)
+        _write_linux(iso_path, target, total_bytes, progress_cb, dry_run, password)
     else:
         raise RuntimeError(f"Unsupported platform: {system!r}. Only macOS and Linux are supported in Layer A.")
 
@@ -139,33 +149,44 @@ def _write_macos(
     total_bytes: int,
     progress_cb: ProgressCallback,
     dry_run: bool,
+    password: Optional[str] = None,
 ) -> None:
     """Write ISO to target on macOS."""
     # Use raw disk device for speed
     raw_target = target.replace("/dev/disk", "/dev/rdisk")
-    cmd = [
-        "sudo", "dd",
-        f"if={iso_path}",
-        f"of={raw_target}",
-        "bs=4m",
-    ]
+    cmd = _sudo(
+        [
+            "dd",
+            f"if={iso_path}",
+            f"of={raw_target}",
+            "bs=4m",
+        ],
+        password,
+    )
 
     if dry_run:
         _print_dry_run(cmd, iso_path, target, total_bytes)
         return
 
-    unmount_target(target)
-    _run_dd_macos(cmd, total_bytes, progress_cb)
+    unmount_target(target, password)
+    _run_dd_macos(cmd, total_bytes, progress_cb, password)
     _sync()
 
 
-def _run_dd_macos(cmd: list[str], total_bytes: int, progress_cb: ProgressCallback) -> None:
+def _run_dd_macos(
+    cmd: list[str],
+    total_bytes: int,
+    progress_cb: ProgressCallback,
+    password: Optional[str] = None,
+) -> None:
     """Run dd on macOS, periodically sending SIGINFO to get progress."""
     proc = subprocess.Popen(
         cmd,
+        stdin=subprocess.PIPE if password is not None else None,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
     )
+    _feed_sudo_password(proc, password)
 
     stop_event = threading.Event()
 
@@ -226,23 +247,27 @@ def _write_linux(
     total_bytes: int,
     progress_cb: ProgressCallback,
     dry_run: bool,
+    password: Optional[str] = None,
 ) -> None:
     """Write ISO to target on Linux."""
-    cmd = [
-        "sudo", "dd",
-        f"if={iso_path}",
-        f"of={target}",
-        "bs=4M",
-        "oflag=direct,sync",
-        "status=progress",
-    ]
+    cmd = _sudo(
+        [
+            "dd",
+            f"if={iso_path}",
+            f"of={target}",
+            "bs=4M",
+            "oflag=direct,sync",
+            "status=progress",
+        ],
+        password,
+    )
 
     if dry_run:
         _print_dry_run(cmd, iso_path, target, total_bytes)
         return
 
-    unmount_target(target)
-    _run_dd_linux(cmd, target, total_bytes, progress_cb)
+    unmount_target(target, password)
+    _run_dd_linux(cmd, target, total_bytes, progress_cb, password)
     _sync()
 
 
@@ -251,6 +276,7 @@ def _run_dd_linux(
     target: str,
     total_bytes: int,
     progress_cb: ProgressCallback,
+    password: Optional[str] = None,
 ) -> None:
     """Run dd on Linux with status=progress; also poll /sys/block/<dev>/stat."""
     dev_name = os.path.basename(target)  # e.g. "sdb"
@@ -258,9 +284,11 @@ def _run_dd_linux(
 
     proc = subprocess.Popen(
         cmd,
+        stdin=subprocess.PIPE if password is not None else None,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
     )
+    _feed_sudo_password(proc, password)
 
     stop_event = threading.Event()
 
@@ -308,11 +336,32 @@ def _sync() -> None:
         raise WriteError(f"sync failed: {exc}") from exc
 
 
-def _run_silent(cmd: list[str]) -> None:
-    """Run a command, ignoring errors (best-effort operations like unmount)."""
+def _feed_sudo_password(proc: "subprocess.Popen", password: Optional[str]) -> None:
+    """Write *password* to a ``sudo -S`` subprocess's stdin, then close it.
+
+    sudo -S reads exactly one line (the password) from stdin; dd then runs with
+    if=<file> so it ignores the remaining stdin. Best-effort: a wrong password
+    makes sudo fail and dd exit non-zero, surfaced later as WriteError.
+    """
+    if password is None or proc.stdin is None:
+        return
+    try:
+        proc.stdin.write((password + "\n").encode("utf-8"))
+        proc.stdin.flush()
+        proc.stdin.close()
+    except (BrokenPipeError, OSError):
+        pass
+
+
+def _run_silent(cmd: list[str], password: Optional[str] = None) -> None:
+    """Run a command, ignoring errors (best-effort operations like unmount).
+
+    When *password* is given, feed it to stdin (for ``sudo -S umount``).
+    """
     try:
         subprocess.run(
             cmd,
+            input=(password + "\n").encode("utf-8") if password is not None else None,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=15,

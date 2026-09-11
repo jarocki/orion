@@ -82,6 +82,8 @@ class ImagerGUI:
         self._devices: list[dict] = []
         self._write_thread: threading.Thread | None = None
         self._log_queue: queue.Queue[str] = queue.Queue()
+        self._progress_determinate = False
+        self._last_logged_pct = -1
 
         self._build_ui()
         self.refresh_devices()
@@ -157,9 +159,11 @@ class ImagerGUI:
         self._dryrun_btn = ttk.Button(btn_row, text="Dry Run", command=self._on_dry_run)
         self._dryrun_btn.pack(side="left", padx=6)
 
-        # --- Progress bar ---
+        # --- Progress bar + live status line ---
         self._progress = ttk.Progressbar(root, mode="indeterminate", length=400)
-        self._progress.pack(pady=(0, 4))
+        self._progress.pack(pady=(0, 2))
+        self._status_var = tk.StringVar(value="Idle")
+        ttk.Label(root, textvariable=self._status_var).pack(pady=(0, 4))
 
         # --- Log window ---
         log_frame = ttk.Frame(root)
@@ -235,9 +239,22 @@ class ImagerGUI:
             self._log_msg("Write cancelled — confirmation not given.")
             return
 
-        self._start_write(dry_run=False)
+        # Collect the sudo password in-app (DEC-PHASE11-032) so the dd elevation
+        # prompt no longer appears in a terminal. Masked entry; used once, not stored.
+        password = self._simpledialog.askstring(
+            "Administrator password",
+            f"Enter your password to write to:\n\n  {target}\n\n"
+            "(used once for 'sudo dd'; not saved)",
+            show="*",
+            parent=self.root,
+        )
+        if password is None:
+            self._log_msg("Write cancelled — no password entered.")
+            return
 
-    def _start_write(self, dry_run: bool) -> None:
+        self._start_write(dry_run=False, password=password)
+
+    def _start_write(self, dry_run: bool, password: str | None = None) -> None:
         if self._write_thread and self._write_thread.is_alive():
             self._messagebox.showinfo("Busy", "A write operation is already in progress.")
             return
@@ -252,7 +269,11 @@ class ImagerGUI:
 
         self._write_btn.config(state="disabled")
         self._dryrun_btn.config(state="disabled")
+        self._progress_determinate = False
+        self._last_logged_pct = -1
+        self._progress.config(mode="indeterminate")
         self._progress.start(10)
+        self._status_var.set("Preparing…")
         self._log_msg("─" * 50)
         if dry_run:
             self._log_msg("[DRY RUN] Planning write (nothing will be written)…")
@@ -261,7 +282,7 @@ class ImagerGUI:
 
         self._write_thread = threading.Thread(
             target=self._write_worker,
-            args=(target, iso_source, tag, local_path, dry_run),
+            args=(target, iso_source, tag, local_path, dry_run, password),
             daemon=True,
         )
         self._write_thread.start()
@@ -273,6 +294,7 @@ class ImagerGUI:
         tag: str,
         local_path: str,
         dry_run: bool,
+        password: str | None = None,
     ) -> None:
         """Background thread: download (if needed), verify, write."""
         try:
@@ -300,12 +322,22 @@ class ImagerGUI:
                 self._log_q(f"ISO ready: {iso_path}")
                 self._log_q("SHA256 verified.")
 
-            # Write
-            _writer.write_iso(iso_path, target, dry_run=dry_run)
+            # Write — switch to a determinate percentage bar for the dd phase
+            if not dry_run:
+                self.root.after(0, self._begin_write_progress)
+            _writer.write_iso(
+                iso_path,
+                target,
+                progress_cb=None if dry_run else self._progress_cb,
+                dry_run=dry_run,
+                password=password,
+            )
 
             if dry_run:
                 self._log_q("[DRY RUN] Complete. No data was written.")
             else:
+                self.root.after(0, lambda: self._progress.config(value=100))
+                self.root.after(0, lambda: self._status_var.set("Write complete ✓"))
                 self._log_q(f"Write complete. {target} is now bootable Orion-X media.")
         except _writer.WriteRefused as exc:
             self._log_q(f"REFUSED: {exc}")
@@ -315,9 +347,43 @@ class ImagerGUI:
             self.root.after(0, self._write_done)
 
     def _write_done(self) -> None:
-        self._progress.stop()
+        # Stop the indeterminate animation (harmless if already determinate).
+        if not self._progress_determinate:
+            self._progress.stop()
+            self._status_var.set("Idle")
         self._write_btn.config(state="normal" if self._confirm_var.get() else "disabled")
         self._dryrun_btn.config(state="normal")
+
+    # ------------------------------------------------------------------
+    # Progress (determinate bar during the dd write phase)
+    # ------------------------------------------------------------------
+
+    def _begin_write_progress(self) -> None:
+        """Switch the progress bar to determinate percentage mode for dd."""
+        self._progress.stop()
+        self._progress.config(mode="determinate", maximum=100, value=0)
+        self._progress_determinate = True
+        self._status_var.set("Writing… 0%")
+
+    def _progress_cb(self, written: int, total: int) -> None:
+        """Thread-safe progress sink passed to writer.write_iso (runs in the
+        dd worker thread; marshals onto the tk main thread)."""
+        self.root.after(0, self._set_progress, written, total)
+
+    def _set_progress(self, written: int, total: int) -> None:
+        """Main-thread: update the determinate bar + verbose status line."""
+        if not total:
+            return
+        pct = min(100, max(0, int(written * 100 / total)))
+        if not self._progress_determinate:
+            self._begin_write_progress()
+        self._progress.config(value=pct)
+        gb = 1_000_000_000
+        self._status_var.set(f"Writing… {pct}%  ({written / gb:.2f} / {total / gb:.2f} GB)")
+        # Throttle the scrolling log to one line per 10%.
+        if pct >= self._last_logged_pct + 10:
+            self._last_logged_pct = pct - (pct % 10)
+            self._log_msg(f"  {pct}%  ({written / gb:.2f} GB / {total / gb:.2f} GB written)")
 
     # ------------------------------------------------------------------
     # Helpers
