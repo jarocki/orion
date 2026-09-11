@@ -303,6 +303,92 @@ cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml << EOF
 </channel>
 EOF
 
+# ---
+# xfce4-panel.xml — custom Orion-X bottom panel (DEC-PHASE11-036).
+# The stock XFCE default panel made the desktop feel generic; this seeds a
+# branded dark panel that WIRES IN the four genmon widgets that already shipped
+# but were displayed nowhere (net / mesh / scans / clients). Seeded in /etc/skel
+# so it only applies to fresh sessions — it cannot disturb an already-running
+# desktop. Widgets are invoked as `python3 <path>` so no +x bit is required.
+# ---
+cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-panel" version="1.0">
+  <property name="configver" type="int" value="2"/>
+  <property name="dark-mode" type="bool" value="true"/>
+  <property name="panels" type="array">
+    <value type="int" value="1"/>
+    <property name="panel-1" type="empty">
+      <property name="mode" type="uint" value="0"/>
+      <property name="size" type="uint" value="30"/>
+      <property name="length" type="uint" value="100"/>
+      <property name="position" type="string" value="p=6;x=0;y=0"/>
+      <property name="position-locked" type="bool" value="true"/>
+      <property name="icon-size" type="uint" value="16"/>
+      <property name="background-style" type="uint" value="1"/>
+      <property name="background-rgba" type="array">
+        <value type="double" value="0.078"/>
+        <value type="double" value="0.067"/>
+        <value type="double" value="0.055"/>
+        <value type="double" value="0.94"/>
+      </property>
+      <property name="plugin-ids" type="array">
+        <value type="int" value="1"/>
+        <value type="int" value="2"/>
+        <value type="int" value="3"/>
+        <value type="int" value="4"/>
+        <value type="int" value="5"/>
+        <value type="int" value="6"/>
+        <value type="int" value="7"/>
+        <value type="int" value="8"/>
+        <value type="int" value="9"/>
+        <value type="int" value="10"/>
+      </property>
+    </property>
+  </property>
+  <property name="plugins" type="empty">
+    <property name="plugin-1" type="string" value="applicationsmenu">
+      <property name="button-title" type="string" value="Orion-X"/>
+      <property name="show-button-title" type="bool" value="true"/>
+    </property>
+    <property name="plugin-2" type="string" value="tasklist"/>
+    <property name="plugin-3" type="string" value="separator">
+      <property name="expand" type="bool" value="true"/>
+      <property name="style" type="uint" value="0"/>
+    </property>
+    <property name="plugin-4" type="string" value="genmon">
+      <property name="command" type="string" value="python3 /opt/orionx/scripts/control_center/widgets/net-status.py"/>
+      <property name="use-label" type="bool" value="false"/>
+      <property name="update-period" type="uint" value="5000"/>
+    </property>
+    <property name="plugin-5" type="string" value="genmon">
+      <property name="command" type="string" value="python3 /opt/orionx/scripts/control_center/widgets/mesh-status.py"/>
+      <property name="use-label" type="bool" value="false"/>
+      <property name="update-period" type="uint" value="5000"/>
+    </property>
+    <property name="plugin-6" type="string" value="genmon">
+      <property name="command" type="string" value="python3 /opt/orionx/scripts/control_center/widgets/scans-count.py"/>
+      <property name="use-label" type="bool" value="false"/>
+      <property name="update-period" type="uint" value="30000"/>
+    </property>
+    <property name="plugin-7" type="string" value="genmon">
+      <property name="command" type="string" value="python3 /opt/orionx/scripts/control_center/widgets/clients-count.py"/>
+      <property name="use-label" type="bool" value="false"/>
+      <property name="update-period" type="uint" value="10000"/>
+    </property>
+    <property name="plugin-8" type="string" value="separator">
+      <property name="style" type="uint" value="1"/>
+    </property>
+    <property name="plugin-9" type="string" value="clock">
+      <property name="digital-format" type="string" value="%a %d %b  %H:%M"/>
+    </property>
+    <property name="plugin-10" type="string" value="systray">
+      <property name="square-icons" type="bool" value="true"/>
+    </property>
+  </property>
+</channel>
+EOF
+
 # MOTD authority: /etc/update-motd.d/10-orionx-welcome is written by
 # iso/config/hooks/live/0700-orionx-setup.hook.chroot (single authority).
 # Do NOT write it here.
