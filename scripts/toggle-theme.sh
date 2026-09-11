@@ -84,7 +84,7 @@ if [ "$NEW_THEME" = "green" ]; then
     log "Applying green terminal theme"
     cat > "$TERM_CONFIG_FILE" << 'TERMRC_EOF'
 [Configuration]
-FontName=Monospace 12
+FontName=Hack 12
 MiscAlwaysShowTabs=FALSE
 MiscBell=FALSE
 MiscCursorBlinks=TRUE
@@ -100,7 +100,7 @@ else
     log "Applying dark/amber terminal theme"
     cat > "$TERM_CONFIG_FILE" << 'TERMRC_EOF'
 [Configuration]
-FontName=Monospace 12
+FontName=Hack 12
 MiscAlwaysShowTabs=FALSE
 MiscBell=FALSE
 MiscCursorBlinks=TRUE
