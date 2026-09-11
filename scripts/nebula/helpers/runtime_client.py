@@ -23,7 +23,7 @@ import json
 import logging
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, Callable, Optional
 
 from .paths import OLLAMA_BASE_URL
 
@@ -91,3 +91,82 @@ def get_loaded_model_name() -> str | None:
     if models:
         return str(models[0].get("name", "unknown"))
     return None
+
+
+# ---------------------------------------------------------------------------
+# Inference (W10-2) — streaming chat completions via POST /api/chat.
+# Still stdlib-only (urllib); ollama streams newline-delimited JSON objects.
+# DEC-006 LOCAL-ONLY: BASE_URL is 127.0.0.1 — no data leaves the host.
+# ---------------------------------------------------------------------------
+
+# Generous timeout: first token can lag while the model loads into RAM on
+# low-power CPUs (Bay Trail cold-load ~200 s). Streaming reads reset it per line.
+_CHAT_TIMEOUT: int = 600
+
+
+class InferenceError(RuntimeError):
+    """Raised when a chat completion cannot be produced (daemon down, etc.)."""
+
+
+def chat_stream(
+    messages: list[dict[str, str]],
+    model: str,
+    on_token: Optional[Callable[[str], None]] = None,
+    options: Optional[dict[str, Any]] = None,
+    timeout: int = _CHAT_TIMEOUT,
+) -> str:
+    """Stream a chat completion from ollama (POST /api/chat, stream=true).
+
+    Parameters
+    ----------
+    messages:
+        List of ``{"role": "system"|"user"|"assistant", "content": str}``.
+    model:
+        ollama model tag (e.g. ``qwen2.5:3b-instruct-q4_K_M``).
+    on_token:
+        Optional callback invoked with each streamed content delta as it
+        arrives (for live UI/CLI rendering).
+    options:
+        Optional ollama options dict (temperature, num_predict, …).
+
+    Returns the full assembled assistant message text.
+
+    Raises:
+        InferenceError: if the daemon is unreachable or returns an error.
+    """
+    payload: dict[str, Any] = {"model": model, "messages": messages, "stream": True}
+    if options:
+        payload["options"] = options
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"{OLLAMA_BASE_URL}/api/chat",
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    parts: list[str] = []
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            for raw in resp:
+                line = raw.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                if obj.get("error"):
+                    raise InferenceError(str(obj["error"]))
+                chunk = (obj.get("message") or {}).get("content", "")
+                if chunk:
+                    parts.append(chunk)
+                    if on_token is not None:
+                        on_token(chunk)
+                if obj.get("done"):
+                    break
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError) as exc:
+        raise InferenceError(
+            f"ollama unreachable at {OLLAMA_BASE_URL} ({exc}). "
+            "Is the model warmed up? Try: nebula warmup"
+        ) from exc
+    return "".join(parts)

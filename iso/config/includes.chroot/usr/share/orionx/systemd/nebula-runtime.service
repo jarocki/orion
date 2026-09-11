@@ -1,17 +1,18 @@
-# Nebula AI — ollama Runtime Service (lazy-start via socket activation)
+# Nebula AI — ollama Runtime Service (auto-started; ollama loads model lazily)
 #
-# @decision DEC-PHASE10-010
-# @title nebula-runtime: lazy-start ollama via socket activation, preserves boot budget
+# @decision DEC-PHASE11-033
+# @title nebula-runtime: run ollama serve directly; socket activation removed
 # @status accepted
-# @rationale The model is 4.4 GB; loading it at boot would add ~30-60s to boot time and
-#   consume ~4.5 GB RAM permanently. Socket activation solves this: systemd listens on
-#   localhost:11434 and starts this service only when the first connection arrives
-#   (typically `nebula status` or the first chat request in the Control Center).
-#   Idle RAM stays < 1.5 GB when no inference is active (DEC-PHASE10-010 budget).
-#   Type=notify: ollama supports sd_notify and signals readiness via $NOTIFY_SOCKET,
-#   so systemd waits for the daemon to report ready before passing traffic through.
-#   References: DEC-PHASE10-009 (integrity gate), DEC-PHASE10-010 (lazy-start),
-#   DEC-PHASE10-011 (AppArmor confinement in usr.bin.ollama profile).
+# @rationale The former nebula-runtime.socket (DEC-PHASE10-010) is DELETED. ollama
+#   serve binds 127.0.0.1:11434 itself and does NOT accept a systemd socket fd, so
+#   the socket and ollama raced for the port: ollama got EADDRINUSE and exited 1,
+#   and Restart=on-failure looped it hundreds of times (observed 824 restarts on
+#   rc1-57). Fix: this service is auto-started at boot (0615 AUTOSTART_UNITS). The
+#   DEC-PHASE10-010 budget still holds because ollama loads NOTHING into RAM until
+#   the first /api/chat — `ollama serve` with no model resident is cheap; the 1.9GB
+#   model streams in on the first inference (warm-up or chat), not at boot.
+#   Requires nebula-integrity-check.service so the model is verified before serving.
+#   References: DEC-PHASE10-009 (integrity gate), DEC-PHASE10-011 (AppArmor).
 
 [Unit]
 Description=Nebula AI Runtime (ollama LLM server)
@@ -20,9 +21,13 @@ Documentation=https://ollama.com
 # Requires= means: if nebula-integrity-check fails, this unit fails too.
 # After= means: do not start ollama until integrity-check has completed.
 Requires=nebula-integrity-check.service
-After=nebula-integrity-check.service network.target
-# Also declared in nebula-runtime.socket so socket activation wires correctly.
-Wants=network.target
+After=nebula-integrity-check.service
+# ollama is localhost-only (DEC-006) and needs no network; do not order on
+# network.target so it is never delayed on an offline boot.
+# StartLimit hardening: if ollama truly fails, give up after 5 tries in 120s
+# instead of looping forever (the socket bug previously caused 824 restarts).
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
 # W11-14j: ollama needs $HOME for its key store, and does not sd_notify;
@@ -53,6 +58,6 @@ RestartSec=5
 TimeoutStartSec=120
 
 [Install]
-# NOT listed in AUTOSTART_UNITS — socket unit activates this on demand.
-# nebula-runtime.socket is enabled instead (DEC-PHASE10-010).
+# Auto-started at boot via 0615 AUTOSTART_UNITS (DEC-PHASE11-033). ollama loads
+# the model lazily on the first request, so this stays within the idle-RAM budget.
 WantedBy=multi-user.target

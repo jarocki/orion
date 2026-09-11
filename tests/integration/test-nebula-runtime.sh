@@ -7,7 +7,7 @@
 #   1. sha256sum -c MANIFEST.sha256 passes against the extracted GGUF (DEFINITIVE proof
 #      that the W10-1 staging + integrity pipeline works end-to-end).
 #   2. nebula-integrity-check.service is enabled (in multi-user.target.wants/).
-#   3. nebula-runtime.socket exists but is NOT in multi-user.target.wants/ (lazy-start).
+#   3. nebula-runtime.service auto-starts; nebula-runtime.socket removed (DEC-PHASE11-033).
 #   4. ollama binary present at /usr/bin/ollama.
 #
 # @decision DEC-PHASE10-009
@@ -217,25 +217,25 @@ else
 fi
 
 # ===========================================================================
-# 4. Lazy-start: nebula-runtime.socket exists but NOT in multi-user.target.wants/
-#    (DEC-PHASE10-010: socket activation keeps ollama off until first use)
+# 4. nebula-runtime.service auto-starts; the socket unit is REMOVED
+#    (DEC-PHASE11-033: ollama serve binds :11434 itself and cannot accept a
+#    systemd socket fd — the old socket caused an EADDRINUSE restart loop)
 # ===========================================================================
-section "Lazy-start: nebula-runtime.socket exists + NOT in multi-user.target.wants/"
+section "nebula-runtime.service auto-starts; socket removed (DEC-PHASE11-033)"
 
-if [[ -f "$SQF/lib/systemd/system/nebula-runtime.socket" ]]; then
-    pass "nebula-runtime.socket present at /lib/systemd/system/ (DEC-PHASE10-010)"
+if [[ ! -f "$SQF/lib/systemd/system/nebula-runtime.socket" ]]; then
+    pass "nebula-runtime.socket is absent from the squashfs (socket activation removed, DEC-PHASE11-033)"
 else
-    fail "nebula-runtime.socket present at /lib/systemd/system/" \
-         "0615 hook must install nebula-runtime.socket into the squashfs"
+    fail "nebula-runtime.socket must NOT be installed" \
+         "Socket activation is incompatible with ollama serve; unit deleted (DEC-PHASE11-033)"
 fi
 
-# Socket must NOT be in multi-user.target.wants/ — it goes to sockets.target.wants/
-# [[ ! -e ]] covers both absent symlink and absent regular file; no || true needed.
-if [[ ! -e "$MULTI_USER_WANTS/nebula-runtime.socket" ]]; then
-    pass "nebula-runtime.socket NOT in multi-user.target.wants/ (WantedBy=sockets.target — DEC-PHASE10-010)"
+# The service itself must be auto-enabled (multi-user.target.wants/) now.
+if [[ -e "$MULTI_USER_WANTS/nebula-runtime.service" ]]; then
+    pass "nebula-runtime.service IS in multi-user.target.wants/ (auto-started — DEC-PHASE11-033)"
 else
-    fail "nebula-runtime.socket NOT in multi-user.target.wants/" \
-         "Socket unit belongs in sockets.target.wants/; direct multi-user.target.wants link is wrong"
+    fail "nebula-runtime.service in multi-user.target.wants/" \
+         "0615 hook must 'systemctl enable nebula-runtime.service' (ollama no longer socket-activated)"
 fi
 
 # ===========================================================================

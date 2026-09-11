@@ -594,13 +594,15 @@ done
 #   multi-user.target.wants/ — it is the boot gate that blocks nebula-runtime
 #   on mismatch. It has WantedBy=multi-user.target.
 #
-# @decision DEC-PHASE10-010
-# @title lazy-start: nebula-runtime.socket + nebula-runtime.service opt-in;
-#   nebula-warmup.service opt-in only; only integrity-check in multi-user.target.wants
+# @decision DEC-PHASE11-033
+# @title nebula-runtime.service auto-started directly; socket activation removed
 # @status accepted
-# @rationale nebula-runtime.socket (WantedBy=sockets.target) provides lazy-start.
-#   nebula-runtime.service and nebula-warmup.service are NOT in multi-user.target.wants/
-#   (keeps boot fast and RAM budget preserved for non-AI workflows).
+# @rationale ollama serve binds 127.0.0.1:11434 itself and cannot accept a systemd
+#   socket fd, so the former nebula-runtime.socket raced it for the port and ollama
+#   looped on EADDRINUSE. The socket unit is deleted; nebula-runtime.service is now
+#   auto-enabled (multi-user.target.wants/). ollama loads the model LAZILY on the
+#   first request, so the idle-RAM budget (DEC-PHASE10-010) still holds.
+#   nebula-warmup.service stays opt-in (NOT auto-enabled).
 #
 # @decision DEC-PHASE10-011
 # @title AppArmor profile usr.bin.ollama confinement
@@ -712,14 +714,13 @@ else
          "zstd not found in dpkg/status — check orionx.list.chroot includes zstd (DEC-PHASE10-007)"
 fi
 
-# (g) 4 systemd unit files installed at /lib/systemd/system/
+# (g) 3 systemd unit files installed at /lib/systemd/system/ (socket removed — DEC-PHASE11-033)
 for nebula_unit in \
     "nebula-integrity-check.service" \
     "nebula-runtime.service" \
-    "nebula-runtime.socket" \
     "nebula-warmup.service"; do
     if [[ -f "$SQF/lib/systemd/system/$nebula_unit" ]]; then
-        pass "/lib/systemd/system/$nebula_unit installed (0615 hook — DEC-PHASE10-009/010)"
+        pass "/lib/systemd/system/$nebula_unit installed (0615 hook — DEC-PHASE10-009, DEC-PHASE11-033)"
     else
         fail "/lib/systemd/system/$nebula_unit installed" \
              "0615-install-systemd-units.hook.chroot must copy this unit (DEC-PHASE7-SYSTEMD-INSTALL-001)"
@@ -737,13 +738,12 @@ else
          "systemctl enable nebula-integrity-check.service must run in 0615 hook"
 fi
 
-# nebula-runtime.service must NOT be in multi-user.target.wants/ (socket activates it)
-# || true: DEC-PHASE9-014 — ls exits non-zero on absent file; the no-match is the correct state.
-if [[ ! -e "$MULTI_USER_WANTS/nebula-runtime.service" ]]; then
-    pass "nebula-runtime.service NOT in multi-user.target.wants/ (socket lazy-start — DEC-PHASE10-010)"
+# nebula-runtime.service MUST be in multi-user.target.wants/ (auto-started — DEC-PHASE11-033)
+if [[ -e "$MULTI_USER_WANTS/nebula-runtime.service" ]]; then
+    pass "nebula-runtime.service in multi-user.target.wants/ (auto-started — DEC-PHASE11-033)"
 else
-    fail "nebula-runtime.service NOT in multi-user.target.wants/" \
-         "Service should be activated by socket only — direct autoenable bypasses lazy-start (DEC-PHASE10-010)"
+    fail "nebula-runtime.service in multi-user.target.wants/" \
+         "ollama must be auto-enabled now that socket activation is removed (DEC-PHASE11-033)"
 fi
 
 # nebula-warmup.service must NOT be in multi-user.target.wants/ (opt-in only)
@@ -754,12 +754,12 @@ else
          "Warmup is deliberately opt-in; autoenable would run at every boot (DEC-PHASE10-010)"
 fi
 
-# nebula-runtime.socket NOT in multi-user.target.wants/ (it goes to sockets.target.wants/)
-if [[ ! -e "$MULTI_USER_WANTS/nebula-runtime.socket" ]]; then
-    pass "nebula-runtime.socket NOT in multi-user.target.wants/ (WantedBy=sockets.target — DEC-PHASE10-010)"
+# nebula-runtime.socket must be ABSENT entirely (socket activation removed — DEC-PHASE11-033)
+if [[ ! -f "$SQF/lib/systemd/system/nebula-runtime.socket" ]]; then
+    pass "nebula-runtime.socket absent from /lib/systemd/system/ (socket activation removed — DEC-PHASE11-033)"
 else
-    fail "nebula-runtime.socket NOT in multi-user.target.wants/" \
-         "Socket unit belongs in sockets.target.wants/, not multi-user.target.wants/"
+    fail "nebula-runtime.socket must NOT be installed" \
+         "ollama serve binds :11434 itself; the socket caused an EADDRINUSE loop (DEC-PHASE11-033)"
 fi
 
 # (i) AppArmor profile usr.bin.ollama present (DEC-PHASE10-011)
