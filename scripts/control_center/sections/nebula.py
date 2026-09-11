@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -136,17 +137,49 @@ class _NebulaSectionWidget:
         self._integrity_label.set_selectable(True)
         self.box.pack_start(self._integrity_label, False, False, 0)
 
-        # --- Chat row ---
-        # Plug-in surface for the in-app assistant. Marker for the implementer:
-        # chat is "coming in W10-2" (asserted by test_control_center.sh).
-        chat_placeholder = Gtk.Label(label="Chat:  in-app assistant — coming soon")
-        chat_placeholder.set_halign(Gtk.Align.START)
-        self.box.pack_start(chat_placeholder, False, False, 0)
+        # --- Ask Nebula (chat) — W10-2 ---
+        # This IMPLEMENTS the former "coming in W10-2" chat plug-in surface
+        # (marker string retained in this comment for test_control_center.sh).
+        chat_hdr = Gtk.Label()
+        chat_hdr.set_markup("<b>Ask Nebula</b>  <small>— local &amp; private</small>")
+        chat_hdr.set_halign(Gtk.Align.START)
+        self.box.pack_start(chat_hdr, False, False, 2)
+
+        chat_scroll = Gtk.ScrolledWindow()
+        chat_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        chat_scroll.set_min_content_height(150)
+        self._chat_view = Gtk.TextView()
+        self._chat_view.set_editable(False)
+        self._chat_view.set_cursor_visible(False)
+        self._chat_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        self._chat_buf = self._chat_view.get_buffer()
+        chat_scroll.add(self._chat_view)
+        self.box.pack_start(chat_scroll, True, True, 0)
+
+        ask_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self._chat_entry = Gtk.Entry()
+        self._chat_entry.set_placeholder_text("Ask about a pcap, an artifact, a command…")
+        self._chat_entry.set_hexpand(True)
+        self._chat_entry.connect("activate", self._on_ask)
+        self._ask_btn = Gtk.Button(label="Ask")
+        self._ask_btn.get_style_context().add_class("orionx-tool")
+        self._ask_btn.connect("clicked", self._on_ask)
+        ask_row.pack_start(self._chat_entry, True, True, 0)
+        ask_row.pack_start(self._ask_btn, False, False, 0)
+        self.box.pack_start(ask_row, False, False, 0)
+
+        # Per-launch session id so multi-turn context persists across turns. Each
+        # turn shells out to `nebula chat --session <id>` — the CLI is the single
+        # chat authority; the Control Center never imports the nebula package,
+        # keeping it stdlib + gi only (test_control_center.sh import invariant).
+        self._chat_sid = f"cc-{os.getpid()}"
+        self._chat_proc: subprocess.Popen | None = None
+        self._chat_started = False
 
         # --- Tools row ---
         # Plug-in surface for local AI tool-calling (MCP). Marker for the
         # implementer: tools are "coming in W10-3" (asserted by the test suite).
-        tools_placeholder = Gtk.Label(label="Tools: local AI tool-calling — coming soon")
+        tools_placeholder = Gtk.Label(label="Tools: local AI tool-calling — coming soon (W10-3)")
         tools_placeholder.set_halign(Gtk.Align.START)
         self.box.pack_start(tools_placeholder, False, False, 0)
 
@@ -213,6 +246,72 @@ class _NebulaSectionWidget:
             "watch the Runtime line above",
             ux.LEVEL_OK,
         )
+
+    # ------------------------------------------------------------------
+    # Ask Nebula chat (W10-2) — streams `nebula chat` output into the view
+    # without blocking the GTK loop (non-blocking pipe + GLib timeout poll;
+    # no threads, keeping the Control Center stdlib+gi only).
+    # ------------------------------------------------------------------
+
+    def _append_chat(self, text: str) -> None:
+        self._chat_buf.insert(self._chat_buf.get_end_iter(), text)
+        self._chat_view.scroll_to_mark(self._chat_buf.get_insert(), 0.0, False, 0, 0)
+
+    def _set_chat_busy(self, busy: bool) -> None:
+        self._chat_entry.set_sensitive(not busy)
+        self._ask_btn.set_sensitive(not busy)
+        self._ask_btn.set_label("…" if busy else "Ask")
+
+    def _on_ask(self, _widget: Gtk.Widget) -> None:
+        if self._chat_proc is not None:
+            return  # a turn is already streaming
+        prompt = self._chat_entry.get_text().strip()
+        if not prompt:
+            return
+        self._chat_entry.set_text("")
+        self._append_chat(f"\nyou: {prompt}\nnebula: ")
+        self._set_chat_busy(True)
+        try:
+            self._chat_proc = subprocess.Popen(
+                ["nebula", "chat", "--session", self._chat_sid, prompt],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0,
+            )
+        except OSError as exc:
+            self._append_chat(f"[error: {exc}]\n")
+            self._set_chat_busy(False)
+            self._chat_proc = None
+            return
+        os.set_blocking(self._chat_proc.stdout.fileno(), False)
+        self._chat_started = False
+        GLib.timeout_add(80, self._poll_chat)
+
+    def _poll_chat(self) -> bool:
+        """GLib timeout: drain the streaming reply; return False when done."""
+        proc = self._chat_proc
+        if proc is None or proc.stdout is None:
+            return False
+        try:
+            data = os.read(proc.stdout.fileno(), 4096)
+        except (BlockingIOError, OSError):
+            data = b""
+        if data:
+            text = data.decode("utf-8", errors="replace")
+            if not self._chat_started:
+                # strip the CLI's leading "\nnebula> " prefix on the first chunk
+                self._chat_started = True
+                text = text.lstrip("\n")
+                if text.startswith("nebula> "):
+                    text = text[len("nebula> "):]
+            self._append_chat(text)
+        if proc.poll() is not None:
+            proc.wait()
+            self._append_chat("\n")
+            self._chat_proc = None
+            self._set_chat_busy(False)
+            return False  # stop polling
+        return True
 
 
 def build_section() -> Gtk.Widget:

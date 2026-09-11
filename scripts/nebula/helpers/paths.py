@@ -55,3 +55,10 @@ WARMUP_LOG: Path = LOG_DIR / "nebula-warmup.log"
 OLLAMA_HOST: str = "127.0.0.1"
 OLLAMA_PORT: int = 11434
 OLLAMA_BASE_URL: str = f"http://{OLLAMA_HOST}:{OLLAMA_PORT}"
+
+# ---------------------------------------------------------------------------
+# Per-user chat session history (W10-2, DEC-PHASE10-005). Lives under the
+# operator's home so history is per-user and survives across sessions; created
+# on first use by chat.py.
+# ---------------------------------------------------------------------------
+SESSIONS_DIR: Path = Path.home() / ".local" / "share" / "nebula" / "sessions"

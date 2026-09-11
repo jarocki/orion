@@ -40,13 +40,15 @@ UNIT_FILES=(
     "orionx-mesh-discover.timer"
     "orionx-firewall.service"
     "orionx-first-boot.service"
-    # W10-1: Nebula AI runtime units (DEC-PHASE10-009, DEC-PHASE10-010)
+    # W10-1: Nebula AI runtime units (DEC-PHASE10-009, DEC-PHASE11-033)
     # nebula-integrity-check: oneshot, runs at boot before nebula-runtime
-    # nebula-runtime: ollama daemon, lazy-start via socket activation
+    # nebula-runtime: ollama daemon, auto-started (ollama loads the 1.9GB model
+    #   LAZILY on first inference; socket activation removed — DEC-PHASE11-033)
     # nebula-warmup: staged here but NOT in AUTOSTART_UNITS (opt-in; DEC-PHASE10-010)
+    # NOTE: nebula-runtime.socket deliberately NOT installed — ollama serve binds
+    #   :11434 itself and cannot accept a systemd socket fd (EADDRINUSE loop).
     "nebula-integrity-check.service"
     "nebula-runtime.service"
-    "nebula-runtime.socket"
     "nebula-warmup.service"
 )
 
@@ -60,15 +62,17 @@ AUTOSTART_UNITS=(
     "orionx-mesh-health.timer"
     "orionx-firewall.service"
     "orionx-first-boot.service"
-    # W10-1 Nebula: enable integrity-check (runs at boot, gates nebula-runtime)
-    # and the socket unit that provides lazy-start for nebula-runtime.
+    # W10-1 Nebula: enable integrity-check (boot gate) + nebula-runtime.service.
     # DEC-PHASE10-009: integrity-check must be autoenabled — it is the boot gate.
-    # DEC-PHASE10-010: nebula-runtime.socket autoenabled (lazy-start);
-    #   nebula-runtime.service itself is started by systemd only when the socket
-    #   receives a connection, keeping boot fast.
+    # DEC-PHASE11-033: nebula-runtime.service is auto-started DIRECTLY. Socket
+    #   activation (the former nebula-runtime.socket) is removed because ollama
+    #   serve binds 127.0.0.1:11434 itself and cannot accept a systemd socket fd —
+    #   the two raced for the port and ollama exited 1 in a tight restart loop
+    #   (observed: 824 restarts). ollama's own lazy MODEL loading (nothing loads
+    #   until the first /api/chat) preserves the DEC-PHASE10-010 idle-RAM budget.
     # nebula-warmup.service is deliberately NOT listed here (DEC-PHASE10-010 opt-in).
     "nebula-integrity-check.service"
-    "nebula-runtime.socket"
+    "nebula-runtime.service"
 )
 
 echo "[install-systemd-units] Installing Orion-X systemd units from $SOURCE_DIR to $TARGET_DIR"

@@ -105,6 +105,19 @@ def cmd_warmup(_args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_chat(args: argparse.Namespace) -> int:
+    """Chat with the local model (W10-2).  Imports chat.py lazily."""
+    _ensure_package_on_path()
+    try:
+        from nebula.chat import run_cli  # noqa: PLC0415
+    except ImportError as exc:
+        print(f"ERROR: cannot import nebula.chat: {exc}", file=sys.stderr)
+        return 1
+
+    prompt = " ".join(args.prompt) if args.prompt else None
+    return run_cli(prompt=prompt, pcap=args.pcap, session_id=args.session)
+
+
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
@@ -143,6 +156,27 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Run a 1-token inference to warm the model into RAM (opt-in).",
     )
 
+    # nebula chat (W10-2)
+    sp_chat = subparsers.add_parser(
+        "chat",
+        help="Chat with the local Nebula model (private, on-device).",
+    )
+    sp_chat.add_argument(
+        "prompt",
+        nargs="*",
+        help="One-shot prompt; omit for an interactive session.",
+    )
+    sp_chat.add_argument(
+        "--pcap",
+        metavar="FILE",
+        help="Attach a packet capture as context for the conversation.",
+    )
+    sp_chat.add_argument(
+        "--session",
+        metavar="ID",
+        help="Resume or continue a named session id (default: new timestamped session).",
+    )
+
     # nebula version (as a subcommand, mirrors --version)
     subparsers.add_parser(
         "version",
@@ -164,6 +198,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.subcommand == "warmup":
         return cmd_warmup(args)
+
+    if args.subcommand == "chat":
+        return cmd_chat(args)
 
     # No subcommand given — print help and exit 0
     parser.print_help()

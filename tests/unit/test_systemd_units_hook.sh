@@ -166,16 +166,17 @@ fi
 # ===========================================================================
 section "Autostart array members"
 
+# NOTE: matrix-synapse-orionx.service and orionx-mesh-beacon.service were REMOVED
+# from AUTOSTART for the offline-boot fix (W11-14f) — they must NOT auto-start
+# without a network. This expectation set matches the current hook.
 EXPECTED_AUTOSTART=(
-    "matrix-synapse-orionx.service"
     "orionx-mesh-discover.timer"
     "orionx-mesh-health.timer"
-    "orionx-mesh-beacon.service"
     "orionx-firewall.service"
     "orionx-first-boot.service"
-    # W10-1 added 2 Nebula units (DEC-PHASE10-009 integrity + DEC-PHASE10-010 socket lazy-start)
+    # W10-1 added 2 Nebula units (DEC-PHASE10-009 integrity + DEC-PHASE11-033 runtime auto-start)
     "nebula-integrity-check.service"
-    "nebula-runtime.socket"
+    "nebula-runtime.service"
 )
 
 for unit in "${EXPECTED_AUTOSTART[@]}"; do
@@ -186,18 +187,16 @@ for unit in "${EXPECTED_AUTOSTART[@]}"; do
     fi
 done
 
-# Count quoted unit entries inside the AUTOSTART_UNITS block to verify
-# exactly 8 members. Extract just the lines between AUTOSTART_UNITS=(
-# and the closing ) to avoid false positives from the UNIT_FILES array.
-# W10-1 added 2 to AUTOSTART_UNITS (only the integrity check + socket;
-# runtime + warmup are lazy/opt-in)
+# Count quoted unit entries inside the AUTOSTART_UNITS block to verify exactly
+# 6 members: 4 mesh/firewall/first-boot + 2 Nebula (integrity + runtime).
+# matrix + mesh-beacon removed (W11-14f offline boot); socket removed (DEC-PHASE11-033).
 AUTOSTART_BLOCK="$(awk '/^AUTOSTART_UNITS=\(/{p=1} p{print} /^\)/{if(p) p=0}' "$HOOK_FILE")"
 AUTOSTART_MEMBER_COUNT="$(grep -c '".*\.service"\|".*\.timer"\|".*\.socket"' <(echo "$AUTOSTART_BLOCK") || true)"
-if [[ "$AUTOSTART_MEMBER_COUNT" -eq 8 ]]; then
-    pass "AUTOSTART_UNITS array has exactly 8 members"
+if [[ "$AUTOSTART_MEMBER_COUNT" -eq 6 ]]; then
+    pass "AUTOSTART_UNITS array has exactly 6 members"
 else
-    fail "AUTOSTART_UNITS array has exactly 8 members" \
-         "Found $AUTOSTART_MEMBER_COUNT; expected 8"
+    fail "AUTOSTART_UNITS array has exactly 6 members" \
+         "Found $AUTOSTART_MEMBER_COUNT; expected 6"
 fi
 
 # ===========================================================================
@@ -229,21 +228,18 @@ fi
 #    W10-1 added 4 Nebula units (DEC-PHASE10-009 integrity + DEC-PHASE10-010
 #    socket activation)
 # ===========================================================================
-section "All 12 unit files referenced"
+section "All 9 unit files referenced"
 
 EXPECTED_UNITS=(
-    "matrix-synapse-orionx.service"
     "orionx-mesh-health.service"
     "orionx-mesh-health.timer"
     "orionx-mesh-discover.service"
     "orionx-mesh-discover.timer"
-    "orionx-mesh-beacon.service"
     "orionx-firewall.service"
     "orionx-first-boot.service"
-    # W10-1 added 4 Nebula units (DEC-PHASE10-009 integrity + DEC-PHASE10-010 socket lazy-start)
+    # W10-1 added 3 Nebula units (DEC-PHASE10-009 integrity + DEC-PHASE11-033 runtime; socket removed)
     "nebula-integrity-check.service"
     "nebula-runtime.service"
-    "nebula-runtime.socket"
     "nebula-warmup.service"
 )
 
@@ -255,15 +251,16 @@ for unit in "${EXPECTED_UNITS[@]}"; do
     fi
 done
 
-# Count members in the UNIT_FILES array (must be exactly 12)
-# W10-1 added 4 Nebula units (DEC-PHASE10-009 integrity + DEC-PHASE10-010 socket lazy-start)
+# Count members in the UNIT_FILES array (must be exactly 9): 6 mesh/firewall/
+# first-boot + 3 Nebula (integrity + runtime + warmup). matrix + mesh-beacon
+# removed (W11-14f offline boot); nebula-runtime.socket removed (DEC-PHASE11-033).
 UNIT_FILES_BLOCK="$(awk '/^UNIT_FILES=\(/{p=1} p{print} /^\)/{if(p) p=0}' "$HOOK_FILE")"
 UNIT_FILES_COUNT="$(grep -c '".*\.service"\|".*\.timer"\|".*\.socket"' <(echo "$UNIT_FILES_BLOCK") || true)"
-if [[ "$UNIT_FILES_COUNT" -eq 12 ]]; then
-    pass "UNIT_FILES array has exactly 12 members"
+if [[ "$UNIT_FILES_COUNT" -eq 9 ]]; then
+    pass "UNIT_FILES array has exactly 9 members"
 else
-    fail "UNIT_FILES array has exactly 12 members" \
-         "Found $UNIT_FILES_COUNT; expected 12"
+    fail "UNIT_FILES array has exactly 9 members" \
+         "Found $UNIT_FILES_COUNT; expected 9"
 fi
 
 # ===========================================================================

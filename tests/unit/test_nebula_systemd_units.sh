@@ -65,8 +65,8 @@ echo ""
 # ===========================================================================
 # T1: All unit files exist
 # ===========================================================================
-echo "[T1] Unit files exist"
-for unit_file in "$INTEGRITY_SVC" "$RUNTIME_SVC" "$WARMUP_SVC" "$SOCKET_UNIT"; do
+echo "[T1] Unit files exist (socket removed — DEC-PHASE11-033)"
+for unit_file in "$INTEGRITY_SVC" "$RUNTIME_SVC" "$WARMUP_SVC"; do
     if [[ -f "$unit_file" ]]; then
         pass "$(basename "$unit_file") exists"
     else
@@ -119,8 +119,8 @@ if [[ -f "$RUNTIME_SVC" ]]; then
         "OLLAMA_HOST=127\.0\.0\.1" "$RUNTIME_SVC"
     contains_in_file "OLLAMA_MODELS points to nebula models dir" \
         "OLLAMA_MODELS=/opt/orionx/nebula/models" "$RUNTIME_SVC"
-    contains_in_file "DEC-PHASE10-010 reference in file" \
-        "DEC-PHASE10-010" "$RUNTIME_SVC"
+    contains_in_file "DEC-PHASE11-033 reference in file (socket activation removed)" \
+        "DEC-PHASE11-033" "$RUNTIME_SVC"
 fi
 echo ""
 
@@ -140,16 +140,16 @@ fi
 echo ""
 
 # ===========================================================================
-# T5: nebula-runtime.socket structural assertions
+# T5: nebula-runtime.socket REMOVED (DEC-PHASE11-033). Socket activation is
+#     incompatible with ollama serve, which binds :11434 itself and cannot accept
+#     a systemd socket fd — the two raced and ollama looped on EADDRINUSE.
 # ===========================================================================
-echo "[T5] nebula-runtime.socket structure"
+echo "[T5] nebula-runtime.socket removed (DEC-PHASE11-033)"
 if [[ -f "$SOCKET_UNIT" ]]; then
-    contains_in_file "ListenStream on localhost:11434" \
-        "^ListenStream=127\.0\.0\.1:11434" "$SOCKET_UNIT"
-    contains_in_file "DEC-PHASE10-010 reference in socket" \
-        "DEC-PHASE10-010" "$SOCKET_UNIT"
-    contains_in_file "WantedBy=sockets.target" \
-        "^WantedBy=sockets\.target" "$SOCKET_UNIT"
+    fail "nebula-runtime.socket must NOT exist" \
+         "Socket activation caused an EADDRINUSE restart loop; the unit is deleted (DEC-PHASE11-033)"
+else
+    pass "nebula-runtime.socket is absent (socket activation removed, DEC-PHASE11-033)"
 fi
 echo ""
 
@@ -179,20 +179,20 @@ if [[ -f "$HOOK_0615" ]]; then
              "Integrity check must be autoenabled — it is the boot gate (DEC-PHASE10-009)"
     fi
 
-    # nebula-runtime.socket MUST be in AUTOSTART_UNITS (enables lazy-start)
-    if echo "$AUTOSTART_BLOCK" | grep -q "nebula-runtime.socket"; then
-        pass "nebula-runtime.socket IS in AUTOSTART_UNITS (lazy-start activation)"
+    # DEC-PHASE11-033: nebula-runtime.service is auto-started DIRECTLY now.
+    if echo "$AUTOSTART_BLOCK" | grep -qE 'nebula-runtime\.service'; then
+        pass "nebula-runtime.service IS in AUTOSTART_UNITS (direct auto-start, DEC-PHASE11-033)"
     else
-        fail "nebula-runtime.socket in AUTOSTART_UNITS" \
-             "Socket unit must be autoenabled for lazy-start (DEC-PHASE10-010)"
+        fail "nebula-runtime.service in AUTOSTART_UNITS" \
+             "ollama must be auto-started directly now that the socket is removed (DEC-PHASE11-033)"
     fi
 
-    # nebula-runtime.service should NOT be directly autoenabled (socket activates it)
-    if echo "$AUTOSTART_BLOCK" | grep -qE '"nebula-runtime\.service"'; then
-        fail "nebula-runtime.service NOT directly in AUTOSTART_UNITS" \
-             "The .service is activated by the .socket; direct autoenable would bypass lazy-start"
+    # The socket unit must NOT be autoenabled (it no longer exists).
+    if echo "$AUTOSTART_BLOCK" | grep -q "nebula-runtime.socket"; then
+        fail "nebula-runtime.socket NOT in AUTOSTART_UNITS" \
+             "Socket activation removed (DEC-PHASE11-033) — remove it from AUTOSTART_UNITS"
     else
-        pass "nebula-runtime.service NOT directly in AUTOSTART_UNITS (socket activates it)"
+        pass "nebula-runtime.socket NOT in AUTOSTART_UNITS (socket activation removed)"
     fi
 else
     fail "0615 hook exists for autoenable check" "Not found at $HOOK_0615"
@@ -202,11 +202,11 @@ echo ""
 # ===========================================================================
 # T7: 0615 UNIT_FILES array contains all 4 new units
 # ===========================================================================
-echo "[T7] 0615 UNIT_FILES array contains all 4 new Nebula units"
+echo "[T7] 0615 UNIT_FILES array contains the 3 Nebula units (socket removed, DEC-PHASE11-033)"
 if [[ -f "$HOOK_0615" ]]; then
     UNIT_FILES_BLOCK="$(awk '/^UNIT_FILES=\(/,/^\)/' "$HOOK_0615")"
     for unit in "nebula-integrity-check.service" "nebula-runtime.service" \
-                "nebula-runtime.socket" "nebula-warmup.service"; do
+                "nebula-warmup.service"; do
         if echo "$UNIT_FILES_BLOCK" | grep -q "$unit"; then
             pass "0615 UNIT_FILES contains: $unit"
         else
