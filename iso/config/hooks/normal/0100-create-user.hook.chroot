@@ -99,7 +99,7 @@ cat > /etc/skel/Desktop/orionx-guide.desktop << EOF
 [Desktop Entry]
 Name=Orion-X User Guide
 Comment=Documentation for Orion-X Phoenix Edition
-Exec=xdg-open /usr/share/doc/orionx/User_Guide.md
+Exec=sh -c 'xdg-open /usr/share/doc/orionx/User_Guide.html 2>/dev/null || xdg-open /usr/share/doc/orionx/User_Guide.md'
 Icon=help-browser
 Terminal=false
 Type=Application
