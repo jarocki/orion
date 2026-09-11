@@ -1,0 +1,81 @@
+#!/bin/bash
+# 0810-render-user-guide.hook.chroot
+#
+# Render /usr/share/doc/orionx/User_Guide.md into a styled User_Guide.html at
+# build time so the desktop launcher opens FORMATTED docs in firefox-esr instead
+# of raw markdown (operator request 2026-09-10).
+#
+# @decision DEC-PHASE11-035
+# @title User Guide renders as styled HTML (not raw markdown)
+# @status accepted
+# @rationale No markdown viewer is installed, but firefox-esr is. We render the
+#   Markdown to a self-contained, dark Orion-X-themed HTML page here (python3-markdown,
+#   pure-Python, in orionx.list.chroot). The .md remains the single source of truth;
+#   the .html is a build-time derived surface regenerated on every build (never
+#   hand-edited). If python3-markdown is somehow unavailable, we still emit a valid
+#   HTML page wrapping the raw text in <pre> so the launcher always has an .html.
+set -euo pipefail
+
+MD="/usr/share/doc/orionx/User_Guide.md"
+HTML="/usr/share/doc/orionx/User_Guide.html"
+
+if [[ ! -f "$MD" ]]; then
+    echo "[render-user-guide] WARN: $MD not found — skipping"
+    exit 0
+fi
+
+python3 - "$MD" "$HTML" <<'PY'
+import sys
+
+md_path, html_path = sys.argv[1], sys.argv[2]
+with open(md_path, encoding="utf-8") as fh:
+    text = fh.read()
+
+try:
+    import markdown
+    body = markdown.markdown(
+        text,
+        extensions=["extra", "toc", "sane_lists", "fenced_code", "tables"],
+    )
+except Exception:  # markdown missing/broken — fall back to a readable <pre>
+    import html as _html
+    body = "<pre>" + _html.escape(text) + "</pre>"
+
+STYLE = """
+  :root { color-scheme: dark; }
+  body { margin:0; background:#14110e; color:#e6e6e6;
+         font-family: system-ui, 'DejaVu Sans', sans-serif; line-height:1.6; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 32px 24px 80px; }
+  h1,h2,h3,h4 { color:#ff8a3a; line-height:1.25; margin-top:1.6em; }
+  h1 { border-bottom:2px solid #7a2f12; padding-bottom:.3em; }
+  h2 { border-bottom:1px solid #3a1f12; padding-bottom:.2em; }
+  a { color:#ffb26b; }
+  code { background:#221812; color:#ffcf9a; padding:2px 5px; border-radius:4px;
+         font-family:'Hack','DejaVu Sans Mono',monospace; font-size:.92em; }
+  pre { background:#0e0b08; border:1px solid #2a1c12; border-radius:6px;
+        padding:14px; overflow-x:auto; }
+  pre code { background:none; color:#e6e6e6; padding:0; }
+  blockquote { border-left:3px solid #ff6a13; margin:1em 0; padding:.2em 1em;
+               color:#c9c2bb; background:#1b1611; }
+  table { border-collapse:collapse; margin:1em 0; width:100%; }
+  th,td { border:1px solid #3a2a1e; padding:6px 10px; text-align:left; }
+  th { background:#241811; color:#ffcf9a; }
+  hr { border:0; border-top:1px solid #3a2a1e; margin:2em 0; }
+  .brand { color:#ff6a13; font-weight:bold; letter-spacing:2px; font-size:.8em; }
+"""
+
+doc = (
+    "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+    "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+    "<title>Orion-X User Guide</title><style>" + STYLE + "</style></head>"
+    "<body><div class='wrap'>"
+    "<div class='brand'>ORION-X · PHOENIX EDITION</div>" + body +
+    "</div></body></html>"
+)
+with open(html_path, "w", encoding="utf-8") as fh:
+    fh.write(doc)
+print(f"[render-user-guide] wrote {html_path} ({len(doc)} bytes)")
+PY
+
+chmod 644 "$HTML"
+echo "[render-user-guide] done"

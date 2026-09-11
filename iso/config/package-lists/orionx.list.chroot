@@ -177,6 +177,11 @@ iotop
 jq
 # xdg-utils: xdg-open, used by Control Center Comms button to open the Matrix URL
 xdg-utils
+# python3-markdown: pure-Python Markdown→HTML (MIT). Used by the build-time
+# 0810-render-user-guide hook to render User_Guide.md into a styled
+# User_Guide.html so the desktop launcher opens formatted docs in firefox-esr
+# instead of raw markdown (DEC-PHASE11-035). Small, no compiled deps.
+python3-markdown
 less
 lsof
 man-db
