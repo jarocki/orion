@@ -244,7 +244,7 @@ class ImagerGUI:
         password = self._simpledialog.askstring(
             "Administrator password",
             f"Enter your password to write to:\n\n  {target}\n\n"
-            "(used once for 'sudo dd'; not saved)",
+            "(used once to elevate the write; not saved)",
             show="*",
             parent=self.root,
         )
@@ -486,7 +486,7 @@ def _cli_main(args: argparse.Namespace) -> int:
                 f"\n[DRY RUN] NOT executing. Would:\n"
                 f"  1. Download  {asset['browser_download_url']}\n"
                 f"  2. Verify    SHA256 against {sha_asset['browser_download_url'] if sha_asset else '(no SHA256SUMS in release)'}\n"
-                f"  3. Run:      sudo dd if=<iso> of={args.target} bs=4m  (macOS) / bs=4M oflag=direct,sync  (Linux)\n"
+                f"  3. Run:      sudo python3 raw_write.py <iso> {args.target}  (sector-aligned raw copy, reports exact progress)\n"
                 f"\nNo data written. Remove --dry-run to perform the actual write.\n"
             )
             return 0

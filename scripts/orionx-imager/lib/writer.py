@@ -1,23 +1,32 @@
 """
-lib/writer.py — Platform-specific USB writer for orionx-imager.
+lib/writer.py — block-device writer for orionx-imager (macOS + Linux).
 
-Single-authority for block-device write logic (dd) on macOS and Linux.
-Uses only stdlib: subprocess, os, platform, signal, threading, pathlib.
+Single authority for the write path. The actual raw-device copy runs in the
+elevated helper lib/raw_write.py (run via sudo), which streams EXACT byte
+progress back on stdout — see DEC-PHASE11-038. stdlib only.
 
-Elevation model (Layer A): tool runs unprivileged; write_iso() detects
-EACCES and re-execs the dd subprocess via sudo. Layer B may add pkexec
-(Linux) and SMJobBless (macOS).
+Elevation model (Layer A): the tool runs unprivileged; the copy is performed by
+`sudo [-S] python3 raw_write.py <iso> <target>`. The optional password (from the
+GUI dialog) is fed to `sudo -S` via stdin; without it, plain sudo prompts on the
+terminal. Layer B may add pkexec (Linux) and SMJobBless (macOS).
 
 @decision DEC-PHASE11-015
-@title    Orion-X imager — platform dd writer + safety refuse-list (Layer A)
+@title    Orion-X imager — raw-device writer + safety refuse-list (Layer A)
 @status   accepted
 @rationale
-    dd is the universal low-level block writer on Unix; no third-party deps.
-    macOS uses bs=4m (lowercase) and /dev/rdiskN (raw disk) for speed.
-    Linux uses bs=4M oflag=direct,sync for cache bypass + write ordering.
-    Safety: WriteRefused exception raised before any subprocess if
-    devices.refuse_write(target) returns a reason. Elevation via sudo only
-    (Layer A); pkexec / notarized helper deferred to Layer B.
+    Raw sector-aligned copy in a stdlib helper (macOS uses /dev/rdiskN for
+    speed, exactly as dd did). Safety: WriteRefused is raised before any
+    subprocess when devices.refuse_write(target) returns a reason.
+
+@decision DEC-PHASE11-038
+@title    Honest write progress via a self-reporting elevated helper
+@status   accepted
+@rationale
+    The old path shelled out to `sudo dd` and drove the bar by sending SIGINFO
+    to the dd process — but the Popen child is *sudo*, which does not forward
+    SIGINFO to the root dd child on macOS, so the bar sat at 0% then jumped to
+    100%. raw_write.py copies in 4 MiB chunks and prints the cumulative bytes
+    written after each chunk, so progress is exact and identical on both OSes.
 """
 
 from __future__ import annotations
@@ -25,10 +34,7 @@ from __future__ import annotations
 import os
 import pathlib
 import platform
-import signal
 import subprocess
-import threading
-import time
 from typing import Callable, Optional
 
 
@@ -94,25 +100,19 @@ def write_iso(
     - Calls ``devices.refuse_write(target)`` and raises WriteRefused if refused.
     - Verifies iso_path exists and is a file.
 
-    macOS:
-      - Converts /dev/diskN to /dev/rdiskN for raw (faster) access.
-      - Uses ``bs=4m`` (macOS dd uses lowercase).
-      - Unmounts the disk first via diskutil.
-
-    Linux:
-      - Uses ``bs=4M oflag=direct,sync`` for cache bypass + write ordering.
-      - Unmounts partitions first.
+    The write itself is done by the elevated helper raw_write.py (see
+    _run_copy): unmount first (diskutil on macOS, umount on Linux), then a
+    sector-aligned raw copy (macOS uses /dev/rdiskN for speed).
 
     In dry_run mode, prints the intended command without executing it.
 
-    Progress (Layer A):
-      - macOS: sends SIGINFO to dd every 2 s and captures stderr.
-      - Linux: polls /sys/block/<dev>/stat (column 6 = sectors written).
-      Both strategies update progress_cb when available.
+    Progress: the helper reports the exact cumulative bytes written after every
+    4 MiB chunk; _run_copy forwards each to progress_cb(bytes_written, total).
+    Honest and identical on both platforms (DEC-PHASE11-038).
 
     Raises:
         WriteRefused: if the target is on the refuse list.
-        WriteError:   if dd exits non-zero.
+        WriteError:   if the raw write exits non-zero.
         FileNotFoundError: if iso_path does not exist.
     """
     # Import here to avoid circular import at module load time.
@@ -143,6 +143,10 @@ def write_iso(
 # macOS write path
 # ---------------------------------------------------------------------------
 
+# Absolute path to the elevated raw-device writer helper (DEC-PHASE11-038).
+_HELPER = str(pathlib.Path(__file__).resolve().parent / "raw_write.py")
+
+
 def _write_macos(
     iso_path: pathlib.Path,
     target: str,
@@ -151,90 +155,54 @@ def _write_macos(
     dry_run: bool,
     password: Optional[str] = None,
 ) -> None:
-    """Write ISO to target on macOS."""
-    # Use raw disk device for speed
-    raw_target = target.replace("/dev/disk", "/dev/rdisk")
-    cmd = _sudo(
-        [
-            "dd",
-            f"if={iso_path}",
-            f"of={raw_target}",
-            "bs=4m",
-        ],
-        password,
-    )
+    """Write ISO to target on macOS via the raw_write helper (exact progress)."""
+    cmd = _sudo(["python3", _HELPER, str(iso_path), target], password)
 
     if dry_run:
         _print_dry_run(cmd, iso_path, target, total_bytes)
         return
 
     unmount_target(target, password)
-    _run_dd_macos(cmd, total_bytes, progress_cb, password)
+    _run_copy(cmd, total_bytes, progress_cb, password)
     _sync()
 
 
-def _run_dd_macos(
+def _run_copy(
     cmd: list[str],
     total_bytes: int,
     progress_cb: ProgressCallback,
     password: Optional[str] = None,
 ) -> None:
-    """Run dd on macOS, periodically sending SIGINFO to get progress."""
+    """Run the elevated raw_write helper and stream its EXACT byte-progress.
+
+    The helper prints the cumulative bytes written (one integer per line) as the
+    copy proceeds, then a final 'DONE'. This replaces the old dd + SIGINFO path,
+    whose signal never reached the root dd child through sudo on macOS
+    (DEC-PHASE11-038). Progress is therefore honest and identical on both
+    platforms. sudo's password prompt and any error text go to stderr.
+    """
     proc = subprocess.Popen(
         cmd,
         stdin=subprocess.PIPE if password is not None else None,
-        stdout=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
     _feed_sudo_password(proc, password)
 
-    stop_event = threading.Event()
-
-    def _siginfo_sender() -> None:
-        """Send SIGINFO to dd every 2 s to trigger progress output on macOS."""
-        while not stop_event.wait(2.0):
-            try:
-                proc.send_signal(signal.SIGINFO)
-            except (ProcessLookupError, OSError):
-                break
-
-    if progress_cb:
-        sender = threading.Thread(target=_siginfo_sender, daemon=True)
-        sender.start()
-
-    stderr_lines: list[str] = []
-    try:
-        # Read stderr line by line; dd prints progress on SIGINFO to stderr
-        assert proc.stderr is not None
-        for raw_line in proc.stderr:
-            line = raw_line.decode("utf-8", errors="replace").strip()
-            if line:
-                stderr_lines.append(line)
-                if progress_cb:
-                    bytes_written = _parse_dd_progress_macos(line)
-                    if bytes_written is not None:
-                        progress_cb(bytes_written, total_bytes)
-    finally:
-        stop_event.set()
+    assert proc.stdout is not None
+    for raw_line in proc.stdout:
+        line = raw_line.decode("utf-8", errors="replace").strip()
+        if not line or line == "DONE":
+            continue
+        if progress_cb is not None and line.isdigit():
+            progress_cb(int(line), total_bytes)
 
     ret = proc.wait()
     if ret != 0:
-        stderr_tail = "\n".join(stderr_lines[-5:])
-        raise WriteError(f"dd exited with code {ret}:\n{stderr_tail}")
-
-
-def _parse_dd_progress_macos(line: str) -> Optional[int]:
-    """Parse dd SIGINFO stderr line on macOS to extract bytes transferred.
-
-    macOS dd SIGINFO output looks like:
-      ``1073741824 bytes (1073741824 bytes) transferred in 10.123456 secs (...)``
-    Returns bytes transferred as int, or None if line doesn't match.
-    """
-    import re
-    m = re.match(r"^\s*(\d+)\s+bytes\s+transferred", line)
-    if m:
-        return int(m.group(1))
-    return None
+        err = ""
+        if proc.stderr is not None:
+            err = proc.stderr.read().decode("utf-8", errors="replace")
+        raise WriteError(f"raw write exited with code {ret}:\n{err.strip()[-800:]}")
 
 
 # ---------------------------------------------------------------------------
@@ -249,79 +217,16 @@ def _write_linux(
     dry_run: bool,
     password: Optional[str] = None,
 ) -> None:
-    """Write ISO to target on Linux."""
-    cmd = _sudo(
-        [
-            "dd",
-            f"if={iso_path}",
-            f"of={target}",
-            "bs=4M",
-            "oflag=direct,sync",
-            "status=progress",
-        ],
-        password,
-    )
+    """Write ISO to target on Linux via the raw_write helper (exact progress)."""
+    cmd = _sudo(["python3", _HELPER, str(iso_path), target], password)
 
     if dry_run:
         _print_dry_run(cmd, iso_path, target, total_bytes)
         return
 
     unmount_target(target, password)
-    _run_dd_linux(cmd, target, total_bytes, progress_cb, password)
+    _run_copy(cmd, total_bytes, progress_cb, password)
     _sync()
-
-
-def _run_dd_linux(
-    cmd: list[str],
-    target: str,
-    total_bytes: int,
-    progress_cb: ProgressCallback,
-    password: Optional[str] = None,
-) -> None:
-    """Run dd on Linux with status=progress; also poll /sys/block/<dev>/stat."""
-    dev_name = os.path.basename(target)  # e.g. "sdb"
-    stat_path = f"/sys/block/{dev_name}/stat"
-
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.PIPE if password is not None else None,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-    )
-    _feed_sudo_password(proc, password)
-
-    stop_event = threading.Event()
-
-    def _stat_poller() -> None:
-        """Poll /sys/block/<dev>/stat column 6 (sectors written) every second."""
-        while not stop_event.wait(1.0):
-            try:
-                with open(stat_path) as fh:
-                    cols = fh.read().split()
-                if len(cols) >= 6 and progress_cb:
-                    sectors = int(cols[5])
-                    progress_cb(sectors * 512, total_bytes)
-            except (OSError, ValueError):
-                pass
-
-    if progress_cb and os.path.exists(stat_path):
-        poller = threading.Thread(target=_stat_poller, daemon=True)
-        poller.start()
-
-    stderr_lines: list[str] = []
-    try:
-        assert proc.stderr is not None
-        for raw_line in proc.stderr:
-            line = raw_line.decode("utf-8", errors="replace").strip()
-            if line:
-                stderr_lines.append(line)
-    finally:
-        stop_event.set()
-
-    ret = proc.wait()
-    if ret != 0:
-        stderr_tail = "\n".join(stderr_lines[-5:])
-        raise WriteError(f"dd exited with code {ret}:\n{stderr_tail}")
 
 
 # ---------------------------------------------------------------------------
