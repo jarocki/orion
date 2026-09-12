@@ -866,14 +866,15 @@ ISOLINUX_EOF
 # Active cmdline (Orion-X Live menuentry):
 #   $bootappend
 #
-# set timeout=1: auto-boot after 1 second with no input.
+# set timeout=5: show the themed Orion-X boot menu for 5s so the operator sees
+#   the "fancy boot screen" (DEC-PHASE11-040); auto-boots the default after that.
 # set default=0: boot the first menuentry (Orion-X Live).
 
 serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
 terminal_input --append serial
 terminal_output --append serial
 
-set timeout=1
+set timeout=5
 set default=0
 set gfxmode=1024x768
 insmod png
