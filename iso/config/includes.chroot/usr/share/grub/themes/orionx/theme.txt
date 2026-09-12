@@ -9,13 +9,11 @@
 #   Font: GRUB built-in DejaVu (W11-9a transitional); W11-9b will add Iosevka
 #   PF2 and edit this file to point at it once the font is staged.
 #
-# ACTIVATION NOTE: This theme.txt is staged but NOT yet activated in
-# generate_bootloader_configs() (scripts/build-iso.sh). Activating GRUB_THEME
-# requires a one-line addition to that generator, which is a forbidden W11-9a
-# scope surface (DEC-PHASE11-012 preservation). This is a planned rider
-# sub-slice per MASTER_PLAN W11-9a Evaluation Contract item 4.
-# QEMU boot test will confirm whether GRUB reads the theme without a
-# GRUB_THEME= line; if not, the escalation path is documented in CHANGELOG.
+# ACTIVATION: ACTIVE. generate_bootloader_configs() (scripts/build-iso.sh) emits
+# `set gfxmode=1024x768 / insmod png / set theme=…/theme.txt` (DEC-PHASE11-013),
+# and DEC-PHASE11-040 bumps the menu timeout to 5s so the operator actually sees
+# this screen. The background is a 1024x768 fit of the wide Phoenix wallpaper
+# (no distortion) with a darkened center band for boot-menu legibility.
 #
 # Color palette:
 #   Phoenix red    #E84000  → grub color: #e84000
@@ -28,7 +26,7 @@
 # Global desktop image
 # ---------------------------------------------------------------------------
 desktop-image: "background.png"
-desktop-image-scale-method: stretch
+desktop-image-scale-method: crop
 desktop-color: "#0a0a0f"
 
 # ---------------------------------------------------------------------------
