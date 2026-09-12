@@ -22,7 +22,19 @@
 set -euo pipefail
 
 # --- Resolve script directory for reliable sourcing ---
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Must resolve symlinks: orionx-mesh is symlinked into /usr/bin (0700 hook), so a
+# bare dirname "${BASH_SOURCE[0]}" yields /usr/bin and the sibling libs
+# (mesh-lib.sh, mesh-join.sh, mesh-leave.sh) are not found there — the operator
+# hit exactly this ("/usr/bin/mesh-lib.sh: No such file or directory"). Walk the
+# symlink chain to the real script location. Portable (plain readlink, no -f).
+# (DEC-PHASE11-039)
+_SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$_SOURCE" ]; do
+    _dir="$(cd -P "$(dirname "$_SOURCE")" >/dev/null 2>&1 && pwd)"
+    _SOURCE="$(readlink "$_SOURCE")"
+    case "$_SOURCE" in /*) ;; *) _SOURCE="$_dir/$_SOURCE" ;; esac
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$_SOURCE")" >/dev/null 2>&1 && pwd)"
 
 # --- Root permission check ---
 # Mesh operations require root (WireGuard interface management, network config).
