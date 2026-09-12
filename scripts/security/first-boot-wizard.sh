@@ -3,16 +3,21 @@
 #
 # first-boot-wizard.sh — Orion-X First-Boot Setup Wizard
 #
-# Runs once on first boot to configure a fresh Orion-X node:
+# Runs once on first boot to configure a fresh Orion-X node. Interactive on the
+# console (tty1) via orionx-first-boot.service, BEFORE the display manager:
 #   1. Set hostname
-#   2. Set user password (interactive only)
-#   3. Generate WireGuard keypair for mesh networking
-#   4. Set Matrix (Synapse) credentials
-#   5. Optionally disable SSH daemon
-#   6. Write completion flag to prevent re-runs
+#   2. Set primary account username + password (rename the live user if changed)
+#   3. Wi-Fi setup (SSID + password) — only when there is no wired link
+#   4. Generate WireGuard keypair for mesh networking
+#   5. Seed a one-shot SSH admin path
+#   6. Set Matrix (Synapse) credentials
+#   7. Optionally disable SSH daemon
+#   8. Write completion flag to prevent re-runs
 #
 # Designed to run as a systemd oneshot service (see orionx-first-boot.service)
-# or manually via CLI. Supports non-interactive mode for automated deployments.
+# or manually via CLI (`sudo orionx-wizard`). Every prompt has an input timeout
+# (falls back to defaults) so the wizard always completes and never hangs boot.
+# Supports --non-interactive for automated deployments / CI (skips all prompts).
 #
 # Environment variables:
 #   ORIONX_FIRST_BOOT_DRY_RUN  — Set to 1 to skip real system calls
@@ -48,6 +53,14 @@ DRY_RUN="${ORIONX_FIRST_BOOT_DRY_RUN:-0}"
 NON_INTERACTIVE=0
 SKIP_SSH=0
 CUSTOM_HOSTNAME=""
+
+# Primary live account (from live-config.username / DEC-PHASE11-012). The operator
+# can rename it in the interactive wizard. Overridable for tests.
+PRIMARY_USER="${ORIONX_PRIMARY_USER:-orionx-operator}"
+
+# Per-prompt input timeout (seconds). If the operator walks away, prompts fall
+# back to their defaults so the wizard always completes and never hangs the boot.
+PROMPT_TIMEOUT="${ORIONX_FIRST_BOOT_PROMPT_TIMEOUT:-120}"
 
 # ---------------------------------------------------------------------------
 # Logging helpers
@@ -212,22 +225,143 @@ step_set_hostname() {
 }
 
 # ---------------------------------------------------------------------------
-# Step 2: Set user password
+# Step 2: Set primary account username + password
+#
+# Prompts for the account name (default: the live user) and a password. Runs
+# BEFORE the display manager starts, so no graphical session holds the account
+# and it is safe to rename. If the operator picks a different name we rename the
+# account + move its home + repoint LightDM autologin at it. All destructive
+# steps are guarded: a failure leaves the original account usable and warns.
 # ---------------------------------------------------------------------------
 
-step_set_password() {
+step_set_user_credentials() {
     if [[ "$NON_INTERACTIVE" -eq 1 ]]; then
-        log_step "Skipping password change (non-interactive mode)"
+        log_step "Skipping account setup (non-interactive mode)"
         return 0
     fi
 
-    log_step "Setting user password"
+    log_step "Account setup"
+
+    local newuser=""
+    printf "Username for the primary account [%s]: " "$PRIMARY_USER"
+    read -r -t "$PROMPT_TIMEOUT" newuser || newuser=""
+    newuser="${newuser:-$PRIMARY_USER}"
+    # Sanitize: allow only a valid Linux username; otherwise keep the default.
+    if ! printf '%s' "$newuser" | grep -qE '^[a-z_][a-z0-9_-]*$'; then
+        log_warn "Invalid username '$newuser' — keeping '$PRIMARY_USER'"
+        newuser="$PRIMARY_USER"
+    fi
 
     if [[ "$DRY_RUN" -eq 1 ]]; then
-        log_dry "passwd orionx"
+        log_dry "rename '$PRIMARY_USER' -> '$newuser' (if changed) + move home + repoint autologin"
+        log_dry "set password for '$newuser' via chpasswd"
+        return 0
+    fi
+
+    # --- Rename the account if the operator chose a different name ---
+    if [[ "$newuser" != "$PRIMARY_USER" ]] && id "$PRIMARY_USER" >/dev/null 2>&1; then
+        if usermod -l "$newuser" "$PRIMARY_USER" 2>/dev/null; then
+            usermod -d "/home/$newuser" -m "$newuser" 2>/dev/null || \
+                log_warn "Renamed login but could not move home dir; home stays /home/$PRIMARY_USER"
+            groupmod -n "$newuser" "$PRIMARY_USER" 2>/dev/null || true
+            # Repoint LightDM autologin (single authority file, DEC-PHASE9-005).
+            local al="/etc/lightdm/lightdm.conf.d/10-orionx-autologin.conf"
+            if [[ -f "$al" ]]; then
+                sed -i -E "s/^autologin-user=.*/autologin-user=${newuser}/" "$al" 2>/dev/null || \
+                    log_warn "Could not update LightDM autologin-user"
+            fi
+            PRIMARY_USER="$newuser"
+            log_info "Primary account renamed to '$newuser'"
+        else
+            log_warn "Could not rename account to '$newuser' — keeping '$PRIMARY_USER'"
+        fi
+    fi
+
+    # --- Set the password (confirmed). Blank keeps the account passwordless ---
+    local p1="" p2=""
+    printf "Set a password for '%s' (blank = keep passwordless): " "$PRIMARY_USER"
+    read -r -s -t "$PROMPT_TIMEOUT" p1 || p1=""
+    printf "\n"
+    if [[ -n "$p1" ]]; then
+        printf "Confirm password: "
+        read -r -s -t "$PROMPT_TIMEOUT" p2 || p2=""
+        printf "\n"
+        if [[ "$p1" == "$p2" ]]; then
+            if printf '%s:%s\n' "$PRIMARY_USER" "$p1" | chpasswd 2>/dev/null; then
+                log_info "Password set for '$PRIMARY_USER'"
+            else
+                log_warn "Could not set password for '$PRIMARY_USER'"
+            fi
+        else
+            log_warn "Passwords did not match — leaving '$PRIMARY_USER' passwordless"
+        fi
     else
-        passwd orionx 2>/dev/null || \
-            log_warn "Could not set password (user may not exist or not running as root)"
+        log_info "Keeping '$PRIMARY_USER' passwordless"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Step 2b: Wi-Fi setup (only when there is no wired link)
+#
+# A cyberdeck is often used without ethernet. When no wired NIC has carrier we
+# prompt for an SSID + password and bring up the connection via nmcli so the
+# operator is online for mesh/updates immediately after first boot.
+# ---------------------------------------------------------------------------
+
+_has_wired_link() {
+    local carrier
+    for carrier in /sys/class/net/e*/carrier /sys/class/net/en*/carrier; do
+        [[ -e "$carrier" ]] || continue
+        [[ "$(cat "$carrier" 2>/dev/null || echo 0)" == "1" ]] && return 0
+    done
+    return 1
+}
+
+step_setup_wifi() {
+    if [[ "$NON_INTERACTIVE" -eq 1 ]]; then
+        log_step "Skipping Wi-Fi setup (non-interactive mode)"
+        return 0
+    fi
+
+    if _has_wired_link; then
+        log_step "Wired network detected — skipping Wi-Fi setup"
+        return 0
+    fi
+
+    log_step "No wired network — Wi-Fi setup"
+
+    if ! command -v nmcli >/dev/null 2>&1; then
+        log_warn "nmcli not available — skipping Wi-Fi setup"
+        return 0
+    fi
+
+    local ssid="" psk=""
+    printf "Wi-Fi network name (SSID) [blank = skip]: "
+    read -r -t "$PROMPT_TIMEOUT" ssid || ssid=""
+    if [[ -z "$ssid" ]]; then
+        log_info "No SSID entered — skipping Wi-Fi"
+        return 0
+    fi
+    printf "Wi-Fi password for '%s' (blank = open network): " "$ssid"
+    read -r -s -t "$PROMPT_TIMEOUT" psk || psk=""
+    printf "\n"
+
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        log_dry "nmcli radio wifi on; nmcli device wifi connect '$ssid' [password ****]"
+        return 0
+    fi
+
+    nmcli radio wifi on 2>/dev/null || true
+    local ok=1
+    if [[ -n "$psk" ]]; then
+        nmcli device wifi connect "$ssid" password "$psk" 2>/dev/null && ok=0
+    else
+        nmcli device wifi connect "$ssid" 2>/dev/null && ok=0
+    fi
+    if [[ "$ok" -eq 0 ]]; then
+        log_info "Connected to Wi-Fi '$ssid'"
+    else
+        log_warn "Could not connect to '$ssid' (check name/password/coverage) — you can retry later from the panel"
     fi
 }
 
@@ -532,8 +666,10 @@ main() {
     log_info "Starting first-boot configuration..."
     [[ "$DRY_RUN" -eq 1 ]] && log_info "Dry-run mode active — no system changes will be made"
 
+    # Operator onboarding first (hostname → account → Wi-Fi), then node provisioning.
     step_set_hostname
-    step_set_password
+    step_set_user_credentials
+    step_setup_wifi
     step_generate_wg_keys
     step_seed_ssh_admin
     step_set_matrix_creds
