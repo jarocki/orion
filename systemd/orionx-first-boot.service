@@ -1,30 +1,43 @@
-# @decision DEC-SEC-003
-# @title First-boot wizard runs once via systemd
+# @decision DEC-SEC-003 (updated by DEC-PHASE11-037)
+# @title First-boot wizard runs INTERACTIVELY on the console (tty1) before the DM
 # @status accepted
-# @rationale Oneshot service with ConditionPathExists guard ensures the
-#   wizard runs exactly once on first boot, then never again. Flag file
-#   at /var/lib/orionx/.first-boot-done is both the systemd condition
-#   and the script's own idempotency check.
+# @rationale Operator directive 2026-09-12: first boot should prompt the operator
+#   for hostname, primary username+password, and Wi-Fi (when there is no wired
+#   link), THEN bring up the desktop. The prior unit ran the wizard
+#   --non-interactive (auto MAC hostname) which gave no onboarding, and a fresh
+#   boot could land on a bare console. This unit takes tty1 from getty, runs the
+#   wizard interactively before display-manager.service, and lets the desktop
+#   start only after onboarding completes. Running before the DM also keeps the
+#   original DEC-SEC-003 invariant: the hostname is settled before X starts, so
+#   the autologin session's X-authority cookie is not invalidated by a late
+#   rename. Every wizard prompt has an input timeout (falls back to defaults),
+#   and this unit is oneshot ordered-before (not required-by) the DM, so it can
+#   never permanently block boot. Runs once, guarded by the flag file.
 
 [Unit]
-Description=Orion-X First-Boot Setup Wizard
-After=multi-user.target
-# Before=display-manager.service: the wizard renames the host (step 1). X
-# authority cookies are keyed by hostname, so a rename racing LightDM's session
-# start invalidates the cookie and the autologin session dies within seconds
-# (hardware attestation 2026-08-21: hostname flipped localhost.localdomain ->
-# orionx-218419db at 22:38:39-42, autologin session opened 22:38:42, greeter
-# fallback 22:38:45, while a later startx under the settled hostname worked).
-# display-manager.service is the canonical alias every DM installs, so this
-# stays correct if lightdm is ever swapped out.
+Description=Orion-X First-Boot Setup Wizard (interactive console)
+# Take the console from getty and run before the graphical login. NetworkManager
+# is ordered before us so the Wi-Fi step's nmcli calls work.
+After=systemd-user-sessions.service getty@tty1.service NetworkManager.service
+Conflicts=getty@tty1.service
 Before=display-manager.service
 ConditionPathExists=!/var/lib/orionx/.first-boot-done
 
 [Service]
 Type=oneshot
-ExecStart=/opt/orionx/scripts/security/first-boot-wizard.sh --non-interactive
-StandardOutput=journal
-StandardError=journal
+RemainAfterExit=yes
+ExecStart=/opt/orionx/scripts/security/first-boot-wizard.sh
+# Interactive on the primary virtual console.
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+# Absolute worst-case bound; per-prompt read timeouts in the wizard mean it
+# self-completes with defaults long before this if left unattended.
+TimeoutStartSec=1200
 
 [Install]
-WantedBy=multi-user.target
+# Pulled into the graphical boot, ordered before the display manager.
+WantedBy=graphical.target

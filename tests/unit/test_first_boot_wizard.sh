@@ -315,10 +315,13 @@ else
     fail "systemd unit is Type=oneshot"
 fi
 
-if grep -q 'multi-user.target' "$SYSTEMD_UNIT" 2>/dev/null; then
-    pass "systemd unit targets multi-user.target"
+# DEC-PHASE11-037: the interactive wizard is pulled into the GRAPHICAL boot and
+# ordered before the display manager (was multi-user.target when it ran headless).
+if grep -q 'WantedBy=graphical.target' "$SYSTEMD_UNIT" 2>/dev/null; then
+    pass "systemd unit targets graphical.target (ordered before the display manager)"
 else
-    fail "systemd unit targets multi-user.target"
+    fail "systemd unit targets graphical.target" \
+         "Interactive first-boot must run in the graphical boot, before display-manager.service"
 fi
 
 if grep -q 'first-boot-wizard.sh' "$SYSTEMD_UNIT" 2>/dev/null; then
@@ -643,19 +646,34 @@ fi
 
 
 # ===========================================================================
-# W11-14d: wizard must not seize tty1 (DEC-PHASE11-023 boot-loop fix)
+# DEC-PHASE11-037: interactive first-boot on tty1 (supersedes the DEC-PHASE11-023
+# off-tty1 fix). W11-14d moved the wizard off tty1 because a NON-interactive
+# wizard writing to tty1 collided with the PLYMOUTH SPLASH on cold boot (boot
+# loop). Two things make interactive-on-tty1 safe now: (1) plymouth is disabled
+# (plymouth.enable=0 + masked units), removing that collision source; and (2) the
+# unit uses Conflicts=getty@tty1 + Before=display-manager.service, the correct way
+# to own the console without contending with getty or the display manager. The
+# operator MUST be prompted for hostname/username/Wi-Fi, which requires a tty.
+# NOTE: this reverses a boot-validated decision — the change is gated on a QEMU
+# boot-test of the built ISO before hardware flash.
 # ===========================================================================
-section "W11-14d: wizard off tty1"
-if grep -qE '^(StandardInput=tty|TTYPath=/dev/tty1)' "$SYSTEMD_UNIT"; then
-    fail "wizard unit does not seize tty1" \
-         "StandardInput=tty/TTYPath=/dev/tty1 present — collides with plymouth/lightdm on a splash cold boot"
+section "DEC-PHASE11-037: interactive first-boot on tty1"
+if grep -qE '^TTYPath=/dev/tty1' "$SYSTEMD_UNIT" && grep -qE '^StandardInput=tty' "$SYSTEMD_UNIT"; then
+    pass "wizard unit runs interactively on tty1 (TTYPath + StandardInput=tty)"
 else
-    pass "wizard unit does not seize tty1 (journal-logged, no VT contention)"
+    fail "wizard unit runs interactively on tty1" \
+         "Interactive prompts (hostname/username/Wi-Fi) require StandardInput=tty + TTYPath=/dev/tty1"
 fi
-if grep -qE '^StandardOutput=journal' "$SYSTEMD_UNIT"; then
-    pass "wizard logs to journal"
+if grep -qE '^Conflicts=getty@tty1.service' "$SYSTEMD_UNIT"; then
+    pass "wizard unit Conflicts=getty@tty1.service (owns the console cleanly, no VT contention)"
 else
-    fail "wizard logs to journal"
+    fail "wizard unit Conflicts=getty@tty1.service" \
+         "Without releasing getty from tty1, the wizard and getty contend for the console"
+fi
+if grep -qE '^Before=display-manager.service' "$SYSTEMD_UNIT"; then
+    pass "wizard unit ordered Before=display-manager.service (onboarding completes before the desktop)"
+else
+    fail "wizard unit ordered Before=display-manager.service"
 fi
 
 # ===========================================================================
