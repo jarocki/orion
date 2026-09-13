@@ -1,0 +1,66 @@
+#!/usr/bin/env python3
+"""orionx-event — publish one event onto the Orion-X event bus.
+
+Thin CLI over rain_lib.emit_event(). Any detector, script, or the operator can
+raise an audible-alertable event with a single command:
+
+    orionx-event --severity critical --source suricata --category ids \
+        "ET SCAN Nmap SYN scan from 10.0.0.5"
+
+The event lands on /run/orionx/events.jsonl, where the R.A.I.N. daemon
+(orionx-rain) turns it into a severity-mapped audio cue for the operator's
+"3am self" (issue #88, DEC-PHASE11-045). This CLI is also how in-process
+emitters that cannot import rain_lib (the Control Center, held to a strict
+import allowlist) publish events — they Popen this command fire-and-forget.
+
+Exit status: 0 if the event was written, 1 otherwise.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+# Resolve the sibling rain_lib.py even when invoked via a /usr/bin symlink
+# (the 0700 setup hook symlinks this script into PATH). Walk the symlink chain.
+_here = Path(__file__).resolve()
+sys.path.insert(0, str(_here.parent))
+
+import rain_lib  # noqa: E402
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="orionx-event",
+        description="Publish an event onto the Orion-X event bus (heard via R.A.I.N.).",
+    )
+    parser.add_argument(
+        "--severity", "-s", default="notice", choices=rain_lib.SEVERITIES,
+        help="event severity (default: notice)",
+    )
+    parser.add_argument(
+        "--source", default="cli",
+        help="emitting component, e.g. suricata, mesh, health (default: cli)",
+    )
+    parser.add_argument(
+        "--category", "-c", default="general",
+        help="event category, e.g. ids, service, posture (default: general)",
+    )
+    parser.add_argument("message", nargs="+", help="human-readable event message")
+    args = parser.parse_args(argv)
+
+    ok = rain_lib.emit_event(
+        severity=args.severity,
+        source=args.source,
+        category=args.category,
+        message=" ".join(args.message),
+    )
+    if not ok:
+        print("orionx-event: failed to write to the event bus", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

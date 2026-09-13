@@ -1,0 +1,223 @@
+#!/usr/bin/env python3
+"""orionx-rain — R.A.I.N. daemon: turn event-bus events into audible alerts.
+
+Tails the Orion-X event bus (/run/orionx/events.jsonl) and, for each event at or
+above the operator's configured minimum severity, plays a distinct severity-mapped
+tone so an intrusion is HEARD, not watched (issue #88, DEC-PHASE11-045). This is
+the operator's "3am self" ears.
+
+Runs as a per-session background process (started from /etc/xdg/autostart in the
+XFCE session, where it has audio access). Config lives at ~/.config/orionx/rain.json
+and is re-read live, so Control Center toggles take effect without a restart.
+
+Throttling guarantees an event STORM never becomes an audio storm: each severity
+has a cooldown, and no two cues ever play closer than a global minimum gap.
+
+Modes:
+    orionx-rain                 run the daemon (default)
+    orionx-rain --test WARNING  play one cue for a severity and exit (CC "Test")
+    orionx-rain --oneshot       drain current backlog, play the most urgent, exit
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import signal
+import sys
+import time
+from pathlib import Path
+
+_here = Path(__file__).resolve()
+sys.path.insert(0, str(_here.parent))
+
+import rain_lib  # noqa: E402
+
+# Poll cadence for new lines + config mtime (seconds).
+_POLL = 0.5
+_running = True
+
+
+def _stop(_signum, _frame):
+    global _running
+    _running = False
+
+
+def _should_play(event: dict, cfg: dict) -> bool:
+    """Gate an event against the live config (enabled + min severity)."""
+    if not cfg.get("enabled", True):
+        return False
+    sev = rain_lib.normalize_severity(event.get("severity", "notice"))
+    return rain_lib.severity_rank(sev) >= rain_lib.severity_rank(cfg["min_severity"])
+
+
+class _Throttle:
+    """Per-severity cooldown + a global minimum gap between any two cues."""
+
+    def __init__(self) -> None:
+        self._last_by_sev: dict[str, float] = {}
+        self._last_any = 0.0
+
+    def allow(self, severity: str, now: float) -> bool:
+        if now - self._last_any < rain_lib.GLOBAL_MIN_GAP_SECONDS:
+            return False
+        cooldown = rain_lib.COOLDOWN_SECONDS.get(severity, 10.0)
+        if now - self._last_by_sev.get(severity, 0.0) < cooldown:
+            return False
+        return True
+
+    def record(self, severity: str, now: float) -> None:
+        self._last_by_sev[severity] = now
+        self._last_any = now
+
+
+def _open_at_end(path: Path):
+    """Open the spool for reading, positioned at EOF. None if not present yet."""
+    try:
+        fh = path.open("r", encoding="utf-8", errors="replace")
+        fh.seek(0, 2)  # SEEK_END — only react to events after we start
+        return fh
+    except OSError:
+        return None
+
+
+def run_daemon() -> int:
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
+
+    throttle = _Throttle()
+    cfg = rain_lib.load_config()
+    cfg_mtime = _config_mtime()
+
+    path = rain_lib.EVENT_LOG
+    fh = _open_at_end(path)
+    inode = _inode(path)
+
+    while _running:
+        # Live-reload config when rain.json changes (CC toggle).
+        m = _config_mtime()
+        if m != cfg_mtime:
+            cfg = rain_lib.load_config()
+            cfg_mtime = m
+
+        # Wait for the spool to appear if it does not exist yet.
+        if fh is None:
+            fh = _open_at_end(path)
+            inode = _inode(path)
+            if fh is None:
+                time.sleep(_POLL)
+                continue
+
+        # Detect truncation/rotation (tmpfs recreated): reopen from the top so
+        # we don't miss a fresh session's events.
+        cur_inode = _inode(path)
+        if cur_inode != inode:
+            try:
+                fh.close()
+            except OSError:
+                pass
+            fh = path.open("r", encoding="utf-8", errors="replace")
+            inode = cur_inode
+
+        line = fh.readline()
+        if not line:
+            time.sleep(_POLL)
+            continue
+
+        event = _parse(line)
+        if event is None:
+            continue
+        if not _should_play(event, cfg):
+            continue
+
+        sev = rain_lib.normalize_severity(event.get("severity", "notice"))
+        now = time.time()
+        if throttle.allow(sev, now):
+            rain_lib.play_cue(sev, cfg)
+            throttle.record(sev, now)
+
+    if fh is not None:
+        try:
+            fh.close()
+        except OSError:
+            pass
+    return 0
+
+
+def _parse(line: str):
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        obj = json.loads(line)
+        return obj if isinstance(obj, dict) else None
+    except ValueError:
+        return None
+
+
+def _config_mtime() -> float:
+    try:
+        return rain_lib.CONFIG_FILE.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _inode(path: Path) -> int:
+    try:
+        return path.stat().st_ino
+    except OSError:
+        return -1
+
+
+def run_oneshot() -> int:
+    """Drain the whole spool and play only the single most urgent event, if any.
+
+    Useful for a login-time 'what happened while I was away' summary cue.
+    """
+    cfg = rain_lib.load_config()
+    top = -1
+    top_sev = None
+    try:
+        with rain_lib.EVENT_LOG.open(encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                ev = _parse(line)
+                if ev is None or not _should_play(ev, cfg):
+                    continue
+                r = rain_lib.severity_rank(ev.get("severity", "notice"))
+                if r > top:
+                    top = r
+                    top_sev = rain_lib.normalize_severity(ev.get("severity"))
+    except OSError:
+        return 0
+    if top_sev is not None:
+        rain_lib.play_cue(top_sev, cfg)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="orionx-rain",
+        description="R.A.I.N. — Real-time Audible Intrusion Notification daemon.",
+    )
+    parser.add_argument(
+        "--test", metavar="SEVERITY", choices=rain_lib.SEVERITIES,
+        help="play one cue for SEVERITY and exit (ignores enabled/min-severity)",
+    )
+    parser.add_argument(
+        "--oneshot", action="store_true",
+        help="play the most urgent pending event once, then exit",
+    )
+    args = parser.parse_args(argv)
+
+    if args.test:
+        # Test button: always audible, honour volume/voice but not enable/min.
+        cfg = rain_lib.load_config()
+        rain_lib.play_cue(args.test, cfg)
+        return 0
+    if args.oneshot:
+        return run_oneshot()
+    return run_daemon()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

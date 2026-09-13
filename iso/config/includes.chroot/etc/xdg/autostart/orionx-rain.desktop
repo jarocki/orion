@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Orion-X R.A.I.N.
+Comment=Real-time Audible Intrusion Notification — plays severity-mapped alert tones
+# Started in the XFCE session (where it has audio access) to tail the Orion-X
+# event bus and play audible cues for the operator's "3am self" (DEC-PHASE11-045).
+Exec=orionx-rain
+Icon=audio-volume-high
+Terminal=false
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
+Categories=System;Security;
