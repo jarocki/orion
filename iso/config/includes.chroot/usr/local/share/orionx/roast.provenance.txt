@@ -1,0 +1,24 @@
+go-roast (/usr/local/bin/roast) — vendored static binary
+=========================================================
+Roadmap #91 · DEC-PHASE12-002
+
+Source:  https://github.com/jarocki/go-roast
+Module:  codeberg.org/hrbrmstr/go-roast
+Commit:  6fe8410
+Built:   GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+         go build -trimpath -ldflags="-s -w" -o roast ./cmd/roast
+Type:    ELF 64-bit, x86-64, statically linked, stripped (~9.6 MB)
+
+What it is: a CLI + stdio MCP server for Interactsh OAST (out-of-band
+application security testing) callback domains — extract them from logs, decode
+their embedded machine-id/pid/timestamp metadata, and cluster them into
+campaigns. Distro-independent (static, no libc/Python), so it survived the
+bullseye->trixie migration unchanged and adds ~9.6 MB to the image.
+
+Integration: registered into the Nebula MCP registry (scripts/nebula/mcp_server.py)
+as the tools oast_extract / oast_decode / oast_analyze (needs="roast"), giving
+the on-device model first-class OAST triage. Also usable directly as `roast`.
+
+To rebuild/update: re-clone the source, checkout the desired commit, and run the
+build command above on any host with Go >= 1.23; replace the binary and update
+this file's commit line.

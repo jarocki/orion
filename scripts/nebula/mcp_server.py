@@ -146,6 +146,39 @@ def _registry() -> list[Tool]:
                     "required": ["artifact"]},
             timeout=600,
         ),
+        # --- go-roast: Interactsh OAST metadata decoding (roadmap #91) -------
+        # A static Go binary at /usr/local/bin/roast (DEC-PHASE12-002). These
+        # give the local model first-class OAST triage: find, decode, and
+        # cluster out-of-band callback domains in a log/text file. All read a
+        # file (argv-only, no shell/stdin) and emit JSON, matching the tshark/
+        # pcap file-tool pattern above.
+        Tool(
+            "oast_extract",
+            "Extract Interactsh OAST callback domains from a log or text file (go-roast).",
+            lambda a: ["roast", "extract", "-f", str(a["file"]), "-o", "json"],
+            needs="roast",
+            schema={"type": "object",
+                    "properties": {"file": _str_prop("path to a log/text file to scan for OAST domains")},
+                    "required": ["file"]},
+        ),
+        Tool(
+            "oast_decode",
+            "Decode Interactsh OAST domains (one per line in a file) into machine-id/pid/timestamp metadata (go-roast).",
+            lambda a: ["roast", "decode", "-f", str(a["file"]), "-o", "json"],
+            needs="roast",
+            schema={"type": "object",
+                    "properties": {"file": _str_prop("path to a file of OAST domains, one per line")},
+                    "required": ["file"]},
+        ),
+        Tool(
+            "oast_analyze",
+            "Cluster OAST domains from a file into campaign statistics (go-roast).",
+            lambda a: ["roast", "analyze", "-f", str(a["file"]), "-o", "json"],
+            needs="roast",
+            schema={"type": "object",
+                    "properties": {"file": _str_prop("path to a file of OAST domains to cluster")},
+                    "required": ["file"]},
+        ),
     ]
 
 
