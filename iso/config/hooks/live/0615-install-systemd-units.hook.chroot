@@ -100,16 +100,21 @@ for unit in "${AUTOSTART_UNITS[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# W11-14g: mask plymouth boot units (DEC-PHASE11-025).
-# splash is already off the cmdline and plymouth.enable=0 is set, but
-# plymouth-start.service still launches plymouthd on a normal boot, and
-# plymouth-quit-wait.service ("Hold until boot process finishes up") then
-# blocks the boot FOREVER (no timeout) waiting for a quit that never arrives on
-# this DM/getty flow — observed on hardware 2026-09-07 (21+ min, no limit).
-# This is a verbose-text-boot forensic appliance; plymouth is pure cosmetics.
-# Masking both removes the daemon and the boot-completion wait entirely.
+# DEC-PHASE11-044: Plymouth orionx-phoenix boot splash is RE-ENABLED.
+# This REVERSES DEC-PHASE11-025 (which masked these units to kill the splash).
+# The original 21-min hang (hardware 2026-09-07) was plymouth-quit-wait.service
+# blocking boot FOREVER because it has no timeout and nothing quit plymouth on
+# the DM/getty flow. That is now bounded two ways, shipped together:
+#   (1) a TimeoutStartSec cap drop-in for plymouth-quit-wait.service
+#       (includes.chroot/etc/systemd/system/plymouth-quit-wait.service.d/
+#        10-orionx-timeout.conf) — worst case a few extra seconds, never a hang;
+#   (2) the first-boot wizard unit runs `plymouth quit` in ExecStartPre, which
+#       both frees tty1 for the interactive wizard and satisfies quit-wait.
+# `splash` is back on the cmdline (DEC-PHASE11-044) and plymouth.enable=0 is
+# gone. Unmask the units (idempotent) so the splash paints; plymouth-quit.service
+# (Before=display-manager) still releases DRM before X starts.
 for punit in plymouth-start.service plymouth-quit.service plymouth-quit-wait.service plymouth-read-write.service; do
-    systemctl mask "$punit" 2>/dev/null && echo "[install-systemd-units] masked: $punit"
+    systemctl unmask "$punit" 2>/dev/null && echo "[install-systemd-units] unmasked: $punit"
 done
 
 echo "[install-systemd-units] systemd unit installation complete"

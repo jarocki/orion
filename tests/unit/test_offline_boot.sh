@@ -49,17 +49,32 @@ for u in orionx-mesh-beacon orionx-mesh-health; do
     fi
 done
 
-# Plymouth must be disabled: plymouth-quit-wait.service blocks boot forever
-# ("Hold until boot process finishes up", no timeout) on a normal boot.
-if grep -q 'systemctl mask "$punit"' "$HOOK" && grep -q "plymouth-quit-wait.service" "$HOOK"; then
-    pass "plymouth boot units masked in 0615 hook (no plymouth-quit-wait boot hang)"
+# Plymouth is RE-ENABLED (DEC-PHASE11-044) with anti-hang guards. The old 21-min
+# hang was plymouth-quit-wait blocking boot forever with no timeout; the guard is
+# a TimeoutStartSec cap drop-in. Assert the units are UNMASKED (not masked) and
+# that the cap is shipped, so the splash paints AND cannot hang boot.
+if grep -q 'systemctl unmask "$punit"' "$HOOK" && ! grep -q 'systemctl mask "$punit"' "$HOOK"; then
+    pass "plymouth boot units unmasked in 0615 hook (splash re-enabled, DEC-PHASE11-044)"
 else
-    fail "plymouth boot units masked in 0615 hook" "plymouth-quit-wait can hang boot forever"
+    fail "plymouth boot units unmasked in 0615 hook" "0615 still masks plymouth — splash will not paint"
 fi
-if grep -q "plymouth.enable=0" "$REPO_ROOT/iso/auto/config"; then
-    pass "plymouth.enable=0 on kernel cmdline"
+PQW_CAP="$REPO_ROOT/iso/config/includes.chroot/etc/systemd/system/plymouth-quit-wait.service.d/10-orionx-timeout.conf"
+if [ -f "$PQW_CAP" ] && grep -qE "^TimeoutStartSec=[0-9]+" "$PQW_CAP"; then
+    pass "plymouth-quit-wait TimeoutStartSec cap present (cannot hang boot, DEC-PHASE11-044)"
 else
-    fail "plymouth.enable=0 on kernel cmdline"
+    fail "plymouth-quit-wait TimeoutStartSec cap present" "missing $PQW_CAP — quit-wait could hang boot forever"
+fi
+# Check the actual --bootappend-live line (not comments that mention the flag).
+BOOTAPPEND_LINE=$(grep -- '--bootappend-live' "$REPO_ROOT/iso/auto/config")
+if printf '%s' "$BOOTAPPEND_LINE" | grep -q "plymouth.enable=0"; then
+    fail "plymouth.enable=0 removed from --bootappend-live" "still present — splash disabled"
+else
+    pass "plymouth.enable=0 removed from --bootappend-live (DEC-PHASE11-044)"
+fi
+if printf '%s' "$BOOTAPPEND_LINE" | grep -q "splash"; then
+    pass "splash present in --bootappend-live (Plymouth paints, DEC-PHASE11-044)"
+else
+    fail "splash present in --bootappend-live" "splash missing — Plymouth will not paint"
 fi
 
 # W11-14j: tmpfiles must not chown /var/log/orionx to a group that does not exist

@@ -37,6 +37,29 @@
 #   both would create dual-registration (live-build would attempt the hook
 #   twice). References: issue #32, W7-3-enabler, DEC-PHASE7-024.
 #
+# @decision DEC-PHASE11-044
+# @title Re-enable the Plymouth orionx-phoenix boot splash (with anti-hang guards)
+# @status accepted
+# @rationale Operator directive 2026-09-12: "go back to doing a Plymouth OrionX
+#   Phoenix boot." This REVERSES DEC-PHASE11-023 (which dropped `splash` +
+#   set plymouth.enable=0) and DEC-PHASE11-025 (which masked the plymouth boot
+#   units), and retires the GRUB gfxmenu theme (DEC-PHASE11-040/041) which
+#   errored + rendered an unreadable font on real UEFI hardware twice (rc1-79
+#   text fallback; rc1-81 error). The identity moves to the already-built
+#   orionx-phoenix Plymouth theme. The original hang was plymouth-quit-wait
+#   blocking boot FOREVER (no timeout) because nothing quit plymouth on the
+#   DM/getty flow. Guards, shipped together so the hang cannot recur:
+#     (1) TimeoutStartSec cap on plymouth-quit-wait (drop-in) → worst case a
+#         few extra seconds, never a hang;
+#     (2) the first-boot wizard's unit runs `plymouth quit` in ExecStartPre so
+#         it can take tty1 and so plymouth-quit-wait is satisfied on first boot;
+#     (3) plymouth-quit.service (Before=display-manager) still releases DRM
+#         before X, and the DEC-PHASE11-023 lightdm noloop drop-in still caps
+#         restarts — so `splash` cannot reintroduce the boot loop either.
+#   GRUB becomes a plain, readable text menu (no gfxmenu theme to error). Both
+#   boot paths stay enabled: UEFI GRUB + BIOS isolinux vesamenu (operator is on
+#   UEFI but wants broad support).
+#
 # This script configures the live-build system for Orion-X.
 
 set -e
@@ -78,7 +101,7 @@ lb config noauto \
     --debian-installer false \
     --debian-installer-distribution "$DISTRIBUTION" \
     --debian-installer-gui false \
-    --bootappend-live "boot=live components persistence plymouth.enable=0 console=tty0 console=ttyS0,115200n8 live-config.username=orionx-operator live-config.hostname=orionx" \
+    --bootappend-live "boot=live components persistence splash console=tty0 console=ttyS0,115200n8 live-config.username=orionx-operator live-config.hostname=orionx" \
     --bootappend-install "locales=en_US.UTF-8" \
     --bootloader "syslinux,grub-efi" \
     --iso-application "Orion-X Phoenix Edition" \
