@@ -800,14 +800,14 @@ generate_bootloader_configs() {
 # @title BIOS/isolinux path gets the Phoenix graphical boot menu too
 # @status accepted
 # @rationale The operator boots via an unknown firmware mode ("not sure").
-#   The prior generated isolinux.cfg was a PLAIN auto-boot config (no `ui`
+#   The prior generated isolinux.cfg was a PLAIN auto-boot config (no 'ui'
 #   directive, prompt 0, 1s timeout) — it overrode live-build's default
 #   vesamenu-based menu, so a BIOS/CSM boot showed no themed menu at all,
 #   only the old splash. vesamenu.c32 and its deps (libcom32/libutil/libmenu/
 #   ldlinux/libgpl) are already present in the ISO (live-build stages them),
 #   and vesamenu is the exact module Debian live uses, so this is low risk —
 #   if VESA graphics are unavailable vesamenu falls back to a text menu rather
-#   than failing to boot. We restore a `ui vesamenu.c32` menu with the Phoenix
+#   than failing to boot. We restore a 'ui vesamenu.c32' menu with the Phoenix
 #   palette, a 5s visible timeout, and a fitted 640x480 Phoenix background
 #   (orionx-isolinux-bg.png, default VESA mode for max legacy compatibility).
 #   This retires the W11-9a3 "BIOS menu deferred" note under DEC-PHASE11-013.
@@ -817,7 +817,7 @@ generate_bootloader_configs() {
 #   $bootappend
 #
 # timeout: units are 1/10th second. timeout 50 = 5.0 seconds before auto-boot,
-#   long enough to see the themed menu. prompt 0: the `ui` menu still displays;
+#   long enough to see the themed menu. prompt 0: the 'ui' menu still displays;
 #   this only suppresses the legacy text "boot:" prompt.
 
 serial 0 115200
@@ -859,24 +859,26 @@ ISOLINUX_EOF
     log "  Generated: $isolinux_cfg"
 
     # -----------------------------------------------------------------------
-    # Generate grub.cfg (UEFI bootloader)
+    # Generate grub.cfg (UEFI bootloader) — PLAIN, READABLE text menu.
     #
-    # @decision DEC-PHASE11-013
-    # @title GRUB theme activation: set theme= + gfxmode + insmod png injected
-    #   by generator (W11-9a2, closes #74)
+    # @decision DEC-PHASE11-044
+    # @title Retire the GRUB gfxmenu theme; GRUB is a plain readable menu now
     # @status accepted
-    # @rationale W11-9a2 activates the Orion-X Phoenix GRUB theme that was
-    #   staged at iso/config/includes.binary/boot/grub/themes/orionx/ (the path
-    #   live-build's GRUB UEFI loader reads at runtime, distinct from the
-    #   post-install path /usr/share/grub/themes/orionx/ staged by W11-9).
-    #   Three directives are inserted between "set default=0" and the first
-    #   menuentry so GRUB loads graphical mode before rendering the menu:
-    #     set gfxmode=1024x768   — VESA resolution for theme rendering
-    #     insmod png             — PNG decoder needed for background.png
-    #     set theme=…/theme.txt  — activates the orionx theme
-    #   The generator is the single authority (DEC-PHASE11-012); these lines
-    #   are regenerated on every build and cannot diverge from the staged assets.
-    #   isolinux MENU BACKGROUND is deferred to W11-9a3 (needs 640x480 variant).
+    # @rationale The GRUB gfxmenu theme (DEC-PHASE11-013/040/041) failed on real
+    #   UEFI hardware twice: rc1-79 fell back to the text menu (no font loaded),
+    #   and rc1-81 — even with the loadfont fix — errored out and rendered an
+    #   unreadable font (operator report 2026-09-12). gfxmenu theming is fragile
+    #   across firmware/panel combos. Per operator directive, the Phoenix boot
+    #   identity moves to the Plymouth splash (DEC-PHASE11-044), which paints
+    #   AFTER the kernel's i915 KMS comes up — far more reliable than GRUB
+    #   graphics. So GRUB drops gfxterm/gfxmenu/gfxmode/loadfont/`set theme`
+    #   entirely and uses its native text console: always readable, never errors,
+    #   no font dependency. The themed BIOS isolinux vesamenu menu stays
+    #   (DEC-PHASE11-042). The theme.txt/background.png assets under
+    #   includes.binary/boot/grub/themes/orionx/ are LEFT in place but unreferenced
+    #   (optionality: the menu-theme decision has oscillated; keep the assets so a
+    #   future revival needs only the generator lines back).
+    #   Single authority preserved (DEC-PHASE11-012): generated every build.
     # -----------------------------------------------------------------------
     cat > "$grub_cfg" << GRUB_EOF
 # GENERATED — do not edit — regenerate via scripts/build-iso.sh
@@ -890,61 +892,28 @@ ISOLINUX_EOF
 #   this file was hand-edited without effect on /proc/cmdline) is retired.
 #   References: DEC-PHASE11-012, DEC-PHASE10-018 (superseded), issue #64, issue #65.
 #
-# @decision DEC-PHASE11-013
-# @title GRUB theme activation (W11-9a2, closes #74)
+# @decision DEC-PHASE11-044
+# @title Plain readable GRUB text menu (gfxmenu theme retired)
 # @status accepted
-# @rationale set gfxmode + insmod png + set theme injected here by generator.
-#   Theme assets staged at iso/config/includes.binary/boot/grub/themes/orionx/.
-#   isolinux MENU BACKGROUND deferred to W11-9a3 (requires 640x480 splash variant).
+# @rationale The GRUB gfxmenu theme errored + rendered an unreadable font on
+#   real UEFI hardware (rc1-79/rc1-81). GRUB now uses its native text console —
+#   always readable, no font/gfx dependency. The Phoenix boot identity is the
+#   Plymouth splash (paints after i915 KMS), not the GRUB menu. No gfxterm,
+#   gfxmenu, gfxmode, loadfont, or 'set theme' here by design.
 #
 # Generated from: iso/auto/config::--bootappend-live
 # Active cmdline (Orion-X Live menuentry):
 #   $bootappend
 #
-# set timeout=5: show the themed Orion-X boot menu for 5s so the operator sees
-#   the "fancy boot screen" (DEC-PHASE11-040); auto-boots the default after that.
-# set default=0: boot the first menuentry (Orion-X Live).
-#
-# @decision DEC-PHASE11-041
-# @title GRUB theme silently fell back to text — no font was ever loaded
-# @status accepted
-# @rationale rc1-79 shipped a correct theme.txt + set theme= but the operator
-#   saw the plain menu ("looks the same"). Root cause found by extracting the
-#   ISO: (1) the generated grub.cfg NEVER ran `loadfont`, so gfxmenu had no
-#   font and abandoned the graphical theme; Debian's own live grub.cfg loadfonts
-#   before `set theme`. (2) theme.txt referenced four fonts, three of which the
-#   ISO does not ship (every "Regular" variant + Bold 18) — only
-#   dejavu-bold-14.pf2 ("DejaVu Sans Bold 14"), dejavu-bold-16.pf2 ("DejaVu Sans
-#   Bold 16") and unicode.pf2 ("Unifont Regular 16") are present (verified from
-#   the .pf2 PFF2/NAME headers). A theme with unresolvable fonts renders nothing
-#   graphical. Fix: insmod the video+gfxmenu stack and loadfont the three
-#   shipped .pf2 files (by absolute path — the paths we confirmed exist) BEFORE
-#   `set theme`, and point theme.txt only at the two shipped DejaVu faces.
-#   `set gfxmode` gains 800x600,auto fallbacks so Bay Trail firmware that can't
-#   set 1024x768 still enters graphics instead of falling back to text.
+# set timeout=5: show the menu 5s (lets the operator pick failsafe), then
+#   auto-boot the default. set default=0: boot the first menuentry.
 
 serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
-
-# Graphics + fonts MUST be loaded before `set theme`, or gfxmenu falls back to
-# the plain text menu (DEC-PHASE11-041). Order matters: bring up gfxterm first,
-# then append serial so a headless/serial console still gets output.
-insmod all_video
-insmod gfxterm
-insmod gfxmenu
-insmod png
-if loadfont /boot/grub/unicode.pf2 ; then
-    loadfont /boot/grub/dejavu-bold-16.pf2
-    loadfont /boot/grub/dejavu-bold-14.pf2
-    set gfxmode=1024x768,800x600,auto
-    terminal_output gfxterm
-fi
-
 terminal_input --append serial
 terminal_output --append serial
 
 set timeout=5
 set default=0
-set theme=/boot/grub/themes/orionx/theme.txt
 
 menuentry "Orion-X Live" {
     linux /live/vmlinuz $bootappend

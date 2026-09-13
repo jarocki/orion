@@ -995,51 +995,47 @@ fi
 echo ""
 
 # ---------------------------------------------------------------------------
-# T36: W11-9a2 — generate_bootloader_configs() emits GRUB theme directives
+# T36: bootloader menus — plain GRUB text menu + themed BIOS vesamenu
 #
-# @decision DEC-PHASE11-013
-# @title Unit tests: GRUB theme activation lines emitted by generator (W11-9a2, #74)
+# @decision DEC-PHASE11-044
+# @title Unit tests: GRUB is a plain readable menu; Phoenix identity is Plymouth
 # @status accepted
-# @rationale generate_bootloader_configs() must emit three directives after
-#   "set default=0" and before the first menuentry:
-#     set gfxmode=1024x768
-#     insmod png
-#     set theme=/boot/grub/themes/orionx/theme.txt
-#   grub.cfg is a GENERATED file (forbidden from direct commit per scope manifest);
-#   these assertions check the generator HEREDOC source in build-iso.sh, which is
-#   the single authority. The binary-tree theme assets (theme.txt + background.png)
-#   ARE committed (allowed paths) and are asserted as staged. W11-2 identity
-#   tokens and GENERATED marker must be preserved in the generator template.
-#   GRUB theme font loading (DEC-PHASE11-041): the generator must loadfont the
-#   shipped .pf2 faces and bring up gfxterm/gfxmenu BEFORE `set theme`, or the
-#   theme silently falls back to the plain text menu. BIOS/isolinux theming
-#   (DEC-PHASE11-042): the isolinux path now uses a vesamenu.c32 graphical menu
-#   with a Phoenix background (W11-9a3 "deferred" is RETIRED).
-#   References: DEC-PHASE11-012, DEC-PHASE11-013, DEC-PHASE11-041, DEC-PHASE11-042.
+# @rationale The GRUB gfxmenu theme (DEC-PHASE11-013/040/041) errored + rendered
+#   an unreadable font on real UEFI hardware, so it is RETIRED. GRUB now uses its
+#   native text console — no gfxterm/gfxmenu/gfxmode/loadfont/`set theme`. The
+#   Phoenix boot identity moves to the Plymouth splash (DEC-PHASE11-044, verified
+#   in test_offline_boot.sh / test_iso_serial_console.sh). grub.cfg is a
+#   GENERATED file; these assertions check the generator HEREDOC (the authority).
+#   The binary-tree theme.txt/background.png assets are LEFT staged but
+#   unreferenced (optionality) and are still asserted present. Identity tokens
+#   and the GENERATED marker must be preserved. The themed BIOS/isolinux
+#   vesamenu menu (DEC-PHASE11-042) stays — both boot paths remain enabled.
+#   References: DEC-PHASE11-012, DEC-PHASE11-042, DEC-PHASE11-044.
 # ---------------------------------------------------------------------------
-echo "[T36] W11-9a2: GRUB theme activation in generate_bootloader_configs() (DEC-PHASE11-013)"
+echo "[T36] Bootloader menus: plain GRUB text menu + BIOS vesamenu (DEC-PHASE11-044)"
 
-# T36.a: generator HEREDOC contains 'set theme=' directive
-# grub.cfg is generated (not committed); we assert on the generator source which
-# is the authority. The generator writes the file at build time from this HEREDOC.
-if grep -qF "set theme=/boot/grub/themes/orionx/theme.txt" "$BUILD_SCRIPT"; then
-    pass "T36.a: 'set theme=/boot/grub/themes/orionx/theme.txt' in generator HEREDOC (closes #74)"
+# T36.a: generator must NOT emit the gfxmenu `set theme=` directive (retired).
+if ! grep -qF "set theme=/boot/grub/themes/orionx/theme.txt" "$BUILD_SCRIPT"; then
+    pass "T36.a: GRUB gfxmenu 'set theme=' retired from generator (DEC-PHASE11-044)"
 else
-    fail "T36.a: 'set theme=' directive not found in build-iso.sh — generator will not emit theme"
+    fail "T36.a: generator still emits 'set theme=' — gfxmenu theme not retired"
 fi
 
-# T36.b: generator HEREDOC contains 'insmod png'
-if grep -qF "insmod png" "$BUILD_SCRIPT"; then
-    pass "T36.b: 'insmod png' present in build-iso.sh generator HEREDOC (PNG decoder)"
+# T36.b: generator GRUB menu must be plain — no gfxterm/gfxmenu/gfxmode/loadfont.
+# (These broke rendering on real hardware; the Plymouth splash carries identity.)
+if ! grep -qE "insmod gfxmenu|insmod gfxterm|set gfxmode|^\s*loadfont " "$BUILD_SCRIPT"; then
+    pass "T36.b: GRUB menu is plain text (no gfxterm/gfxmenu/gfxmode/loadfont — DEC-PHASE11-044)"
 else
-    fail "T36.b: 'insmod png' not found in build-iso.sh generator HEREDOC"
+    fail "T36.b: generator still contains GRUB graphics directives — menu can error/unreadable"
 fi
 
-# T36.c: generator HEREDOC contains 'set gfxmode=1024x768'
-if grep -qF "set gfxmode=1024x768" "$BUILD_SCRIPT"; then
-    pass "T36.c: 'set gfxmode=1024x768' present in build-iso.sh generator HEREDOC (VESA mode)"
+# T36.c: the readable GRUB menu still offers both entries + a visible timeout.
+if grep -qF 'menuentry "Orion-X Live"' "$BUILD_SCRIPT" && \
+   grep -qF 'menuentry "Orion-X Live (failsafe)"' "$BUILD_SCRIPT" && \
+   grep -qF "set timeout=5" "$BUILD_SCRIPT"; then
+    pass "T36.c: GRUB menu has Live + failsafe entries and a 5s timeout (readable menu)"
 else
-    fail "T36.c: 'set gfxmode=1024x768' not found in build-iso.sh generator HEREDOC"
+    fail "T36.c: GRUB menuentries / timeout missing from generator"
 fi
 
 # T36.d: generator HEREDOC preserves GENERATED marker on line 1 of emitted grub.cfg
@@ -1059,11 +1055,11 @@ else
     fail "T36.e: generator HEREDOC linux line must use \$bootappend (not hardcoded tokens)"
 fi
 
-# T36.f: DEC-PHASE11-013 annotation present in build-iso.sh
-if grep -qF "DEC-PHASE11-013" "$BUILD_SCRIPT"; then
-    pass "T36.f: DEC-PHASE11-013 annotation present in build-iso.sh (W11-9a2)"
+# T36.f: DEC-PHASE11-044 annotation present in build-iso.sh (plain GRUB menu)
+if grep -qF "DEC-PHASE11-044" "$BUILD_SCRIPT"; then
+    pass "T36.f: DEC-PHASE11-044 annotation present in build-iso.sh (GRUB gfxmenu retired)"
 else
-    fail "T36.f: DEC-PHASE11-013 annotation not found in build-iso.sh"
+    fail "T36.f: DEC-PHASE11-044 annotation not found in build-iso.sh"
 fi
 
 # T36.g: binary-tree GRUB theme assets staged (committed allowed paths)
@@ -1114,40 +1110,14 @@ else
     fail "T36.i3: iso/config/includes.binary/isolinux/orionx-isolinux-bg.png missing — vesamenu will have no background"
 fi
 
-# T36.j: GRUB loadfont fix (DEC-PHASE11-041). gfxmenu needs a font loaded before
-# `set theme` or it silently falls back to the plain text menu (rc1-79 symptom:
-# "looks the same"). Assert the generator loadfonts the shipped .pf2 faces and
-# brings up gfxterm/gfxmenu.
-if grep -qF "loadfont /boot/grub/dejavu-bold-14.pf2" "$BUILD_SCRIPT" && \
-   grep -qF "insmod gfxterm" "$BUILD_SCRIPT" && \
-   grep -qF "insmod gfxmenu" "$BUILD_SCRIPT"; then
-    pass "T36.j: generator loadfonts + gfxterm/gfxmenu before set theme (DEC-PHASE11-041)"
+# T36.j: Plymouth splash carries the Phoenix boot identity now (DEC-PHASE11-044).
+# The theme + anti-hang guards are asserted in test_offline_boot.sh; here we just
+# confirm the theme assets the build activates are present in the source tree.
+PLY_THEME="$REPO_ROOT/iso/config/includes.chroot/usr/share/plymouth/themes/orionx-phoenix"
+if [[ -f "$PLY_THEME/orionx-phoenix.plymouth" && -f "$PLY_THEME/orionx-phoenix.script" && -f "$PLY_THEME/background.png" ]]; then
+    pass "T36.j: Plymouth orionx-phoenix theme assets present (.plymouth/.script/background.png — DEC-PHASE11-044)"
 else
-    fail "T36.j: generator HEREDOC missing loadfont/gfxterm/gfxmenu — GRUB theme falls back to text menu"
-fi
-
-# T36.j2: DEC-PHASE11-041 annotation present in the generator
-if grep -qF "DEC-PHASE11-041" "$BUILD_SCRIPT"; then
-    pass "T36.j2: DEC-PHASE11-041 annotation present in build-iso.sh (GRUB font loading)"
-else
-    fail "T36.j2: DEC-PHASE11-041 annotation not found in build-iso.sh"
-fi
-
-# T36.j3: theme.txt references ONLY the two shipped DejaVu faces. The ISO ships
-# dejavu-bold-14.pf2 ("DejaVu Sans Bold 14") and dejavu-bold-16.pf2 ("DejaVu
-# Sans Bold 16") — no Regular variants, no Bold 18. Referencing an absent font
-# is what made the theme fall back to text (DEC-PHASE11-041). Check the AUTHORITY
-# (includes.chroot); ignore the comment lines that merely name the constraint.
-THEME_TXT_SRC="$REPO_ROOT/iso/config/includes.chroot/usr/share/grub/themes/orionx/theme.txt"
-if [[ -f "$THEME_TXT_SRC" ]]; then
-    if ! grep -E '^\s*(item_font|selected_item_font|font)\s*=' "$THEME_TXT_SRC" \
-         | grep -qE 'DejaVu Sans Regular|DejaVu Sans Bold 18'; then
-        pass "T36.j3: theme.txt font declarations reference only shipped DejaVu faces (DEC-PHASE11-041)"
-    else
-        fail "T36.j3: theme.txt declares a font the ISO does not ship (Regular/Bold 18) — theme falls back to text"
-    fi
-else
-    fail "T36.j3: theme.txt authority not found at $THEME_TXT_SRC"
+    fail "T36.j: Plymouth orionx-phoenix theme assets missing — boot splash will not paint"
 fi
 
 echo ""

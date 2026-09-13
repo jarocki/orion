@@ -26,6 +26,11 @@ ConditionPathExists=!/var/lib/orionx/.first-boot-done
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# Quit the Plymouth splash before the wizard prompts: the splash otherwise holds
+# tty1 + DRM-master, so its prompts would be invisible, and this also satisfies
+# plymouth-quit-wait.service on first boot. `-` prefix = non-fatal if plymouth is
+# not running (e.g. subsequent boots, or splash already gone). (DEC-PHASE11-044)
+ExecStartPre=-/bin/plymouth quit
 ExecStart=/opt/orionx/scripts/security/first-boot-wizard.sh
 # Interactive on the primary virtual console.
 StandardInput=tty

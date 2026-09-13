@@ -141,15 +141,16 @@ contains "console=tty0 in --bootappend-live" "console=tty0" "$BOOTAPPEND_LINE"
 echo ""
 
 # ---------------------------------------------------------------------------
-# T5: splash REMOVED (DEC-PHASE11-023 boot-loop fix), persistence preserved
+# T5: splash RE-ENABLED (DEC-PHASE11-044 Plymouth revival), persistence preserved
 # ---------------------------------------------------------------------------
-# splash was dropped from --bootappend-live: on rc1-35 hardware plymouth grabbed
-# DRM master from initramfs, lightdms X could not become master, and
-# Restart=always looped the cold boot forever (2026-09-06). Verbose text boot
-# also aids future field diagnosis on this appliance.
-echo "[T5] splash removed, persistence preserved (DEC-PHASE11-023)"
-not_contains "splash removed from --bootappend-live (boot-loop fix)" "splash" "$BOOTAPPEND_LINE"
-contains "plymouth.enable=0 in --bootappend-live (no plymouth boot hang)" "plymouth.enable=0" "$BOOTAPPEND_LINE"
+# splash was dropped in DEC-PHASE11-023 to stop a boot loop/hang, then RE-ADDED
+# in DEC-PHASE11-044 (operator directive: "go back to a Plymouth OrionX Phoenix
+# boot"). The boot loop is now guarded three ways — the lightdm noloop drop-in,
+# plymouth-quit.service releasing DRM before X, and a plymouth-quit-wait
+# TimeoutStartSec cap — so splash is safe. plymouth.enable=0 is gone.
+echo "[T5] splash re-enabled, plymouth.enable=0 removed, persistence preserved (DEC-PHASE11-044)"
+contains "splash present in --bootappend-live (Plymouth splash, DEC-PHASE11-044)" "splash" "$BOOTAPPEND_LINE"
+not_contains "plymouth.enable=0 removed from --bootappend-live" "plymouth.enable=0" "$BOOTAPPEND_LINE"
 contains "persistence still in --bootappend-live" "persistence" "$BOOTAPPEND_LINE"
 echo ""
 

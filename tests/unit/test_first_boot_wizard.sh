@@ -651,9 +651,10 @@ fi
 # DEC-PHASE11-037: interactive first-boot on tty1 (supersedes the DEC-PHASE11-023
 # off-tty1 fix). W11-14d moved the wizard off tty1 because a NON-interactive
 # wizard writing to tty1 collided with the PLYMOUTH SPLASH on cold boot (boot
-# loop). Two things make interactive-on-tty1 safe now: (1) plymouth is disabled
-# (plymouth.enable=0 + masked units), removing that collision source; and (2) the
-# unit uses Conflicts=getty@tty1 + Before=display-manager.service, the correct way
+# loop). Two things make interactive-on-tty1 safe now: (1) Plymouth is RE-ENABLED
+# (DEC-PHASE11-044) but the wizard unit runs `plymouth quit` in ExecStartPre, so
+# the splash releases tty1 + DRM before the wizard prompts (no collision); and
+# (2) the unit uses Conflicts=getty@tty1 + Before=display-manager.service, the correct way
 # to own the console without contending with getty or the display manager. The
 # operator MUST be prompted for hostname/username/Wi-Fi, which requires a tty.
 # NOTE: this reverses a boot-validated decision — the change is gated on a QEMU
@@ -676,6 +677,14 @@ if grep -qE '^Before=display-manager.service' "$SYSTEMD_UNIT"; then
     pass "wizard unit ordered Before=display-manager.service (onboarding completes before the desktop)"
 else
     fail "wizard unit ordered Before=display-manager.service"
+fi
+# DEC-PHASE11-044: the unit must quit Plymouth before prompting, or the splash
+# holds tty1/DRM and the wizard's prompts are invisible (and quit-wait could hang).
+if grep -qE '^ExecStartPre=-?/bin/plymouth quit' "$SYSTEMD_UNIT"; then
+    pass "wizard unit quits Plymouth before prompting (ExecStartPre=plymouth quit — DEC-PHASE11-044)"
+else
+    fail "wizard unit quits Plymouth before prompting" \
+         "Without ExecStartPre=plymouth quit, the splash hides the wizard prompts on tty1"
 fi
 
 # ===========================================================================
