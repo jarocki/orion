@@ -77,11 +77,23 @@ ORIONX_VERSION="${ORIONX_VERSION:-v2.0.0-rc9}"
 ORIONX_ISO_VOLUME="$(printf '%.32s' "OrionX-${ORIONX_VERSION}")"
 
 # Base distribution
-DISTRIBUTION="bullseye"
-# Mirrors are env-overridable so a build can pin snapshot.debian.org when the
-# live Fastly index and pool go inconsistent (observed 2026-09-06: bullseye-
-# security index stuck on gnupg deb11u3 while the pool had purged it -> 404).
-# Defaults are unchanged, so normal builds are byte-identical.
+#
+# @decision DEC-PHASE12-001
+# @title Modernize the base from Debian 11 (bullseye) to Debian 13 (trixie)
+# @status accepted
+# @rationale Operator directive 2026-09-13: modernize off bullseye. Trixie is the
+#   current Debian stable (Python 3.13, kernel 6.12 LTS, live-build 20250x). This
+#   unblocks the roadmap tools that Bullseye's Python 3.9 could not run
+#   (nucleotide needs 3.10+, pivotglass 3.12+ — 3.13 covers both), lets us drop
+#   the bullseye-era snapshot pin (trixie stable indices are consistent), and
+#   reinstates fonts-iosevka + radare2 (#85). Migration is phased; the last
+#   bullseye images (rc1-73 clean boot, rc1-86 + RAIN) are kept as fallbacks.
+#   The build volume MUST be full-cleaned (ORIONX_FULL_CLEAN=1) for the first
+#   trixie build — the cached chroot is bullseye.
+DISTRIBUTION="trixie"
+# Mirrors are env-overridable (a build can still pin snapshot.debian.org for
+# reproducibility). Default to the live trixie mirrors — as current stable its
+# index+pool are consistent, so the bullseye-era snapshot pin is no longer needed.
 MIRROR_URL="${ORIONX_MIRROR:-http://deb.debian.org/debian/}"
 MIRROR_SECURITY_URL="${ORIONX_SECURITY_MIRROR:-http://security.debian.org/}"
 
@@ -95,7 +107,7 @@ lb config noauto \
     --mirror-chroot "$MIRROR_URL" \
     --mirror-chroot-security "$MIRROR_SECURITY_URL" \
     --mirror-binary-security "$MIRROR_SECURITY_URL" \
-    --archive-areas "main contrib non-free" \
+    --archive-areas "main contrib non-free non-free-firmware" \
     --apt-indices false \
     --apt-recommends true \
     --debian-installer false \

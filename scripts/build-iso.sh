@@ -133,17 +133,18 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
              -e ORIONX_PHASE_11_SLICES="${ORIONX_PHASE_11_SLICES:-W11-1,W11-2,W11-2b,W11-2c,W11-2d,W11-2e,W11-2f,W11-3,W11-4,W11-5,W11-6,W11-7,W11-8,W11-9a,W11-9a2,W11-9b,W11-11,W11-12,W11-13}" \
              -e APT_OPTIONS="--yes -o Acquire::Retries=5 --allow-remove-essential${APT_VALID_UNTIL}" \
              -e APTITUDE_OPTIONS="--assume-yes -o Acquire::Retries=5 --allow-remove-essential${APT_VALID_UNTIL}" \
-             debian:bullseye-slim \
+             debian:trixie-slim \
              bash -c '
                  set -e
                  # When a mirror override is set (e.g. snapshot.debian.org to dodge a
                  # broken live security index), repoint the build container apt too
                  # so the host toolchain (gnupg etc.) resolves consistently.
+                 # (DEC-PHASE12-001: base is trixie; suite codenames updated.)
                  if [ -n "$ORIONX_MIRROR" ]; then
                      {
-                       echo "deb $ORIONX_MIRROR bullseye main contrib non-free"
-                       echo "deb ${ORIONX_SECURITY_MIRROR:-$ORIONX_MIRROR} bullseye-security main contrib non-free"
-                       echo "deb $ORIONX_MIRROR bullseye-updates main contrib non-free"
+                       echo "deb $ORIONX_MIRROR trixie main contrib non-free non-free-firmware"
+                       echo "deb ${ORIONX_SECURITY_MIRROR:-$ORIONX_MIRROR} trixie-security main contrib non-free non-free-firmware"
+                       echo "deb $ORIONX_MIRROR trixie-updates main contrib non-free non-free-firmware"
                      } > /etc/apt/sources.list
                      # snapshot.debian.org serves original security Release files
                      # whose Valid-Until has since passed; tolerate for this build.
