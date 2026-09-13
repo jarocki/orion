@@ -48,6 +48,18 @@ xfce4
 xfce4-terminal
 lightdm
 
+# Audio stack for R.A.I.N. (Real-time Audible Intrusion Notification, #88 /
+# DEC-PHASE11-045). The forensic base has no sound stack; RAIN needs one to play
+# severity-mapped alert tones for the operator's "3am self".
+#   pulseaudio        — desktop-session sound server (paplay honours per-cue volume)
+#   pulseaudio-utils  — provides paplay (preferred cue player)
+#   alsa-utils        — provides aplay (fallback when PulseAudio is absent)
+#   espeak-ng         — optional spoken voice cue (off by default)
+pulseaudio
+pulseaudio-utils
+alsa-utils
+espeak-ng
+
 # Forensic tools
 # EXTERNAL: autopsy          — install via https://www.autopsy.com/download/
 binwalk

@@ -101,6 +101,9 @@ declare -A SCRIPT_MAP=(
     # (operator report 2026-09-12). Give it a short PATH name so it is runnable
     # as `sudo orionx-wizard` (DEC-PHASE11-037).
     ["orionx-wizard"]="/opt/orionx/scripts/security/first-boot-wizard.sh"
+    # R.A.I.N. — event-bus emitter + audible-alert daemon (#88, DEC-PHASE11-045)
+    ["orionx-event"]="/opt/orionx/scripts/rain/orionx-event"
+    ["orionx-rain"]="/opt/orionx/scripts/rain/orionx-rain"
 )
 
 for name in "${!SCRIPT_MAP[@]}"; do
