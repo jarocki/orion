@@ -1010,8 +1010,12 @@ echo ""
 #   the single authority. The binary-tree theme assets (theme.txt + background.png)
 #   ARE committed (allowed paths) and are asserted as staged. W11-2 identity
 #   tokens and GENERATED marker must be preserved in the generator template.
-#   isolinux.cfg must NOT contain a MENU BACKGROUND directive (deferred to W11-9a3).
-#   References: DEC-PHASE11-012, DEC-PHASE11-013.
+#   GRUB theme font loading (DEC-PHASE11-041): the generator must loadfont the
+#   shipped .pf2 faces and bring up gfxterm/gfxmenu BEFORE `set theme`, or the
+#   theme silently falls back to the plain text menu. BIOS/isolinux theming
+#   (DEC-PHASE11-042): the isolinux path now uses a vesamenu.c32 graphical menu
+#   with a Phoenix background (W11-9a3 "deferred" is RETIRED).
+#   References: DEC-PHASE11-012, DEC-PHASE11-013, DEC-PHASE11-041, DEC-PHASE11-042.
 # ---------------------------------------------------------------------------
 echo "[T36] W11-9a2: GRUB theme activation in generate_bootloader_configs() (DEC-PHASE11-013)"
 
@@ -1083,16 +1087,67 @@ else
     fail "T36.h: grub_theme_dst variable not found — binary-tree copy logic missing from generator"
 fi
 
-# T36.i: isolinux.cfg does NOT contain MENU BACKGROUND (deferred to W11-9a3)
-ISOLINUX_CFG="$REPO_ROOT/iso/config/includes.binary/isolinux/isolinux.cfg"
-if [[ -f "$ISOLINUX_CFG" ]]; then
-    if ! grep -qi "MENU BACKGROUND" "$ISOLINUX_CFG"; then
-        pass "T36.i: isolinux.cfg does NOT contain MENU BACKGROUND (W11-9a3 deferred — correct)"
+# T36.i: generator emits the themed BIOS/isolinux menu (DEC-PHASE11-042).
+# W11-9a3 "BIOS menu deferred" is RETIRED — the isolinux path now uses a
+# vesamenu.c32 graphical menu with a Phoenix background. Assert on the generator
+# HEREDOC (the single authority), matching T36.a-f — NOT on the committed
+# generated artifact (which is regenerated at build time).
+if grep -qF "ui vesamenu.c32" "$BUILD_SCRIPT" && \
+   grep -qF "menu background orionx-isolinux-bg.png" "$BUILD_SCRIPT"; then
+    pass "T36.i: generator emits themed isolinux menu (ui vesamenu.c32 + Phoenix background — DEC-PHASE11-042)"
+else
+    fail "T36.i: generator HEREDOC missing 'ui vesamenu.c32' / 'menu background' — BIOS boot menu not themed"
+fi
+
+# T36.i2: DEC-PHASE11-042 annotation present in the generator
+if grep -qF "DEC-PHASE11-042" "$BUILD_SCRIPT"; then
+    pass "T36.i2: DEC-PHASE11-042 annotation present in build-iso.sh (BIOS themed menu)"
+else
+    fail "T36.i2: DEC-PHASE11-042 annotation not found in build-iso.sh"
+fi
+
+# T36.i3: the 640x480 isolinux background asset is staged (committed binary path)
+ISOLINUX_BG="$REPO_ROOT/iso/config/includes.binary/isolinux/orionx-isolinux-bg.png"
+if [[ -f "$ISOLINUX_BG" ]]; then
+    pass "T36.i3: isolinux Phoenix background staged (orionx-isolinux-bg.png)"
+else
+    fail "T36.i3: iso/config/includes.binary/isolinux/orionx-isolinux-bg.png missing — vesamenu will have no background"
+fi
+
+# T36.j: GRUB loadfont fix (DEC-PHASE11-041). gfxmenu needs a font loaded before
+# `set theme` or it silently falls back to the plain text menu (rc1-79 symptom:
+# "looks the same"). Assert the generator loadfonts the shipped .pf2 faces and
+# brings up gfxterm/gfxmenu.
+if grep -qF "loadfont /boot/grub/dejavu-bold-14.pf2" "$BUILD_SCRIPT" && \
+   grep -qF "insmod gfxterm" "$BUILD_SCRIPT" && \
+   grep -qF "insmod gfxmenu" "$BUILD_SCRIPT"; then
+    pass "T36.j: generator loadfonts + gfxterm/gfxmenu before set theme (DEC-PHASE11-041)"
+else
+    fail "T36.j: generator HEREDOC missing loadfont/gfxterm/gfxmenu — GRUB theme falls back to text menu"
+fi
+
+# T36.j2: DEC-PHASE11-041 annotation present in the generator
+if grep -qF "DEC-PHASE11-041" "$BUILD_SCRIPT"; then
+    pass "T36.j2: DEC-PHASE11-041 annotation present in build-iso.sh (GRUB font loading)"
+else
+    fail "T36.j2: DEC-PHASE11-041 annotation not found in build-iso.sh"
+fi
+
+# T36.j3: theme.txt references ONLY the two shipped DejaVu faces. The ISO ships
+# dejavu-bold-14.pf2 ("DejaVu Sans Bold 14") and dejavu-bold-16.pf2 ("DejaVu
+# Sans Bold 16") — no Regular variants, no Bold 18. Referencing an absent font
+# is what made the theme fall back to text (DEC-PHASE11-041). Check the AUTHORITY
+# (includes.chroot); ignore the comment lines that merely name the constraint.
+THEME_TXT_SRC="$REPO_ROOT/iso/config/includes.chroot/usr/share/grub/themes/orionx/theme.txt"
+if [[ -f "$THEME_TXT_SRC" ]]; then
+    if ! grep -E '^\s*(item_font|selected_item_font|font)\s*=' "$THEME_TXT_SRC" \
+         | grep -qE 'DejaVu Sans Regular|DejaVu Sans Bold 18'; then
+        pass "T36.j3: theme.txt font declarations reference only shipped DejaVu faces (DEC-PHASE11-041)"
     else
-        fail "T36.i: isolinux.cfg contains MENU BACKGROUND but W11-9a3 not yet implemented; needs 640x480 splash variant first"
+        fail "T36.j3: theme.txt declares a font the ISO does not ship (Regular/Bold 18) — theme falls back to text"
     fi
 else
-    pass "T36.i: isolinux.cfg not yet generated — MENU BACKGROUND absence trivially satisfied"
+    fail "T36.j3: theme.txt authority not found at $THEME_TXT_SRC"
 fi
 
 echo ""

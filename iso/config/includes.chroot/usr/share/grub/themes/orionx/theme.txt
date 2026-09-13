@@ -6,8 +6,13 @@
 # @rationale W11-9a GRUB theme: visual identity layer for UEFI boot menu.
 #   Background is the W9-1 Phoenix wallpaper (operator-directed reuse,
 #   2026-07-13 directive). Menu uses Phoenix-red (#E84000) for selected item.
-#   Font: GRUB built-in DejaVu (W11-9a transitional); W11-9b will add Iosevka
-#   PF2 and edit this file to point at it once the font is staged.
+#   Font: ONLY the two DejaVu faces live-build ships as .pf2 may be used —
+#   "DejaVu Sans Bold 16" (dejavu-bold-16.pf2) and "DejaVu Sans Bold 14"
+#   (dejavu-bold-14.pf2). Regular variants and Bold 18 are NOT in the ISO;
+#   referencing them made gfxmenu fall back to the plain text menu
+#   (DEC-PHASE11-041). grub.cfg loadfonts these before `set theme`. If richer
+#   typography is wanted later, generate the .pf2 with grub-mkfont in the binary
+#   stage and stage it alongside background.png, then point fonts here at it.
 #
 # ACTIVATION: ACTIVE. generate_bootloader_configs() (scripts/build-iso.sh) emits
 # `set gfxmode=1024x768 / insmod png / set theme=…/theme.txt` (DEC-PHASE11-013),
@@ -35,7 +40,7 @@ desktop-color: "#0a0a0f"
 + label {
     id = "orionx-title"
     text = "Orion-X Phoenix Edition"
-    font = "DejaVu Sans Bold 18"
+    font = "DejaVu Sans Bold 16"
     color = "#e84000"
     align = "center"
     preferred_size = (0%, 0%)
@@ -55,10 +60,10 @@ desktop-color: "#0a0a0f"
 
     # Menu frame (semi-transparent dark panel for readability)
     item_color = "#f0f0f0"
-    item_font = "DejaVu Sans Regular 14"
+    item_font = "DejaVu Sans Bold 14"
 
     selected_item_color = "#e84000"
-    selected_item_font = "DejaVu Sans Bold 14"
+    selected_item_font = "DejaVu Sans Bold 16"
 
     # Highlight bar behind selected item
     item_height = 38
@@ -88,7 +93,7 @@ desktop-color: "#0a0a0f"
 + label {
     id = "help-text"
     text = "Use arrow keys to select. Enter to boot. 'e' to edit."
-    font = "DejaVu Sans Regular 11"
+    font = "DejaVu Sans Bold 14"
     color = "#909090"
     align = "center"
     position = (0, 90%)

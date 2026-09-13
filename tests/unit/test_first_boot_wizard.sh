@@ -543,9 +543,11 @@ else
          "DEC-PHASE11-019 not found in $WIZARD_SCRIPT"
 fi
 
-# step_seed_ssh_admin is called from main() — verify wiring
+# step_seed_ssh_admin is called from main() — verify wiring.
+# Window is -A 30: main() gained announce_interactive_start (DEC-PHASE11-043)
+# before the step calls, so the seed_ssh_admin call now sits deeper in the body.
 if grep -q 'step_seed_ssh_admin' "$WIZARD_SCRIPT" && \
-   grep -A 20 '^main()' "$WIZARD_SCRIPT" | grep -q 'step_seed_ssh_admin'; then
+   grep -A 30 '^main()' "$WIZARD_SCRIPT" | grep -q 'step_seed_ssh_admin'; then
     pass "step_seed_ssh_admin is wired into main() (T7)"
 else
     fail "step_seed_ssh_admin is wired into main() (T7)" \
