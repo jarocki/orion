@@ -149,8 +149,14 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
                      # whose Valid-Until has since passed; tolerate for this build.
                      echo "Acquire::Check-Valid-Until \"false\";" > /etc/apt/apt.conf.d/99snapshot-valid-until
                  fi
-                 apt-get update -q
+                 # Retries: snapshot.debian.org occasionally drops a connection
+                 # mid-fetch (observed on the rc1-85 build: libksba8 "Remote end
+                 # closed connection"). Without retries one dropped packet fails
+                 # the whole toolchain install before lb build even starts.
+                 # (DEC-PHASE11-046)
+                 apt-get update -q -o Acquire::Retries=5
                  apt-get install -y -q --no-install-recommends \
+                     -o Acquire::Retries=5 \
                      live-build debootstrap xorriso isolinux \
                      ca-certificates wget gnupg python3 \
                      squashfs-tools rsync cpio
