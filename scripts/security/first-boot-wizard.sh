@@ -194,7 +194,7 @@ step_set_hostname() {
             fi
         else
             printf "Enter hostname for this node [orionx-node]: "
-            read -r hostname
+            read -r -t "$PROMPT_TIMEOUT" hostname || hostname=""
             hostname="${hostname:-orionx-node}"
         fi
     fi
@@ -650,6 +650,43 @@ SUMMARY_EOF
 }
 
 # ---------------------------------------------------------------------------
+# Interactive attention banner
+#
+# @decision DEC-PHASE11-043
+# @title First-boot wizard must visibly announce "the boot paused — your turn"
+# @status accepted
+# @rationale The wizard runs on tty1 BEFORE the display manager. The operator
+#   reported that its prompts were indistinguishable from ordinary boot log
+#   spew — nothing signalled that the boot had PAUSED to wait for input. Clear
+#   the screen and print a high-contrast Phoenix-colored banner so it is
+#   unmistakable that the system is waiting on the operator. Gated on
+#   interactive mode + a real TTY so --non-interactive/CI runs stay clean (no
+#   escape sequences in captured output).
+# ---------------------------------------------------------------------------
+
+announce_interactive_start() {
+    [[ "$NON_INTERACTIVE" -eq 1 ]] && return 0
+    [[ -t 1 ]] || return 0
+
+    local RED=$'\033[1;38;5;202m'   # Phoenix orange-red (256-color; VT-safe on tty1)
+    local BOLD=$'\033[1m'
+    local DIM=$'\033[2m'
+    local RST=$'\033[0m'
+    local rule
+    rule="$(printf '%0.s─' {1..64})"
+
+    clear 2>/dev/null || printf '\033[2J\033[H'
+    printf '\n%s%s%s\n' "$RED" "$rule" "$RST"
+    printf '%s        ORION-X  PHOENIX  ·  FIRST-BOOT SETUP%s\n' "$RED$BOLD" "$RST"
+    printf '%s%s%s\n\n' "$RED" "$rule" "$RST"
+    printf '  %s>>>  The boot has PAUSED — this system needs your input.  <<<%s\n\n' "$BOLD" "$RST"
+    printf '  Answer the prompts below to configure this node:\n'
+    printf '    hostname  ·  primary account + password  ·  Wi-Fi (if no cable)\n\n'
+    printf '  %sEach prompt auto-continues with its default after %ss if left blank.%s\n\n' \
+        "$DIM" "$PROMPT_TIMEOUT" "$RST"
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -665,6 +702,9 @@ main() {
 
     log_info "Starting first-boot configuration..."
     [[ "$DRY_RUN" -eq 1 ]] && log_info "Dry-run mode active — no system changes will be made"
+
+    # Make it unmistakable that the boot has paused for the operator (tty1).
+    announce_interactive_start
 
     # Operator onboarding first (hostname → account → Wi-Fi), then node provisioning.
     step_set_hostname
