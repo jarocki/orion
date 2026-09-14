@@ -15,7 +15,7 @@
 Type=Application
 Name=Orion-X Phoenix Wallpaper
 Comment=Ensure Phoenix branding wallpaper survives session re-init
-Exec=/bin/sh -c 'xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/image-path -s /opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png && xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/last-image -s /opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png && xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/last-single-image -s /opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png && xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/image-show -s true && { xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/image-style -s 5 2>/dev/null || xfconf-query -c xfce4-desktop -p /backdrop/screen0/monitor0/image-style -n -t int -s 5; }'
+Exec=/opt/orionx/scripts/set-wallpaper.sh
 OnlyShowIn=XFCE;
 X-GNOME-Autostart-enabled=true
 NoDisplay=true

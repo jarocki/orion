@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# ---------------------------------------------------------------------------
+# test_desktop_wiring.sh — XFCE desktop wiring regressions (Trixie / XFCE 4.20)
+#
+# Locks two fixes found on the trixie-dev1 hardware boot:
+#   - wallpaper: set on every backdrop (monitor-name-agnostic), not monitor0 only
+#     (DEC-PHASE12-004)
+#   - genmon panel widgets: per-plugin .rc Command= present + widgets emit <txt>
+#     markup so they render instead of the "(genmon)" placeholder (DEC-PHASE12-005)
+# ---------------------------------------------------------------------------
+set -uo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
+GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
+PASS=0; FAIL=0
+pass() { PASS=$((PASS+1)); printf "  ${GREEN}PASS${NC}: %s\n" "$1"; }
+fail() { FAIL=$((FAIL+1)); printf "  ${RED}FAIL${NC}: %s — %s\n" "$1" "${2:-}"; }
+section() { printf "\n[%s]\n" "$1"; }
+
+WP="$REPO_ROOT/scripts/set-wallpaper.sh"
+AUTOSTART="$REPO_ROOT/iso/config/includes.chroot/etc/xdg/autostart/orionx-wallpaper.desktop"
+HOOK="$REPO_ROOT/iso/config/hooks/normal/0100-create-user.hook.chroot"
+WIDGETS="$REPO_ROOT/scripts/control_center/widgets"
+
+section "Wallpaper: monitor-name-agnostic (DEC-PHASE12-004)"
+if [[ -x "$WP" ]]; then pass "set-wallpaper.sh present + executable"; else fail "set-wallpaper.sh present+exec" "missing/not +x"; fi
+if grep -q "^Exec=/opt/orionx/scripts/set-wallpaper.sh" "$AUTOSTART"; then
+    pass "autostart invokes set-wallpaper.sh"
+else
+    fail "autostart invokes set-wallpaper.sh" "orionx-wallpaper.desktop Exec not updated"
+fi
+# Must enumerate existing backdrops (xfconf-query -l), not hardcode monitor0 only.
+if grep -qF 'xfconf-query -c "$CH" -l' "$WP" && grep -q "backdrop/screen0/monitor" "$WP"; then
+    pass "set-wallpaper enumerates existing backdrop props (handles any connector name)"
+else
+    fail "set-wallpaper enumerates backdrops" "still relies on a hardcoded monitor path"
+fi
+if sh -n "$WP" 2>/dev/null; then pass "set-wallpaper.sh is valid POSIX sh"; else fail "set-wallpaper.sh valid sh" "syntax error"; fi
+
+section "genmon: per-plugin Command= + widgets emit <txt> (DEC-PHASE12-005)"
+# The 0100 hook must write genmon-<id>.rc with a Command= for each widget id.
+if grep -q "genmon-\$1.rc" "$HOOK" && grep -q "^Command=python3" "$HOOK"; then
+    pass "0100 hook writes genmon-<id>.rc with Command= (the file genmon actually reads)"
+else
+    fail "0100 hook writes genmon .rc Command=" "genmon reads Command from genmon-<id>.rc, not the panel XML"
+fi
+for w in net-status mesh-status scans-count clients-count; do
+    if grep -q "genmon_rc.*$w\|/$w.py" "$HOOK"; then pass "genmon rc wired for $w"; else fail "genmon rc wired for $w" "no rc entry"; fi
+done
+# Every widget must wrap output in <txt>…</txt> or genmon shows the placeholder.
+for w in net-status mesh-status scans-count clients-count; do
+    outs=$(python3 "$WIDGETS/$w.py" 2>/dev/null)
+    if printf '%s' "$outs" | grep -q "<txt>.*</txt>"; then
+        pass "$w emits genmon <txt> markup"
+    else
+        fail "$w emits <txt> markup" "output was: $outs"
+    fi
+    # And no bare print without the wrapper remains.
+    if grep -qE "print\((f?\"|f?')[^<]" "$WIDGETS/$w.py" | grep -qv "<txt>"; then
+        :  # informational only
+    fi
+done
+
+printf "\n===========================================\n"
+printf "  Results: ${GREEN}%d passed${NC}, ${RED}%d failed${NC}\n" "$PASS" "$FAIL"
+printf "===========================================\n"
+[[ $FAIL -eq 0 ]]

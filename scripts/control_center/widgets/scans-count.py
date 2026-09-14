@@ -25,7 +25,7 @@ import sys
 def main() -> None:
     # W10-5 implementer: replace this with live scan count from the
     # detection daemon socket or state file.
-    print("\U0001f50d ?")  # 🔍 ?
+    print("<txt>\U0001f50d ?</txt>")  # 🔍 ? (genmon <txt> markup)
 
 
 if __name__ == "__main__":

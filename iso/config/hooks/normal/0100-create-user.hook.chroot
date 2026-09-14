@@ -389,6 +389,27 @@ cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml << 'EOF
 </channel>
 EOF
 
+# ---
+# genmon per-plugin config files (DEC-PHASE12-005).
+# xfce4-genmon-plugin does NOT read its command from the panel XML above — it
+# reads Command= from ~/.config/xfce4/panel/genmon-<plugin-id>.rc. Without these
+# the four widgets are unconfigured and each shows the "(genmon)" placeholder
+# (observed on the trixie-dev1 hardware boot). Seed them in /etc/skel alongside
+# the panel XML. The <id> matches plugin-4..7. Widget scripts emit <txt> markup.
+# ---
+mkdir -p /etc/skel/.config/xfce4/panel
+_orionx_genmon_rc() {  # $1=plugin-id  $2=widget-basename  $3=update-period-ms
+    cat > "/etc/skel/.config/xfce4/panel/genmon-$1.rc" <<GENMON_RC
+Command=python3 /opt/orionx/scripts/control_center/widgets/$2.py
+UpdatePeriod=$3
+UseLabel=0
+GENMON_RC
+}
+_orionx_genmon_rc 4 net-status     5000
+_orionx_genmon_rc 5 mesh-status    5000
+_orionx_genmon_rc 6 scans-count    30000
+_orionx_genmon_rc 7 clients-count  10000
+
 # MOTD authority: /etc/update-motd.d/10-orionx-welcome is written by
 # iso/config/hooks/live/0700-orionx-setup.hook.chroot (single authority).
 # Do NOT write it here.

@@ -37,11 +37,13 @@ def _get_active_iface() -> str:
 
 
 def main() -> None:
+    # genmon renders ONLY output wrapped in <txt>…</txt> markup; plain text is
+    # ignored and the widget shows its "(genmon)" placeholder (DEC-PHASE12-005).
     iface = _get_active_iface()
     if iface:
-        print(f"▲ {iface}")
+        print(f"<txt>▲ {iface}</txt>")
     else:
-        print("▼ down")
+        print("<txt>▼ down</txt>")
 
 
 if __name__ == "__main__":

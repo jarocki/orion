@@ -41,9 +41,9 @@ def _get_peer_count() -> int | None:
 def main() -> None:
     count = _get_peer_count()
     if count is None:
-        print("—")  # em-dash — mesh not running
+        print("<txt>—</txt>")  # em-dash — mesh not running (genmon <txt> markup)
     else:
-        print(f"\U0001f517 {count}p")  # 🔗 Np
+        print(f"<txt>\U0001f517 {count}p</txt>")  # 🔗 Np (genmon <txt> markup)
 
 
 if __name__ == "__main__":
