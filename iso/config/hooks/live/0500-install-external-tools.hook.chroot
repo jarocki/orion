@@ -30,24 +30,31 @@ set -euo pipefail
 echo "=== Installing external tools ==="
 
 # Volatility3 (Python package)
-pip3 install volatility3 || echo "WARNING: volatility3 install failed"
+# Trixie's system Python is PEP 668 "externally managed" (DEC-PHASE12-001), so a
+# bare `pip3 install` is refused with "externally-managed-environment" and
+# volatility3 silently does not install (observed on the trixie-dev1 build). This
+# is a build-time install into a chroot we fully control, so --break-system-packages
+# is the correct escape hatch; --no-input keeps it non-interactive. (DEC-PHASE12-003)
+pip3 install --break-system-packages --no-input volatility3 \
+    || echo "WARNING: volatility3 install failed"
 
 # Zeek (OpenSUSE Build Service repo).
-# 2026-05: Bullseye Zeek repo retired; soft-fail and clean up if 404.
-# Critical: must not leave a dangling sources.list.d entry — subsequent
-# apt-get update would fail and abort the binary stage (#30 cascade).
+# DEC-PHASE12-003: on the trixie base the repo path must be Debian_13 (Debian_11
+# 404s — that was the #33 cascade on the trixie-dev1 build). Still soft-fail +
+# clean up if the Debian_13 build is not yet published, so a missing repo never
+# leaves a dangling sources.list.d entry that would abort the binary stage.
 {
     # Try to fetch the key first. If this fails, abort before touching
     # apt sources at all.  wget replaces curl (curl not in build container).
-    wget -qO- https://download.opensuse.org/repositories/security:zeek/Debian_11/Release.key \
+    wget -qO- https://download.opensuse.org/repositories/security:zeek/Debian_13/Release.key \
         | gpg --dearmor > /etc/apt/trusted.gpg.d/zeek.gpg
     # Key fetch succeeded; now safe to add the source list and install.
-    echo 'deb http://download.opensuse.org/repositories/security:/zeek/Debian_11/ /' \
+    echo 'deb http://download.opensuse.org/repositories/security:/zeek/Debian_13/ /' \
         > /etc/apt/sources.list.d/zeek.list
     apt-get update
     apt-get install -y zeek
 } || {
-    echo "WARNING: zeek install failed — upstream Bullseye repo unavailable (#33 cascade)"
+    echo "WARNING: zeek install failed — OpenSUSE Debian_13 zeek repo unavailable (#33 cascade)"
     # Belt + suspenders: remove any partial config so later apt-get update
     # doesn't fail on a dangling source list.
     rm -f /etc/apt/sources.list.d/zeek.list /etc/apt/trusted.gpg.d/zeek.gpg
