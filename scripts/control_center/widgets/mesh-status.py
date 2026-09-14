@@ -43,7 +43,9 @@ def main() -> None:
     if count is None:
         print("<txt>—</txt>")  # em-dash — mesh not running (genmon <txt> markup)
     else:
-        print(f"<txt>\U0001f517 {count}p</txt>")  # 🔗 Np (genmon <txt> markup)
+        # ◆ (U+25C6, Geometric Shapes) renders in the panel font; the 🔗 emoji
+        # rendered as a missing-glyph box (no emoji font on the deck; DEC-PHASE12-005).
+        print(f"<txt>◆ {count}p</txt>")  # ◆ Np (genmon <txt> markup)
 
 
 if __name__ == "__main__":

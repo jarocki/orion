@@ -25,7 +25,8 @@ import sys
 def main() -> None:
     # W10-5 implementer: replace this with live client count from the
     # detection daemon socket or state file.
-    print("<txt>\U0001f465 ?</txt>")  # 👥 ? (genmon <txt> markup)
+    # ◉ (U+25C9) renders in the panel font; 👥 emoji showed as a tofu box (DEC-PHASE12-005).
+    print("<txt>◉ ?</txt>")  # ◉ ? (genmon <txt> markup)
 
 
 if __name__ == "__main__":

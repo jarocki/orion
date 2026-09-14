@@ -36,6 +36,21 @@ else
     fail "set-wallpaper enumerates backdrops" "still relies on a hardcoded monitor path"
 fi
 if sh -n "$WP" 2>/dev/null; then pass "set-wallpaper.sh is valid POSIX sh"; else fail "set-wallpaper.sh valid sh" "syntax error"; fi
+# Rev 2 (race fix): must WAIT for xfdesktop to register backdrops, log to a file,
+# and make a second pass — the rev-1 fire-and-forget lost the startup race.
+if grep -q '_i" -lt 30' "$WP" && grep -q "set-wallpaper.log" "$WP" && grep -qi "second pass" "$WP"; then
+    pass "set-wallpaper waits for xfdesktop, logs, and second-passes (race-proof)"
+else
+    fail "set-wallpaper race-proof" "missing wait loop / log / second pass"
+fi
+# Belt-and-suspenders: XFCE 4.20's compiled-in default backdrop (xfce-x.svg) is
+# replaced with the Phoenix image at build time, so the default IS Phoenix.
+BRAND="$REPO_ROOT/iso/config/hooks/live/0800-orionx-branding.hook.chroot"
+if grep -q "backgrounds/xfce/xfce-x.svg" "$BRAND" && grep -q "base64" "$BRAND"; then
+    pass "0800 hook replaces XFCE default backdrop xfce-x.svg with Phoenix (embedded SVG)"
+else
+    fail "0800 hook replaces default backdrop" "xfce-x.svg override missing from branding hook"
+fi
 
 section "genmon: per-plugin Command= + widgets emit <txt> (DEC-PHASE12-005)"
 # The 0100 hook must write genmon-<id>.rc with a Command= for each widget id.
@@ -55,11 +70,14 @@ for w in net-status mesh-status scans-count clients-count; do
     else
         fail "$w emits <txt> markup" "output was: $outs"
     fi
-    # And no bare print without the wrapper remains.
-    if grep -qE "print\((f?\"|f?')[^<]" "$WIDGETS/$w.py" | grep -qv "<txt>"; then
-        :  # informational only
-    fi
 done
+# No emoji (U+1Fxxx) — the panel font has no emoji glyphs; they rendered as tofu
+# boxes on the trixie-dev2 boot. Widgets must use BMP geometric glyphs instead.
+if grep -qiE "U0001F" "$WIDGETS"/*.py 2>/dev/null; then
+    fail "widgets use no emoji (panel font lacks emoji glyphs)" "U+1Fxxx escape still present"
+else
+    pass "widgets use panel-font-safe glyphs (no emoji tofu)"
+fi
 
 printf "\n===========================================\n"
 printf "  Results: ${GREEN}%d passed${NC}, ${RED}%d failed${NC}\n" "$PASS" "$FAIL"

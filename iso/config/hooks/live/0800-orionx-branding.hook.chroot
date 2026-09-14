@@ -189,4 +189,32 @@ if [ -f "${_XFWM_THEME}/themerc" ] && [ "$(ls "${_XFWM_THEME}"/*.xpm 2>/dev/null
     fi
 fi
 
+# ---------------------------------------------------------------------------
+# DEC-PHASE12-004: make XFCE 4.20's compiled-in DEFAULT backdrop the Phoenix
+# wallpaper. xfdesktop 4.20.1 hardcodes /usr/share/backgrounds/xfce/xfce-x.svg
+# (the blue diamond-X + mouse) as the fallback for any monitor with no configured
+# backdrop. XFCE 4.20 names backdrops by connector (monitoreDP-1 etc.), so the
+# /etc/skel monitor0 seed never matches the real display and the default kept
+# showing on the trixie-dev1/dev2 hardware boots. Replacing the default file
+# means Phoenix renders even before set-wallpaper.sh's xfconf pass lands — the
+# two layers together make the wallpaper independent of monitor naming AND of
+# session-start timing. The PNG is base64-EMBEDDED in an SVG wrapper (data: URI)
+# so librsvg's external-file restrictions cannot blank it. Tracing is suspended
+# around the heredoc so `set -x` does not dump the ~3.8 MB payload into the log.
+# ---------------------------------------------------------------------------
+_PHX_WP="/opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png"
+_XFCE_DEFAULT="/usr/share/backgrounds/xfce/xfce-x.svg"
+if [ -f "${_PHX_WP}" ] && [ -d "$(dirname "${_XFCE_DEFAULT}")" ]; then
+    set +x
+    _PHX_B64="$(base64 -w0 "${_PHX_WP}")"
+    cat > "${_XFCE_DEFAULT}" <<PHX_SVG
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1920" height="1080" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice"><image width="1920" height="1080" xlink:href="data:image/png;base64,${_PHX_B64}"/></svg>
+PHX_SVG
+    unset _PHX_B64
+    set -x
+    echo "${LOG_PREFIX} XFCE default backdrop ${_XFCE_DEFAULT} replaced with Phoenix ($(stat -c %s "${_XFCE_DEFAULT}") bytes, DEC-PHASE12-004)"
+else
+    echo "${LOG_PREFIX} WARNING: Phoenix wallpaper or XFCE backgrounds dir missing; default backdrop not replaced" >&2
+fi
+
 echo "${LOG_PREFIX} W11-9a boot-chain branding hook complete"
