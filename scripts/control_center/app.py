@@ -62,17 +62,67 @@ from .helpers import ux  # noqa: E402
 from .sections import auto_healing, awareness, comms, ir, mesh, nebula, network  # noqa: E402
 
 # Dark-cyberdeck accent — layered OVER the system theme, not a full replacement.
+#
+# @decision DEC-PHASE12-008
+# @title Futuristic "deck" theming pass for the Control Center
+# @status accepted
+# @rationale Operator (2026-09-14): the desktop lacks "pizzaz" and should feel
+#   like a futuristic cockpit. GTK3 CSS gives us gradients, glow (box-/text-
+#   shadow), transitions and @keyframes, so the accent layer now carries the
+#   Phoenix identity: an ember-glow header, a pulsing tagline, neon-edged tool
+#   buttons that light on hover, and an accent-lit active tab. Every property
+#   used is GTK 3.22+; anything a theme lacks is ignored with a warning, never a
+#   crash. Kept as an overlay so the system theme still supplies base widgets.
 _CSS = b"""
-.orionx-subtitle { color: #d98a3a; font-size: 90%; }
-.orionx-toast {
-    padding: 8px 12px;
-    border-radius: 5px;
-    font-family: monospace;
+/* --- header: ember glow, wordmark tracking, pulsing tagline --- */
+headerbar {
+    background: linear-gradient(to bottom, #171a21, #0d0f13);
+    border-bottom: 1px solid rgba(255,106,19,0.55);
+    box-shadow: 0 2px 12px rgba(255,106,19,0.28);
 }
-.orionx-toast.ok    { background-color: rgba(52,255,158,0.16);  color: #34ff9e; }
-.orionx-toast.error { background-color: rgba(255,80,40,0.18);   color: #ff8a5a; }
+headerbar .title { color: #f2f2f2; letter-spacing: 1px; font-weight: bold; }
+.orionx-subtitle {
+    color: #ff8a2a; font-size: 90%; letter-spacing: 1px;
+    animation: orionx-pulse 2.6s ease-in-out infinite alternate;
+}
+@keyframes orionx-pulse {
+    from { text-shadow: 0 0 3px rgba(255,120,30,0.25); color: #e07a24; }
+    to   { text-shadow: 0 0 12px rgba(255,140,40,0.95); color: #ffa24a; }
+}
+/* --- Cockpit launcher: the one loud button on the header --- */
+button.orionx-cockpit {
+    background: linear-gradient(to right, #ff6a13, #d43f1c);
+    color: #0b0b0e; font-weight: bold; letter-spacing: 1px;
+    border: none; border-radius: 4px; padding: 4px 14px;
+    box-shadow: 0 0 10px rgba(255,106,19,0.55);
+    transition: all 160ms ease;
+}
+button.orionx-cockpit:hover { box-shadow: 0 0 18px rgba(255,120,40,1.0); color: #000; }
+/* --- vertical tabs: accent-lit active tab --- */
+notebook > header { background: #0f1116; }
+notebook > header tab { padding: 8px 10px; color: #9aa0a6; border-left: 3px solid transparent; }
+notebook > header tab:checked {
+    color: #ffb15c; border-left: 3px solid #ff6a13;
+    background: rgba(255,106,19,0.08);
+    box-shadow: inset 8px 0 12px -10px rgba(255,106,19,0.9);
+}
+notebook > header tab:hover { color: #e6e6e6; }
+/* --- tool buttons: neon edge that lights on hover --- */
+button.orionx-tool {
+    padding: 9px 12px;
+    border: 1px solid rgba(255,120,30,0.30); border-radius: 4px;
+    background: rgba(20,22,28,0.92); color: #e6e6e6;
+    transition: all 150ms ease;
+}
+button.orionx-tool:hover {
+    border-color: #ff6a13; color: #ffffff;
+    box-shadow: 0 0 10px rgba(255,106,19,0.5), inset 0 0 6px rgba(255,106,19,0.15);
+}
+/* --- toasts --- */
+.orionx-toast { padding: 8px 12px; border-radius: 5px; font-family: monospace; }
+.orionx-toast.ok    { background-color: rgba(52,255,158,0.16);  color: #34ff9e; box-shadow: 0 0 8px rgba(52,255,158,0.25); }
+.orionx-toast.error { background-color: rgba(255,80,40,0.18);   color: #ff8a5a; box-shadow: 0 0 8px rgba(255,80,40,0.30); }
 .orionx-toast.info  { background-color: rgba(150,180,230,0.14); color: #cfe0ff; }
-button.orionx-tool { padding: 9px 12px; }
 """
 
 
@@ -108,6 +158,15 @@ class OrionXControlCenter(Gtk.Application):
         subtitle = header.get_custom_title()
         if subtitle is not None:
             subtitle.get_style_context().add_class("orionx-subtitle")
+        # The one loud button: open the live Orion Cockpit (DEC-PHASE12-007).
+        cockpit_btn = Gtk.Button(label="◈ COCKPIT")
+        cockpit_btn.set_tooltip_text("Open the Orion Cockpit — live view of the cyber activity around you")
+        cockpit_btn.get_style_context().add_class("orionx-cockpit")
+        cockpit_btn.connect(
+            "clicked",
+            lambda _b: ux.launch_detached(["orionx-cockpit"], friendly="Orion Cockpit"),
+        )
+        header.pack_end(cockpit_btn)
         win.set_titlebar(header)
 
         # --- Root layout: notebook (expand) + toast bar (bottom) ---

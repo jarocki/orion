@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 360" width="960" height="360" font-family="Hack, 'DejaVu Sans Mono', monospace">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#10131a"/><stop offset="1" stop-color="#07080b"/></linearGradient>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#ff6a13"/></marker>
+    <filter id="glow"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="960" height="360" fill="url(#bg)"/>
+  <g stroke="#1a2130" stroke-width="1"><path d="M0 60H960M0 120H960M0 180H960M0 240H960M0 300H960M120 0V360M240 0V360M360 0V360M480 0V360M600 0V360M720 0V360M840 0V360"/></g>
+  <text x="24" y="34" fill="#ff6a13" font-size="15" font-weight="bold" letter-spacing="2" filter="url(#glow)">ONE EVENT BUS · SEE IT AND HEAR IT</text>
+  <text x="24" y="52" fill="#8a919b" font-size="11">producers publish once; R.A.I.N. sounds it, the Cockpit shows it</text>
+  <!-- producers -->
+  <g font-size="12" text-anchor="middle">
+    <rect x="30" y="86" width="150" height="40" rx="6" fill="#0d1017" stroke="#8a919b"/><text x="105" y="111" fill="#e6e6e6">Control Center health</text>
+    <rect x="30" y="136" width="150" height="40" rx="6" fill="#0d1017" stroke="#8a919b"/><text x="105" y="161" fill="#e6e6e6">threat-posture change</text>
+    <rect x="30" y="186" width="150" height="40" rx="6" fill="#0d1017" stroke="#8a919b"/><text x="105" y="211" fill="#e6e6e6">suricata / IDS (Tier 1)</text>
+    <rect x="30" y="236" width="150" height="40" rx="6" fill="#0d1017" stroke="#8a919b"/><text x="105" y="261" fill="#e6e6e6">orionx-event CLI</text>
+    <text x="105" y="298" fill="#8a919b" font-size="10.5">…any script or detector</text>
+  </g>
+  <!-- bus -->
+  <rect x="300" y="120" width="260" height="120" rx="8" fill="#0d1017" stroke="#ff6a13" stroke-width="1.8" filter="url(#glow)"/>
+  <text x="430" y="152" fill="#ff6a13" font-size="13" font-weight="bold" text-anchor="middle" letter-spacing="1">EVENT BUS</text>
+  <text x="430" y="174" fill="#f0f0f0" font-size="11.5" text-anchor="middle">/run/orionx/events.jsonl</text>
+  <text x="430" y="196" fill="#8a919b" font-size="10.5" text-anchor="middle">append-only JSONL · tmpfs · atomic lines</text>
+  <text x="430" y="214" fill="#8a919b" font-size="10.5" text-anchor="middle">{ts, severity, source, category, message}</text>
+  <!-- consumers -->
+  <g font-size="12" text-anchor="middle">
+    <rect x="680" y="96" width="250" height="70" rx="6" fill="#0d1017" stroke="#ffb15c" stroke-width="1.6"/>
+    <text x="805" y="121" fill="#f0f0f0" font-weight="bold">🔊  R.A.I.N.  (orionx-rain)</text>
+    <text x="805" y="139" fill="#8a919b" font-size="10.5">severity → escalating tone · throttled</text>
+    <text x="805" y="155" fill="#8a919b" font-size="10.5">info · notice · warning · critical</text>
+    <rect x="680" y="194" width="250" height="70" rx="6" fill="#0d1017" stroke="#33d9ff" stroke-width="1.6"/>
+    <text x="805" y="219" fill="#f0f0f0" font-weight="bold">◈  ORION COCKPIT</text>
+    <text x="805" y="237" fill="#8a919b" font-size="10.5">event stream · threat pressure gauge</text>
+    <text x="805" y="253" fill="#8a919b" font-size="10.5">network sparkline · systems LEDs</text>
+  </g>
+  <!-- arrows -->
+  <g stroke="#ff6a13" stroke-width="1.6" fill="none" marker-end="url(#arr)">
+    <path d="M180 106 C240 106 240 150 300 150"/><path d="M180 156 L300 170"/><path d="M180 206 L300 190"/><path d="M180 256 C240 256 240 210 300 210"/>
+    <path d="M560 160 C620 160 620 131 680 131"/><path d="M560 200 C620 200 620 229 680 229"/>
+  </g>
+  <text x="480" y="336" fill="#8a919b" font-size="10.5" text-anchor="middle">Because both consumers read the same file, what you hear and what you see always agree. Publish your own:  orionx-event -s warning --source me -c test "hello"</text>
+</svg>

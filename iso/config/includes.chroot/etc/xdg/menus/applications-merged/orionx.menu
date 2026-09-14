@@ -1,0 +1,20 @@
+<!DOCTYPE Menu PUBLIC "-//freedesktop//DTD Menu 1.0//EN"
+ "http://www.freedesktop.org/standards/menu-spec/menu-1.0.dtd">
+<!--
+  Orion-X Phoenix Edition — "Orion" application-menu group (DEC-PHASE12-006).
+  Merged into XFCE's root menu (garcon reads /etc/xdg/menus/applications-merged/
+  via the standard DefaultMergeDirs; the root <Name> must match XFCE's, "Xfce").
+  Collects every .desktop entry tagged Categories=X-Orion; into one branded
+  submenu with the Phoenix icon, so the Orion tools read as one product instead
+  of being scattered across Network / Utility / System.
+-->
+<Menu>
+  <Name>Xfce</Name>
+  <Menu>
+    <Name>Orion</Name>
+    <Directory>orionx.directory</Directory>
+    <Include>
+      <Category>X-Orion</Category>
+    </Include>
+  </Menu>
+</Menu>

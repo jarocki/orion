@@ -1,0 +1,440 @@
+#!/usr/bin/env python3
+"""orionx-cockpit — the Orion-X live cockpit: SEE the cyber activity around you.
+
+A full-window Cairo dashboard that consumes the same event bus R.A.I.N. sounds
+(/run/orionx/events.jsonl) plus non-privileged host telemetry, and renders it
+as animated instruments:
+
+    ┌──────────────────────── ORION-X // COCKPIT ── posture ── clock ──┐
+    │  EVENT STREAM (live, severity-coloured,  │  THREAT PRESSURE gauge  │
+    │  newest first, fades with age; warning/  │  (decaying severity)    │
+    │  critical events FLASH the whole deck —  ├─────────────────────────┤
+    │  the visual twin of the R.A.I.N. tone)   │  NETWORK  rx/tx spark   │
+    │                                          ├─────────────────────────┤
+    │                                          │  SYSTEMS  LEDs          │
+    └──────────────────────────────────────────┴─────────────────────────┘
+
+Keys: F11 fullscreen · Esc / q quit.   Flags: --fullscreen, --demo (synthetic
+events so the deck comes alive with no real traffic — for demos/screenshots).
+
+No threads: GLib timers drive polling (events 0.5s, network 1s, systems 5s) and
+a ~6 fps redraw — deliberately cheap for Bay Trail hardware. All logic that is
+not drawing lives in cockpit_lib.py (dependency-free, unit-tested).
+DEC-PHASE12-007.
+"""
+
+from __future__ import annotations
+
+import argparse
+import math
+import random
+import sys
+import time
+from pathlib import Path
+
+_here = Path(__file__).resolve()
+sys.path.insert(0, str(_here.parent))
+
+import cockpit_lib as L  # noqa: E402
+
+try:
+    import gi
+    gi.require_version("Gtk", "3.0")
+    gi.require_version("Gdk", "3.0")
+    from gi.repository import Gdk, GLib, Gtk  # type: ignore[import]
+    import cairo  # python3-gi-cairo / python3-cairo
+except (ImportError, ValueError) as exc:  # pragma: no cover - environment
+    print(f"orionx-cockpit: GTK/Cairo bindings unavailable ({exc}). "
+          "Install python3-gi python3-gi-cairo gir1.2-gtk-3.0.", file=sys.stderr)
+    sys.exit(1)
+
+FPS_MS = 160          # ~6 fps redraw
+POLL_EVENTS_MS = 500
+POLL_NET_MS = 1000
+POLL_SYS_MS = 5000
+ICON = "/usr/share/pixmaps/orionx.png"
+FONT = "Hack"         # fonts-hack-otf is in the image; cairo falls back if absent
+
+_DEMO_MSGS = [
+    ("info", "health", "service", "Nebula AI recovered: running"),
+    ("notice", "posture", "posture", "Threat posture changed to Tier 1 · Active"),
+    ("warning", "suricata", "ids", "ET SCAN Nmap SYN scan 10.0.0.5 -> 10.0.0.12"),
+    ("critical", "suricata", "ids", "ET MALWARE Cobalt Strike beacon 10.0.0.12 -> 45.13.7.9"),
+    ("notice", "mesh", "peer", "peer orionx-3 handshake 12s ago"),
+    ("warning", "auth", "ssh", "3 failed logins for root from 192.168.4.77"),
+    ("info", "rain", "audio", "cue played: warning"),
+    ("critical", "health", "service", "Firewall degraded: inactive"),
+]
+
+
+class Cockpit(Gtk.Window):
+    def __init__(self, fullscreen: bool = False, demo: bool = False) -> None:
+        super().__init__(title="Orion Cockpit")
+        self.set_default_size(1280, 720)
+        try:
+            self.set_icon_from_file(ICON)
+        except Exception:
+            pass
+        self._fs = False
+        self.demo = demo
+
+        self.da = Gtk.DrawingArea()
+        self.add(self.da)
+        self.da.connect("draw", self._draw)
+        self.connect("key-press-event", self._on_key)
+        self.connect("destroy", Gtk.main_quit)
+
+        # --- live state ---
+        self.tail = L.EventTail()
+        self.rates = L.RateTracker()
+        self.pressure_target = 0.0
+        self.pressure_shown = 0.0
+        self.flash = 0.0                    # 1.0 on a new warning/critical, decays
+        self.systems = {"NEBULA": False, "FIREWALL": False, "MESH": False, "R.A.I.N.": False}
+        self.posture = "0"
+        self.t0 = time.time()
+
+        GLib.timeout_add(FPS_MS, self._tick)
+        GLib.timeout_add(POLL_EVENTS_MS, self._poll_events)
+        GLib.timeout_add(POLL_NET_MS, self._poll_net)
+        GLib.timeout_add(POLL_SYS_MS, self._poll_sys)
+        if demo:
+            GLib.timeout_add(1400, self._demo_event)
+        self._poll_events()
+        self._poll_net()
+        self._poll_sys()
+        if fullscreen:
+            self.fullscreen()
+            self._fs = True
+
+    # ------------------------------------------------------------------ polling
+    def _poll_events(self) -> bool:
+        for ev in self.tail.poll():
+            if ev["severity"] in ("warning", "critical"):
+                self.flash = 1.0
+        self.pressure_target = L.pressure(self.tail.events, time.time())
+        return True
+
+    def _demo_event(self) -> bool:
+        sev, src, cat, msg = random.choice(_DEMO_MSGS)
+        ev = {"ts": time.time(), "severity": sev, "source": src, "category": cat, "message": msg}
+        self.tail.events.append(ev)
+        if sev in ("warning", "critical"):
+            self.flash = 1.0
+        self.pressure_target = L.pressure(self.tail.events, time.time())
+        return True
+
+    def _poll_net(self) -> bool:
+        rx, tx = L.read_net_bytes()
+        if self.demo:  # synthesize a lively but plausible waveform
+            t = time.time() - self.t0
+            rx += int((math.sin(t / 3.0) + 1.3) * 40_000 * t)
+            tx += int((math.cos(t / 5.0) + 1.1) * 12_000 * t)
+        self.rates.push(rx, tx, time.time())
+        return True
+
+    def _poll_sys(self) -> bool:
+        self.systems["NEBULA"] = L.service_active("nebula-runtime.service")
+        self.systems["FIREWALL"] = L.service_active("orionx-firewall.service")
+        self.systems["MESH"] = L.mesh_up()
+        self.systems["R.A.I.N."] = L.process_running("orionx-rain")
+        self.posture = L.posture_tier()
+        if self.demo:
+            self.systems.update({"NEBULA": True, "FIREWALL": True, "MESH": True, "R.A.I.N.": True})
+        return True
+
+    def _tick(self) -> bool:
+        self.pressure_shown = L.lerp(self.pressure_shown, self.pressure_target, 0.15)
+        self.flash = max(0.0, self.flash - 0.07)
+        self.da.queue_draw()
+        return True
+
+    def _on_key(self, _w, ev) -> bool:
+        name = Gdk.keyval_name(ev.keyval) or ""
+        if name == "F11":
+            if self._fs:
+                self.unfullscreen()
+            else:
+                self.fullscreen()
+            self._fs = not self._fs
+            return True
+        if name in ("Escape", "q"):
+            Gtk.main_quit()
+            return True
+        return False
+
+    # ------------------------------------------------------------------ drawing
+    def _draw(self, da, cr) -> bool:
+        W = da.get_allocated_width()
+        H = da.get_allocated_height()
+        self._background(cr, W, H)
+
+        pad = 16
+        header_h = 58
+        self._header(cr, W, header_h)
+
+        body_y = header_h + pad
+        body_h = H - header_h - pad * 2
+        left_w = int(W * 0.58) - pad
+        self._events_panel(cr, pad, body_y, left_w, body_h)
+
+        rx = pad + left_w + pad
+        rw = W - rx - pad
+        g_h = int(body_h * 0.42)
+        n_h = int(body_h * 0.30)
+        s_h = body_h - g_h - n_h - pad * 2
+        self._gauge_panel(cr, rx, body_y, rw, g_h)
+        self._net_panel(cr, rx, body_y + g_h + pad, rw, n_h)
+        self._systems_panel(cr, rx, body_y + g_h + n_h + pad * 2, rw, s_h)
+
+        if self.flash > 0.0:  # visual twin of the R.A.I.N. cue
+            cr.set_source_rgba(*L.RED, 0.16 * self.flash)
+            cr.rectangle(0, 0, W, H)
+            cr.fill()
+        return False
+
+    # --- primitives ---
+    def _text(self, cr, x, y, s, size=12.0, color=L.DIM, bold=False, align="left", glow=0.0):
+        cr.select_font_face(FONT, cairo.FONT_SLANT_NORMAL,
+                            cairo.FONT_WEIGHT_BOLD if bold else cairo.FONT_WEIGHT_NORMAL)
+        cr.set_font_size(size)
+        ext = cr.text_extents(s)
+        if align == "right":
+            x -= ext.x_advance
+        elif align == "center":
+            x -= ext.x_advance / 2
+        if glow > 0:
+            cr.move_to(x, y)
+            cr.text_path(s)
+            cr.set_source_rgba(*color, 0.35 * glow)
+            cr.set_line_width(3.0)
+            cr.stroke()
+        cr.move_to(x, y)
+        cr.set_source_rgb(*color)
+        cr.show_text(s)
+        return ext.x_advance
+
+    @staticmethod
+    def _rrect(cr, x, y, w, h, r=8.0):
+        cr.new_sub_path()
+        cr.arc(x + w - r, y + r, r, -math.pi / 2, 0)
+        cr.arc(x + w - r, y + h - r, r, 0, math.pi / 2)
+        cr.arc(x + r, y + h - r, r, math.pi / 2, math.pi)
+        cr.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
+        cr.close_path()
+
+    def _panel(self, cr, x, y, w, h, title):
+        self._rrect(cr, x, y, w, h)
+        cr.set_source_rgba(0.04, 0.05, 0.07, 0.82)
+        cr.fill_preserve()
+        cr.set_source_rgba(*L.EMBER, 0.35)
+        cr.set_line_width(1.0)
+        cr.stroke()
+        # corner accents
+        cr.set_source_rgba(*L.EMBER, 0.9)
+        cr.set_line_width(2.0)
+        for (cx, cy, dx, dy) in ((x, y, 1, 1), (x + w, y, -1, 1), (x, y + h, 1, -1), (x + w, y + h, -1, -1)):
+            cr.move_to(cx + dx * 14, cy)
+            cr.line_to(cx, cy)
+            cr.line_to(cx, cy + dy * 14)
+            cr.stroke()
+        self._text(cr, x + 14, y + 20, title, 11, L.EMBER, bold=True, glow=0.6)
+        return (x + 14, y + 34, w - 28, h - 46)   # content box
+
+    # --- background: gradient + grid + scanline sweep ---
+    def _background(self, cr, W, H):
+        g = cairo.LinearGradient(0, 0, 0, H)
+        g.add_color_stop_rgb(0, *L.BG_TOP)
+        g.add_color_stop_rgb(1, *L.BG_BOTTOM)
+        cr.set_source(g)
+        cr.rectangle(0, 0, W, H)
+        cr.fill()
+        cr.set_source_rgba(*L.GRID, 0.22)
+        cr.set_line_width(1.0)
+        for gx in range(0, W, 40):
+            cr.move_to(gx + 0.5, 0)
+            cr.line_to(gx + 0.5, H)
+        for gy in range(0, H, 40):
+            cr.move_to(0, gy + 0.5)
+            cr.line_to(W, gy + 0.5)
+        cr.stroke()
+        # scanline sweep
+        t = time.time() - self.t0
+        sy = (t * 60.0) % (H + 80) - 40
+        band = cairo.LinearGradient(0, sy - 40, 0, sy + 40)
+        band.add_color_stop_rgba(0, *L.EMBER, 0.0)
+        band.add_color_stop_rgba(0.5, *L.EMBER, 0.07)
+        band.add_color_stop_rgba(1, *L.EMBER, 0.0)
+        cr.set_source(band)
+        cr.rectangle(0, sy - 40, W, 80)
+        cr.fill()
+
+    # --- header ---
+    def _header(self, cr, W, h):
+        cr.set_source_rgba(*L.EMBER, 0.5)
+        cr.set_line_width(1.0)
+        cr.move_to(16, h + 0.5)
+        cr.line_to(W - 16, h + 0.5)
+        cr.stroke()
+        self._text(cr, 22, 38, "ORION-X", 22, L.EMBER, bold=True, glow=1.0)
+        self._text(cr, 22 + 118, 38, "//  COCKPIT", 16, L.DIM)
+        # posture badge
+        label = L.POSTURE_LABEL.get(self.posture, "TIER 0 · PASSIVE")
+        col = {"0": L.GREEN, "1": L.AMBER, "2": L.RED}.get(self.posture, L.GREEN)
+        bw = 220
+        bx = W - 16 - 180 - bw - 16
+        self._rrect(cr, bx, 14, bw, 30, 6)
+        cr.set_source_rgba(*col, 0.12)
+        cr.fill_preserve()
+        cr.set_source_rgba(*col, 0.8)
+        cr.set_line_width(1.0)
+        cr.stroke()
+        self._text(cr, bx + bw / 2, 34, label, 12, col, bold=True, align="center", glow=0.8)
+        # clock
+        self._text(cr, W - 22, 38, time.strftime("%a %d %b  %H:%M:%S"), 15, L.DIM, align="right")
+
+    # --- event stream ---
+    def _events_panel(self, cr, x, y, w, h):
+        cx, cy, cw, ch = self._panel(cr, x, y, w, h, "EVENT STREAM  ·  /run/orionx/events.jsonl")
+        cr.save()
+        cr.rectangle(cx, cy, cw, ch)
+        cr.clip()
+        row_h = 22
+        rows = int(ch // row_h)
+        events = list(self.tail.events)[-rows:][::-1]   # newest first
+        now = time.time()
+        if not events:
+            self._text(cr, cx + cw / 2, cy + ch / 2, "— no events yet — publish one with: orionx-event -s warning 'hello'  —",
+                       12, L.DIM, align="center")
+        for i, ev in enumerate(events):
+            ry = cy + i * row_h + 16
+            age = now - ev["ts"] if ev["ts"] else 0
+            fade = max(0.35, 1.0 - min(age, 600) / 800.0)
+            col = L.SEVERITY_COLOR.get(ev["severity"], L.DIM)
+            # severity dot with glow (fresh = brighter)
+            cr.set_source_rgba(*col, 0.25 * fade)
+            cr.arc(cx + 8, ry - 4, 6, 0, 2 * math.pi)
+            cr.fill()
+            cr.set_source_rgba(*col, fade)
+            cr.arc(cx + 8, ry - 4, 3.2, 0, 2 * math.pi)
+            cr.fill()
+            cr.set_source_rgba(*L.DIM, fade)
+            self._text(cr, cx + 22, ry, f"{L.fmt_age(age):>3}", 11, tuple(c * fade for c in L.DIM))
+            self._text(cr, cx + 58, ry, f"{ev['source']}/{ev['category']}", 11, tuple(c * fade for c in col), bold=True)
+            msg = ev["message"]
+            self._text(cr, cx + 230, ry, msg, 11.5, tuple(c * fade for c in (0.9, 0.9, 0.9)))
+        cr.restore()
+
+    # --- threat gauge ---
+    def _gauge_panel(self, cr, x, y, w, h):
+        cx0, cy0, cw, ch = self._panel(cr, x, y, w, h, "THREAT PRESSURE")
+        p = self.pressure_shown
+        col = L.pressure_color(p)
+        cxm = cx0 + cw / 2
+        cym = cy0 + ch * 0.62
+        r = min(cw, ch) * 0.42
+        a0 = math.radians(135)
+        a1 = math.radians(405)
+        # track
+        cr.set_line_cap(cairo.LINE_CAP_ROUND)
+        cr.set_line_width(12)
+        cr.set_source_rgba(1, 1, 1, 0.06)
+        cr.arc(cxm, cym, r, a0, a1)
+        cr.stroke()
+        # value arc: glow + core
+        a_val = a0 + (a1 - a0) * (p / 100.0)
+        cr.set_line_width(18)
+        cr.set_source_rgba(*col, 0.22)
+        cr.arc(cxm, cym, r, a0, a_val)
+        cr.stroke()
+        cr.set_line_width(8)
+        cr.set_source_rgb(*col)
+        cr.arc(cxm, cym, r, a0, a_val)
+        cr.stroke()
+        # ticks
+        cr.set_line_width(1.5)
+        for i in range(0, 11):
+            a = a0 + (a1 - a0) * i / 10
+            cr.set_source_rgba(*L.DIM, 0.6)
+            cr.move_to(cxm + math.cos(a) * (r - 18), cym + math.sin(a) * (r - 18))
+            cr.line_to(cxm + math.cos(a) * (r - 24), cym + math.sin(a) * (r - 24))
+            cr.stroke()
+        # needle
+        cr.set_source_rgba(*col, 0.9)
+        cr.set_line_width(2.5)
+        cr.move_to(cxm, cym)
+        cr.line_to(cxm + math.cos(a_val) * (r - 30), cym + math.sin(a_val) * (r - 30))
+        cr.stroke()
+        cr.arc(cxm, cym, 5, 0, 2 * math.pi)
+        cr.fill()
+        # readout
+        self._text(cr, cxm, cym - 10, f"{int(round(p))}", 34, col, bold=True, align="center", glow=1.0)
+        band = "CALM" if p < 25 else "ELEVATED" if p < 60 else "HOSTILE"
+        self._text(cr, cxm, cym + 14, band, 12, col, bold=True, align="center")
+        self._text(cr, cxm, cy0 + ch - 4, "severity-weighted · 60s half-life", 10, L.DIM, align="center")
+
+    # --- network sparkline ---
+    def _net_panel(self, cr, x, y, w, h):
+        cx, cy, cw, ch = self._panel(cr, x, y, w, h, "NETWORK")
+        graph_h = ch - 22
+        vmax = max(max(self.rates.rx_hist), max(self.rates.tx_hist), 1024.0)
+        for hist, col in ((self.rates.rx_hist, L.CYAN), (self.rates.tx_hist, L.EMBER)):
+            pts = L.sparkline_points(hist, cx, cy, cw, graph_h, vmax)
+            if len(pts) < 2:
+                continue
+            # area
+            cr.move_to(pts[0][0], cy + graph_h)
+            for px, py in pts:
+                cr.line_to(px, py)
+            cr.line_to(pts[-1][0], cy + graph_h)
+            cr.close_path()
+            cr.set_source_rgba(*col, 0.12)
+            cr.fill()
+            # line
+            cr.move_to(*pts[0])
+            for px, py in pts[1:]:
+                cr.line_to(px, py)
+            cr.set_source_rgba(*col, 0.95)
+            cr.set_line_width(1.8)
+            cr.stroke()
+        self._text(cr, cx, cy + ch - 4, f"↓ {L.fmt_rate(self.rates.rx_rate)}", 12, L.CYAN, bold=True)
+        self._text(cr, cx + cw, cy + ch - 4, f"↑ {L.fmt_rate(self.rates.tx_rate)}", 12, L.EMBER, bold=True, align="right")
+
+    # --- systems LEDs ---
+    def _systems_panel(self, cr, x, y, w, h):
+        cx, cy, cw, ch = self._panel(cr, x, y, w, h, "SYSTEMS")
+        items = list(self.systems.items())
+        col_w = cw / max(1, len(items))
+        pulse = 0.75 + 0.25 * math.sin((time.time() - self.t0) * 2.0)
+        for i, (name, ok) in enumerate(items):
+            lx = cx + col_w * i + col_w / 2
+            ly = cy + ch * 0.42
+            col = L.GREEN if ok else L.RED
+            cr.set_source_rgba(*col, (0.35 if ok else 0.2) * pulse)
+            cr.arc(lx, ly, 14, 0, 2 * math.pi)
+            cr.fill()
+            cr.set_source_rgb(*col)
+            cr.arc(lx, ly, 6, 0, 2 * math.pi)
+            cr.fill()
+            self._text(cr, lx, ly + 30, name, 11, L.DIM if ok else col, bold=True, align="center")
+            self._text(cr, lx, ly + 44, "ONLINE" if ok else "DOWN", 9, col, align="center")
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(prog="orionx-cockpit",
+                                 description="Orion-X live cockpit — see the cyber activity around you.")
+    ap.add_argument("--fullscreen", action="store_true", help="start fullscreen (F11 toggles)")
+    ap.add_argument("--demo", action="store_true", help="synthesize events/traffic for a live demo")
+    args = ap.parse_args(argv)
+    try:
+        win = Cockpit(fullscreen=args.fullscreen, demo=args.demo)
+    except Exception as exc:  # no display, etc.
+        print(f"orionx-cockpit: cannot open a window ({exc}). Is DISPLAY set?", file=sys.stderr)
+        return 1
+    win.show_all()
+    Gtk.main()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

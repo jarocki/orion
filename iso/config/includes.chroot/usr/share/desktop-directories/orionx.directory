@@ -1,0 +1,8 @@
+[Desktop Entry]
+# Orion-X Phoenix Edition — application-menu group (DEC-PHASE12-006).
+# Every Orion tool carries Categories=X-Orion; and applications-merged/orionx.menu
+# collects them under this single branded "Orion" submenu.
+Type=Directory
+Name=Orion
+Comment=Orion-X Phoenix Edition — cyberdeck tools
+Icon=/usr/share/pixmaps/orionx.png

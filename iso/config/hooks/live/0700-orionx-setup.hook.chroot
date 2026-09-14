@@ -104,6 +104,8 @@ declare -A SCRIPT_MAP=(
     # R.A.I.N. — event-bus emitter + audible-alert daemon (#88, DEC-PHASE11-045)
     ["orionx-event"]="/opt/orionx/scripts/rain/orionx-event"
     ["orionx-rain"]="/opt/orionx/scripts/rain/orionx-rain"
+    # Orion Cockpit — live visualisation dashboard (DEC-PHASE12-007)
+    ["orionx-cockpit"]="/opt/orionx/scripts/cockpit/orionx-cockpit"
 )
 
 for name in "${!SCRIPT_MAP[@]}"; do
@@ -136,7 +138,7 @@ Name=Orion-X Mesh
 Comment=WireGuard P2P mesh management
 Exec=xfce4-terminal --hold -e "bash -c 'orionx-mesh; exec bash'"
 Icon=network-workgroup
-Categories=Network;
+Categories=X-Orion;
 DESKTOP_EOF
 
 cat > /usr/share/applications/orionx-setup-matrix.desktop << 'DESKTOP_EOF'
@@ -146,7 +148,7 @@ Name=Orion-X Matrix Setup
 Comment=Set up Matrix/Synapse communication server
 Exec=xfce4-terminal --hold -e "bash -c 'setup-matrix.sh; exec bash'"
 Icon=internet-chat
-Categories=Network;
+Categories=X-Orion;
 DESKTOP_EOF
 
 cat > /usr/share/applications/orionx-artifact-analyzer.desktop << 'DESKTOP_EOF'
@@ -156,7 +158,7 @@ Name=Orion-X Artifact Analyzer
 Comment=Forensic artifact analysis tool
 Exec=xfce4-terminal --hold -e "bash -c 'artifact-analyzer.py; exec bash'"
 Icon=utilities-file-archiver
-Categories=Utility;
+Categories=X-Orion;
 DESKTOP_EOF
 
 cat > /usr/share/applications/orionx-storyboard-gen.desktop << 'DESKTOP_EOF'
@@ -166,7 +168,7 @@ Name=Orion-X Storyboard Generator
 Comment=Generate intelligence storyboards from forensic data
 Exec=xfce4-terminal --hold -e "bash -c 'storyboard-gen.py; exec bash'"
 Icon=text-editor
-Categories=Utility;
+Categories=X-Orion;
 DESKTOP_EOF
 
 # One-click mesh launcher — invokes the existing orionx-mesh entrypoint with sudo.
@@ -179,7 +181,7 @@ Name=Orion-X — Start Mesh
 Comment=Start Orion-X WireGuard mesh (one-click)
 Exec=xfce4-terminal --hold -e "bash -c 'sudo orionx-mesh join; exec bash'"
 Icon=network-wireless
-Categories=Network;
+Categories=X-Orion;
 DESKTOP_EOF
 
 # GTK Control Center — launches directly as a GTK window, NOT via xfce4-terminal.
@@ -192,8 +194,21 @@ Type=Application
 Name=Orion-X Control Center
 Comment=Orion-X cyberdeck control surface (Network, Mesh, Comms, IR, Nebula AI)
 Exec=/usr/bin/orionx-control-center
-Icon=preferences-desktop
-Categories=System;Security;
+Icon=/usr/share/pixmaps/orionx.png
+Categories=X-Orion;
+DESKTOP_EOF
+
+# Orion Cockpit — live "see and hear" visualisation of cyber activity (event
+# stream, threat gauge, network sparkline, mesh/system status). GTK+Cairo app,
+# launches directly (DEC-PHASE12-007). Grouped under the Orion menu.
+cat > /usr/share/applications/orionx-cockpit.desktop << 'DESKTOP_EOF'
+[Desktop Entry]
+Type=Application
+Name=Orion Cockpit
+Comment=Live cockpit — see and hear the cyber activity around you
+Exec=/usr/bin/orionx-cockpit
+Icon=/usr/share/pixmaps/orionx.png
+Categories=X-Orion;
 DESKTOP_EOF
 
 # ---------------------------------------------------------------------------

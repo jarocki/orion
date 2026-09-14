@@ -194,6 +194,10 @@ xdg-utils
 # User_Guide.html so the desktop launcher opens formatted docs in firefox-esr
 # instead of raw markdown (DEC-PHASE11-035). Small, no compiled deps.
 python3-markdown
+# python3-pymdownx: PyMdown extensions — `superfences` renders code fences nested
+# inside list items, which stock python-markdown collapses into inline <code>
+# garbage (the User Guide has 128 such blocks; audit 2026-09-14). DEC-PHASE12-009.
+python3-pymdownx
 less
 lsof
 man-db
@@ -255,6 +259,10 @@ python3-gi
 gir1.2-gtk-3.0
 # gir1.2-glib-2.0: GObject introspection data for GLib 2
 gir1.2-glib-2.0
+# python3-gi-cairo: Cairo integration for PyGObject — REQUIRED for the Orion
+# Cockpit's live gauges/sparklines (a Gtk.DrawingArea 'draw' handler only receives
+# a cairo.Context when this is installed). python3-cairo comes with it. (DEC-PHASE12-007)
+python3-gi-cairo
 # xfce4-genmon-plugin: generic monitor plugin for XFCE panel (drives panel widgets)
 xfce4-genmon-plugin
 

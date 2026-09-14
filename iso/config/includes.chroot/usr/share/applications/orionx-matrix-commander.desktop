@@ -5,5 +5,5 @@ Comment=matrix-commander over Phase 4 Synapse / Phase 3 WireGuard mesh (DEC-PHAS
 Exec=xfce4-terminal -e "bash -c 'matrix-commander --help; echo; read -p \"Press enter to close...\"'"
 Icon=terminal
 Terminal=false
-Categories=Network;Chat;
+Categories=X-Orion;
 OnlyShowIn=XFCE

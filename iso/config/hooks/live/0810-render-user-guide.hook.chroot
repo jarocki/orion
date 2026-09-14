@@ -33,10 +33,21 @@ with open(md_path, encoding="utf-8") as fh:
 
 try:
     import markdown
-    body = markdown.markdown(
-        text,
-        extensions=["extra", "toc", "sane_lists", "fenced_code", "tables"],
-    )
+    # DEC-PHASE12-009: the User Guide nests ~128 code fences inside list items.
+    # Stock python-markdown (fenced_code, also pulled in by "extra") only honours
+    # fences at column 0, so those blocks rendered as inline "<code>bash lsblk …"
+    # garbage (audit 2026-09-14). pymdownx.superfences renders them as real,
+    # Pygments-highlighted <pre> blocks and the list resumes with start=N.
+    # superfences must NOT be combined with fenced_code, so when it is available
+    # we list "extra"'s components explicitly minus fenced_code. Proven in a
+    # trixie container (python3-markdown + python3-pymdownx 10.13).
+    try:
+        import pymdownx.superfences  # noqa: F401  (python3-pymdownx)
+        _exts = ["abbr", "attr_list", "def_list", "footnotes", "md_in_html",
+                 "tables", "toc", "sane_lists", "pymdownx.superfences"]
+    except Exception:
+        _exts = ["extra", "toc", "sane_lists", "fenced_code", "tables"]
+    body = markdown.markdown(text, extensions=_exts)
 except Exception:  # markdown missing/broken — fall back to a readable <pre>
     import html as _html
     body = "<pre>" + _html.escape(text) + "</pre>"
@@ -47,6 +58,20 @@ STYLE = """
          font-family: system-ui, 'DejaVu Sans', sans-serif; line-height:1.6; }
   .wrap { max-width: 900px; margin: 0 auto; padding: 32px 24px 80px; }
   h1,h2,h3,h4 { color:#ff8a3a; line-height:1.25; margin-top:1.6em; }
+  /* Pygments classes emitted by pymdownx.superfences — dark Phoenix palette
+     (DEC-PHASE12-009). Without these, highlighted code renders uncoloured. */
+  .highlight { background:#0e1116; border:1px solid rgba(255,106,19,0.35); border-radius:6px;
+               padding:10px 14px; overflow-x:auto; box-shadow: inset 0 0 12px rgba(255,106,19,0.06); }
+  .highlight pre { margin:0; background:transparent; }
+  .highlight .k, .highlight .kd, .highlight .kn { color:#ff8a3a; }      /* keywords */
+  .highlight .s, .highlight .s1, .highlight .s2 { color:#34ff9e; }      /* strings */
+  .highlight .c, .highlight .c1, .highlight .cm { color:#7f8791; font-style:italic; } /* comments */
+  .highlight .nb, .highlight .nf { color:#33d9ff; }                       /* builtins / functions */
+  .highlight .o, .highlight .p { color:#cfd3d8; }                         /* operators / punctuation */
+  .highlight .m, .highlight .mi { color:#ffb15c; }                        /* numbers */
+  img { max-width:100%; height:auto; border-radius:6px; margin:12px 0;
+        box-shadow: 0 0 18px rgba(255,106,19,0.15); }
+  img[src$=".svg"] { background:#0b0d12; }
   h1 { border-bottom:2px solid #7a2f12; padding-bottom:.3em; }
   h2 { border-bottom:1px solid #3a1f12; padding-bottom:.2em; }
   a { color:#ffb26b; }
