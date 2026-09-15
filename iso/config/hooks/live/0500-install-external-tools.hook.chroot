@@ -64,7 +64,12 @@ pip3 install --break-system-packages --no-input stix2 pyfiglet \
     echo 'deb http://download.opensuse.org/repositories/security:/zeek/Debian_13/ /' \
         > /etc/apt/sources.list.d/zeek.list
     apt-get update
-    apt-get install -y zeek
+    # zeek-core, NOT the `zeek` metapackage: the latter pulls zeek-zkg (plugin
+    # package manager) → zeek-spicy-dev (194 MB) + btest-data (40 MB) + a full
+    # gcc/g++ toolchain + git — plugin-building kit that an air-gapped live deck
+    # never uses. zeek-core is the analyzer itself (/opt/zeek/bin/zeek, zeek-cut).
+    # (DEC-PHASE12-015; leftovers are purged by 0900-trim as belt-and-suspenders.)
+    apt-get install -y --no-install-recommends zeek-core
 } || {
     echo "WARNING: zeek install failed — OpenSUSE Debian_13 zeek repo unavailable (#33 cascade)"
     # Belt + suspenders: remove any partial config so later apt-get update
@@ -182,6 +187,20 @@ fi
 # Clean up the downloaded archive (free up space in the chroot)
 rm -f "${OLLAMA_TMP}"
 
+# DEC-PHASE12-015: drop ollama's GPU backends. The archive ships CUDA 12/13 and
+# Vulkan runtimes (measured in trixie-dev6: cuda_v12 1.25 GB + cuda_v13 0.85 GB
+# + vulkan 58 MB uncompressed — the single largest non-model item in the image).
+# The Bay Trail deck has no NVIDIA GPU and no Vulkan; Nebula runs on the CPU
+# backends (libggml-cpu-*.so), which stay. ollama probes backends at runtime, so
+# an absent directory simply means "no GPU" — exactly the state on the hardware.
+for gpu in cuda_v12 cuda_v13 vulkan rocm rocm_v6 rocm_v7; do
+    [ -d "/usr/local/lib/ollama/$gpu" ] && rm -rf "/usr/local/lib/ollama/$gpu" \
+        && echo "[ollama] removed GPU backend lib/ollama/$gpu (no GPU on the deck; DEC-PHASE12-015)"
+done
+ls /usr/local/lib/ollama/libggml-cpu-*.so >/dev/null 2>&1 \
+    && echo "[ollama] CPU backends retained: $(ls /usr/local/lib/ollama/libggml-cpu-*.so | wc -l) variants" \
+    || echo "WARNING: [ollama] no CPU backend libs found after GPU prune" >&2
+
 # Verify the binary is present and executable
 if ! command -v ollama >/dev/null 2>&1; then
     echo "ERROR: ollama installed but binary not found in PATH." >&2
@@ -197,11 +216,15 @@ echo "=== Ollama installation complete ==="
 # W11-2c debloat-purge: remove gcc/g++ transitive Recommends that survive
 # list-driven removal because iso/auto/config runs --apt-recommends true.
 # DEC-PHASE11-003 policy is enforced list-side (gcc not in orionx.list.chroot)
-# AND chroot-side (this purge). Single debloat-in-chroot authority: this hook.
+# AND chroot-side (this purge). Chroot-side debloat has two ordered steps, not
+# two authorities: THIS hook purges the build toolchain at the points where the
+# pip/venv ordering demands it (here and at the tail), and 0900-trim.hook.chroot
+# (DEC-PHASE12-015) is the single FINAL sweep — package purges, locales, docs —
+# after every other hook has finished installing. Add new size cuts to 0900.
 # ---------------------------------------------------------------------------
 echo "[0500] W11-2c: purging gcc/g++ Recommends residue (DEC-PHASE11-003 enforcement)"
 DEBIAN_FRONTEND=noninteractive apt-get purge -y --autoremove \
-    gcc gcc-10 g++ g++-10 || true
+    gcc gcc-14 g++ g++-14 || true
 
 # W11-14 debloat repair: python3-pip Recommends build-essential + python3-dev, and
 # iso/auto/config runs --apt-recommends true, so adding python3-pip in W11-13 (T6)

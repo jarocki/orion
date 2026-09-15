@@ -1,0 +1,117 @@
+#!/bin/bash
+# shellcheck shell=bash
+# 0900-trim.hook.chroot — zero-regret image trim (runs last, before squashfs).
+#
+# @decision DEC-PHASE12-015
+# @title Zero-regret trim: purge bloat that no supported deck can use
+# @status accepted
+# @rationale Size budget measured on trixie-dev6 (6.63 GB ISO; squashfs already
+#   xz + dedup, so compression is NOT a lever). The bloat is concentrated in
+#   things that cost the operator nothing to lose:
+#     - ollama GPU backends (cuda_v12 1.25 GB, cuda_v13 0.85 GB, vulkan 58 MB):
+#       no NVIDIA/Vulkan on the Bay Trail deck, ollama runs CPU-only (handled in
+#       0500 right after extraction; listed here for the budget).
+#     - `zeek` metapackage → zeek-zkg → zeek-spicy-dev (194 MB) + btest-data
+#       (40 MB) + gcc/g++/*-dev/git: a package-manager + compiler toolchain for
+#       building Zeek plugins on an air-gapped live deck. 0500 now installs
+#       zeek-core; the leftovers are purged here.
+#     - binwalk (Rust, needs no Python) + python3-scapy Recommends dragging
+#       python3-scipy/-matplotlib/-pyqtgraph/-fonttools + unicode-data + gcc.
+#     - ukui-polkit: an unrelated desktop's polkit agent that apt chose for the
+#       polkit-1-auth-agent virtual dep, dragging OpenCV + GDAL + proj (~200 MB).
+#       The package list now pins the XFCE agent; the stray is purged.
+#     - firmware-nvidia-graphics (63 MB; GSP firmware for accel on new NVIDIA —
+#       nouveau boots without it), mesa-vulkan-drivers (79 MB; no Vulkan use),
+#       unhide.rb + ruby (30 MB; rkhunter Recommends).
+#     - 219 non-English locale dirs (258 MB) and non-copyright /usr/share/doc
+#       (108 MB). Copyright files stay (redistribution), man pages stay (3am
+#       operator), /usr/share/doc/orionx stays (the User Guide lives there).
+#   Everything is best-effort: purge lists are filtered to what is actually
+#   installed so a renamed package can never abort the build, and the hook
+#   never touches anything under /opt/orionx.
+set -euo pipefail
+
+echo "=== 0900 trim: zero-regret debloat (DEC-PHASE12-015) ==="
+export DEBIAN_FRONTEND=noninteractive
+
+_before=$(df -m / | awk 'NR==2{print $3}')
+
+# ---------------------------------------------------------------------------
+# 1. Package purges (filtered to installed; --autoremove drops the orphans)
+# ---------------------------------------------------------------------------
+PURGE_WANTED=(
+    # zeek plugin-dev toolchain (0500 installs zeek-core now)
+    zeek-zkg zeek-spicy-dev zeek-btest-data zeek-core-dev libbroker-dev
+    # compilers + dev headers (nothing at runtime needs them; pip installs are done)
+    gcc g++ cpp gcc-14 g++-14 cpp-14 gcc-x86-64-linux-gnu g++-x86-64-linux-gnu
+    gcc-14-x86-64-linux-gnu g++-14-x86-64-linux-gnu cpp-14-x86-64-linux-gnu
+    libc6-dev linux-libc-dev libstdc++-14-dev libgcc-14-dev libssl-dev
+    libsystemd-dev manpages-dev
+    # binwalk/scapy Recommends bloat (binwalk 3 is Rust; scapy runs without these)
+    python3-scipy python3-matplotlib python3-matplotlib-inline python3-pyqtgraph
+    python3-fonttools unicode-data
+    # stray polkit agent + its OpenCV/GDAL tail
+    ukui-polkit
+    # misc
+    unhide.rb ruby3.3 libruby3.3 ruby
+    mesa-vulkan-drivers firmware-nvidia-graphics
+)
+PURGE=()
+for p in "${PURGE_WANTED[@]}"; do
+    if dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "install ok installed"; then
+        PURGE+=("$p")
+    fi
+done
+# Every remaining *-dev package (none are runtime deps on a live forensic image).
+while IFS= read -r p; do
+    case " ${PURGE[*]} " in *" $p "*) ;; *) PURGE+=("$p") ;; esac
+done < <(dpkg-query -W -f='${Package}\n' 2>/dev/null | grep -E -- '-dev$' || true)
+
+if [ "${#PURGE[@]}" -gt 0 ]; then
+    echo "[trim] purging ${#PURGE[@]} packages: ${PURGE[*]}"
+    apt-get purge -y -q --autoremove "${PURGE[@]}" \
+        || echo "WARNING: [trim] apt purge reported a problem — continuing (best-effort)" >&2
+else
+    echo "[trim] nothing to purge"
+fi
+apt-get autoremove -y -q --purge >/dev/null 2>&1 || true
+apt-get clean
+
+# Guard: the things we must NOT have lost.
+for must in zeek python3-scapy binwalk ollama nebula-runtime; do
+    case "$must" in
+        zeek)   [ -x /opt/zeek/bin/zeek ] && echo "[trim] ✓ zeek-core still present" || echo "WARNING: [trim] zeek binary missing after purge" >&2 ;;
+        ollama) [ -x /usr/local/bin/ollama ] && echo "[trim] ✓ ollama still present" || echo "WARNING: [trim] ollama missing" >&2 ;;
+        nebula-runtime) ls /usr/local/lib/ollama/libggml-cpu-*.so >/dev/null 2>&1 && echo "[trim] ✓ ollama CPU backends present" || echo "WARNING: [trim] ollama CPU backends missing" >&2 ;;
+        *)      dpkg-query -W "$must" >/dev/null 2>&1 && echo "[trim] ✓ $must still installed" || echo "WARNING: [trim] $must missing after purge" >&2 ;;
+    esac
+done
+
+# ---------------------------------------------------------------------------
+# 2. Locales: keep English only (the deck is en_US.UTF-8; i18n sources stay)
+# ---------------------------------------------------------------------------
+if [ -d /usr/share/locale ]; then
+    _n=0
+    for d in /usr/share/locale/*/; do
+        b=$(basename "$d")
+        case "$b" in en|en_*|en@*|locale.alias) ;; *) rm -rf "$d"; _n=$((_n+1)) ;;
+        esac
+    done
+    echo "[trim] removed $_n non-English locale dirs"
+fi
+
+# ---------------------------------------------------------------------------
+# 3. /usr/share/doc: keep every copyright file (licence compliance) and ALL of
+#    /usr/share/doc/orionx (User Guide + images). Drop the rest.
+# ---------------------------------------------------------------------------
+if [ -d /usr/share/doc ]; then
+    find /usr/share/doc -mindepth 1 \
+        -not -path '/usr/share/doc/orionx' -not -path '/usr/share/doc/orionx/*' \
+        -type f -not -name copyright -delete 2>/dev/null || true
+    find /usr/share/doc -mindepth 1 -type d -empty -delete 2>/dev/null || true
+    echo "[trim] /usr/share/doc pruned to copyright files + orionx docs ($(du -sh /usr/share/doc | cut -f1))"
+fi
+
+_after=$(df -m / | awk 'NR==2{print $3}')
+echo "[trim] chroot usage: ${_before} MB -> ${_after} MB (freed $((_before - _after)) MB uncompressed)"
+echo "=== 0900 trim complete ==="

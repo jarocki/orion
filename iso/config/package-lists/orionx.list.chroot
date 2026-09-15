@@ -47,6 +47,12 @@ user-setup
 xfce4
 xfce4-terminal
 lightdm
+# Pin the polkit auth agent. nm-applet/nm-connection-editor depend on
+# "policykit-1-gnome | polkit-1-auth-agent"; left unpinned, trixie-dev6 got
+# BOTH xfce4's recommended mate-polkit AND ukui-polkit — the latter dragging
+# OpenCV + GDAL + proj (~200 MB) into a live ISO for a Qt agent nothing uses.
+# Naming mate-polkit satisfies the virtual dep up front (DEC-PHASE12-015).
+mate-polkit
 
 # Audio stack for R.A.I.N. (Real-time Audible Intrusion Notification, #88 /
 # DEC-PHASE11-045). The forensic base has no sound stack; RAIN needs one to play
