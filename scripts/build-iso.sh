@@ -55,6 +55,56 @@ done
 
 if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
     if [[ -z "${ORIONX_BUILD_IN_DOCKER:-}" ]]; then
+        # -------------------------------------------------------------------
+        # @decision DEC-PHASE12-014
+        # @title Delegation guards: validate args, verify the repo, refuse a busy volume
+        # @status accepted
+        # @rationale The trixie-dev5 build died at lb chroot_hooks with
+        #   "mount: chroot/live-build/config: special device config does not
+        #   exist" — /build/iso/config had VANISHED from the shared volume
+        #   mid-build. Cause: tests/unit/test_build_iso.sh T9 runs
+        #   `bash scripts/build-iso.sh --bogus` from a FAKE repo (scripts/ with
+        #   one file). Without --dry-run, this block delegated to Docker, mounted
+        #   the fake repo as /host-src, and `rsync -a --delete` replaced the
+        #   volume's whole tree (iso/config, iso/auto, docs, theme…) under the
+        #   running build; the unknown-flag error only fired afterwards, INSIDE
+        #   the container. On an idle volume the next real build silently
+        #   re-synced everything, which is why this never surfaced before.
+        #   Three independent guards, all BEFORE any docker command:
+        #     1. args are validated on the host — only --dry-run, --version V,
+        #        --help/-h may proceed; anything else exits 1 here;
+        #     2. the source tree must be the real repo (iso/auto/config +
+        #        iso/config/package-lists present), or we refuse to delegate;
+        #     3. if a container already uses the orionx-lb-work volume, refuse —
+        #        two concurrent builds would corrupt each other.
+        # -------------------------------------------------------------------
+        _argv=("$@")
+        _i=0
+        while [[ $_i -lt ${#_argv[@]} ]]; do
+            case "${_argv[$_i]}" in
+                --dry-run) ;;
+                --version)
+                    _i=$((_i + 1))
+                    if [[ $_i -ge ${#_argv[@]} || "${_argv[$_i]}" != v* ]]; then
+                        echo "ERROR: --version requires a value starting with 'v' (got: '${_argv[$_i]:-}')" >&2
+                        exit 1
+                    fi
+                    ;;
+                --help|-h)
+                    grep '^#' "$0" | grep -v '#!/' | sed 's/^# \?//'
+                    exit 0
+                    ;;
+                *)
+                    echo "ERROR: Unknown argument: ${_argv[$_i]}" >&2
+                    echo "       Usage: bash scripts/build-iso.sh [--dry-run] [--version <ver>]" >&2
+                    echo "       (refusing to delegate to Docker with invalid arguments — DEC-PHASE12-014)" >&2
+                    exit 1
+                    ;;
+            esac
+            _i=$((_i + 1))
+        done
+        unset _argv _i
+
         if ! command -v docker >/dev/null 2>&1; then
             echo "ERROR: macOS host detected but 'docker' command not found." >&2
             echo "       Install Docker Desktop and start it, then re-run." >&2
@@ -66,6 +116,22 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
             exit 1
         fi
         REPO_ROOT_MACOS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+        # Guard 2 (DEC-PHASE12-014): only the REAL repo may be rsync --delete'd
+        # over the shared build volume. A fake/partial tree would wipe it.
+        if [[ ! -f "$REPO_ROOT_MACOS/iso/auto/config" || ! -d "$REPO_ROOT_MACOS/iso/config/package-lists" ]]; then
+            echo "ERROR: $REPO_ROOT_MACOS does not look like the Orion-X repo (missing iso/auto/config" >&2
+            echo "       or iso/config/package-lists). Refusing to delegate: syncing this tree into the" >&2
+            echo "       shared build volume would destroy it (DEC-PHASE12-014)." >&2
+            exit 1
+        fi
+        # Guard 3 (DEC-PHASE12-014): one build per volume at a time.
+        if [[ -n "$(docker ps -q --filter volume=orionx-lb-work 2>/dev/null)" ]]; then
+            echo "ERROR: a container is already using the orionx-lb-work build volume:" >&2
+            docker ps --filter volume=orionx-lb-work --format '       {{.ID}}  {{.Image}}  {{.Status}}' >&2
+            echo "       Refusing to start a second build on the same volume (DEC-PHASE12-014)." >&2
+            exit 1
+        fi
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] macOS host detected — delegating to debian:trixie-slim container"
 
         # -------------------------------------------------------------------

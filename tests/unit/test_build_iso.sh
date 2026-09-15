@@ -283,6 +283,22 @@ make_fake_repo "$FAKE_REPO_FLAG"
 
 run_test_fail "unknown flag --bogus exits non-zero" \
     "(cd '$FAKE_REPO_FLAG' && bash scripts/build-iso.sh --bogus 2>&1)"
+# DEC-PHASE12-014: on macOS this very invocation used to DELEGATE TO DOCKER from
+# the fake repo and `rsync --delete` it over the shared build volume, wiping a
+# running build's iso/config (trixie-dev5 post-mortem). The unknown-flag error
+# must now come from the HOST, before any docker command.
+BOGUS_OUT="$( (cd "$FAKE_REPO_FLAG" && bash scripts/build-iso.sh --bogus) 2>&1 || true)"
+contains "unknown flag is rejected on the host, before Docker delegation" "Unknown argument: --bogus" "$BOGUS_OUT"
+not_contains "unknown flag never reaches the Docker delegation banner" "delegating to debian" "$BOGUS_OUT"
+# Guard 2: a tree that is not the real repo must be refused even with VALID args
+# (this is what makes a fake-repo test invocation safe on macOS).
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    FAKE_VALID_OUT="$( (cd "$FAKE_REPO_FLAG" && bash scripts/build-iso.sh --version v9.9.9) 2>&1 || true)"
+    contains "fake repo refused before delegation (repo-sanity guard)" "does not look like the Orion-X repo" "$FAKE_VALID_OUT"
+    not_contains "fake repo never reaches the Docker delegation banner" "delegating to debian" "$FAKE_VALID_OUT"
+fi
+contains "DEC-PHASE12-014 delegation guards annotated" "DEC-PHASE12-014" "$SCRIPT_CONTENT"
+contains "volume-in-use guard present (one build per volume)" "docker ps -q --filter volume=orionx-lb-work" "$SCRIPT_CONTENT"
 echo ""
 
 # ---------------------------------------------------------------------------
