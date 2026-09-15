@@ -960,6 +960,22 @@ For analyzing log files:
   /opt/orionx/venv/re/bin/capa /path/to/sample.exe
   ```
 - **roast** — OAST callback-domain triage; see [go-roast](#go-roast-oast-triage).
+- **nucleotide** — attributes observed HTTP requests to the *Nuclei* scanner templates that produced them, grades each match (`weak` / `medium` / `strong`), and builds portable threat-actor behaviour fingerprints. A lookup table covering the full nuclei-templates catalogue is built into the image at `/opt/orionx/nucleotide/lookup.json`, with matching Snort/Suricata rules under `/opt/orionx/nucleotide/snort/`, so attribution works offline.
+
+  Attribute one or more URLs (arguments or stdin):
+  ```bash
+  nucleotide lookup /opt/orionx/nucleotide/lookup.json https://victim.example/wp-content/plugins/akismet/readme.txt
+  ```
+  Stream a web log into the event bus — every UNIQUE attribution becomes an event, so R.A.I.N. sounds it and the Cockpit shows it (`--dry-run` prints instead of publishing):
+  ```bash
+  awk '{print $7}' /var/log/nginx/access.log | orionx-nucleotide-watch --min-quality medium
+  ```
+  Fingerprint an actor from a batch of observed events, then compare or match against a saved fingerprint:
+  ```bash
+  nucleotide fingerprint events.jsonl --lookup /opt/orionx/nucleotide/lookup.json --actor-id case-2026-001 --out actor.yml
+  nucleotide compare ref-actor.yml actor.yml
+  ```
+  Rebuild the lookup table when you have network access: `nucleotide build --out /opt/orionx/nucleotide/lookup.json`. Nebula can call it too, via the `nucleotide_lookup` and `nucleotide_fingerprint` MCP tools.
 
 ## 11. Timeline Generation
 

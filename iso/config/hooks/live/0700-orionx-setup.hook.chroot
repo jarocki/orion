@@ -111,6 +111,9 @@ declare -A SCRIPT_MAP=(
     # safe when the zeek repo soft-fails. Verified present in trixie-dev4.
     ["zeek"]="/opt/zeek/bin/zeek"
     ["zeek-cut"]="/opt/zeek/bin/zeek-cut"
+    # nucleotide — Nuclei-scan attribution/fingerprinting (roadmap #89, DEC-PHASE12-012)
+    ["nucleotide"]="/opt/orionx/scripts/nucleotide/nucleotide-cli"
+    ["orionx-nucleotide-watch"]="/opt/orionx/scripts/nucleotide/orionx-nucleotide-watch"
 )
 
 for name in "${!SCRIPT_MAP[@]}"; do

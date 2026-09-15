@@ -1,0 +1,31 @@
+#!/bin/sh
+# nucleotide-cli — launcher for the vendored nucleotide package (roadmap #89).
+#
+# @decision DEC-PHASE12-012
+# @title nucleotide vendored as a plain package + launcher (no pip, no venv)
+# @status accepted
+# @rationale nucleotide (github.com/jarocki/nucleotide) needs Python >= 3.10 and
+#   PyYAML only. On the trixie base that is the system python3 (3.13) plus the
+#   python3-yaml package, so we vendor the 388 KB package verbatim under
+#   /opt/orionx/scripts/nucleotide/nucleotide/ and run it with `python3 -m`.
+#   No pip (PEP 668 would refuse it), no venv (nothing to isolate), no build
+#   step — and ~zero size cost. Symlinked to /usr/bin/nucleotide by the 0700
+#   SCRIPT_MAP (the launcher is named nucleotide-cli so it cannot shadow the
+#   package directory next to it). Resolves its own location through the
+#   /usr/bin symlink (DEC-PHASE11-039 lesson).
+#
+# Usage: nucleotide {build,lookup,fingerprint,compare,match} ...
+#   A lookup table built at ISO-build time lives at
+#   /opt/orionx/nucleotide/lookup.json (see 0520-nucleotide-lookup.hook.chroot);
+#   the CLI defaults are unchanged, so pass it explicitly:
+#     nucleotide lookup /opt/orionx/nucleotide/lookup.json https://host/path
+
+_SOURCE="$0"
+while [ -h "$_SOURCE" ]; do
+    _dir="$(cd -P "$(dirname "$_SOURCE")" >/dev/null 2>&1 && pwd)"
+    _SOURCE="$(readlink "$_SOURCE")"
+    case "$_SOURCE" in /*) ;; *) _SOURCE="$_dir/$_SOURCE" ;; esac
+done
+HERE="$(cd -P "$(dirname "$_SOURCE")" >/dev/null 2>&1 && pwd)"
+
+PYTHONPATH="$HERE${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m nucleotide "$@"

@@ -1,0 +1,29 @@
+nucleotide — vendored Python package
+====================================
+Roadmap #89 · DEC-PHASE12-012
+
+Source:   https://github.com/jarocki/nucleotide
+Commit:   d94bd93
+Version:  2.0.0 (pyproject.toml)
+License:  Apache-2.0 (LICENSE.nucleotide alongside this file)
+Package:  ./nucleotide/  (18 files, 388 KB — copied verbatim, __pycache__ removed)
+Runtime:  Python >= 3.10 (trixie ships 3.13) + PyYAML (python3-yaml, apt)
+
+What it is: "Reverse-engineer threat-actor tool and CLI choices from observed
+Nuclei traffic." Builds a URL→template lookup table from the nuclei-templates
+repo, attributes observed URLs to templates (with a quality grade), emits
+per-tier Snort/Suricata + Sigma rules, and produces portable actor-behaviour
+fingerprints that can be compared/matched across incidents.
+
+How it is wired in:
+  nucleotide-cli            launcher (PYTHONPATH here; python3 -m nucleotide)
+                            → /usr/bin/nucleotide via the 0700 SCRIPT_MAP
+  orionx-nucleotide-watch   URLs → lookup → Orion-X event bus (R.A.I.N. + Cockpit)
+  /opt/orionx/nucleotide/   lookup.json + snort/ rules built at ISO-build time by
+                            0520-nucleotide-lookup.hook.chroot (soft-fail; the
+                            100 MB template clone is NOT shipped)
+  Nebula MCP tools          nucleotide_lookup, nucleotide_fingerprint
+
+To update: re-clone, checkout the desired commit, copy the nucleotide/ package
+directory over ./nucleotide/, delete __pycache__, and bump the commit line here.
+Its own test suite (137 tests) passed on trixie/Python 3.13 before vendoring.

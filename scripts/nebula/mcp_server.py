@@ -179,6 +179,40 @@ def _registry() -> list[Tool]:
                     "properties": {"file": _str_prop("path to a file of OAST domains to cluster")},
                     "required": ["file"]},
         ),
+        # --- nucleotide: Nuclei-scan attribution + actor fingerprinting (#89) --
+        # Vendored package + launcher on PATH as `nucleotide` (DEC-PHASE12-012).
+        # The lookup table is built at ISO-build time; both tools read a FILE and
+        # pass it as argv (no shell/stdin), matching the roast/tshark pattern.
+        Tool(
+            "nucleotide_lookup",
+            "Attribute observed URLs (one per line in a file) to Nuclei scanner templates — "
+            "which template produced each request, with template severity and a quality grade. "
+            "Reports UNIQUE attributions of medium+ quality (nucleotide).",
+            # `nucleotide lookup` reads URLs from argv/stdin only, and this server
+            # is argv-only (no shell/stdin) — so use the file-reading watcher in
+            # --dry-run mode, which prints attributions instead of publishing them.
+            lambda a: ["orionx-nucleotide-watch", "--dry-run", str(a["file"])],
+            needs="orionx-nucleotide-watch",
+            schema={"type": "object",
+                    "properties": {"file": _str_prop("path to a file of URLs/paths, one per line")},
+                    "required": ["file"]},
+        ),
+        Tool(
+            "nucleotide_fingerprint",
+            "Build a portable threat-actor behaviour fingerprint (YAML) from a JSONL file of "
+            "observed HTTP events, using the on-device Nuclei lookup table (nucleotide).",
+            lambda a: ["nucleotide", "fingerprint", str(a["file"]),
+                       "--lookup", "/opt/orionx/nucleotide/lookup.json",
+                       "--actor-id", str(a.get("actor_id", "orionx-observed"))],
+            needs="nucleotide",
+            schema={"type": "object",
+                    "properties": {
+                        "file": _str_prop("path to a JSONL file of observed HTTP events"),
+                        "actor_id": _str_prop("label for the fingerprint (default: orionx-observed)"),
+                    },
+                    "required": ["file"]},
+            timeout=300,
+        ),
     ]
 
 

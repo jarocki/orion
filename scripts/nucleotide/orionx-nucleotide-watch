@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""orionx-nucleotide-watch — attribute observed URLs to Nuclei templates and
+publish the hits onto the Orion-X event bus, so R.A.I.N. sounds them and the
+Cockpit shows them (roadmap #89 integration, DEC-PHASE12-012).
+
+    orionx-nucleotide-watch access.log            # URLs/paths, one per line
+    tail -f access.log | orionx-nucleotide-watch   # stream from stdin
+    orionx-nucleotide-watch --lookup other.json --min-quality strong urls.txt
+
+For every line, the URL is matched against the lookup table built at ISO-build
+time (/opt/orionx/nucleotide/lookup.json). Each UNIQUE attribution becomes one
+event on /run/orionx/events.jsonl:
+
+    severity  = template severity mapped onto the bus scale
+                (info→info, low→notice, medium→warning, high/critical→critical)
+    source    = nucleotide      category = scan
+    message   = "<template-id> (<template severity>, <quality>): <url>"
+
+The panel's ◎ scans widget and the Cockpit's THREAT PRESSURE gauge count these.
+AMBIGUOUS matches (a path shared by many templates) are NOT published — they
+would only add noise. Everything is best-effort: a missing lookup table or bus
+is reported once on stderr and the tool exits 0.
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+_here = Path(__file__).resolve()
+DEFAULT_LOOKUP = Path("/opt/orionx/nucleotide/lookup.json")
+LAUNCHER = _here.parent / "nucleotide-cli"
+
+# Nuclei template severity -> Orion-X bus severity.
+_SEV_MAP = {"info": "info", "low": "notice", "medium": "warning",
+            "high": "critical", "critical": "critical"}
+_QUALITY_RANK = {"weak": 0, "medium": 1, "strong": 2}
+
+
+def parse_lookup_line(line: str) -> dict | None:
+    """Parse one TSV line of `nucleotide lookup` output.
+
+    Columns: url, verdict(UNIQUE|AMBIGUOUS), template_id, snippet,
+             template_severity, name, quality. Returns None for non-hit lines.
+    """
+    parts = line.rstrip("\n").split("\t")
+    if len(parts) < 7:
+        return None
+    url, verdict, template_id, _snippet, tsev, name, quality = parts[:7]
+    if verdict not in ("UNIQUE", "AMBIGUOUS"):
+        return None
+    return {
+        "url": url, "verdict": verdict, "template_id": template_id,
+        "template_severity": tsev.strip().lower(), "name": name,
+        "quality": quality.strip().lower(),
+    }
+
+
+def bus_severity(template_severity: str) -> str:
+    return _SEV_MAP.get(template_severity, "notice")
+
+
+def should_publish(hit: dict, min_quality: str) -> bool:
+    """UNIQUE hits at or above the quality floor only."""
+    if hit["verdict"] != "UNIQUE":
+        return False
+    return _QUALITY_RANK.get(hit["quality"], 0) >= _QUALITY_RANK.get(min_quality, 1)
+
+
+def run_lookup(lookup: Path, urls: list[str]) -> str:
+    """Run the vendored CLI once for a batch of URLs; returns its stdout."""
+    if not urls:
+        return ""
+    try:
+        out = subprocess.run(
+            [str(LAUNCHER), "lookup", str(lookup), *urls],
+            capture_output=True, text=True, timeout=120, check=False,
+        )
+        return out.stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"orionx-nucleotide-watch: lookup failed: {exc}", file=sys.stderr)
+        return ""
+
+
+def publish(hit: dict) -> None:
+    msg = f"{hit['template_id']} ({hit['template_severity']}, {hit['quality']}): {hit['url']}"
+    try:
+        subprocess.Popen(
+            ["orionx-event", "--severity", bus_severity(hit["template_severity"]),
+             "--source", "nucleotide", "--category", "scan", msg],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        pass
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="orionx-nucleotide-watch",
+        description="Attribute URLs to Nuclei templates and publish hits to the Orion-X event bus.",
+    )
+    ap.add_argument("file", nargs="?", help="file of URLs/paths, one per line (default: stdin)")
+    ap.add_argument("--lookup", default=str(DEFAULT_LOOKUP), help=f"lookup table (default: {DEFAULT_LOOKUP})")
+    ap.add_argument("--min-quality", default="medium", choices=("weak", "medium", "strong"),
+                    help="minimum snippet quality to publish (default: medium)")
+    ap.add_argument("--batch", type=int, default=200, help="URLs per lookup invocation")
+    ap.add_argument("--dry-run", action="store_true", help="print would-be events instead of publishing")
+    args = ap.parse_args(argv)
+
+    lookup = Path(args.lookup)
+    if not lookup.is_file():
+        print(f"orionx-nucleotide-watch: no lookup table at {lookup} — run "
+              "`nucleotide build --out <path>` when online, or pass --lookup", file=sys.stderr)
+        return 0
+
+    src = open(args.file, encoding="utf-8", errors="replace") if args.file else sys.stdin
+    published = 0
+    batch: list[str] = []
+    try:
+        for line in src:
+            u = line.strip()
+            if u and not u.startswith("#"):
+                batch.append(u)
+            if len(batch) >= args.batch:
+                published += _flush(lookup, batch, args)
+                batch = []
+        published += _flush(lookup, batch, args)
+    finally:
+        if args.file:
+            src.close()
+    print(f"orionx-nucleotide-watch: {published} event(s) {'would be ' if args.dry_run else ''}published",
+          file=sys.stderr)
+    return 0
+
+
+def _flush(lookup: Path, batch: list[str], args) -> int:
+    n = 0
+    for line in run_lookup(lookup, batch).splitlines():
+        hit = parse_lookup_line(line)
+        if hit and should_publish(hit, args.min_quality):
+            if args.dry_run:
+                print(f"[{bus_severity(hit['template_severity'])}] nucleotide/scan "
+                      f"{hit['template_id']} ({hit['template_severity']}, {hit['quality']}): {hit['url']}")
+            else:
+                publish(hit)
+            n += 1
+    return n
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

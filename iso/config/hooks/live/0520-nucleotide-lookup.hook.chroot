@@ -1,0 +1,57 @@
+#!/bin/bash
+# shellcheck shell=bash
+# 0520-nucleotide-lookup.hook.chroot — build nucleotide's Nuclei lookup table
+# and Snort/Suricata rules at ISO-build time so the deck can attribute scanner
+# traffic OFFLINE.
+#
+# @decision DEC-PHASE12-012
+# @title Prebuilt nucleotide lookup table (offline attribution), soft-fail
+# @status accepted
+# @rationale `nucleotide lookup` / `fingerprint` need a lookup table built from
+#   the nuclei-templates repo (`nucleotide build`), which requires a ~100 MB git
+#   clone — impossible on the offline deck, cheap at build time (measured on
+#   trixie: 78 s, 13,738 templates → lookup.json 55 MB raw, Snort rules 8.3 MB).
+#   We ship lookup.json + the Snort rules (Suricata can load them for Tier 1)
+#   and DROP the clone and the Sigma output (no SIEM on the deck) — the JSON
+#   compresses ~5x in squashfs. SOFT-FAIL like zeek: a GitHub outage must not
+#   abort the ISO; the CLI still works with any user-supplied lookup, and
+#   orionx-nucleotide-watch says exactly what is missing. Timeboxed so a hung
+#   clone cannot stall the build.
+set -euo pipefail
+
+echo "=== nucleotide: building Nuclei lookup table (DEC-PHASE12-012) ==="
+
+LAUNCHER="/opt/orionx/scripts/nucleotide/nucleotide-cli"
+OUT_DIR="/opt/orionx/nucleotide"
+CACHE_DIR="/tmp/nuclei-templates-cache"
+REPO="https://github.com/projectdiscovery/nuclei-templates"
+
+if [ ! -x "$LAUNCHER" ]; then
+    echo "WARNING: nucleotide launcher missing at $LAUNCHER — skipping lookup build" >&2
+    exit 0
+fi
+
+mkdir -p "$OUT_DIR"
+{
+    # --templates-dir avoids nucleotide's own fetch path; we control depth/timeout.
+    timeout 600 git clone --depth 1 --quiet "$REPO" "$CACHE_DIR"
+    timeout 900 "$LAUNCHER" build \
+        --templates-dir "$CACHE_DIR" \
+        --out "$OUT_DIR/lookup.json" \
+        --snort-out-dir "$OUT_DIR/snort" \
+        --min-len 6
+    printf 'built=%s\ntemplates_repo=%s\ntemplates_commit=%s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$REPO" \
+        "$(git -C "$CACHE_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+        > "$OUT_DIR/BUILD_INFO"
+    echo "nucleotide lookup built: $(du -sh "$OUT_DIR/lookup.json" | cut -f1) lookup.json, $(find "$OUT_DIR/snort" -type f | wc -l) rule files"
+} || {
+    echo "WARNING: nucleotide lookup build failed (network/GitHub?) — shipping without a prebuilt table." >&2
+    echo "         Operators can run: nucleotide build --out $OUT_DIR/lookup.json  (when online)" >&2
+    rm -f "$OUT_DIR/lookup.json"
+}
+
+# Never ship the 100 MB template clone.
+rm -rf "$CACHE_DIR"
+chmod -R a+rX "$OUT_DIR" 2>/dev/null || true
+echo "=== nucleotide lookup step complete ==="

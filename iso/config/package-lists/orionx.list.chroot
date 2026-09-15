@@ -194,6 +194,9 @@ xdg-utils
 # User_Guide.html so the desktop launcher opens formatted docs in firefox-esr
 # instead of raw markdown (DEC-PHASE11-035). Small, no compiled deps.
 python3-markdown
+# python3-yaml: PyYAML — the ONLY third-party dependency of the vendored
+# nucleotide package (roadmap #89, DEC-PHASE12-012). System package, no pip.
+python3-yaml
 # python3-pymdownx: PyMdown extensions — `superfences` renders code fences nested
 # inside list items, which stock python-markdown collapses into inline <code>
 # garbage (the User Guide has 128 such blocks; audit 2026-09-14). DEC-PHASE12-009.
