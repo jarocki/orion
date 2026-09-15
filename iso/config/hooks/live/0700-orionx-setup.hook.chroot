@@ -106,6 +106,11 @@ declare -A SCRIPT_MAP=(
     ["orionx-rain"]="/opt/orionx/scripts/rain/orionx-rain"
     # Orion Cockpit — live visualisation dashboard (DEC-PHASE12-007)
     ["orionx-cockpit"]="/opt/orionx/scripts/cockpit/orionx-cockpit"
+    # zeek installs under /opt/zeek (OpenSUSE Debian_13 repo, DEC-PHASE12-003),
+    # which is not on PATH. The loop below skips absent sources, so this stays
+    # safe when the zeek repo soft-fails. Verified present in trixie-dev4.
+    ["zeek"]="/opt/zeek/bin/zeek"
+    ["zeek-cut"]="/opt/zeek/bin/zeek-cut"
 )
 
 for name in "${!SCRIPT_MAP[@]}"; do
