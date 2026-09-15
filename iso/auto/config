@@ -60,6 +60,25 @@
 #   boot paths stay enabled: UEFI GRUB + BIOS isolinux vesamenu (operator is on
 #   UEFI but wants broad support).
 #
+# @decision DEC-PHASE12-011
+# @title Disable live-build's automatic firmware enumeration (--firmware-* false)
+# @status accepted
+# @rationale trixie-dev4 died in lb chroot_install-packages with
+#   "E: Unable to locate package firmware-qcom-dsp" / "ezurio-qca-firmware has
+#   no installation candidate" — neither is in our package list. Cause: with the
+#   default --firmware-chroot true, lb's chroot_firmware stage enumerates EVERY
+#   firmware package from the Contents index (Firmware_List_From_Contents) and
+#   queues them all; live-build 20250505's distribution table predates trixie
+#   going stable and resolved LB_PARENT_DISTRIBUTION_CHROOT to "testing" (=forky),
+#   whose Contents had just gained those freshly split firmware packages that
+#   trixie's index does not carry. dev3 escaped by a day of mirror drift. We list
+#   the firmware we support explicitly (firmware-iwlwifi/-realtek/-atheros/
+#   -misc-nonfree in orionx.list.chroot) — that list is the single authority, so
+#   the auto-enumeration is redundant, mirror-drift-prone, AND pulls hundreds of
+#   MB of firmware we never load (a direct win for the <2 GB trim). Also fixed in
+#   the same change: iso/config/archives/debian-nonfree.list.chroot still said
+#   `bullseye`, mixing a Debian 11 apt source into the trixie chroot.
+#
 # This script configures the live-build system for Orion-X.
 
 set -e
@@ -108,6 +127,8 @@ lb config noauto \
     --mirror-chroot-security "$MIRROR_SECURITY_URL" \
     --mirror-binary-security "$MIRROR_SECURITY_URL" \
     --archive-areas "main contrib non-free non-free-firmware" \
+    --firmware-chroot false \
+    --firmware-binary false \
     --apt-indices false \
     --apt-recommends true \
     --debian-installer false \

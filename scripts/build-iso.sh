@@ -35,12 +35,12 @@ set -euo pipefail
 
 # ---------------------------------------------------------------------------
 # @decision DEC-PHASE11-MACOS-BUILD-001
-# @title macOS host auto-wraps in debian:bullseye-slim Docker
+# @title macOS host auto-wraps in debian:trixie-slim Docker
 # @status active
 # @rationale live-build is Debian-native (dpkg, debootstrap, chroot). macOS
 #   hosts cannot run it natively. Prior UX required the user to know the
 #   docker run incantation; now the script detects Darwin and auto-re-execs
-#   itself inside the same debian:bullseye-slim container that release.yml
+#   itself inside the same debian:trixie-slim container that release.yml
 #   uses. Preserves reproducibility with CI and eliminates the "you must be
 #   on Linux" wall. The ORIONX_BUILD_IN_DOCKER guard prevents infinite
 #   recursion when the script is re-invoked inside the container.
@@ -58,7 +58,7 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
         if ! command -v docker >/dev/null 2>&1; then
             echo "ERROR: macOS host detected but 'docker' command not found." >&2
             echo "       Install Docker Desktop and start it, then re-run." >&2
-            echo "       (build-iso.sh auto-delegates to debian:bullseye-slim on macOS.)" >&2
+            echo "       (build-iso.sh auto-delegates to debian:trixie-slim on macOS.)" >&2
             exit 1
         fi
         if ! docker info >/dev/null 2>&1; then
@@ -66,7 +66,7 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
             exit 1
         fi
         REPO_ROOT_MACOS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] macOS host detected — delegating to debian:bullseye-slim container"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] macOS host detected — delegating to debian:trixie-slim container"
 
         # -------------------------------------------------------------------
         # @decision DEC-PHASE11-MACOS-BUILD-002 (supersedes DEC-PHASE11-MACOS-BUILD-001)
@@ -460,7 +460,7 @@ stage_nebula_model() {
 
     # ---------------------------------------------------------------------------
     # Network download path: wget with retry, primary URL then fallback.
-    # curl is NOT installed in the debian:bullseye-slim build container used by
+    # curl is NOT installed in the debian:trixie-slim build container used by
     # qemu-test.yml (only wget is pre-installed).  wget equivalents:
     #   curl --fail --location --retry 3 --retry-delay 5 -o dest url
     #   → wget -O dest --tries=3 --waitretry=5 --timeout=120 --no-verbose url

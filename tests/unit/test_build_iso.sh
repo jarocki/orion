@@ -61,11 +61,16 @@ run_test_fail() {
 }
 
 contains() {
-    # Assert output contains a substring
+    # Assert output contains a substring.
+    # Deliberately a bash substring test, NOT `echo | grep -q`: this file runs
+    # under `set -o pipefail`, and grep -q exits on the first match, SIGPIPE-ing
+    # echo (141) before it finishes writing the ~1000-line haystack — so an
+    # EARLY match reported as failure (seen twice: "isolinux", "xorriso" in T10).
+    # No pipe, no race, exact-substring semantics preserved.
     local name="$1"
     local needle="$2"
     local haystack="$3"
-    if echo "$haystack" | grep -qF "$needle"; then
+    if [[ "$haystack" == *"$needle"* ]]; then
         pass "$name"
     else
         fail "$name — expected '$needle' in output; got: $haystack"
@@ -73,10 +78,14 @@ contains() {
 }
 
 not_contains() {
+    # Mirror of contains(): bash substring test, no pipe. The old
+    # `! echo | grep -q` form was WORSE than flaky here — under pipefail an early
+    # match SIGPIPEs echo (141), and the leading `!` turned that into a false
+    # PASS for a needle that WAS present. Assertions of absence must not lie.
     local name="$1"
     local needle="$2"
     local haystack="$3"
-    if ! echo "$haystack" | grep -qF "$needle"; then
+    if [[ "$haystack" != *"$needle"* ]]; then
         pass "$name"
     else
         fail "$name — expected '$needle' NOT in output; got: $haystack"
@@ -394,6 +403,35 @@ if [[ -f "$NONFREE_LIST" ]]; then
     else
         fail "debian-nonfree.list.chroot deb line does not include 'non-free'"
     fi
+    # DEC-PHASE12-011: the suite MUST track the base distribution. After the
+    # trixie flip this file still said `bullseye`, silently mixing a Debian 11
+    # apt source into the trixie chroot (deb11u packages in the cache).
+    BASE_DIST="$(grep -oE '^DISTRIBUTION="[a-z]+"' "$REPO_ROOT/iso/auto/config" | cut -d'"' -f2)"
+    if [[ -n "$BASE_DIST" ]] && grep -E '^deb ' "$NONFREE_LIST" | grep -qE " ${BASE_DIST} "; then
+        pass "debian-nonfree.list.chroot suite tracks the base distribution (${BASE_DIST})"
+    else
+        fail "debian-nonfree.list.chroot suite tracks the base distribution" \
+             "deb line does not name DISTRIBUTION=${BASE_DIST:-?} from iso/auto/config"
+    fi
+    if grep -E '^deb ' "$NONFREE_LIST" | grep -q 'bullseye'; then
+        fail "debian-nonfree.list.chroot does not reference bullseye" "stale Debian 11 source in a ${BASE_DIST} chroot"
+    else
+        pass "debian-nonfree.list.chroot does not reference bullseye"
+    fi
+fi
+# DEC-PHASE12-011: lb's auto-firmware enumeration must stay OFF. With
+# --firmware-chroot true, chroot_firmware queues every firmware package from the
+# Contents index of LB_PARENT_DISTRIBUTION_CHROOT — which lb 20250505 resolved to
+# "testing" (forky) for trixie — and freshly split forky firmware packages
+# (firmware-qcom-dsp, ezurio-qca-firmware) killed the trixie-dev4 build. Our
+# explicit firmware-* list is the single authority.
+if grep -qE '^\s*--firmware-chroot false' "$REPO_ROOT/iso/auto/config" && \
+   grep -qE '^\s*--firmware-binary false' "$REPO_ROOT/iso/auto/config"; then
+    pass "iso/auto/config disables lb auto-firmware (--firmware-chroot/-binary false — DEC-PHASE12-011)"
+else
+    fail "iso/auto/config disables lb auto-firmware" "missing --firmware-chroot false / --firmware-binary false"
+fi
+if [[ -f "$NONFREE_LIST" ]]; then
     # Must reference the Debian mirror (deb.debian.org)
     if grep -E '^deb ' "$NONFREE_LIST" | grep -q 'debian'; then
         pass "debian-nonfree.list.chroot deb line references a debian mirror"

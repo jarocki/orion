@@ -15,4 +15,10 @@
 #   chroot apt archives augmentation; no parallel mechanism under
 #   includes.chroot/etc/apt/ should be added (iso_apt_archives_authority).
 #   References: issue #48, CI run 26492487114, DEC-PHASE9-004, W9-1b.
-deb http://deb.debian.org/debian bullseye main contrib non-free
+#
+# DEC-PHASE12-011 (trixie migration): this line was still `bullseye` after the
+# base flip (DEC-PHASE12-001), silently mixing a Bullseye apt source into the
+# Trixie chroot — the package cache was full of deb11u packages and firmware
+# resolution went wrong on the trixie-dev4 build. Suite MUST track the base
+# distribution; non-free-firmware added (trixie split firmware out of non-free).
+deb http://deb.debian.org/debian trixie main contrib non-free non-free-firmware

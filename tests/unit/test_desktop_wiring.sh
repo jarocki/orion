@@ -71,6 +71,44 @@ for w in net-status mesh-status scans-count clients-count; do
         fail "$w emits <txt> markup" "output was: $outs"
     fi
 done
+# DEC-PHASE12-010: scans/clients are REAL counts now, never the "?" placeholder.
+for w in scans-count clients-count; do
+    first=$(python3 "$WIDGETS/$w.py" 2>/dev/null | head -1)
+    if printf '%s' "$first" | grep -qE "<txt>[◎◉] [0-9]+</txt>"; then
+        pass "$w emits a real integer count (got: $first)"
+    else
+        fail "$w emits a real integer count" "got: $first"
+    fi
+done
+# scans-count must count only scan/IDS events, from the bus, and tolerate garbage.
+if python3 - "$WIDGETS" <<'PY'
+import sys, tempfile, json, importlib.util
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("sc", sys.argv[1] + "/scans-count.py")
+sc = importlib.util.module_from_spec(spec); spec.loader.exec_module(sc)
+p = Path(tempfile.mktemp())
+rows = [
+  {"category": "ids", "source": "suricata"},   # counts (both)
+  {"category": "scan", "source": "x"},         # counts (category)
+  {"category": "service", "source": "health"}, # NOT a scan
+  {"category": "posture", "source": "posture"},# NOT a scan
+  {"category": "x", "source": "nucleotide"},   # counts (source)
+]
+p.write_text("\n".join(json.dumps(r) for r in rows) + "\nnot json\n\n")
+assert sc.count_scans(p) == 3, sc.count_scans(p)
+assert sc.count_scans(Path("/nonexistent/bus")) == 0
+p.unlink()
+spec2 = importlib.util.spec_from_file_location("cc", sys.argv[1] + "/clients-count.py")
+cc = importlib.util.module_from_spec(spec2); spec2.loader.exec_module(cc)
+neigh = ("192.168.4.1 dev enp2s0 lladdr aa:bb:cc:dd:ee:01 REACHABLE\n"
+         "192.168.4.77 dev enp2s0 lladdr aa:bb:cc:dd:ee:02 STALE\n"
+         "192.168.4.99 dev enp2s0  FAILED\n"
+         "192.168.4.50 dev enp2s0 lladdr aa:bb:cc:dd:ee:03 INCOMPLETE\n")
+assert cc.count_clients(neigh) == 2, cc.count_clients(neigh)
+assert cc.count_clients("") == 0
+print("ok")
+PY
+then pass "widget counting logic (scan filter, garbage-tolerant, neigh states)"; else fail "widget counting logic" "assertion failed"; fi
 # No emoji (U+1Fxxx) — the panel font has no emoji glyphs; they rendered as tofu
 # boxes on the trixie-dev2 boot. Widgets must use BMP geometric glyphs instead.
 if grep -qiE "U0001F" "$WIDGETS"/*.py 2>/dev/null; then
