@@ -2,8 +2,11 @@
 Nebula AI — Model Integrity Verification.
 
 Invoked at boot by nebula-integrity-check.service (Type=oneshot).  Verifies
-every GGUF file in the models directory against the MANIFEST.sha256 generated
-by stage_nebula_model() in scripts/build-iso.sh.
+every file listed in MANIFEST.sha256 (paths relative to the models directory)
+against its recorded SHA-256.  Since DEC-PHASE12-016 the manifest is written by
+scripts/nebula/store.py at build time and lists the ollama blobs the runtime
+actually loads (``blobs/sha256-<digest>``, model layer first); the bare source
+GGUF that stage_nebula_model() staged is no longer shipped.
 
 Exit codes:
     0  — all files verified OK; status file written with OK state
@@ -303,7 +306,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         write_status(args.status_file, ok=False, detail=detail)
         return 1
 
-    verified_count = 1  # single model in W10-1; future slices may add more
+    try:
+        verified_count = len(parse_manifest(args.manifest))
+    except (OSError, ValueError):
+        verified_count = 1
     if ok:
         detail = f"all {verified_count} model file(s) verified OK"
         logger.info("Integrity check PASSED: %s", detail)

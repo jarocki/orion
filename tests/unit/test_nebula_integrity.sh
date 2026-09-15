@@ -255,6 +255,41 @@ fi
 echo ""
 
 # ===========================================================================
+# T8: ollama blob-store layout (DEC-PHASE12-016) — manifest entries are
+#     relative paths 'blobs/sha256-<digest>' whose hash IS the file name.
+# ===========================================================================
+echo "[T8] blob-store layout: 'blobs/sha256-<digest>' entries verify; a tampered blob fails"
+FIXTURE_STORE="$SCRATCH/fixture_store"
+mkdir -p "$FIXTURE_STORE/blobs"
+printf 'LIVE MODEL LAYER BYTES' > "$FIXTURE_STORE/layer.tmp"
+LAYER_HASH="$(sha256sum "$FIXTURE_STORE/layer.tmp" | awk '{print $1}')"
+mv "$FIXTURE_STORE/layer.tmp" "$FIXTURE_STORE/blobs/sha256-$LAYER_HASH"
+printf '{"model_format":"gguf"}' > "$FIXTURE_STORE/cfg.tmp"
+CFG_HASH="$(sha256sum "$FIXTURE_STORE/cfg.tmp" | awk '{print $1}')"
+mv "$FIXTURE_STORE/cfg.tmp" "$FIXTURE_STORE/blobs/sha256-$CFG_HASH"
+printf '# comment line\n%s  blobs/sha256-%s\n%s  blobs/sha256-%s\n' \
+    "$LAYER_HASH" "$LAYER_HASH" "$CFG_HASH" "$CFG_HASH" > "$FIXTURE_STORE/MANIFEST.sha256"
+run_integrity "$FIXTURE_STORE" "$FIXTURE_STORE/MANIFEST.sha256"
+if [[ "$INTEGRITY_RC" -eq 0 ]]; then
+    pass "blob-store manifest (relative blobs/ paths) verifies with exit 0"
+else
+    fail "blob-store manifest verifies" "exit $INTEGRITY_RC"
+fi
+if grep -q "all 2 model file(s) verified OK" "$INTEGRITY_STATUS_FILE" 2>/dev/null; then
+    pass "status detail counts the manifest entries (2), not a hardcoded 1"
+else
+    fail "status detail counts entries" "$(cat "$INTEGRITY_STATUS_FILE" 2>/dev/null)"
+fi
+printf 'X' >> "$FIXTURE_STORE/blobs/sha256-$LAYER_HASH"
+run_integrity "$FIXTURE_STORE" "$FIXTURE_STORE/MANIFEST.sha256"
+if [[ "$INTEGRITY_RC" -eq 1 ]]; then
+    pass "tampered live blob -> exit 1 (boot gate still bites on the store layout)"
+else
+    fail "tampered live blob -> exit 1" "exit $INTEGRITY_RC"
+fi
+echo ""
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo "================================================================"

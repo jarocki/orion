@@ -24,12 +24,25 @@
 #         and lose it at shutdown;
 #     (b) importing here puts blobs/ inside the squashfs, where it is read-only,
 #         verified, and costs no runtime RAM;
-#     (c) mksquashfs deduplicates identical files by default, so the imported
-#         blob and the original GGUF collapse to one copy — the size cost of
-#         keeping both is close to zero.
-#   The original GGUF is deliberately RETAINED: it is what MANIFEST.sha256 and
-#   nebula-integrity-check.service verify at boot (DEC-PHASE10-009). Deleting it
-#   to save space would break the boot integrity gate.
+#     (c) [SUPERSEDED — see DEC-PHASE12-016 below] mksquashfs was expected to
+#         deduplicate the imported blob against the original GGUF.
+#
+# @decision DEC-PHASE12-016
+# @title Ship the model once: consolidate the ollama store, bind integrity to the live layer
+# @status accepted
+# @rationale Assumption (c) was wrong. Measured on trixie-dev7: `ollama create`
+#   RE-SERIALISES the GGUF — the live layer blob (sha256-fb8a8b68…) differs from
+#   the source file (sha256 9c9f56a3…) at identical size, and ollama leaves the
+#   byte-identical first copy behind as an orphan blob. The squashfs therefore
+#   carried TWO ~1.8 GB compressed copies (≈3.6 GB of a 4.99 GB ISO; the whole
+#   OS is ≈1.3 GB). After a verified import this hook now runs
+#   scripts/nebula/store.py consolidate, which (1) verifies every blob the
+#   manifests reference hashes to its own content address, (2) deletes orphan
+#   blobs and the source GGUF, (3) rewrites MANIFEST.sha256 to the live blobs.
+#   nebula-integrity-check.service (DEC-PHASE10-009) is mechanically unchanged
+#   and now verifies the exact bytes ollama loads — a stronger gate than before.
+#   store.py refuses (and deletes nothing) on any verification doubt, and that
+#   refusal hard-fails the build per DEC-PHASE10-007.
 #
 #   Feasibility of running an amd64 ollama inside the chroot on an Apple Silicon
 #   host was confirmed before writing this hook: the 2026-08-07 build log shows
@@ -168,7 +181,28 @@ fi
 
 echo "${LOG_PREFIX} registered models:"
 "$OLLAMA_BIN" list | sed 's/^/    /'
-echo "${LOG_PREFIX} store size: $(du -sh "${MODELS_DIR}/blobs" 2>/dev/null | cut -f1)"
-echo "${LOG_PREFIX} NOTE: the original GGUF is retained on purpose — MANIFEST.sha256 and"
-echo "${LOG_PREFIX}       nebula-integrity-check.service verify it at boot (DEC-PHASE10-009)."
+echo "${LOG_PREFIX} store size before consolidation: $(du -sh "${MODELS_DIR}/blobs" 2>/dev/null | cut -f1)"
+
+# --- Consolidate: one copy on disk, integrity bound to the live layer -------
+# Stop the throwaway server FIRST so ollama cannot race the deletions (its
+# startup prune would also try to remove orphans — we do it deterministically).
+cleanup
+trap - EXIT
+STORE_PY="/opt/orionx/scripts/nebula/store.py"
+if [ ! -f "$STORE_PY" ]; then
+    echo "${LOG_PREFIX} FATAL: $STORE_PY missing — scripts/ not staged into the chroot." >&2
+    exit 1
+fi
+echo "${LOG_PREFIX} consolidating store (DEC-PHASE12-016): verify live blobs, drop orphans + source GGUF..."
+if ! python3 "$STORE_PY" consolidate --models-dir "$MODELS_DIR" --source-gguf "$GGUF"; then
+    echo "${LOG_PREFIX} FATAL: store consolidation refused — store could not be verified (nothing deleted)." >&2
+    exit 1
+fi
+if [ -f "$GGUF" ]; then
+    echo "${LOG_PREFIX} FATAL: source GGUF still present after consolidation: $GGUF" >&2
+    exit 1
+fi
+echo "${LOG_PREFIX} MANIFEST.sha256 now binds to the live ollama layer(s):"
+sed 's/^/    /' "${MODELS_DIR}/MANIFEST.sha256"
+echo "${LOG_PREFIX} store size after consolidation: $(du -sh "${MODELS_DIR}" 2>/dev/null | cut -f1)"
 echo "${LOG_PREFIX} === Model registration complete ==="

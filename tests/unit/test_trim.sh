@@ -44,6 +44,7 @@ grep -q "not -path '/usr/share/doc/orionx/\*'" "$TRIM" && pass "doc prune keeps 
 grep -qE 'en\|en_\*\|en@\*\|locale.alias' "$TRIM" && pass "locale prune keeps en, en_*, en@*, locale.alias" || fail "locale keep set" "wrong"
 if grep -qE "usr/share/man" "$TRIM"; then fail "man pages untouched" "hook references usr/share/man"; else pass "man pages untouched (3am operator keeps man)"; fi
 grep -q "DEC-PHASE12-015" "$TRIM" && pass "DEC-PHASE12-015 annotated in 0900" || fail "annotation 0900" "missing"
+grep -q "rm -rf /root/.cache/pip" "$TRIM" && pass "pip wheel cache removed (49 MB leaked into dev7)" || fail "pip cache" "not removed"
 # Guards after purge
 for g in "zeek-core still present" "ollama still present" "CPU backends"; do grep -q "$g" "$TRIM" && pass "post-purge guard: $g" || fail "guard: $g" "missing"; done
 

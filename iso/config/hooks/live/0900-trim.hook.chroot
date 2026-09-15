@@ -76,6 +76,10 @@ else
 fi
 apt-get autoremove -y -q --purge >/dev/null 2>&1 || true
 apt-get clean
+# Build-time caches that leaked into the dev7 squashfs: pip's wheel cache from
+# the --break-system-packages installs (49 MB) and the throwaway ollama server
+# log from 0510. Neither has any meaning on the booted deck.
+rm -rf /root/.cache/pip /tmp/ollama-build-serve.log
 
 # Guard: the things we must NOT have lost.
 for must in zeek python3-scapy binwalk ollama nebula-runtime; do
