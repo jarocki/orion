@@ -38,6 +38,18 @@ echo "=== Installing external tools ==="
 pip3 install --break-system-packages --no-input volatility3 \
     || echo "WARNING: volatility3 install failed"
 
+# Pivotglass deps that trixie apt cannot provide correctly (roadmap #90,
+# DEC-PHASE12-013), pure Python, same PEP 668 escape hatch as volatility3:
+#   stix2     — absent from trixie (+ stix2-patterns, antlr4 runtime); its other
+#               transitive deps (requests, pytz, simplejson) come from apt.
+#   pyfiglet  — PRESENT in trixie but as a +dfsg repack that strips the
+#               contributed fonts; `ap tui`/`ap chat` load "ansi_shadow" at import
+#               and die with pyfiglet.FontNotFound. Upstream pip ships all fonts.
+# Soft-fail, but say so loudly: without these, `ap` cannot start / the TUI dies.
+pip3 install --break-system-packages --no-input stix2 pyfiglet \
+    && python3 -c "import stix2, stix2patterns, pyfiglet; pyfiglet.Figlet(font='ansi_shadow')" \
+    || echo "WARNING: stix2/pyfiglet install failed — Pivotglass (ap) will be broken on this image"
+
 # Zeek (OpenSUSE Build Service repo).
 # DEC-PHASE12-003: on the trixie base the repo path must be Debian_13 (Debian_11
 # 404s — that was the #33 cascade on the trixie-dev1 build). Still soft-fail +

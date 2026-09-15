@@ -114,6 +114,9 @@ declare -A SCRIPT_MAP=(
     # nucleotide — Nuclei-scan attribution/fingerprinting (roadmap #89, DEC-PHASE12-012)
     ["nucleotide"]="/opt/orionx/scripts/nucleotide/nucleotide-cli"
     ["orionx-nucleotide-watch"]="/opt/orionx/scripts/nucleotide/orionx-nucleotide-watch"
+    # Pivotglass — AI-augmented adversary-infrastructure hunting (roadmap #90, DEC-PHASE12-013)
+    ["ap"]="/opt/orionx/scripts/pivotglass/ap"
+    ["pivotglass"]="/opt/orionx/scripts/pivotglass/ap"
 )
 
 for name in "${!SCRIPT_MAP[@]}"; do
@@ -215,6 +218,19 @@ Type=Application
 Name=Orion Cockpit
 Comment=Live cockpit — see and hear the cyber activity around you
 Exec=/usr/bin/orionx-cockpit
+Icon=/usr/share/pixmaps/orionx.png
+Categories=X-Orion;
+DESKTOP_EOF
+
+# Pivotglass — adversary-infrastructure hunting; `ap web` serves its local
+# browser cockpit on 127.0.0.1:8765 and opens it (DEC-PHASE12-013). Grouped
+# under the Orion menu.
+cat > /usr/share/applications/orionx-pivotglass.desktop << 'DESKTOP_EOF'
+[Desktop Entry]
+Type=Application
+Name=Pivotglass
+Comment=AI-augmented hunting of adversary infrastructure, indicators and TTPs
+Exec=/usr/bin/ap web
 Icon=/usr/share/pixmaps/orionx.png
 Categories=X-Orion;
 DESKTOP_EOF

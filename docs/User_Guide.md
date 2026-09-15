@@ -44,6 +44,7 @@ Release: **v2.2.0 (Trixie line)** — Debian 13 "trixie", Python 3.13, Linux 6.1
    - [Using Nebula](#using-nebula)
    - [MCP Tools](#mcp-tools)
    - [go-roast: OAST Triage](#go-roast-oast-triage)
+   - [Pivotglass: Adversary-Infrastructure Hunting](#pivotglass-adversary-infrastructure-hunting)
 
 9. [Forensic Evidence Collection](#9-forensic-evidence-collection)
    - [Memory Acquisition](#memory-acquisition)
@@ -616,6 +617,27 @@ roast serve                                           # local web UI
 ```
 
 Subcommands: `extract`, `decode`, `analyze` (input from stdin or `-f FILE`; output `-o json|csv|table`), `mcp`, `serve`. The same three analyses are exposed to Nebula as `oast_extract`, `oast_decode` and `oast_analyze`.
+
+### Pivotglass: Adversary-Infrastructure Hunting
+
+Pivotglass is an AI-augmented framework for hunting, pivoting on, and discovering adversary infrastructure, indicators and TTPs. It keeps every investigation in a workspace with evidence, provenance and a relationship graph, can export STIX 2, and — importantly for a deck that is often air-gapped — ships a **complete offline learning investigation** that needs no API key, model, account or network.
+
+Launch it from **Applications → Orion → Pivotglass**, or from a terminal:
+
+```bash
+ap            # local browser cockpit at http://127.0.0.1:8765 (same as: ap web)
+ap tui        # full-screen terminal deck
+ap basic      # direct use → set → run module console
+ap --version
+```
+
+Your first investigation, fully offline — type this inside the Pivotglass prompt:
+
+```text
+workspace learn first-case
+```
+
+The browser interface listens only on the local machine. Workspaces and configuration live in `~/.ap/` (on the live system they do not survive a reboot — export what you need). Fourteen optional intelligence modules (VirusTotal, Shodan, GreyNoise, OTX, urlscan, crt.sh, …) activate when you add keys and have connectivity; nothing is required for local pivoting. Exposing Pivotglass hunts to Nebula as MCP tools is a planned follow-up.
 
 ## 9. Forensic Evidence Collection
 

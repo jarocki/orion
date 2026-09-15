@@ -1,0 +1,270 @@
+"""Authoritative lifecycle records for analyst-visible investigations.
+
+The model is deliberately UI-neutral.  Web and terminal adapters may choose
+different transports, but lifecycle names, timestamps, classifications, and
+operator actions come from this module.
+"""
+
+from __future__ import annotations
+
+import threading
+import uuid
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
+from enum import StrEnum
+from typing import Any
+
+
+def utc_now() -> str:
+    """Return a stable, timezone-qualified timestamp."""
+    return datetime.now(UTC).isoformat()
+
+
+class LifecycleState(StrEnum):
+    PLANNED = "planned"
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    EMPTY = "empty"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    CANCELLED = "cancelled"
+
+
+class EventClass(StrEnum):
+    DISCOVERY = "discovery"
+    CORROBORATION = "corroboration"
+    CONTRADICTION = "contradiction"
+    DOSSIER_TRANSITION = "dossier_transition"
+    SOURCE_FAULT = "source_fault"
+    OPERATOR_ACTION = "operator_action"
+    INFERENCE = "inference"
+    SYSTEM = "system"
+
+
+class ContentClass(StrEnum):
+    EVIDENCE = "evidence"
+    NARRATION = "narration"
+    SYSTEM = "system"
+
+
+TERMINAL_STATES = {
+    LifecycleState.SUCCEEDED,
+    LifecycleState.EMPTY,
+    LifecycleState.FAILED,
+    LifecycleState.SKIPPED,
+    LifecycleState.CANCELLED,
+}
+
+
+@dataclass(frozen=True)
+class InvestigationEvent:
+    investigation_id: str
+    event_id: str
+    sequence: int
+    event_class: str
+    severity: str
+    lifecycle: str
+    content_class: str
+    created_at: str
+    updated_at: str
+    target: str
+    target_type: str
+    tool: str | None = None
+    source: str | None = None
+    queue_position: int | None = None
+    result_count: int | None = None
+    artifact_ids: tuple[str, ...] = ()
+    summary: str | None = None
+    reason: str | None = None
+    retryable: bool = False
+    actions: tuple[str, ...] = ()
+    briefing: dict[str, Any] | None = None
+    diagnostic_id: str | None = None
+    diagnostic_category: str | None = None
+    next_action: str | None = None
+    log_name: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class InvestigationRecord:
+    investigation_id: str
+    target: str
+    target_type: str
+    created_at: str
+    lifecycle: str = LifecycleState.PLANNED
+    updated_at: str = ""
+    completed_at: str | None = None
+    cancel_requested: bool = False
+    events: list[InvestigationEvent] = field(default_factory=list)
+
+    def snapshot(self, cursor: int = 0) -> dict[str, Any]:
+        events = [event.to_dict() for event in self.events[cursor:]]
+        return {
+            "investigation_id": self.investigation_id,
+            "target": self.target,
+            "target_type": self.target_type,
+            "lifecycle": self.lifecycle,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "completed_at": self.completed_at,
+            "cancel_requested": self.cancel_requested,
+            "cursor": len(self.events),
+            "events": events,
+        }
+
+
+class InvestigationStore:
+    """Thread-safe in-memory session authority for investigation events."""
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._records: dict[str, InvestigationRecord] = {}
+        self._acknowledged_alerts: set[str] = set()
+
+    def create(self, target: str, target_type: str) -> InvestigationRecord:
+        now = utc_now()
+        record = InvestigationRecord(
+            investigation_id=str(uuid.uuid4()),
+            target=target,
+            target_type=target_type,
+            created_at=now,
+            updated_at=now,
+        )
+        with self._lock:
+            self._records[record.investigation_id] = record
+        return record
+
+    def append(
+        self,
+        investigation_id: str,
+        *,
+        event_class: EventClass,
+        severity: str,
+        lifecycle: LifecycleState,
+        content_class: ContentClass,
+        tool: str | None = None,
+        source: str | None = None,
+        queue_position: int | None = None,
+        result_count: int | None = None,
+        artifact_ids: tuple[str, ...] = (),
+        summary: str | None = None,
+        reason: str | None = None,
+        retryable: bool = False,
+        actions: tuple[str, ...] = (),
+        briefing: dict[str, Any] | None = None,
+        diagnostic_id: str | None = None,
+        diagnostic_category: str | None = None,
+        next_action: str | None = None,
+        log_name: str | None = None,
+    ) -> InvestigationEvent:
+        with self._lock:
+            record = self._records[investigation_id]
+            now = utc_now()
+            event = InvestigationEvent(
+                investigation_id=investigation_id,
+                event_id=f"{investigation_id}:{len(record.events) + 1}",
+                sequence=len(record.events) + 1,
+                event_class=event_class,
+                severity=severity,
+                lifecycle=lifecycle,
+                content_class=content_class,
+                created_at=now,
+                updated_at=now,
+                target=record.target,
+                target_type=record.target_type,
+                tool=tool,
+                source=source,
+                queue_position=queue_position,
+                result_count=result_count,
+                artifact_ids=artifact_ids,
+                summary=summary,
+                reason=reason,
+                retryable=retryable,
+                actions=actions,
+                briefing=briefing,
+                diagnostic_id=diagnostic_id,
+                diagnostic_category=diagnostic_category,
+                next_action=next_action,
+                log_name=log_name,
+            )
+            record.events.append(event)
+            record.updated_at = now
+            return event
+
+    def transition(self, investigation_id: str, lifecycle: LifecycleState) -> None:
+        """Update the investigation lifecycle independently of enrichment events."""
+        with self._lock:
+            record = self._records[investigation_id]
+            now = utc_now()
+            record.lifecycle = lifecycle
+            record.updated_at = now
+            if lifecycle in TERMINAL_STATES:
+                record.completed_at = now
+
+    def snapshot(self, investigation_id: str, cursor: int = 0) -> dict[str, Any]:
+        with self._lock:
+            return self._records[investigation_id].snapshot(max(0, cursor))
+
+    def snapshots(self) -> list[dict[str, Any]]:
+        """Return complete snapshots in stable creation order.
+
+        Visualization adapters use this read-only projection to build task and
+        activity views.  Returning copies prevents a browser renderer from
+        becoming a second lifecycle authority.
+        """
+        with self._lock:
+            return [record.snapshot() for record in self._records.values()]
+
+    def request_cancel(self, investigation_id: str) -> bool:
+        with self._lock:
+            record = self._records[investigation_id]
+            if record.lifecycle in TERMINAL_STATES:
+                return False
+            record.cancel_requested = True
+            record.updated_at = utc_now()
+            return True
+
+    def cancellation_requested(self, investigation_id: str) -> bool:
+        with self._lock:
+            return self._records[investigation_id].cancel_requested
+
+    def active_count(self) -> int:
+        with self._lock:
+            return sum(record.lifecycle not in TERMINAL_STATES for record in self._records.values())
+
+    def alerts(self) -> list[dict[str, Any]]:
+        """Return persistent attention records without deleting acknowledgements."""
+        attention_classes = {
+            EventClass.DISCOVERY,
+            EventClass.CORROBORATION,
+            EventClass.CONTRADICTION,
+            EventClass.DOSSIER_TRANSITION,
+            EventClass.SOURCE_FAULT,
+            EventClass.OPERATOR_ACTION,
+        }
+        with self._lock:
+            result = []
+            for record in self._records.values():
+                for event in record.events:
+                    if event.event_class not in attention_classes:
+                        continue
+                    item = event.to_dict()
+                    item["acknowledged"] = event.event_id in self._acknowledged_alerts
+                    result.append(item)
+            return result
+
+    def acknowledge_alert(self, event_id: str) -> dict[str, Any]:
+        """Acknowledge an attention record while preserving it in history."""
+        with self._lock:
+            for record in self._records.values():
+                for event in record.events:
+                    if event.event_id == event_id:
+                        self._acknowledged_alerts.add(event_id)
+                        item = event.to_dict()
+                        item["acknowledged"] = True
+                        return item
+        raise ValueError("unknown alert")

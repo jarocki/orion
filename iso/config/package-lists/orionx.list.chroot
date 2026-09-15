@@ -197,6 +197,27 @@ python3-markdown
 # python3-yaml: PyYAML — the ONLY third-party dependency of the vendored
 # nucleotide package (roadmap #89, DEC-PHASE12-012). System package, no pip.
 python3-yaml
+# Pivotglass runtime deps (roadmap #90, DEC-PHASE12-013) — 8 of its 9 declared
+# deps + the 3 stix2 transitive deps that exist in trixie, all from apt so the
+# build-time pip is limited to stix2 itself. ~13 MB installed.
+python3-cmd2
+python3-rich
+python3-sqlalchemy
+python3-httpx
+python3-pydantic
+# (python3-pyfiglet deliberately NOT used: Debian's +dfsg repack strips the
+#  contributed figlet fonts, and Pivotglass's terminal deck loads "ansi_shadow"
+#  at import → pyfiglet.FontNotFound. pyfiglet comes from pip in the 0500 hook
+#  with its full font set. Caught by test_pivotglass.sh's live run.)
+python3-tomli-w
+python3-requests
+python3-pytz
+python3-simplejson
+# python3-prompt-toolkit: Pivotglass's `agent` extra — powers `ap tui`/`ap chat`
+# (the terminal deck) and REPL line editing. Its sibling extra litellm is large,
+# pip-only and API-oriented, so it is deliberately NOT shipped (trim); it could
+# later target the local Nebula/ollama endpoint. (DEC-PHASE12-013)
+python3-prompt-toolkit
 # python3-pymdownx: PyMdown extensions — `superfences` renders code fences nested
 # inside list items, which stock python-markdown collapses into inline <code>
 # garbage (the User Guide has 128 such blocks; audit 2026-09-14). DEC-PHASE12-009.

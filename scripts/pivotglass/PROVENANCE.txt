@@ -1,0 +1,47 @@
+Pivotglass — vendored Python package
+====================================
+Roadmap #90 · DEC-PHASE12-013
+
+Source:    https://github.com/jarocki/pivotglass
+Commit:    0913e5b
+Version:   0.9.6 (distribution name "adversary-pursuit"; command `ap`)
+License:   MIT (LICENSE.pivotglass alongside this file)
+Package:   ./adversary_pursuit/  (src/adversary_pursuit copied verbatim, __pycache__
+           removed) + ./adversary_pursuit/web/static/ (= upstream web/out, the
+           committed Next.js static export; no Node at build or run time)
+Runtime:   Python >= 3.12 (trixie ships 3.13)
+Deps:      apt — python3-cmd2 python3-rich python3-sqlalchemy python3-httpx
+                 python3-pydantic python3-tomli-w python3-yaml
+                 python3-requests python3-pytz python3-simplejson
+                 python3-prompt-toolkit (upstream `agent` extra: ap tui/chat)
+           pip (build time, 0500 hook) — stix2 (+ stix2-patterns,
+                 antlr4-python3-runtime): absent from trixie apt; and pyfiglet:
+                 trixie's python3-pyfiglet is a +dfsg repack WITHOUT the
+                 contributed fonts, and the TUI banner needs "ansi_shadow"
+                 (pyfiglet.FontNotFound otherwise — found by the live test).
+           NOT shipped — litellm (upstream `agent` extra: LLM synthesis via
+                 API providers). Large, pip-only; the deck's LLM is Nebula/
+                 ollama, which litellm can target — a candidate follow-up.
+
+What it is: "AI-augmented framework for hunting, pivoting, and discovering
+adversary infrastructure, indicators, and TTPs." Browser cockpit or terminal
+deck; a workspace/evidence/provenance model with a relationship graph, 14
+optional intelligence modules (API keys), STIX 2 export, and a complete
+OFFLINE learning investigation (`workspace learn first-case`) that needs no key,
+model, account or network — the natural first run on an air-gapped deck.
+
+How it is wired in:
+  ap (this dir)           launcher → /usr/bin/ap and /usr/bin/pivotglass (0700)
+  Orion menu              "Pivotglass" .desktop → `ap web` (local browser UI)
+  ~/.ap/                  per-session state (live system: not persisted)
+  Nebula                  NOT yet exposed as MCP tools (issue #90 asks for
+                          "hunts as MCP tools"; Pivotglass is workspace/DB-driven,
+                          so that needs a designed read-only surface — follow-up).
+
+Verified on trixie/3.13 before vendoring: imports clean with the apt+pip set;
+`ap --help`; `ap web` served the static export (HTTP 200, "Pivotglass") on
+127.0.0.1:8765 and created ~/.ap/workspaces.
+
+To update: re-clone, checkout the tag, copy src/adversary_pursuit/ over
+./adversary_pursuit/ and web/out/ over ./adversary_pursuit/web/static/, strip
+__pycache__, re-check pyproject dependencies against the apt list above.
