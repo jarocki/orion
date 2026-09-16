@@ -16,35 +16,102 @@
 #       building Zeek plugins on an air-gapped live deck. 0500 now installs
 #       zeek-core; the leftovers are purged here.
 #     - binwalk (Rust, needs no Python) + python3-scapy Recommends dragging
-#       python3-scipy/-matplotlib/-pyqtgraph/-fonttools + unicode-data + gcc.
+#       python3-scipy/-matplotlib/-pyqtgraph/-fonttools + unicode-data.
 #     - ukui-polkit: an unrelated desktop's polkit agent that apt chose for the
 #       polkit-1-auth-agent virtual dep, dragging OpenCV + GDAL + proj (~200 MB).
-#       The package list now pins the XFCE agent; the stray is purged.
+#       The package list now pins mate-polkit; the stray is purged if present.
 #     - firmware-nvidia-graphics (63 MB; GSP firmware for accel on new NVIDIA —
 #       nouveau boots without it), mesa-vulkan-drivers (79 MB; no Vulkan use),
 #       unhide.rb + ruby (30 MB; rkhunter Recommends).
 #     - 219 non-English locale dirs (258 MB) and non-copyright /usr/share/doc
 #       (108 MB). Copyright files stay (redistribution), man pages stay (3am
 #       operator), /usr/share/doc/orionx stays (the User Guide lives there).
-#   Everything is best-effort: purge lists are filtered to what is actually
-#   installed so a renamed package can never abort the build, and the hook
-#   never touches anything under /opt/orionx.
+#   Purge lists are filtered to what is actually installed so a renamed package
+#   can never abort the build, and the hook never touches /opt/orionx.
+#
+# @decision DEC-PHASE12-017
+# @title Purges are simulated first and may never remove a manual/critical package
+# @status accepted
+# @rationale trixie-dev8 booted to a bare X terminal with no window manager.
+#   Cause: the dev7/dev8 purge list contained `cpp`, and on trixie
+#   x11-xserver-utils (xrdb) hard-depends on cpp → apt removed x11-xserver-utils
+#   → xfce4-session → the xfce4 metapackage and xorg → --autoremove then swept
+#   thunar, xfwm4, xfce4-panel, xfdesktop4, light-locker… 160 packages in one
+#   silent step. The blanket `*-dev` sweep did the same to python3-numpy
+#   (python3-numpy hard-depends on python3-numpy-dev on trixie). The build was
+#   green: nothing checked the OUTCOME. Rules now enforced by this hook:
+#     1. PROTECTED = every package apt marks manual (= the package lists + hook
+#        installs) ∪ a hardcoded desktop-critical set. Critical packages are
+#        re-marked manual so autoremove can never orphan them.
+#     2. Every purge is SIMULATED (`apt-get -s purge --autoremove`). If the plan
+#        removes any protected package that is not itself an explicit target,
+#        the offending targets are dropped one at a time (each logged with the
+#        protected package it would have taken) and only the safe remainder is
+#        purged. If the safe remainder's own plan is still blocked, nothing is
+#        purged at all.
+#     3. After the purge, every critical package must still be installed —
+#        otherwise the BUILD FAILS. A missing desktop is a defect, not a warning
+#        (same principle as DEC-PHASE11-018: never ship a green build with a
+#        dead feature).
+#   Functions are defined first and exposed for unit tests via
+#   ORIONX_TRIM_LIB_ONLY=1 (tests/unit/test_trim.sh feeds canned `apt-get -s`
+#   output through them).
 set -euo pipefail
 
-echo "=== 0900 trim: zero-regret debloat (DEC-PHASE12-015) ==="
+# ---------------------------------------------------------------------------
+# Library functions (testable)
+# ---------------------------------------------------------------------------
+# stdin: `apt-get -s ...` output → stdout: every package the plan would remove.
+trim_plan_removals() {
+    awk '($1=="Remv" || $1=="Purg") {print $2}' | sort -u
+}
+# $1 planned-removals file, $2 protected-set file, $3 explicit-targets file
+# → stdout: protected packages the plan would remove that were not asked for.
+trim_blocked() {
+    comm -12 <(sort -u "$1") <(sort -u "$2") | comm -23 - <(sort -u "$3")
+}
+# stdin: newline-separated package names → stdout: those currently installed.
+trim_installed_only() {
+    local p
+    while IFS= read -r p; do
+        [ -n "$p" ] || continue
+        if dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "install ok installed"; then
+            printf '%s\n' "$p"
+        fi
+    done
+}
+
+# Desktop/session/runtime packages that must survive any trim (DEC-PHASE12-017).
+CRITICAL=(
+    xorg xserver-xorg xserver-xorg-core xinit x11-xserver-utils x11-utils xauth
+    lightdm lightdm-gtk-greeter
+    xfce4 xfce4-session xfce4-settings xfce4-panel xfwm4 xfdesktop4 xfconf
+    thunar xfce4-terminal mate-polkit
+    network-manager network-manager-gnome wpasupplicant
+    python3 python3-gi python3-gi-cairo python3-numpy python3-scapy python3-yaml
+    plymouth plymouth-themes
+)
+
+if [ "${ORIONX_TRIM_LIB_ONLY:-0}" = "1" ]; then
+    return 0 2>/dev/null || exit 0
+fi
+
+echo "=== 0900 trim: zero-regret debloat (DEC-PHASE12-015 / DEC-PHASE12-017) ==="
 export DEBIAN_FRONTEND=noninteractive
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
 
 _before=$(df -m / | awk 'NR==2{print $3}')
 
 # ---------------------------------------------------------------------------
-# 1. Package purges (filtered to installed; --autoremove drops the orphans)
+# 1. Package purges — simulated, protected, verified
 # ---------------------------------------------------------------------------
 PURGE_WANTED=(
     # zeek plugin-dev toolchain (0500 installs zeek-core now)
     zeek-zkg zeek-spicy-dev zeek-btest-data zeek-core-dev libbroker-dev
-    # compilers + dev headers (nothing at runtime needs them; pip installs are done)
-    gcc g++ cpp gcc-14 g++-14 cpp-14 gcc-x86-64-linux-gnu g++-x86-64-linux-gnu
-    gcc-14-x86-64-linux-gnu g++-14-x86-64-linux-gnu cpp-14-x86-64-linux-gnu
+    # compilers + dev headers. NOT cpp: x11-xserver-utils (xrdb) needs it.
+    gcc g++ gcc-14 g++-14 gcc-x86-64-linux-gnu g++-x86-64-linux-gnu
+    gcc-14-x86-64-linux-gnu g++-14-x86-64-linux-gnu
     libc6-dev linux-libc-dev libstdc++-14-dev libgcc-14-dev libssl-dev
     libsystemd-dev manpages-dev
     # binwalk/scapy Recommends bloat (binwalk 3 is Rust; scapy runs without these)
@@ -56,20 +123,56 @@ PURGE_WANTED=(
     unhide.rb ruby3.3 libruby3.3 ruby
     mesa-vulkan-drivers firmware-nvidia-graphics
 )
-PURGE=()
-for p in "${PURGE_WANTED[@]}"; do
-    if dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "install ok installed"; then
-        PURGE+=("$p")
-    fi
-done
-# Every remaining *-dev package (none are runtime deps on a live forensic image).
-while IFS= read -r p; do
-    case " ${PURGE[*]} " in *" $p "*) ;; *) PURGE+=("$p") ;; esac
-done < <(dpkg-query -W -f='${Package}\n' 2>/dev/null | grep -E -- '-dev$' || true)
+printf '%s\n' "${PURGE_WANTED[@]}" | trim_installed_only > "$WORK/targets"
+# Remaining *-dev packages — each still has to pass the simulation guard
+# (python3-numpy-dev is a hard dep of python3-numpy on trixie and will be kept).
+dpkg-query -W -f='${Package}\n' 2>/dev/null | grep -E -- '-dev$' >> "$WORK/targets" || true
+sort -u -o "$WORK/targets" "$WORK/targets"
 
-if [ "${#PURGE[@]}" -gt 0 ]; then
-    echo "[trim] purging ${#PURGE[@]} packages: ${PURGE[*]}"
-    apt-get purge -y -q --autoremove "${PURGE[@]}" \
+# Protected set: everything apt considers manually installed + the critical set.
+printf '%s\n' "${CRITICAL[@]}" | trim_installed_only > "$WORK/critical"
+if [ -s "$WORK/critical" ]; then
+    xargs -r apt-mark manual < "$WORK/critical" >/dev/null 2>&1 || true
+fi
+{ apt-mark showmanual 2>/dev/null || true; cat "$WORK/critical"; } | sort -u > "$WORK/protected"
+echo "[trim] $(wc -l < "$WORK/targets") purge targets, $(wc -l < "$WORK/protected") protected packages"
+
+simulate() {  # args: packages → writes $WORK/plan; prints removals
+    apt-get -s -q purge --autoremove "$@" > "$WORK/plan" 2>/dev/null || true
+    trim_plan_removals < "$WORK/plan" > "$WORK/removals"
+    trim_blocked "$WORK/removals" "$WORK/protected" "$WORK/targets"
+}
+
+mapfile -t TARGETS < "$WORK/targets"
+FINAL=()
+if [ "${#TARGETS[@]}" -gt 0 ]; then
+    blocked=$(simulate "${TARGETS[@]}")
+    if [ -z "$blocked" ]; then
+        FINAL=("${TARGETS[@]}")
+    else
+        echo "[trim] combined plan would remove protected packages: $(echo "$blocked" | tr '\n' ' ')"
+        echo "[trim] falling back to per-target simulation..."
+        for t in "${TARGETS[@]}"; do
+            b=$(simulate "$t")
+            if [ -n "$b" ]; then
+                echo "[trim] SKIP $t — would remove protected: $(echo "$b" | tr '\n' ' ')"
+            else
+                FINAL+=("$t")
+            fi
+        done
+        if [ "${#FINAL[@]}" -gt 0 ]; then
+            b=$(simulate "${FINAL[@]}")
+            if [ -n "$b" ]; then
+                echo "WARNING: [trim] safe remainder still blocked in combination ($(echo "$b" | tr '\n' ' ')) — purging NOTHING" >&2
+                FINAL=()
+            fi
+        fi
+    fi
+fi
+
+if [ "${#FINAL[@]}" -gt 0 ]; then
+    echo "[trim] purging ${#FINAL[@]} packages: ${FINAL[*]}"
+    apt-get purge -y -q --autoremove "${FINAL[@]}" \
         || echo "WARNING: [trim] apt purge reported a problem — continuing (best-effort)" >&2
 else
     echo "[trim] nothing to purge"
@@ -81,15 +184,22 @@ apt-get clean
 # log from 0510. Neither has any meaning on the booted deck.
 rm -rf /root/.cache/pip /tmp/ollama-build-serve.log
 
-# Guard: the things we must NOT have lost.
-for must in zeek python3-scapy binwalk ollama nebula-runtime; do
-    case "$must" in
-        zeek)   [ -x /opt/zeek/bin/zeek ] && echo "[trim] ✓ zeek-core still present" || echo "WARNING: [trim] zeek binary missing after purge" >&2 ;;
-        ollama) [ -x /usr/local/bin/ollama ] && echo "[trim] ✓ ollama still present" || echo "WARNING: [trim] ollama missing" >&2 ;;
-        nebula-runtime) ls /usr/local/lib/ollama/libggml-cpu-*.so >/dev/null 2>&1 && echo "[trim] ✓ ollama CPU backends present" || echo "WARNING: [trim] ollama CPU backends missing" >&2 ;;
-        *)      dpkg-query -W "$must" >/dev/null 2>&1 && echo "[trim] ✓ $must still installed" || echo "WARNING: [trim] $must missing after purge" >&2 ;;
-    esac
-done
+# Outcome gate (DEC-PHASE12-017): every critical package that was installed
+# before the purge must still be installed. A missing desktop fails the build.
+MISSING=()
+while IFS= read -r p; do
+    dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "install ok installed" || MISSING+=("$p")
+done < "$WORK/critical"
+if [ "${#MISSING[@]}" -gt 0 ]; then
+    echo "FATAL: [trim] critical packages missing after purge: ${MISSING[*]}" >&2
+    echo "FATAL: [trim] refusing to build an ISO without its desktop (DEC-PHASE12-017)" >&2
+    exit 1
+fi
+echo "[trim] ✓ all $(wc -l < "$WORK/critical") critical packages still installed"
+dpkg-query -W binwalk >/dev/null 2>&1 && echo "[trim] ✓ binwalk still installed" || echo "WARNING: [trim] binwalk missing after purge" >&2
+[ -x /opt/zeek/bin/zeek ] && echo "[trim] ✓ zeek-core still present" || echo "WARNING: [trim] zeek binary missing after purge" >&2
+[ -x /usr/local/bin/ollama ] && echo "[trim] ✓ ollama still present" || echo "WARNING: [trim] ollama missing" >&2
+ls /usr/local/lib/ollama/libggml-cpu-*.so >/dev/null 2>&1 && echo "[trim] ✓ ollama CPU backends present" || echo "WARNING: [trim] ollama CPU backends missing" >&2
 
 # ---------------------------------------------------------------------------
 # 2. Locales: keep English only (the deck is en_US.UTF-8; i18n sources stay)
