@@ -1,7 +1,8 @@
 # Orion-X Phoenix Edition — Cyberdeck for the Good Guys
 
-**Version:** v2.1.0-dev (Phase 11 in progress; next tag v2.1.0-rc1)
-**Base:** Debian Bullseye live | **Runtime:** Qwen2.5-3B-Instruct (Apache-2.0)
+**Version:** v2.2.0-beta — "OrionX Beta" ([download](https://github.com/jarocki/orion/releases/tag/v2.2.0-beta), pre-release)
+**Base:** Debian 13 "trixie" live (kernel 6.12, Python 3.13, XFCE 4.20) | **Runtime:** Qwen2.5-3B-Instruct (Apache-2.0)
+**Previous line:** v2.1.0-bullseye-rain (final Debian 11 build, kept as a known-good fallback)
 
 Orion-X is a **live, USB-bootable cyberdeck** for incident responders working in
 contested network infrastructure. It boots to a locked-down forensic-first Linux
@@ -70,7 +71,8 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 ### Cyberdeck Visual Identity
 
 - **Plymouth**: Phoenix splash on boot (`orionx-phoenix` theme)
-- **GRUB / isolinux**: Orion-X theme (GRUB active; isolinux activation pending rider sub-slice per DEC-PHASE11-012)
+- **GRUB / isolinux**: plain, readable text menus (the graphical GRUB theme was retired after failing on hardware — DEC-PHASE11-044; the boot identity is the Plymouth splash)
+- **Orion Cockpit**: live Cairo dashboard on the R.A.I.N. event bus (`orionx-cockpit`, ◈ COCKPIT in the Control Center); every Orion-X tool lives under the **Orion** application menu
 - **LightDM greeter**: Orion-X-Greeter with Phoenix backdrop
 - **XFCE GTK theme**: `Orion-X-Cyberdeck` (Adwaita-dark fork with Phoenix red-orange `#FF5722` accent)
 - **Icons**: `Orion-X-Icons` (Papirus-Dark inheritance + 4 custom SVG icons)
@@ -82,6 +84,21 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 ## Quick Start
 
 ### 1. Get the ISO
+
+**OrionX Beta (v2.2.0-beta, 3.09 GB):** GitHub caps release assets at 2 GB per
+file, so the ISO is published as three `.part-*` files plus `SHA256SUMS` and
+`REASSEMBLE.txt` on the
+[release page](https://github.com/jarocki/orion/releases/tag/v2.2.0-beta).
+Download all of them into one directory, then:
+
+```bash
+cat orionx-phoenix-edition-v2.2.0-beta.iso.part-* > orionx-phoenix-edition-v2.2.0-beta.iso
+shasum -a 256 -c SHA256SUMS      # Linux: sha256sum -c SHA256SUMS
+```
+
+The reassembled ISO must hash to
+`606e6179887ff7f82e9d05ed973333856c153a692d45983e16e35b12a0f0e49f`. A single
+`.part-*` file is not bootable on its own.
 
 **Option A — Host imager tool (recommended):**
 
@@ -138,7 +155,9 @@ See `docs/orionx-diag.md` for interpreting results.
 make lint              # ShellCheck + ruff
 make test-unit         # bash + python unit tests (~1400+ assertions)
 make iso-build         # Full ISO build (Linux only; use Docker on macOS)
-make docker-build      # Build Debian Bullseye container for ISO builds
+make docker-build      # Build the Debian Trixie container for ISO builds
+# macOS: scripts/build-iso.sh delegates to debian:trixie-slim automatically;
+# set ORIONX_VERSION=<tag> explicitly (git-describe resolves to the last tag).
 make test-qemu-boot    # UEFI + BIOS QEMU boot smoke tests
 ```
 
@@ -184,10 +203,16 @@ Contributor guide: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 | W11-11 | `orionx-diag` 200-assertion in-ISO diagnostic tool |
 | W11-12 | `orionx-imager` host-side USB writer (GUI + CLI, macOS/Linux) |
 
-**Next:** W11-10 (v2.1.0-rc1 tag), plus Layer B follow-ups:
-W11-3b/4b/5b/6b/8b/9c/11b/12b.
+**Phase 12 (Trixie line, v2.2.0-beta):** base flip to Debian 13, Orion Cockpit,
+Orion menu, R.A.I.N., go-roast, nucleotide, Pivotglass, User Guide rewrite,
+image trim 6.63 GB → 3.09 GB (DEC-PHASE12-001 … -017).
 
-**Target ISO size:** ≤3.0 GB compressed (currently ~4 GB; tracking).
+**Next:** move the language model out of the ISO into its own release asset so
+the ISO itself fits GitHub's 2 GB single-asset limit (~1.2 GB projected);
+imager-created persistence partition; merge `feat/trixie-migration` → `develop`;
+update `release.yml` for the Trixie build container.
+
+**ISO size:** 3.09 GB (v2.2.0-beta); target <2 GB without the bundled model.
 
 ---
 

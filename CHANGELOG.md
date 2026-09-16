@@ -7,7 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [v2.1.0] - Unreleased
+## [v2.2.0-beta] — 2026-09-16 ("OrionX Beta", pre-release)
+
+First public beta of the Debian 13 (Trixie) line. Built from
+`feat/trixie-migration` (`32247dd`), boot-tested on the reference deck
+(Lenovo Bay Trail, UEFI). ISO SHA-256
+`606e6179887ff7f82e9d05ed973333856c153a692d45983e16e35b12a0f0e49f`,
+3,091,660,800 bytes (3.09 GB, published as three <2 GB parts).
+
+### Changed
+
+- **Base flipped to Debian 13 "trixie"** (DEC-PHASE12-001): kernel 6.12,
+  Python 3.13 (PEP 668 — system `pip` installs use `--break-system-packages`,
+  DEC-PHASE12-003), XFCE 4.20, live mirrors instead of a snapshot pin,
+  `--firmware-chroot false` (our four firmware packages are the authority,
+  DEC-PHASE12-011). Build container is `debian:trixie-slim`.
+- **Image size 6.63 GB → 3.09 GB** — zero-regret trim (DEC-PHASE12-015: ollama
+  CUDA/Vulkan backends, `zeek-core` instead of the `zeek` metapackage,
+  compilers/`-dev` headers, scipy/matplotlib/pyqtgraph Recommends, non-English
+  locales, package docs except copyright files, `mate-polkit` pinned so apt no
+  longer pulls ukui-polkit + OpenCV + GDAL) and **one model copy** on disk
+  (DEC-PHASE12-016: `ollama create` re-serialises the GGUF, so the image had
+  carried two distinct 1.9 GB copies; `scripts/nebula/store.py consolidate`
+  keeps only the manifest-referenced blobs and rebinds `MANIFEST.sha256` to
+  them — the boot integrity gate now hashes the bytes ollama actually loads).
+- Wallpaper and genmon panel widgets fixed for XFCE 4.20 (connector-named
+  backdrops, `genmon-N.rc`, `<txt>` markup, real counts) — DEC-PHASE12-004/005/010.
+
+### Added
+
+- **Orion Cockpit** (`orionx-cockpit`, DEC-PHASE12-007) — live Cairo dashboard
+  on the R.A.I.N. event bus; ◈ COCKPIT button in the Control Center.
+- **"Orion" application menu** grouping every Orion-X tool (DEC-PHASE12-006);
+  Control Center deck theming (DEC-PHASE12-008).
+- **go-roast** (`roast`) + Nebula tools `oast_extract`/`oast_decode`/`oast_analyze`
+  (DEC-PHASE12-002).
+- **nucleotide** (`nucleotide`, `orionx-nucleotide-watch`) with a lookup table
+  prebuilt at ISO-build time; Nebula tools `nucleotide_lookup`/`nucleotide_fingerprint`
+  (DEC-PHASE12-012).
+- **Pivotglass** (`ap`, `pivotglass`; web UI on 127.0.0.1:8765) (DEC-PHASE12-013).
+- **Zeek** on PATH (`/opt/zeek/bin` symlinks); volatility3 on Python 3.13.
+- **User Guide** rewrite with architecture diagrams, rendered with
+  `pymdownx.superfences` (DEC-PHASE12-009).
+- Build-wrapper delegation guards — argument whitelist, repo sanity, busy-volume
+  refusal — after a test run wiped the build volume mid-build (DEC-PHASE12-014).
+- **Purge safety** (DEC-PHASE12-017): trim purges are simulated, protected
+  packages (apt manual set ∪ desktop-critical list) are never removed, and a
+  missing critical package fails the build. Added after internal build dev8
+  shipped without a window manager (`cpp` is a hard dependency of
+  `x11-xserver-utils` on trixie).
+
+### Known limitations
+
+- Plain-text UEFI GRUB menu (graphical theme retired; identity is in Plymouth).
+- Model still inside the ISO → three-part download. Separate model asset is next.
+- Not yet merged to `develop`; `release.yml` still builds in a Bullseye container
+  and was not used for this release (published manually, see
+  `docs/release-process.md` §10).
+
+## [v2.1.0-bullseye-rain] — 2026-09-13 (pre-release; final Bullseye build)
 
 ### W11-13: Runtime Cascade Fix + Build-Wrapper Landing (2026-08-03)
 

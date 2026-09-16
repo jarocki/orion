@@ -303,3 +303,48 @@ the next `--edit` cycle. Examples from the 2026-07-19 arc:
 Each sub-slice: full planner -> implementer -> reviewer -> guardian:land chain.
 Keeps the mainline W11-N Evaluation Contract stable; hotfix items don't drift
 the DEC.
+
+## 10. Manual publish from the macOS build host (>2 GB ISOs)
+
+Used for `v2.1.0-bullseye-rain` (6.62 GB, 4 parts) and `v2.2.0-beta`
+(3.09 GB, 3 parts). This is the path that actually shipped both releases;
+`release.yml` (§3) still builds inside `debian:bullseye-slim` and has not been
+updated for the Trixie line, so it is **not** the authority for these tags.
+Cancel its run if it fires on the tag push (it cannot be allowed to attach a
+CI-built ISO whose hash differs from `SHA256SUMS`).
+
+GitHub rejects release assets larger than 2 GB, so the ISO is split.
+
+```bash
+# 1. Stage from the verified build (SHA already checked against the .sha256)
+R=tmp/release-<tag>; mkdir -p "$R"
+cp output/orionx-phoenix-edition-<build>.iso "$R/orionx-phoenix-edition-<tag>.iso"
+cd "$R"
+
+# 2. Split into <2 GB parts. 1000 MiB keeps each upload under ~6 minutes on a
+#    ~3 MB/s uplink; the host's memory-pressure reaper kills long background
+#    uploads, so parts are uploaded one at a time in the foreground.
+split -b 1000m orionx-phoenix-edition-<tag>.iso orionx-phoenix-edition-<tag>.iso.part-
+shasum -a 256 orionx-phoenix-edition-<tag>.iso orionx-phoenix-edition-<tag>.iso.part-* > SHA256SUMS
+cat orionx-phoenix-edition-<tag>.iso.part-* | shasum -a 256   # must equal the ISO line
+
+# 3. Write REASSEMBLE.txt (cat / copy /b instructions + the ISO SHA) and the
+#    release notes (from the CHANGELOG section for the tag).
+
+# 4. Tag the commit the ISO was built from, push branch + tag.
+git tag -a <tag> -m "Orion-X Phoenix Edition <tag>" <commit>
+git push origin <branch> <tag>
+
+# 5. Create the release (pre-release for beta/rc), then upload serially.
+gh release create <tag> --prerelease --title "<title>" --notes-file release-notes.md \
+    SHA256SUMS REASSEMBLE.txt
+for p in orionx-phoenix-edition-<tag>.iso.part-*; do
+    gh release upload <tag> --clobber "$p"
+done
+
+# 6. Verify: asset names + byte sizes match `ls -l`; download one part and
+#    compare against SHA256SUMS.
+gh release view <tag> --json assets --jq '.assets[]|[.name,.size]|@tsv'
+```
+
+Never publish a bare `.part-*` set without `SHA256SUMS` and `REASSEMBLE.txt`.

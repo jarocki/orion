@@ -156,6 +156,24 @@ For intensive operations like memory analysis of large dumps or processing multi
 
 Before you can use Orion-X, you need to create bootable media (typically a USB drive). Release images follow the name pattern `orionx-phoenix-edition-<version>.iso`.
 
+#### Downloading a release published in parts
+
+GitHub limits release assets to 2 GB per file, so releases larger than that (including **v2.2.0-beta**, 3.09 GB) are published as several `orionx-phoenix-edition-<version>.iso.part-*` files together with `SHA256SUMS` and `REASSEMBLE.txt`. Download every part into the same directory and join them before writing anything to USB:
+
+```bash
+# Linux / macOS
+cat orionx-phoenix-edition-<version>.iso.part-* > orionx-phoenix-edition-<version>.iso
+sha256sum -c SHA256SUMS        # macOS: shasum -a 256 -c SHA256SUMS
+```
+
+```powershell
+# Windows (PowerShell)
+cmd /c copy /b orionx-phoenix-edition-<version>.iso.part-aa + orionx-phoenix-edition-<version>.iso.part-ab + orionx-phoenix-edition-<version>.iso.part-ac orionx-phoenix-edition-<version>.iso
+Get-FileHash orionx-phoenix-edition-<version>.iso -Algorithm SHA256
+```
+
+`SHA256SUMS` lists the whole ISO **and** each part, so a corrupted download can be identified and re-fetched individually. A single `.part-*` file is not bootable.
+
 #### Recommended: orionx-imager
 
 `orionx-imager` is the host-side USB writer for macOS, Linux and Windows. It downloads the release ISO, verifies its SHA-256, refuses to write to internal disks, asks for your password inside the app, and shows a real byte-accurate progress bar while writing. See [orionx-imager.md](orionx-imager.md) for installation and usage.
