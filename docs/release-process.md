@@ -348,3 +348,25 @@ gh release view <tag> --json assets --jq '.assets[]|[.name,.size]|@tsv'
 ```
 
 Never publish a bare `.part-*` set without `SHA256SUMS` and `REASSEMBLE.txt`.
+
+### 10.1 Lessons from v2.2.0-beta (2026-09-16 → 09-19)
+
+- **Long uploads get reset.** From the macOS build host every upload stream
+  longer than roughly five minutes to `uploads.github.com` was reset mid-body
+  (`gh` and `curl` alike, HTTP 400/500 or `connection reset`), while probes to
+  other hosts showed a healthy 1.5–3 MB/s. Pieces of ~190 MiB (≈70 s) went
+  through on the first or second try. Split finer than the 2 GB cap requires
+  when uploads keep dying; `cat part-*` reassembly is unchanged.
+- **Failed uploads leave a hidden `starter` asset** that blocks every retry of
+  the same file name with `400 Bad Request` / `500 Error saving asset`. It is
+  NOT shown by `gh release view`; list and delete it with the REST API:
+  ```bash
+  gh api repos/jarocki/orion/releases/<release-id>/assets --jq '.[]|[.id,.name,.state]|@tsv'
+  gh api -X DELETE repos/jarocki/orion/releases/assets/<id>
+  ```
+- **Keep the host awake** (`caffeinate -i <uploader>`) — a sleeping laptop
+  looks exactly like a stalled network.
+- **Confirm completion through the API** (`state == "uploaded"` and `size`
+  equal to the local file), never by reading a response file that may be
+  stale from the previous part.
+- Outside the repo directory, `gh release download` needs `-R jarocki/orion`.
