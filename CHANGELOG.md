@@ -13,7 +13,9 @@ First public beta of the Debian 13 (Trixie) line. Built from
 `feat/trixie-migration` (`32247dd`), boot-tested on the reference deck
 (Lenovo Bay Trail, UEFI). ISO SHA-256
 `606e6179887ff7f82e9d05ed973333856c153a692d45983e16e35b12a0f0e49f`,
-3,091,660,800 bytes (3.09 GB, published as three <2 GB parts).
+3,091,660,800 bytes (3.09 GB, published as seven parts ≤1000 MiB — the
+release host's connection to uploads.github.com reset every long stream, so
+the tail was cut finer than the 2 GB cap requires).
 
 ### Changed
 

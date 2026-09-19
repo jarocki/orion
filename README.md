@@ -86,8 +86,8 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 ### 1. Get the ISO
 
 **OrionX Beta (v2.2.0-beta, 3.09 GB):** GitHub caps release assets at 2 GB per
-file, so the ISO is published as three `.part-*` files plus `SHA256SUMS` and
-`REASSEMBLE.txt` on the
+file, so the ISO is published as seven `.part-*` files (`part-aa` … `part-ag`,
+≤1000 MiB each) plus `SHA256SUMS` and `REASSEMBLE.txt` on the
 [release page](https://github.com/jarocki/orion/releases/tag/v2.2.0-beta).
 Download all of them into one directory, then:
 
