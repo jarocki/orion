@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 from typing import Callable, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -35,6 +36,11 @@ from urllib.request import Request, urlopen
 GITHUB_REPO = "jarocki/orion"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
 _ISO_ASSET_SUFFIXES = (".iso",)
+# Split releases: GitHub caps assets at 2 GB, so releases larger than that ship
+# as `<name>.iso.part-aa`, `.part-ab`, … (see docs/release-process.md §10).
+# `cat part-*` in name order reassembles the ISO; SHA256SUMS lists the whole
+# ISO and every part. DEC-PHASE12-019.
+_PART_RE = re.compile(r"^(?P<iso>.+\.iso)\.part-(?P<seq>[a-z]{2,})$")
 _SHA256_ASSET_NAMES = ("SHA256SUMS", "sha256sums", "SHA256SUMS.txt")
 _CHUNK_SIZE = 65536  # 64 KiB streaming chunks
 
@@ -66,11 +72,16 @@ def list_releases() -> list[dict]:
     return _api_get(RELEASES_API)
 
 
-def get_release(tag: str = "latest") -> dict:
+def get_release(tag: str = "latest", allow_prerelease: bool = False) -> dict:
     """Fetch a single release by tag name, or the latest release.
 
     Args:
         tag: Release tag (e.g. "v2.0.0") or the special string "latest".
+        allow_prerelease: For "latest" only. GitHub's ``/releases/latest``
+            never returns a pre-release (so a beta is invisible to it and the
+            imager would silently fetch the previous stable line). With True,
+            "latest" means the newest non-draft release *including*
+            pre-releases, taken from the release list (newest first).
 
     Returns:
         Release dict (raw GitHub API shape with 'assets', 'tag_name', etc.).
@@ -79,6 +90,11 @@ def get_release(tag: str = "latest") -> dict:
         RuntimeError: on network error, 404 (tag not found), or rate-limit (403).
     """
     if tag == "latest":
+        if allow_prerelease:
+            for rel in list_releases():
+                if not rel.get("draft"):
+                    return rel
+            raise RuntimeError("No published releases found for " + GITHUB_REPO)
         url = RELEASES_API + "/latest"
     else:
         url = RELEASES_API + f"/tags/{tag}"
@@ -86,24 +102,58 @@ def get_release(tag: str = "latest") -> dict:
 
 
 def find_iso_asset(release: dict) -> dict:
-    """Find the ISO asset in a release dict.
+    """Resolve the ISO of a release — a single ``.iso`` asset or a split set.
 
-    Picks the first asset whose name ends with '.iso'.
-    If multiple ISO assets exist, picks the first (sorted by name for
-    determinism). Raises RuntimeError if no ISO asset is found.
+    Returns an asset-like dict with ``name`` (the ISO file name), ``size`` and
+    ``browser_download_url``. For a release published in parts (no ``.iso``
+    asset, only ``<name>.iso.part-aa`` …) the dict describes the reassembled
+    ISO: ``name`` is the ISO name, ``size`` the sum of the parts,
+    ``browser_download_url`` is None and ``parts`` holds the part assets in
+    concatenation order. Raises RuntimeError if neither form is present, or
+    if the part sequence has a gap.
     """
-    candidates = [
-        a for a in release.get("assets", [])
+    assets = release.get("assets", [])
+    whole = [
+        a for a in assets
         if any(a["name"].lower().endswith(s) for s in _ISO_ASSET_SUFFIXES)
     ]
-    if not candidates:
+    if whole:
+        whole.sort(key=lambda a: a["name"])          # deterministic
+        return whole[0]
+
+    groups: dict[str, list[tuple[str, dict]]] = {}
+    for a in assets:
+        m = _PART_RE.match(a["name"])
+        if m:
+            groups.setdefault(m.group("iso"), []).append((m.group("seq"), a))
+    if not groups:
         raise RuntimeError(
-            f"No .iso asset found in release {release.get('tag_name', '?')}. "
-            "Available assets: " + ", ".join(a["name"] for a in release.get("assets", []))
+            f"No .iso (or .iso.part-*) asset found in release {release.get('tag_name', '?')}. "
+            "Available assets: " + ", ".join(a["name"] for a in assets)
         )
-    # Deterministic: sort by name, take first
-    candidates.sort(key=lambda a: a["name"])
-    return candidates[0]
+    iso_name = sorted(groups)[0]
+    parts = sorted(groups[iso_name], key=lambda p: p[0])
+    expected = _part_sequence(len(parts))
+    got = [seq for seq, _ in parts]
+    if got != expected:
+        raise RuntimeError(
+            f"Release {release.get('tag_name', '?')} has a broken part set for {iso_name}: "
+            f"found {got}, expected {expected}. Refusing to reassemble."
+        )
+    return {
+        "name": iso_name,
+        "size": sum(int(a.get("size") or 0) for _, a in parts),
+        "browser_download_url": None,
+        "parts": [a for _, a in parts],
+    }
+
+
+def _part_sequence(n: int) -> list[str]:
+    """The `split` suffix sequence aa, ab, …, az, ba, … for n parts."""
+    out = []
+    for i in range(n):
+        out.append(chr(ord("a") + i // 26) + chr(ord("a") + i % 26))
+    return out
 
 
 def find_sha256sums_asset(release: dict) -> Optional[dict]:
@@ -229,8 +279,12 @@ def download_and_verify(
         if matched:
             return iso_path  # Cache hit — skip re-download
 
-    # Download ISO
-    download(iso_asset["browser_download_url"], iso_path, progress_cb=progress_cb)
+    # Download ISO — whole file, or parts reassembled in order
+    if iso_asset.get("parts"):
+        _download_parts(iso_asset["parts"], iso_path, sha_path if not skip_verify else None,
+                        progress_cb=progress_cb)
+    else:
+        download(iso_asset["browser_download_url"], iso_path, progress_cb=progress_cb)
 
     # Verify
     if not skip_verify:
@@ -266,6 +320,65 @@ def clear_cache() -> None:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _download_parts(
+    parts: list[dict],
+    iso_path: pathlib.Path,
+    sha_path: Optional[pathlib.Path],
+    progress_cb: ProgressCallback = None,
+) -> None:
+    """Download every part of a split release and concatenate them into *iso_path*.
+
+    Each part lands in the cache next to the ISO. A part whose SHA256 is listed
+    in SHA256SUMS and already matches is not re-downloaded (a failed run resumes
+    at part granularity). Every downloaded part is verified against the
+    manifest when it is listed there (a bad part is reported by name so the
+    user can re-fetch one file, not 3 GB). Progress is reported over the total
+    of all parts. The whole-ISO hash is verified afterwards by the caller.
+    """
+    total = sum(int(a.get("size") or 0) for a in parts)
+    done = 0
+    part_paths: list[pathlib.Path] = []
+    for asset in parts:
+        dest = iso_path.parent / asset["name"]
+        part_paths.append(dest)
+        size = int(asset.get("size") or 0)
+        cached_ok = False
+        if dest.exists() and sha_path is not None:
+            matched, expected = verify_sha256(dest, sha_path)
+            cached_ok = matched and bool(expected)
+        if not cached_ok:
+            base = done
+
+            def _cb(read: int, _total: int, _base: int = base) -> None:
+                if progress_cb:
+                    progress_cb(_base + read, total)
+
+            download(asset["browser_download_url"], dest, progress_cb=_cb)
+            if sha_path is not None:
+                matched, expected = verify_sha256(dest, sha_path)
+                if expected and not matched:
+                    raise RuntimeError(
+                        f"SHA256 mismatch for part {asset['name']}:\n"
+                        f"  expected: {expected}\n"
+                        f"  actual:   {_sha256_file(dest)}\n"
+                        "Delete that part from the cache and retry; the other parts are kept."
+                    )
+        done += size
+        if progress_cb:
+            progress_cb(done, total)
+
+    tmp = iso_path.with_suffix(iso_path.suffix + ".assembling")
+    with open(tmp, "wb") as out:
+        for p in part_paths:
+            with open(p, "rb") as fh:
+                while True:
+                    chunk = fh.read(_CHUNK_SIZE * 16)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+    os.replace(tmp, iso_path)
+
 
 def _api_get(url: str) -> dict | list:
     """Perform a GET request to the GitHub API and return parsed JSON."""
