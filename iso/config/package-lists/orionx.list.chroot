@@ -1,5 +1,7 @@
-# Orion-X Phoenix Edition v2.1.0
-# Package list for live-build (Debian Bullseye)
+# Orion-X Phoenix Edition v2.2.0 (Trixie line)
+# Package list for live-build (Debian 13 "trixie"). Packages commented with
+# "#85" (radare2, fonts-iosevka, nikto, bulk-extractor) are NOT in trixie and
+# must not be documented as shipped until an alternative source is chosen.
 #
 # @decision DEC-PHASE9-004
 # @title GUI networking stack: NetworkManager + nm-applet + firmware

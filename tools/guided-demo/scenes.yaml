@@ -22,8 +22,9 @@ scenes:
     narration: >-
       This is Orion-X Phoenix Edition, version 2.2.0 beta: a live USB cyberdeck
       for incident responders working in networks they cannot trust. It boots
-      from a USB stick on Debian 13, runs entirely from RAM, and works fully
-      air-gapped. Nothing has to be installed on the machine you are standing at.
+      from a USB stick on Debian 13, runs from the stick with all changes held in
+      memory, and works fully air-gapped. Nothing is installed on, or written
+      to, the machine you are standing at.
 
   - id: desktop
     visual: desktop         # real XFCE session: Phoenix wallpaper + branded panel + live widgets
