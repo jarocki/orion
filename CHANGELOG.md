@@ -53,6 +53,11 @@ the tail was cut finer than the 2 GB cap requires).
   `pymdownx.superfences` (DEC-PHASE12-009).
 - Build-wrapper delegation guards — argument whitelist, repo sanity, busy-volume
   refusal — after a test run wiped the build volume mid-build (DEC-PHASE12-014).
+- **Guided walkthrough video** (`docs/media/orionx-guided-demo-v2.2.0-beta.mp4`
+  + poster, WebVTT captions, transcript; embedded in the README) built by
+  `tools/guided-demo/` from `scenes.yaml` — recorded from the beta's own desktop
+  and applications in a virtual X session, narrated offline with Piper
+  (DEC-PHASE12-018). Re-cut per release with one command.
 - **Purge safety** (DEC-PHASE12-017): trim purges are simulated, protected
   packages (apt manual set ∪ desktop-critical list) are never removed, and a
   missing critical package fails the build. Added after internal build dev8

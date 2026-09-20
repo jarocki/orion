@@ -11,6 +11,16 @@ analysis toolkit — designed to work fully air-gapped.
 
 Mission verbs: **monitor** / **detect** / **defend** / **triage** / **timeline**.
 
+[![Watch the Orion-X guided walkthrough](docs/media/orionx-guided-demo-v2.2.0-beta-poster.png)](docs/media/orionx-guided-demo-v2.2.0-beta.mp4)
+
+**[Watch or download the guided walkthrough (2½ min)](docs/media/orionx-guided-demo-v2.2.0-beta.mp4)** ·
+**[Captions](docs/media/orionx-guided-demo-v2.2.0-beta.vtt)** ·
+**[Read the transcript](docs/media/orionx-guided-demo-v2.2.0-beta-transcript.md)**
+
+The walkthrough is recorded from the beta's own desktop and applications
+(`tools/guided-demo/`, rebuilt per release from `scenes.yaml`); the Cockpit shows
+its built-in synthetic demo feed and the narration is synthesised offline.
+
 ---
 
 ## What's on the ISO
