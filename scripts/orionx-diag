@@ -9,7 +9,7 @@
 #   the ISO that automates checking, testing, and verification that (a) ISO OS +
 #   tools correctly match the current repository version, (b) all expected tools
 #   and dependencies are installed and work properly."
-#   Ten check categories (47 assertions) cover identity, version manifest, base
+#   Ten check categories (45 assertions) cover identity, version manifest, base
 #   packages, file presence, systemd units, python imports, nebula runtime,
 #   branding, freshen scripts, and optional installers. Single-authority source:
 #   /etc/orionx-version KEY=VALUE manifest (written by 0700 hook at build time).
@@ -80,7 +80,7 @@ Categories:
   version-manifest  /etc/orionx-version present + all KEY=VALUE fields parseable
   packages          dpkg -l for expected Phase 11 packages; clamav ABSENT gate
   files             Nebula model, comms, yara, suricata, optional, branding assets
-  systemd           nebula-integrity-check, nebula-runtime.socket, suricata, NM, lightdm
+  systemd           nebula-integrity-check, nebula-runtime.service, suricata, NM, lightdm
   python            control_center.app importable; yara Python binding loads
   nebula            ollama binary + model SHA match + last-run status
   branding          Plymouth theme, GTK theme, grub.cfg directive, MOTD wordmark
@@ -281,14 +281,18 @@ run_identity_checks() {
             "expected=orionx-operator actual=$actual_user"
     fi
 
-    # 1b: hostname == orionx
-    local actual_host
-    actual_host="$(hostname 2>/dev/null || echo unknown)"
-    if [[ "$actual_host" == "orionx" ]]; then
-        check_pass "$cat" "hostname == orionx" "$actual_host"
+    # 1b: hostname is set and consistent. live-config boots as "orionx"; the
+    # first-boot wizard then sets whatever the operator chose (default
+    # "orionx-node"), so the value itself is not asserted — only that the kernel
+    # hostname matches /etc/hostname and is resolvable (DEC-PHASE12-021).
+    local actual_host etc_host
+    actual_host="$(hostname 2>/dev/null || echo "")"
+    etc_host="$({ cat /etc/hostname 2>/dev/null || true; } | tr -d '[:space:]')"
+    if [[ -n "$actual_host" && "$actual_host" != "localhost" && ( -z "$etc_host" || "$etc_host" == "$actual_host" ) ]]; then
+        check_pass "$cat" "hostname set and consistent with /etc/hostname" "$actual_host"
     else
-        check_fail "$cat" "hostname == orionx" \
-            "expected=orionx actual=$actual_host"
+        check_fail "$cat" "hostname set and consistent with /etc/hostname" \
+            "hostname=$actual_host /etc/hostname=$etc_host"
     fi
 
     # 1c: /proc/cmdline contains both identity tokens
@@ -393,10 +397,10 @@ _check_pkg() {
 run_packages_checks() {
     local cat="packages"
 
-    # 3a-3f: required packages
-    _check_pkg "radare2"
+    # 3a-3f: required packages (radare2 is not in trixie — dropped, #85;
+    # md5deep is provided by the hashdeep package)
     _check_pkg "ssdeep"
-    _check_pkg "md5deep"
+    _check_pkg "hashdeep"
     _check_pkg "yara"
     _check_pkg "python3-yara"
     _check_pkg "suricata"
@@ -533,13 +537,8 @@ run_files_checks() {
             "W11-9a boot chain Plymouth theme absent"
     fi
 
-    # 4l: GRUB theme file
-    if [[ -f "/usr/share/grub/themes/orionx/theme.txt" ]]; then
-        check_pass "$cat" "/usr/share/grub/themes/orionx/theme.txt present" ""
-    else
-        check_fail "$cat" "/usr/share/grub/themes/orionx/theme.txt present" \
-            "W11-9a2 GRUB theme absent"
-    fi
+    # 4l: (GRUB graphical theme retired — DEC-PHASE11-044; the boot identity is
+    # the Plymouth splash checked in 4k. No GRUB theme assertion.)
 }
 
 # ---------------------------------------------------------------------------
@@ -570,17 +569,18 @@ run_systemd_checks() {
         fi
     fi
 
-    # 5b: nebula-runtime.socket enabled
+    # 5b: nebula-runtime.service enabled (socket activation was removed —
+    # ollama binds :11434 itself; DEC-PHASE11-033)
     if [[ $EUID -ne 0 ]]; then
-        check_skip "$cat" "nebula-runtime.socket enabled" \
+        check_skip "$cat" "nebula-runtime.service enabled" \
             "root required for systemctl is-enabled"
     else
         local state
-        state="$(_systemctl_is_enabled "nebula-runtime.socket")"
+        state="$(_systemctl_is_enabled "nebula-runtime.service")"
         if [[ "$state" == "enabled" || "$state" == "enabled-runtime" ]]; then
-            check_pass "$cat" "nebula-runtime.socket enabled" "$state"
+            check_pass "$cat" "nebula-runtime.service enabled" "$state"
         else
-            check_fail "$cat" "nebula-runtime.socket enabled" \
+            check_fail "$cat" "nebula-runtime.service enabled" \
                 "systemctl is-enabled returned: $state"
         fi
     fi

@@ -4,12 +4,27 @@
 **Base:** Debian 13 "trixie" live (kernel 6.12, Python 3.13, XFCE 4.20) | **Runtime:** Qwen2.5-3B-Instruct (Apache-2.0)
 **Previous line:** v2.1.0-bullseye-rain (final Debian 11 build, kept as a known-good fallback)
 
-Orion-X is a **live, USB-bootable cyberdeck** for incident responders working in
-contested network infrastructure. It boots to a locked-down forensic-first Linux
-environment with an AI copilot, mesh-encrypted team comms, and a curated malware
-analysis toolkit — designed to work fully air-gapped.
+**In plain words:** Orion-X is a complete Linux system that you copy onto a USB
+stick and start a computer from. It does not install anything on that computer
+and leaves no files behind when you unplug it. It comes with the tools an
+incident responder uses to look at a possibly compromised machine or network —
+packet capture, memory and disk forensics, malware triage — plus a private AI
+assistant that runs on the stick itself, encrypted team chat, and an alerting
+"cockpit" that lets you hear and see suspicious activity. It works with no
+internet connection at all.
+
+In the project's own words: a **live, USB-bootable cyberdeck** for incident
+responders working in contested network infrastructure — a locked-down,
+forensic-first Linux environment with an AI copilot, mesh-encrypted team comms,
+and a curated malware-analysis toolkit, designed to work fully air-gapped.
 
 Mission verbs: **monitor** / **detect** / **defend** / **triage** / **timeline**.
+
+> **This is a beta.** It has been boot-tested on one reference laptop and in
+> QEMU. Expect rough edges; please report anything confusing or broken via the
+> [issue tracker](https://github.com/jarocki/orion/issues/new/choose). What it
+> does **not** do yet: boot Apple-silicon Macs (x86-64 only), keep your changes
+> between reboots unless you set up persistence, or update itself.
 
 [![Watch the Orion-X guided walkthrough](docs/media/orionx-guided-demo-v2.2.0-beta-poster.png)](docs/media/orionx-guided-demo-v2.2.0-beta.mp4)
 
@@ -42,10 +57,14 @@ its built-in synthetic demo feed and the narration is synthesised offline.
 
 - **Ollama** serving **Qwen2.5-3B-Instruct Q4_K_M** locally (1.9 GB, Apache-2.0,
   approximately 2-3x faster than Mistral-7B on CPU — see DEC-PHASE11-002)
-- **Integrity check** — SHA256-verified on boot via `nebula-integrity-check.service`
-  (DEC-PHASE10-008 trust-on-first-use)
-- **AppArmor confined** — LOCAL-ONLY policy, sandbox per DEC-006/DEC-007
-- **Lazy-start** — socket-activated to save RAM until first inference request
+- **Integrity check** — the model blob ollama loads is SHA-256-verified at every
+  boot by `nebula-integrity-check.service`; on mismatch the runtime is not started
+  (DEC-PHASE10-009, DEC-PHASE12-016)
+- **AppArmor confined** — `/usr/local/bin/ollama` runs under a local-only profile
+  (no outbound network; DEC-PHASE10-011)
+- **Local only** — the assistant listens on 127.0.0.1 and never sends prompts or
+  data off the deck; 12 local MCP tools (pcap/artifact analysis, OAST decoding,
+  nuclei-template lookup, service status)
 
 ### Team Comms (Mesh)
 
@@ -110,38 +129,68 @@ The reassembled ISO must hash to
 `606e6179887ff7f82e9d05ed973333856c153a692d45983e16e35b12a0f0e49f`. A single
 `.part-*` file is not bootable on its own.
 
-**Option A — Host imager tool (recommended):**
+You need a **USB stick of 8 GB or more** (everything on it will be erased) and an
+**x86-64 PC or laptop** that can boot from USB with **Secure Boot turned off**
+(see [Before you boot](#2-boot-the-target-machine-from-usb)).
+
+**Option A — Host imager tool (macOS / Linux; recommended):**
+
+The imager is a small Python program in this repository (no installation):
+clone or download the repo, then run it from a terminal. It downloads the
+release — split `.part-*` releases are reassembled and verified automatically —
+checks the SHA-256, refuses to write to your internal disk, and writes the stick.
 
 ```bash
-# GUI (macOS / Linux)
+git clone https://github.com/jarocki/orion.git && cd orion
+
+# GUI
 scripts/orionx-imager/orionx-imager
 
-# CLI
+# CLI — the beta is a pre-release, so name its tag explicitly
 scripts/orionx-imager/orionx-imager-cli.sh --list-devices
-scripts/orionx-imager/orionx-imager-cli.sh --iso-release latest --target /dev/disk4
+scripts/orionx-imager/orionx-imager-cli.sh --iso-release v2.2.0-beta --target /dev/disk4 --dry-run
+scripts/orionx-imager/orionx-imager-cli.sh --iso-release v2.2.0-beta --target /dev/disk4
 ```
 
-The imager downloads the latest GitHub release, verifies SHA256, and guides the
-USB write. It refuses `/dev/disk0` and `/dev/sda` (internal-disk safety). See
-`docs/orionx-imager.md` for full reference.
+`--iso-release latest` means the latest *stable* release (GitHub's rule), so
+it skips betas; add `--allow-prerelease` to include them. Full reference:
+[docs/orionx-imager.md](docs/orionx-imager.md). **Windows:** the imager does
+not run on Windows yet — reassemble the parts with `copy /b` (see
+`REASSEMBLE.txt`), check the hash with `Get-FileHash`, and write the ISO with
+[Rufus](https://rufus.ie) in "DD image" mode.
 
-**Option B — Manual dd:**
+**Option B — Manual dd (macOS / Linux):**
 
 ```bash
-# macOS
+# macOS — find the stick's disk number with `diskutil list` (NOT disk0, that is your Mac)
 diskutil list
-sudo dd if=orionx-phoenix-edition-*.iso of=/dev/rdisk4 bs=4m status=progress
+diskutil unmountDisk /dev/disk4
+sudo dd if=orionx-phoenix-edition-v2.2.0-beta.iso of=/dev/rdisk4 bs=4m status=progress
+diskutil eject /dev/disk4
 
-# Linux
+# Linux — find the stick with `lsblk` (NOT sda/nvme0n1 if that is your system disk)
 lsblk
-sudo dd if=orionx-phoenix-edition-*.iso of=/dev/sdX bs=4M status=progress conv=fsync
+sudo dd if=orionx-phoenix-edition-v2.2.0-beta.iso of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 ### 2. Boot the target machine from USB
 
-- Boot menu key varies: F12 / F10 / Esc — check your hardware
-- Autologin as `orionx-operator` (passwordless live account with passwordless sudo)
-- Hostname: `orionx`
+**Before you boot:** in the machine's firmware settings, turn **Secure Boot
+off** (the beta's bootloader is unsigned) and allow booting from USB. On a
+Windows laptop with BitLocker, have the recovery key at hand before you change
+firmware settings — Windows may ask for it afterwards. Nothing on the internal
+disk is touched by booting Orion-X unless you mount or image it yourself.
+
+- Boot-menu key varies by maker: usually F12, F10, F9, Esc or Del at power-on
+- The boot menu shows for **5 seconds**, then starts "Orion-X Live"
+- **First boot:** a short text wizard runs on the console **before** the desktop
+  and asks for a hostname (default `orionx-node`), the account name (default
+  `orionx-operator`) and an optional password (blank = passwordless), and Wi-Fi
+  only if no wired network is found. Each question times out to its default
+  after 120 s, so an unattended boot still completes.
+- Then the desktop opens **automatically logged in** as that account (it has
+  `sudo` rights). If you log out, the login screen asks for the password you set
+  (or just Enter if you left it blank).
 
 ### 3. Verify the boot
 
@@ -242,8 +291,10 @@ Explicitly **not** shipped: JetBrains software (per DEC-PHASE11-013 — communit
 
 ---
 
-## Support
+## Support and beta feedback
 
-- Issues: https://github.com/jarocki/orion/issues
-- [docs/SUPPORT.md](docs/SUPPORT.md)
+- **Report a problem:** https://github.com/jarocki/orion/issues/new/choose
+  (templates for bug reports and beta feedback tell you what to include)
+- [docs/SUPPORT.md](docs/SUPPORT.md) — what to try first, what to send us, and
+  how to get `orionx-diag` output off a live system that forgets everything
 - [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)

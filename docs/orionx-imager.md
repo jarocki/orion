@@ -7,9 +7,19 @@
 
 ## Overview
 
-`orionx-imager` downloads the latest Orion-X release ISO from GitHub Releases,
+`orionx-imager` downloads an Orion-X release ISO from GitHub Releases,
 verifies its SHA256 against the release manifest, and guides you through writing
 it to a bootable USB device with internal-disk safety checks.
+
+Releases larger than GitHub's 2 GB asset limit are published as
+`<name>.iso.part-aa`, `.part-ab`, … The imager detects that form, downloads
+the parts (each verified against `SHA256SUMS`; a bad part is named so you only
+re-fetch that one), reassembles them in the cache and verifies the whole ISO
+before anything is written (DEC-PHASE12-019). You never handle parts by hand.
+
+**"latest" means the latest stable release** — GitHub's `/releases/latest`
+never returns a pre-release. To get a beta, name its tag
+(`--iso-release v2.2.0-beta`) or pass `--allow-prerelease` with `latest`.
 
 Two front-ends over the same Python 3 core:
 
@@ -58,8 +68,9 @@ scripts/orionx-imager/orionx-imager-cli.sh \
 |---|---|
 | `--list-devices` | Enumerate USB / removable devices, exit 0 |
 | `--iso <path>` | Use a local ISO file |
-| `--iso-release latest` | Download latest GitHub release from `jarocki/orion` |
-| `--iso-release <tag>` | Download a specific release tag |
+| `--iso-release latest` | Download the latest **stable** GitHub release from `jarocki/orion` |
+| `--iso-release <tag>` | Download a specific release tag (use this for betas, e.g. `v2.2.0-beta`) |
+| `--allow-prerelease` | With `--iso-release latest`: include pre-releases (betas) |
 | `--target <device>` | Write target (e.g., `/dev/disk4` macOS, `/dev/sdb` Linux) |
 | `--dry-run` | Print the write plan without executing |
 | `--skip-verify` | Skip SHA256 verification (NOT recommended; CLI-only) |
@@ -90,11 +101,21 @@ Multiple layers prevent common mistakes:
 - Writes via `sudo dd if=<iso> of=/dev/sdX bs=4M status=progress`.
 - Unmounts any mounted partitions first.
 
-### Windows (deferred to W11-12b)
+### Windows — not supported by the imager
 
-Not currently supported. See DEC-PHASE11-015 for rationale. Windows users can:
-- Use WSL2 with the Linux path
-- Use Rufus, BalenaEtcher, or Raspberry Pi Imager (with the ISO downloaded manually + SHA256 verified per `docs/release-process.md`)
+The imager does not run on Windows (no device enumeration or raw writer for it
+yet; DEC-PHASE11-015). Windows users:
+
+1. Download every `.part-*` file plus `SHA256SUMS` from the release page.
+2. Reassemble with `copy /b` exactly as `REASSEMBLE.txt` shows (list every part, in order).
+3. Check the hash: `Get-FileHash orionx-phoenix-edition-<version>.iso -Algorithm SHA256`
+   (PowerShell prints it in UPPER CASE; compare letters case-insensitively).
+4. Write with [Rufus](https://rufus.ie): select the ISO, keep the defaults, and choose
+   **"Write in DD Image mode"** when Rufus asks. Windows may then offer to
+   "format" the stick — click **Cancel**; the stick is correct as written.
+
+WSL2 users can run the Linux imager path inside WSL only if the USB device is
+attached to WSL (usbipd); most people will find Rufus simpler.
 
 ## Architecture
 
@@ -125,9 +146,11 @@ You need `sudo`. Both CLI and GUI paths invoke `sudo dd`; be at the terminal to 
 After a successful write:
 
 1. Eject the USB (`diskutil eject /dev/disk4` on macOS)
-2. Boot the target machine from USB
-3. Autologin as `orionx-operator` (see [User Guide](User_Guide.md))
-4. Run `orionx-diag` to verify the boot (see [orionx-diag](orionx-diag.md))
+2. Boot the target machine from USB (Secure Boot off; boot-menu key F12/F10/F9/Esc/Del)
+3. Answer the first-boot wizard on the console (hostname, account name, optional
+   password, Wi-Fi if no cable) — or wait 120 s per prompt for the defaults —
+   then the desktop opens automatically logged in (see [User Guide](User_Guide.md))
+4. Run `orionx-diag` in a terminal to verify the boot (see [orionx-diag](orionx-diag.md))
 
 ## References
 

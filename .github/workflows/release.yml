@@ -4,7 +4,7 @@ name: Release Pipeline
 # @title Release artifact pipeline: ISO + checksums + GPG signatures + DRAFT GitHub Release
 # @status accepted
 # @rationale Phase 8 W8-4/W8-5 deliverable. Tag-triggered workflow builds a
-#   reproducible ISO inside debian:bullseye (same Docker pattern as qemu-test.yml
+#   reproducible ISO inside debian:trixie (same Docker pattern as qemu-test.yml
 #   to ensure live-build sees a Debian host), generates SHA-256/SHA-512 checksums,
 #   produces detached GPG signatures with continue-on-error so an unprovisioned key
 #   does not block release prep, and creates a DRAFT GitHub Release. DRAFT mode is
@@ -50,14 +50,14 @@ jobs:
           fetch-depth: 0
 
       # -----------------------------------------------------------------------
-      # Step 2: Build ISO in debian:bullseye container
+      # Step 2: Build ISO in debian:trixie container
       #
       # Identical pattern to qemu-test.yml (W7-1 deliverable, issue #25):
-      # live-build detects the host distro; running inside debian:bullseye-slim
-      # with --privileged ensures it bootstraps from deb.debian.org/bullseye
+      # live-build detects the host distro; running inside debian:trixie-slim
+      # with --privileged ensures it bootstraps from deb.debian.org/trixie
       # instead of the ubuntu-latest host's apt sources.
       # -----------------------------------------------------------------------
-      - name: Build ISO in debian:bullseye container
+      - name: Build ISO in debian:trixie container
         env:
           # Derive ORIONX_VERSION from the tag name when triggered by a tag push
           # (github.ref_name = "v2.0.0-rc3" for refs/tags/v2.0.0-rc3).
@@ -72,7 +72,7 @@ jobs:
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
             -e "ORIONX_VERSION=${ORIONX_VERSION}" \
-            debian:bullseye-slim \
+            debian:trixie-slim \
             bash -c '
               set -e
               apt-get update -q
@@ -199,7 +199,7 @@ jobs:
       # GPG step was skipped (unprovisioned key). The ISO and checksums are
       # always present; the release remains valid without signatures.
       #
-      # prerelease: auto-flagged when the tag contains '-rc' (release candidate).
+      # prerelease: auto-flagged for -rc, -beta and -alpha tags.
       # -----------------------------------------------------------------------
       - name: Create DRAFT GitHub Release
         if: github.event_name == 'push' || github.event.inputs.dry_run == 'false'
@@ -207,7 +207,7 @@ jobs:
         with:
           name: ${{ github.ref_name }}
           draft: true
-          prerelease: ${{ contains(github.ref_name, '-rc') }}
+          prerelease: ${{ contains(github.ref_name, '-rc') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-alpha') }}
           body_path: tmp/release-notes.md
           files: |
             output/*.iso

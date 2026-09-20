@@ -841,7 +841,7 @@ echo ""
 #   the same regression class (silent pass-through on download failure)
 #   cannot reoccur without a test failure.
 #   The test also verifies wget is used (not curl) in stage_nebula_model(),
-#   because curl is absent from the debian:bullseye-slim build container.
+#   because curl is absent from the debian:trixie-slim build container.
 #   References: DEC-PHASE10-008, DEC-PHASE10-011, CI run 27248174302.
 # ---------------------------------------------------------------------------
 echo "[T33] W10-1 iter-3: stage_nebula_model exit 1 on failure + wget not curl (DEC-PHASE10-011)"
@@ -973,7 +973,7 @@ if [[ -f "$QEMU_WORKFLOW" ]]; then
     # for set -o pipefail appearing before the first `docker run` line in
     # that region, which is the requirement.
     BUILD_STEP_REGION="$(awk '
-        /Build ISO in debian:bullseye container/ { in_step=1 }
+        /Build ISO in debian:(bullseye|trixie) container/ { in_step=1 }
         in_step && /Restore workspace ownership/ { exit }
         in_step { print }
     ' "$QEMU_WORKFLOW")"

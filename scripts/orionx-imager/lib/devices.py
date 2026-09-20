@@ -282,26 +282,58 @@ def _list_devices_linux() -> list[dict]:
 
 
 def _is_linux_system_disk(path: str) -> bool:
-    """Return True if *path* is the Linux root device."""
-    # Always refuse /dev/sda as a safety default; additionally check findmnt.
-    # The explicit check against findmnt catches cases where /dev/sda is NOT
-    # root (unlikely but possible on servers with NVMe) and /dev/nvme0n1 IS.
+    """Return True if *path* is the Linux root disk (or the disk holding it).
+
+    The root source reported by findmnt may be a partition (``/dev/nvme0n1p2``,
+    ``/dev/sda1``, ``/dev/mmcblk0p2``) or a mapper device (LUKS/LVM root:
+    ``/dev/mapper/cryptroot``). The whole disk that contains it is resolved by
+    walking ``lsblk -no PKNAME`` upwards, so ``/dev/nvme0n1`` and ``/dev/mmcblk0``
+    are refused exactly like ``/dev/sda`` (beta audit M14: the old code only
+    handled string-prefix matches, so an NVMe root disk was NOT refused).
+    """
+    root_source = ""
     try:
         result = subprocess.run(
             ["findmnt", "--target", "/", "--output", "SOURCE", "--noheadings"],
             capture_output=True, text=True, timeout=5,
         )
         if result.returncode == 0:
-            root_source = result.stdout.strip()
-            # root_source may be "/dev/sda1"; check if path is a prefix
-            if root_source.startswith(path):
-                return True
+            root_source = result.stdout.strip().split()[0] if result.stdout.strip() else ""
     except (FileNotFoundError, subprocess.TimeoutExpired):
-        # findmnt unavailable: fall through to conservative /dev/sda check
-        pass
+        root_source = ""
 
-    # Conservative fallback: refuse /dev/sda on Linux
-    return path == "/dev/sda"
+    if root_source:
+        # Direct prefix match keeps the historical behaviour (/dev/sda1 -> /dev/sda).
+        if root_source.startswith(path):
+            return True
+        # Walk parents: partition -> disk, or mapper -> partition -> disk.
+        node = root_source
+        for _ in range(4):
+            parent = _lsblk_parent(node)
+            if not parent:
+                break
+            if parent == path:
+                return True
+            node = parent
+        return False
+
+    # findmnt unavailable: conservative fallback refuses the classic names.
+    return path in ("/dev/sda", "/dev/nvme0n1", "/dev/mmcblk0")
+
+
+def _lsblk_parent(node: str) -> str:
+    """Return the /dev path of *node*'s parent block device ('' at the top)."""
+    try:
+        result = subprocess.run(
+            ["lsblk", "-no", "PKNAME", node],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode != 0:
+        return ""
+    name = result.stdout.strip().splitlines()[0].strip() if result.stdout.strip() else ""
+    return f"/dev/{name}" if name else ""
 
 
 # ---------------------------------------------------------------------------

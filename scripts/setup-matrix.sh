@@ -138,11 +138,26 @@ parse_args() {
         esac
     done
 
-    # --mode is required
+    # --mode is required. When launched interactively without it (the Orion
+    # menu entry, or an operator typing the bare command as the User Guide
+    # shows), ask instead of failing — DEC-PHASE12-020 (beta audit BLK-4).
     if [[ -z "$SERVER_MODE" ]]; then
-        echo "ERROR: --mode is required (server or client)" >&2
-        usage >&2
-        exit 1
+        if [[ -t 0 && -t 1 ]]; then
+            echo "Orion-X Matrix setup — choose a mode:"
+            echo "  1) client  — connect this deck to an existing Matrix homeserver"
+            echo "  2) server  — run a Synapse homeserver on this deck (needs network to install)"
+            local _choice=""
+            read -r -p "Mode [1/2, or client/server]: " _choice
+            case "${_choice,,}" in
+                1|client|c) SERVER_MODE="client" ;;
+                2|server|s) SERVER_MODE="server" ;;
+                *) echo "ERROR: unrecognised choice '${_choice}'" >&2; exit 1 ;;
+            esac
+        else
+            echo "ERROR: --mode is required (server or client)" >&2
+            usage >&2
+            exit 1
+        fi
     fi
 
     # Validate mode value

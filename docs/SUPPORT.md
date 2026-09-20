@@ -1,69 +1,77 @@
 # Support for Orion-X Phoenix Edition
 
-This document provides information on how to get support when using Orion-X Phoenix Edition.
+Orion-X is an open-source project maintained by volunteers. Support is
+best-effort, through the GitHub issue tracker. **v2.2.0 is a beta**: reports of
+anything confusing, wrong or broken are exactly what we want.
 
-## Community Support
+## Before you ask
 
-### Issue Tracker
+1. **Read the section of the [User Guide](User_Guide.md) for what you are doing** —
+   the Troubleshooting section (§16) covers the most common failures.
+2. **Check the [release notes](https://github.com/jarocki/orion/releases)** for
+   known limitations of your version.
+3. **Search [existing issues](https://github.com/jarocki/orion/issues?q=is%3Aissue)** —
+   someone may have hit the same thing.
 
-The primary method for getting support is through our issue tracker. Please search existing issues before creating a new one.
+## Common issues — quick answers
 
-To create a new issue:
-1. Go to the Issues tab in our repository
-2. Click "New Issue"
-3. Choose the appropriate template
-4. Provide as much detail as possible
+| Symptom | Try |
+|---|---|
+| The stick does not appear in the boot menu / "Invalid signature" | Turn **Secure Boot off** in firmware; make sure USB boot is allowed; try another USB port (USB-2 ports are the most reliable). |
+| Hash check fails after reassembling the parts | You are missing a part or have one twice. `SHA256SUMS` lists every part — check each one; re-download only the part whose hash differs. |
+| Black screen after the boot menu | Wait 60 s (slow USB sticks). If still black, reboot and pick **Orion-X Live (failsafe)**. |
+| Boot seems stuck with a text banner | That is the **first-boot wizard** waiting on tty1 ("the boot has PAUSED — your input is needed"). Answer the prompts, or wait 120 s per prompt for the defaults. |
+| No Wi-Fi networks | Your adapter may need firmware not on the image. Use a cable, or a USB Wi-Fi adapter with in-kernel drivers. `nmcli device` shows what was detected. |
+| Nebula AI shows "down" or "integrity FAIL" | `systemctl status nebula-integrity-check nebula-runtime` in a terminal. A FAIL means the model file does not match its checksum — re-write the stick from a verified ISO. |
+| Something worked on the reference laptop but not on yours | Please file a bug — hardware coverage is exactly what the beta needs. |
 
-### Discussion Forum
+## Reporting a bug or giving beta feedback
 
-For general questions and discussions, please use our discussion forum. This is a great place to:
-- Ask questions about usage
-- Share tips and tricks
-- Discuss best practices
-- Connect with other Orion-X users
+Use the templates at **https://github.com/jarocki/orion/issues/new/choose**:
 
-## Documentation
+- **Bug report** — something is broken.
+- **Beta feedback** — something is confusing, unclear, or could be better; no
+  need for it to be "broken".
 
-Before seeking support, please check our documentation:
+What helps most (the templates ask for it):
 
-- [README.md](README.md) - Basic overview and quick start
-- [User Guide](User_Guide.md) - Comprehensive usage instructions
-- [Development Checklist](DEVELOPMENT_CHECKLIST.md) - Guidelines for developers
+- Orion-X version: `cat /etc/orionx-version` on the deck, or the release tag you downloaded.
+- How you made the stick (imager / dd / Rufus) and the machine you booted (make, model, UEFI or BIOS).
+- What you did, what you expected, what happened — the exact text of any error.
+- For boot problems: a photo of the screen is fine.
+- For anything after boot: the output of `orionx-diag --json` (see below).
 
-## Common Issues
+### Getting `orionx-diag` output off a live system
 
-### Booting Issues
+The live system forgets everything at shutdown, so save the report to
+something external before you reboot:
 
-If you're having trouble booting from the USB:
-- Verify your BIOS/UEFI settings allow booting from USB
-- Try a different USB port
-- Ensure Secure Boot is disabled (if not using signed boot)
+```bash
+orionx-diag --json > /tmp/orionx-diag.json      # or without --json for a readable version
+# then copy /tmp/orionx-diag.json to a second USB stick, a network share,
+# or paste it into the issue.
+```
 
-### Network Configuration
+`orionx-diag` reports package, file, service and integrity checks. It does
+**not** include your files, captured traffic, chat messages or passwords, but it
+does include the hostname and network interface names — remove anything you
+consider sensitive before posting. (`orionx-diag` is missing from the
+v2.2.0-beta image; that is a known beta defect and is fixed for the next build.
+Until then, `systemctl --failed` and `journalctl -b -p err` are the next best
+things to include.)
 
-For network setup problems:
-- Check physical connections
-- Verify WireGuard configuration
-- Ensure firewall rules are not blocking connections
+## What Orion-X does and does not do with your data
 
-### VPN Troubleshooting
+- **Nothing is sent anywhere automatically.** Nebula AI runs on the stick and
+  listens only on the deck itself; there is no telemetry, no update check, no
+  crash reporter.
+- **Network use happens only when you ask for it:** joining a Wi-Fi network,
+  joining a mesh, running an online lookup, uploading to a vault you configured.
+  Plugging in a cable will bring up the wired connection (DHCP) so the tools
+  can work — unplug it if you want to be sure the deck stays offline.
+- **The internal disk of the computer is not touched** unless you mount or image it.
 
-If the VPN connection fails:
-- Verify server endpoint is correct
-- Check that public keys match
-- Confirm there's no network firewall blocking WireGuard
+## Commercial support
 
-## Commercial Support
-
-For professional support options, training, or custom development, please contact:
-
-[Placeholder for professional support contact information]
-
-## Contributing to Support
-
-If you've solved an issue that might help others:
-1. Document your solution
-2. Consider submitting it as a knowledge base article
-3. Help answer questions in the issue tracker or discussion forum
-
-Thank you for using Orion-X Phoenix Edition!
+There is no commercial support offering at this time. For consulting or
+training enquiries, open a GitHub Discussion or an issue and we will respond.

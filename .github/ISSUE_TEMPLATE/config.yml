@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: User Guide (troubleshooting is §16)
+    url: https://github.com/jarocki/orion/blob/main/docs/User_Guide.md
+    about: Check the guide first — most boot and network questions are answered there.
+  - name: Release notes and downloads
+    url: https://github.com/jarocki/orion/releases
+    about: Known limitations of each version, and where to get the ISO.

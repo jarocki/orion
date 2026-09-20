@@ -88,7 +88,8 @@ To populate with training/sample data post-boot:
 Forensic workflow entry points (all in PATH):
   artifact-analyzer.py <file>   — automated triage
   pcap-analyzer.py <file>       — PCAP-focused analysis
-  yara -r /opt/orionx/yara/     — YARA scanning
+  sudo orionx-freshen-yara      — fetch YARA rulesets (network), then
+  yara -r <rules.yar> <dir>     — scan; see /opt/orionx/yara/README.md for the rule files
   nebula                        — Nebula AI assistant
 SKELEOF
     chmod 644 "${SKEL_ANALYSIS_DIR}/README.txt"

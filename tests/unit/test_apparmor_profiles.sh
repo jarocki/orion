@@ -155,8 +155,8 @@ assert_file_contains "$VOLATILITY_PROFILE" "deny network," \
     "Volatility3 profile denies network"
 assert_file_contains "$VOLATILITY_PROFILE" "/opt/orionx/data/.*r," \
     "Volatility3 profile allows /opt/orionx/data read"
-assert_file_contains "$VOLATILITY_PROFILE" "/home/orionx/Analysis/.*rw," \
-    "Volatility3 profile allows /home/orionx/Analysis rw"
+assert_file_contains "$VOLATILITY_PROFILE" "/home/\*/Analysis/.*rw," \
+    "Volatility3 profile allows /home/*/Analysis rw"
 
 # ============================================================
 # Test Group 6: bulk_extractor profile rules
@@ -168,8 +168,8 @@ assert_file_contains "$BULKEXT_PROFILE" "deny network," \
     "bulk_extractor profile denies network"
 assert_file_contains "$BULKEXT_PROFILE" "/opt/orionx/data/.*r," \
     "bulk_extractor profile allows /opt/orionx/data read"
-assert_file_contains "$BULKEXT_PROFILE" "/home/orionx/Analysis/.*rw," \
-    "bulk_extractor profile allows /home/orionx/Analysis rw"
+assert_file_contains "$BULKEXT_PROFILE" "/home/\*/Analysis/.*rw," \
+    "bulk_extractor profile allows /home/*/Analysis rw"
 
 # ============================================================
 # Test Group 7: tshark profile rules
