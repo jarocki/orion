@@ -129,13 +129,19 @@ assert_mesh_discover_enabled() {
 # result means the 0615 hook failed to install the unit into the squashfs.
 # ---------------------------------------------------------------------------
 assert_matrix_synapse_state() {
-    local verdict="FAIL"
+    # W11-14f (offline boot) removed matrix-synapse-orionx.service from the
+    # units 0615 installs: Matrix is opt-in via `setup-matrix.sh --mode server`,
+    # which installs Synapse from the network. On a stock image the unit is
+    # therefore "not-found" BY DESIGN — that is a PASS. The only failure state
+    # is an installed unit that has actually failed (beta audit A.6: the old
+    # not-found=FAIL rule made W7-4-B red on every correct image).
+    local verdict="PASS"
     local svc_state
     svc_state="$(systemctl is-active matrix-synapse-orionx.service 2>/dev/null || true)"
-    if [[ "${svc_state}" != "not-found" ]]; then
-        verdict="PASS"
+    if [[ "${svc_state}" == "failed" ]]; then
+        verdict="FAIL"
     fi
-    emit "ORIONX_VERIFY: matrix_synapse_state=${verdict}"
+    emit "ORIONX_VERIFY: matrix_synapse_state=${verdict} (${svc_state:-unknown})"
     [[ "${verdict}" == "PASS" ]] || mark_fail
 }
 
