@@ -83,7 +83,7 @@ Categories:
   systemd           nebula-integrity-check, nebula-runtime.service, suricata, NM, lightdm
   python            control_center.app importable; yara Python binding loads
   nebula            ollama binary + model SHA match + last-run status
-  branding          Plymouth theme, GTK theme, grub.cfg directive, MOTD wordmark
+  branding          Plymouth theme + plymouthd.conf, GTK theme, MOTD wordmark
   freshen           orionx-freshen-yara + orionx-freshen-suricata symlinks
   optional          installer scripts source common lib; common lib defines all functions
 
@@ -787,16 +787,24 @@ run_branding_checks() {
             "Orion-X-Cyberdeck not found in $xsettings"
     fi
 
-    # 8c: /boot/grub/grub.cfg contains set theme= directive
-    local grub_cfg="/boot/grub/grub.cfg"
-    if [[ ! -f "$grub_cfg" ]]; then
-        check_skip "$cat" "/boot/grub/grub.cfg contains orionx theme directive" \
-            "/boot/grub/grub.cfg absent (live-boot ISO — GRUB reads from binary partition)"
-    elif grep -q "set theme=/boot/grub/themes/orionx/theme.txt" "$grub_cfg" 2>/dev/null; then
-        check_pass "$cat" "/boot/grub/grub.cfg contains orionx theme directive" ""
+    # 8c: plymouthd.conf declares the Phoenix theme.
+    #
+    # This replaced a `set theme=` assertion on /boot/grub/grub.cfg: the
+    # graphical GRUB theme was retired after it failed on hardware
+    # (DEC-PHASE11-044), the generated grub.cfg no longer sets a theme, and
+    # /boot/grub/grub.cfg does not exist on a live boot anyway — so the old
+    # check SKIPped on the ISO and FAILed on an installed system. plymouthd.conf
+    # is the declarative authority for the boot identity that actually ships
+    # (DEC-PHASE11-010), and 8a checks what Plymouth resolves at runtime.
+    local plymouth_conf="/etc/plymouth/plymouthd.conf"
+    if [[ ! -f "$plymouth_conf" ]]; then
+        check_fail "$cat" "plymouthd.conf declares Theme=orionx-phoenix" \
+            "$plymouth_conf absent — boot splash configuration missing"
+    elif grep -qE '^[[:space:]]*Theme=orionx-phoenix[[:space:]]*$' "$plymouth_conf"; then
+        check_pass "$cat" "plymouthd.conf declares Theme=orionx-phoenix" ""
     else
-        check_fail "$cat" "/boot/grub/grub.cfg contains orionx theme directive" \
-            "'set theme=/boot/grub/themes/orionx/theme.txt' not found in $grub_cfg"
+        check_fail "$cat" "plymouthd.conf declares Theme=orionx-phoenix" \
+            "Theme=orionx-phoenix not found in $plymouth_conf"
     fi
 
     # 8d: MOTD contains Orion-X Phoenix Edition wordmark

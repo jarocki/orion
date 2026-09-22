@@ -119,22 +119,20 @@ assert_mesh_discover_enabled() {
 # ---------------------------------------------------------------------------
 # Assertion: matrix_synapse_state
 #
-# Checks that matrix-synapse-orionx.service is present and not absent from
-# systemd's unit database. Accepts: active, activating, or any loaded state
-# (including failed, since Synapse startup is slow and may fail transiently
-# on first boot before configuration is complete). Rejects only: not-found.
+# Checks that matrix-synapse-orionx.service is not in a broken state.
+# Accepts: not-found, inactive, active, activating — every state except one.
+# Rejects only: failed.
 #
-# Rationale: the assertion's purpose is to verify the unit is INSTALLED and
-# managed by systemd, not that it successfully completed startup. A not-found
-# result means the 0615 hook failed to install the unit into the squashfs.
+# Rationale: Matrix is OPT-IN. W11-14f (offline boot) removed the unit from the
+# set the 0615 hook installs; an operator adds it with
+# `setup-matrix.sh --mode server`, which pulls Synapse over the network. On a
+# stock image the unit is therefore "not-found" BY DESIGN, and that is a PASS.
+# The only thing worth failing on is a unit that was installed and then failed
+# to start. (Beta audit A.6: the previous not-found=FAIL rule made W7-4-B red
+# on every correctly-built image.)
 # ---------------------------------------------------------------------------
 assert_matrix_synapse_state() {
-    # W11-14f (offline boot) removed matrix-synapse-orionx.service from the
-    # units 0615 installs: Matrix is opt-in via `setup-matrix.sh --mode server`,
-    # which installs Synapse from the network. On a stock image the unit is
-    # therefore "not-found" BY DESIGN — that is a PASS. The only failure state
-    # is an installed unit that has actually failed (beta audit A.6: the old
-    # not-found=FAIL rule made W7-4-B red on every correct image).
+    # "failed" is the only rejected state — see the block comment above.
     local verdict="PASS"
     local svc_state
     svc_state="$(systemctl is-active matrix-synapse-orionx.service 2>/dev/null || true)"

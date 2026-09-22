@@ -58,7 +58,7 @@ bash scripts/qemu-boot-test.sh [options]
 | Flag | Description | Default |
 |---|---|---|
 | `--mode bios\|uefi\|both` | Boot mode(s) to test | `both` |
-| `--iso <path>` | Path to hybrid ISO image | `output/orionx-phoenix-edition-v2.0.0-rc1.iso` |
+| `--iso <path>` | Path to hybrid ISO image | first `output/orionx-phoenix-edition-*.iso` in sort order (resolved at run time, DEC-PHASE9-015) |
 | `--ovmf <path>` | Override `OVMF_CODE.fd` path for UEFI mode | distro-packaged path |
 | `--timeout <sec>` | Per-mode boot timeout in seconds | `300` |
 | `--post-boot-script <path>` | W7-4 attach point: host-side script run after boot marker is detected; receives `RUN_ID` and `SERIAL_LOG` as positional args | (none) |
@@ -99,7 +99,7 @@ bash scripts/qemu-boot-test.sh --mode uefi --ovmf /opt/ovmf/OVMF_CODE.fd
 | Package | Debian/Ubuntu | Fedora/RHEL | macOS |
 |---|---|---|---|
 | QEMU x86_64 system emulator | `qemu-system-x86` | `qemu-system-x86` | `brew install qemu` |
-| OVMF UEFI firmware | `ovmf` | `edk2-ovmf` | bundled with `qemu` |
+| OVMF UEFI firmware | `ovmf` | `edk2-ovmf` | Homebrew `qemu` ships edk2 as `$(brew --prefix)/share/qemu/edk2-x86_64-code.fd`, not `OVMF_CODE.fd` — pass `--ovmf "$(brew --prefix)/share/qemu/edk2-x86_64-code.fd"` |
 | `sha256sum` (or `shasum`) | `coreutils` (default) | `coreutils` (default) | built-in |
 
 CI installs `qemu-system-x86 ovmf` via apt on `ubuntu-latest`. Local
@@ -137,7 +137,10 @@ BOOT_SUCCESS_MARKERS=(
 ```
 
 First match wins. If a future Orion-X build emits a different banner, update
-this array — do not add per-mode marker logic in `run_mode()`.
+this array — do not add per-mode marker logic in `run_mode()`. Note that the
+first-boot wizard renames the host (default `orionx-node`), so the
+`orionx login:` getty marker rarely matches on the Trixie line; the systemd
+`Reached target` markers fire first, so the result is unaffected.
 
 ## Artifacts
 
@@ -161,7 +164,7 @@ back-to-back runs never collide.
 {
   "harness_version": "1.0.0",
   "run_id": "20260428-143012",
-  "iso_path": "/abs/path/to/orionx-phoenix-edition-v2.0.0-rc1.iso",
+  "iso_path": "/abs/path/to/orionx-phoenix-edition-v2.2.0.iso",
   "iso_sha256": "abc123...",
   "host_kvm": true,
   "ovmf_path": "/usr/share/OVMF/OVMF_CODE.fd",
@@ -231,13 +234,26 @@ mean what this section says** for the lifetime of W7-3.
 request to `develop`:
 
 - Runner: `ubuntu-latest`
-- Timeout: `30 minutes` (covers `iso-build` ~10-15min plus two TCG boot
-  cycles ~5-9min each with headroom)
+- Timeout: `timeout-minutes: 60` on the job (the ISO build alone is well past
+  the 10–15 min it took before the model import/consolidation step; each TCG
+  boot is another 5–15 min)
 - Steps: checkout → install `qemu-system-x86 ovmf` → log QEMU/OVMF/KVM
-  state → setup Python 3.11 → install `requirements.txt` → `make iso-build`
-  (W7-1 deliverable) → `make test-qemu-boot` → upload
+  state and detect the OVMF path → set up Python 3.13 → install
+  `requirements.txt` → build the ISO with `bash scripts/build-iso.sh` inside a
+  privileged `debian:trixie-slim` container (live-build must see a Debian host;
+  the container matches `iso/auto/config`'s `DISTRIBUTION="trixie"`) → restore
+  workspace ownership → upload the ISO → `tests/integration/test-iso-hooks-applied.sh`
+  (#32) → `tests/integration/test-iso-content-presence.sh` on the built ISO
+  (#43 gate) → `scripts/qemu-boot-test.sh --mode both --timeout 900 [--ovmf …]`
+  → W7-4-B runtime verification, W7-5 performance benchmark, W7-6
+  failure-resilience check (each `continue-on-error`) → upload
   `tmp/qemu-artifacts/` as `qemu-artifacts-<github.run_id>` (always, even on
-  failure).
+  failure), plus W7-4-B / W7-5 artifacts on failure.
+
+Until the switch to `debian:trixie-slim` (release/2.2.0), this workflow and
+`release.yml` built inside `debian:bullseye-slim` and could not produce the
+Trixie image at all — which is why the v2.2.0-beta was built and published
+from the macOS build host (`docs/release-process.md` §10).
 
 The workflow does not branch on KVM availability — the harness handles that
 internally. CI artifacts are retained per the GitHub Actions default

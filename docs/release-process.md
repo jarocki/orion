@@ -15,13 +15,42 @@ The `DRAFT` boundary is non-negotiable. CI never publishes a release on its own.
 
 ---
 
+## 0. Which path is the authority
+
+Two things decide how a tag becomes a release:
+
+| Image size | Authority for the published assets | What `release.yml` contributes |
+|---|---|---|
+| ≤ 2 GB | CI draft (§3) → operator verifies and publishes (§4) | Builds, checksums, signs, drafts |
+| > 2 GB (every Trixie-line image so far: v2.2.0-beta is 3.09 GB) | **Manual split-part publish from the build host (§10)** | Build check only — GitHub rejects release assets over 2 GB, so its draft cannot carry the ISO |
+
+In both cases CI produces a **DRAFT only**; a human publishes. The `DRAFT`
+boundary is non-negotiable.
+
 ## 1. Prerequisites
 
 Before tagging:
 
-- **Phase 7 attestation (W7-7)** is complete for any final `v2.0.0` tag. Release
-  candidate tags (`v2.1.0-rcN`) MAY be cut before W7-7 lands; final releases MUST
-  NOT.
+- **The branch is at the head you intend to release** — `release/2.2.0` for
+  the v2.2.0 line (merged back to `develop` after the tag). The image is built
+  from the tagged commit, or with `ORIONX_VERSION=<tag>` exported, so that the
+  baked `/etc/orionx-version` equals the tag (§4.3, §10 step 0). The beta
+  shipped as `v2.2.0-trixie-dev9` because this was not enforced.
+- **CI on that head:** `lint.yml` and `e2e-test.yml` green. `qemu-test.yml`
+  (which, like `release.yml`, now builds in `debian:trixie-slim`) must have
+  produced an ISO and passed the content-presence gate and the BIOS+UEFI boot
+  test; W7-4-B/W7-5/W7-6 are `continue-on-error` and informative. If the
+  runner budget prevents a full run, say so in the release notes rather than
+  skipping silently.
+- **All documentation fixes have landed** — the ISO bakes `README.md` and
+  `docs/` into `/usr/share/doc/orionx/`; the beta carried a pre-beta README.
+- **Version literals bumped.** `scripts/build-iso.sh` has no version literal
+  (it uses `ORIONX_VERSION` or `git describe`, DEC-PHASE7-002) and
+  `iso/auto/config` only a fallback default. The real touchpoints are:
+  `README.md`, `docs/User_Guide.md` (line 3 and the *About the beta* list),
+  `CHANGELOG.md`, `tools/guided-demo/scenes.yaml` (`version:` — the demo
+  video is re-cut per release), `docs/orionx-diag.md`, and the release notes.
+  Confirm with `git grep -n 'v2.2.0-beta'`.
 - **GPG signing key** is provisioned as repository secrets:
   - `secrets.GPG_PRIVATE_KEY` — ASCII-armored private key
   - `secrets.GPG_PASSPHRASE` — passphrase for the key
@@ -29,58 +58,65 @@ Before tagging:
   Until these are provisioned, the GPG step runs with `continue-on-error: true`
   and the DRAFT release is produced **without** `.asc` signature files. The
   pipeline does not fail; the operator must either provision the key and
-  re-run, or attach signatures manually before publishing.
-- **`develop` is at the head you intend to release.** All three CI workflows
-  (`lint.yml`, `e2e-test.yml`, `qemu-test.yml`) are green on that head.
+  re-run, or attach signatures manually before publishing. Manual publishes
+  (§10) are unsigned today; `SHA256SUMS` on the release page is the integrity
+  authority.
 - **`CHANGELOG.md` is updated** with a section for the version you are about
   to tag. The section heading must match one of:
-  - `## [2.0.0-rc1] — <date or status>`
-  - `## [v2.1.0-rc1] — <date or status>`
+  - `## [2.2.0] — <date or status>`
+  - `## [v2.2.0] — <date or status>`
 
-  `extract-release-notes.sh` matches both forms. If no section is found, the
-  release body falls back to `"See CHANGELOG.md for full release history."`
+  `extract-release-notes.sh` matches both forms (anything after the closing
+  `]` is free text). If no section is found, the release body falls back to
+  `"See CHANGELOG.md for full release history."`
 
 ---
 
-## 2. Cutting a release candidate (`v2.1.0-rcN`)
+## 2. Cutting a pre-release (`v2.2.0-beta`, `v2.2.0-rcN`)
 
-From a clean checkout of `develop` at the head you intend to release:
+From a clean checkout at the head you intend to release:
 
 ```bash
 git fetch origin
-git checkout develop
-git pull --ff-only origin develop
+git checkout release/2.2.0
+git pull --ff-only origin release/2.2.0
 
 # Confirm head matches what you reviewed
 git log -1 --oneline
 
 # Annotated tag — the message is what `git describe` will surface.
-git tag -a v2.1.0-rc1 -m "Orion-X Phoenix Edition v2.1.0-rc1"
+git tag -a v2.2.0-rc1 -m "Orion-X Phoenix Edition v2.2.0-rc1"
 
 # Push the tag — this fires release.yml.
-git push origin v2.1.0-rc1
+git push origin v2.2.0-rc1
 ```
 
 Tag push triggers `.github/workflows/release.yml`. The workflow auto-flags
-`prerelease: true` when the tag contains `-rc`.
+`prerelease: true` when the tag contains `-rc`, `-beta` or `-alpha`. For a
+> 2 GB image, treat the CI run as a build check and publish per §10; delete
+the CI draft (`gh release delete <tag>` — non-destructive while unpublished,
+see §6.1) before creating the manual release for the same tag.
 
 ---
 
 ## 3. What CI does (release.yml, 8 steps)
 
-The workflow runs on `ubuntu-latest` with a 60-minute timeout (mirroring
-`qemu-test.yml`'s ISO build budget). Source of truth: `.github/workflows/release.yml`.
+The workflow runs on `ubuntu-latest` with a 60-minute job timeout (the same
+budget as `qemu-test.yml`). Source of truth: `.github/workflows/release.yml`.
 
 1. **Checkout repository** — `actions/checkout@v4` with `fetch-depth: 0` so
    `CHANGELOG.md` and git history are always available, even on shallow tag
    triggers.
-2. **Build ISO inside `debian:bullseye-slim`** — same Docker pattern as
+2. **Build ISO inside `debian:trixie-slim`** — same Docker pattern as
    `qemu-test.yml` (W7-1, issue #25). live-build detects the host distro, so
-   we run privileged inside Debian Bullseye to ensure it bootstraps from
-   `deb.debian.org/bullseye` rather than the Ubuntu runner's apt sources.
-   Output goes to `output/*.iso`; build log is captured to
-   `tmp/release-build-iso.log`. Workspace ownership is `chown`ed back to the
-   runner UID afterward.
+   we run privileged inside Debian trixie (matching `iso/auto/config`'s
+   `DISTRIBUTION="trixie"`) to ensure it bootstraps from
+   `deb.debian.org/trixie` rather than the Ubuntu runner's apt sources.
+   `ORIONX_VERSION` is set from the tag name for tag pushes, so the baked
+   `/etc/orionx-version` equals the tag; for `workflow_dispatch` it is left
+   empty and `build-iso.sh` falls back to `git describe`. Output goes to
+   `output/*.iso`; build log is captured to `tmp/release-build-iso.log`.
+   Workspace ownership is `chown`ed back to the runner UID afterward.
 3. **Verify ISO artifact** — hard-fails the run if `output/` contains zero
    ISO files. No silent success.
 4. **Generate checksums** — `sha256sum` and `sha512sum` over each
@@ -100,36 +136,42 @@ The workflow runs on `ubuntu-latest` with a 60-minute timeout (mirroring
    back to a static "See CHANGELOG.md" line if no section matches.
 7. **Create DRAFT GitHub Release** via `softprops/action-gh-release@v2`:
    - `draft: true` — **always**, regardless of tag shape.
-   - `prerelease: true` — auto-flagged when tag contains `-rc`.
+   - `prerelease: true` — auto-flagged when the tag contains `-rc`, `-beta`
+     or `-alpha`.
    - `body_path: tmp/release-notes.md`
    - `files:` glob uploads `output/*.iso`, both `SHA*SUMS`, and any `*.asc`
      that exist. `fail_on_unmatched_files: false` so a skipped GPG step does
-     not break the release.
+     not break the release. **An ISO over 2 GB is rejected by GitHub at this
+     step** — the draft then holds only the checksum files, which is why the
+     split-part path (§10) is the authority for such images.
 8. **Upload artifacts to Actions + emit summary** — `actions/upload-artifact@v4`
    always runs (`if: always()`), bundling the ISO, checksums, signatures, the
    build log, and the release notes under
    `release-artifacts-<run_id>`. A final shell step prints a Release Pipeline
    Summary with the tag, GPG signing state, and `output/` listing.
 
-Expected wall-clock: ISO build ~10–15 min, total run ~15–20 min.
+Expected wall-clock: the ISO build alone now exceeds the 10–15 min it took
+before the model import/consolidation step (0510) — budget the full 60-minute
+job and read the Actions timing of the last green run for a current number.
 
 ---
 
 ## 4. Publishing the release (W8-7 operator approve gate)
 
 Once the workflow completes successfully, the DRAFT exists but is **not
-visible to the public**. The operator owns the publish flip.
+visible to the public**. The operator owns the publish flip. (For > 2 GB
+images the same checks apply to the staged files in §10 before upload.)
 
 ### 4.1. Locate the draft
 
 - GitHub UI: **Repository → Releases** → the draft appears at the top, tagged
   with the version and a `Draft` badge.
-- CLI: `gh release view v2.1.0-rc1 --json isDraft,assets`
+- CLI: `gh release view v2.2.0-rc1 --json isDraft,assets`
 
 ### 4.2. Verify the artifacts
 
-Download the draft assets (`gh release download v2.1.0-rc1 -D /tmp/orion-rc1`
-or via the UI) and run, from the download directory:
+Download the draft assets (`gh release download v2.2.0-rc1 -D tmp/release-v2.2.0-rc1`
+or via the UI — never into `/tmp/`) and run, from the download directory:
 
 ```bash
 # Checksum verification — both must report "OK" for every artifact line.
@@ -140,7 +182,7 @@ sha512sum -c SHA512SUMS
 gpg --verify SHA256SUMS.asc SHA256SUMS
 gpg --verify SHA512SUMS.asc SHA512SUMS
 # And for each ISO:
-gpg --verify orion-x-<version>.iso.asc orion-x-<version>.iso
+gpg --verify orionx-phoenix-edition-<version>.iso.asc orionx-phoenix-edition-<version>.iso
 ```
 
 `gpg --verify` exits 0 and prints `Good signature from "..."` on success.
@@ -152,57 +194,75 @@ time, either:
   the workflow via `workflow_dispatch`, then upload the new `.asc` files to
   the draft; or
 - sign the artifacts locally and attach the resulting `.asc` files via
-  `gh release upload v2.1.0-rc1 <files>`.
+  `gh release upload v2.2.0-rc1 <files>`.
 
-### 4.3. Final preflight before publish
+### 4.3. Assert the image's identity matches the tag
+
+The hash proves the file is intact; it does not prove the image *knows* which
+release it is. Extract the version manifest from the squashfs and check it
+(the beta shipped `ISO_VERSION=v2.2.0-trixie-dev9`):
+
+```bash
+ISO=orionx-phoenix-edition-<tag>.iso; TAG=<tag>
+7z e -o"tmp/iso-check" "$ISO" live/filesystem.squashfs
+unsquashfs -d tmp/iso-check/fs tmp/iso-check/filesystem.squashfs etc/orionx-version usr/share/doc/orionx/README.md
+grep -x "ISO_VERSION=$TAG" tmp/iso-check/fs/etc/orionx-version || { echo "BAKED VERSION != TAG"; exit 1; }
+diff -q README.md tmp/iso-check/fs/usr/share/doc/orionx/README.md || { echo "BAKED README IS STALE"; exit 1; }
+rm -rf tmp/iso-check
+```
+
+Both must pass. A mismatch means rebuilding from the tagged commit (or with
+`ORIONX_VERSION=$TAG` exported) — not editing the release notes around it.
+
+### 4.4. Final preflight before publish
 
 - Release notes (the rendered Markdown body) match the `CHANGELOG.md`
-  section.
-- For a final `v2.0.0` tag: **W7-7 attestation is complete.** Do not publish
-  a final release without it.
-- Asset list contains, at minimum: ISO, `SHA256SUMS`, `SHA512SUMS`. If GPG
-  signing was expected, `.asc` siblings for each.
+  section, including its *Known issues* list.
+- Asset list contains, at minimum: ISO (or `.iso.part-*` + `REASSEMBLE.txt`),
+  `SHA256SUMS`, `SHA512SUMS` where CI produced it. If GPG signing was
+  expected, `.asc` siblings for each.
+- The guided-demo assets referenced from the release notes
+  (`docs/media/orionx-guided-demo-<tag>.{mp4,vtt,-poster.png,-transcript.md}`)
+  are either attached to the release or linked to their `docs/media/` paths
+  at the tag.
 
-### 4.4. Flip DRAFT → Published
+### 4.5. Flip DRAFT → Published
 
 UI: open the draft, click **Publish release**.
 
-CLI: `gh release edit v2.1.0-rc1 --draft=false`
+CLI: `gh release edit v2.2.0-rc1 --draft=false`
 
 This is the W8-7 `approve` gate. Once flipped, the release is public.
 
 ---
 
-## 5. Promotion: `v2.1.0-rcN` → `v2.0.0` final
+## 5. Promotion: `v2.2.0-beta` → `v2.2.0` final
 
-When an RC has soaked sufficiently and W7-7 attestation is complete:
+When the beta has soaked and its *Known issues* are closed:
 
-1. **Update CHANGELOG.md** — rename the `## [v2.1.0-rc1]` section to
-   `## [v2.0.0] — <release date>` (or add a new `## [v2.0.0]` section that
-   supersedes the rc entry). The new section is what `extract-release-notes.sh`
-   will return for the `v2.0.0` tag.
-2. **Bump version literals** — same shape as W8-1 version-bump touchpoints:
-   - `Dockerfile` (image labels)
-   - `README.md`
-   - `docs/User_Guide.md`
-   - `scripts/build-iso.sh` (`VERSION=` line)
-   - `iso/auto/config` (or equivalent live-build hook)
-
-   Grep for the previous rc string to confirm coverage:
-   `git grep -n 'v2.1.0-rc1'`
-3. **Land via the canonical chain on `develop`** — planner → guardian
-   (provision) → implementer → reviewer → guardian (land). Do not hand-edit
-   the bump on `main`. (Sacred Practice #2.)
-4. **Tag from the updated `develop` head:**
+1. **Update CHANGELOG.md** — add a `## [v2.2.0] — <release date>` section
+   above the beta section (keep the beta section as history; its *Known
+   issues* list documents what changed). The new section is what
+   `extract-release-notes.sh` returns for the `v2.2.0` tag.
+2. **Bump version literals** — the touchpoints listed in §1; confirm with
+   `git grep -n 'v2.2.0-beta'` that only historical references remain
+   (CHANGELOG, release-process lessons, the beta's own demo video).
+3. **Land on `release/2.2.0`**, then merge to `develop` after the tag. Do
+   not hand-edit the bump on the integration branch.
+4. **Tag from the updated head:**
    ```bash
    git fetch origin
-   git checkout develop
-   git pull --ff-only origin develop
-   git tag -a v2.0.0 -m "Orion-X Phoenix Edition v2.0.0"
-   git push origin v2.0.0
+   git checkout release/2.2.0
+   git pull --ff-only origin release/2.2.0
+   git tag -a v2.2.0 -m "Orion-X Phoenix Edition v2.2.0"
+   git push origin v2.2.0
    ```
-5. **CI produces a DRAFT release.** Repeat Section 4 to verify and publish.
-   `prerelease` will be `false` automatically (tag does not contain `-rc`).
+5. **Build and publish.** `release.yml` fires and produces a DRAFT with
+   `prerelease: false` (the tag has no `-rc`/`-beta`/`-alpha`). If the image
+   is under 2 GB, repeat §4. If it is over 2 GB — expected for v2.2.0, since
+   the model is still inside the ISO — build on the build host with
+   `ORIONX_VERSION=v2.2.0` exported, run §4.3 against the output, and publish
+   per §10; delete the CI draft first.
 
 ---
 

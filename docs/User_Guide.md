@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition User Guide
 
-Release: **v2.2.0 (Trixie line)** — Debian 13 "trixie", Python 3.13, Linux 6.12.
+Release: **v2.2.0-beta** (v2.2.0 line, Trixie) — Debian 13 "trixie", Python 3.13, Linux 6.12. This guide describes the beta image; where v2.2.0 final differs, the text says so.
 
 ## Table of Contents
 
@@ -12,7 +12,7 @@ Release: **v2.2.0 (Trixie line)** — Debian 13 "trixie", Python 3.13, Linux 6.1
 2. [Getting Started](#2-getting-started)
    - [System Requirements](#system-requirements)
    - [Creating Bootable Media](#creating-bootable-media)
-   - [Verifying Your Installation](#verifying-your-installation)
+   - [Verifying the Download and the Boot](#verifying-the-download-and-the-boot)
 
 3. [Booting and Initial Setup](#3-booting-and-initial-setup)
    - [Boot Menu and Boot Chain](#boot-menu-and-boot-chain)
@@ -102,25 +102,50 @@ Release: **v2.2.0 (Trixie line)** — Debian 13 "trixie", Python 3.13, Linux 6.1
 
 ### About Orion-X Phoenix Edition
 
-Orion-X Phoenix Edition is a comprehensive cybersecurity toolkit designed specifically for incident response and digital forensics. It provides a hardened Linux-based live environment that emphasizes security, privacy, and team collaboration.
+Orion-X Phoenix Edition is a complete Linux system on a USB stick for incident response and digital forensics. You start a computer from the stick instead of from its own disk; Orion-X runs entirely from memory, installs nothing, and leaves no files on that computer. It brings its own tools — network capture, memory and disk forensics, malware triage, encrypted team chat, an on-device AI assistant — and works without any internet connection.
 
-The "Phoenix" name symbolizes the toolkit's ability to help organizations rise from the ashes of security incidents through effective investigation and response. The current release, v2.2.0 (Trixie line), is built on Debian 13 "trixie" with Python 3.13 and Linux 6.12. It adds an on-device AI assistant (Nebula), audible intrusion alerts (R.A.I.N.), a live visualization dashboard (the Orion Cockpit), a peer-to-peer WireGuard mesh, and a graphical Control Center.
+The "Phoenix" name symbolizes the toolkit's ability to help organizations rise from the ashes of security incidents through effective investigation and response. The current release, **v2.2.0-beta** (Trixie line), is built on Debian 13 "trixie" with Python 3.13 and Linux 6.12. It adds an on-device AI assistant (Nebula), audible intrusion alerts (R.A.I.N.), a live visualization dashboard (the Orion Cockpit), a peer-to-peer WireGuard mesh, and a graphical Control Center.
 
-Orion-X is designed to be booted directly from USB media, leaving no traces on the host system. It can run entirely in memory, providing a secure and isolated environment for analyzing potentially compromised systems.
+**About the beta.** v2.2.0-beta has been boot-tested on one reference laptop (Lenovo, Intel Bay Trail, UEFI) and in QEMU. It is complete enough to use, but expect rough edges, and please report anything confusing or broken (see [Support](SUPPORT.md)). Known limits of this beta:
+
+- x86-64 PCs only (it does not boot Apple-silicon Macs); Secure Boot must be off.
+- Nothing you change survives a reboot unless you set up [persistence](#persistence-options).
+- The beta image identifies itself as `ISO_VERSION=v2.2.0-trixie-dev9` in `/etc/orionx-version` and the terminal welcome text. That is the v2.2.0-beta build (ISO SHA-256 `606e6179…e49f`); v2.2.0 final will report `v2.2.0`.
+- The self-check tool `orionx-diag` is missing from the beta image (it ships in v2.2.0).
+- `radare2` and `bulk_extractor` are not on the image, although earlier release text listed them; Ghidra is available as an optional installer (§15).
+- The bare `sudo setup-matrix.sh` command exits with "`--mode` is required" on the beta; pass `--mode client` or `--mode server` (§6). v2.2.0 prompts for the mode instead.
+- The copy of this guide and the README baked into the image at `/usr/share/doc/orionx/` predates the beta; the versions on GitHub are current.
+
+#### Words this guide uses
+
+- **ISO / image** — the single file that contains the whole Orion-X system; you copy it onto a USB stick.
+- **Live system** — an operating system that runs from removable media and memory instead of being installed.
+- **Air-gapped** — a computer with no network connection at all. Orion-X is built to work that way.
+- **SHA-256 / hash** — a fingerprint of a file. If your copy's fingerprint matches the published one, the file is intact.
+- **UEFI / BIOS / Secure Boot** — the computer's firmware and its start-up rules. Secure Boot must be off for the beta to start.
+- **Deck** — an Orion-X machine (from "cyberdeck"). **Node** — the same thing, seen from the network.
+- **Mesh** — several decks joined to each other over encrypted WireGuard links.
+- **Event bus** — the file every Orion-X detector writes alerts to; R.A.I.N. and the Cockpit read it.
+- **MCP tools** — the fixed set of local commands the Nebula assistant is allowed to run (MCP is the protocol it uses to call them).
+- **Persistence** — keeping changes between reboots on an extra partition you add to the stick.
+- **Terminal** — the window where you type commands. On the desktop: Applications → Terminal Emulator, or the terminal icon in the top panel.
+- **sudo** — prefix that runs one command as the administrator ("root"). The live account may use it without a password.
+- **Service** — a background program managed by `systemctl` (for example `nebula-runtime.service`, which runs the AI assistant).
+- **IDS** — intrusion detection system; here, Suricata, which inspects network traffic against rule files.
 
 ### Key Features
 
-- **Hardened Linux Environment**: Debian 13 "trixie" base, RAM-only operation with optional full disk encryption
-- **Control Center**: One window for network, mesh, comms, awareness, IR tools, Nebula AI and auto-healing — designed for your 3am self
+- **Hardened Linux Environment**: Debian 13 "trixie" base, runs from memory with the stick's read-only image; optional encrypted persistence (§3)
+- **Control Center**: One window for network, mesh, comms, awareness, IR (incident response) tools, Nebula AI and auto-healing — designed for your 3am self
 - **R.A.I.N.**: Real-time Audible Intrusion Notification — hear intrusions without watching the screen
 - **Orion Cockpit**: Live dashboard of the event stream, threat pressure, network activity and system status
-- **Nebula AI**: On-device language model (ollama + Qwen2.5-3B-Instruct) with tool access through MCP; nothing leaves the deck
-- **Secure Communication**: Matrix homeserver setup for encrypted team collaboration
+- **Nebula AI**: On-device language model (ollama serving Qwen2.5-3B-Instruct) with tool access through MCP. It answers on 127.0.0.1 only and needs no internet; see §8 for exactly what "local" covers
+- **Secure Communication**: Matrix setup (client or homeserver) for encrypted team chat — the Matrix software itself is installed over the network (§6)
 - **Private Networking**: WireGuard VPN and a peer-to-peer WireGuard mesh between Orion-X nodes
 - **Comprehensive Forensic Tools**: Built-in utilities for memory acquisition, disk imaging, network analysis, detection (suricata, yara, capa) and OAST triage (go-roast)
 - **Automated Analysis**: Custom scripts for rapid artifact processing and timeline generation
-- **Sample Data Library**: Synthetic and public forensic samples for training and testing
-- **Visual Distinction**: Themed interface with two modes (dark/amber and green) for operational clarity
+- **Sample Data Library**: Synthetic forensic samples on the image, public samples fetched on demand (§14)
+- **Visual Distinction**: A terminal colour toggle (dark/amber and green) to tell operating contexts apart (§13)
 - **Documentation**: This guide and reference materials accessible within the environment
 
 ### Use Cases
@@ -140,11 +165,13 @@ Orion-X Phoenix Edition is ideal for:
 
 To effectively run Orion-X Phoenix Edition, your system should meet these minimum requirements:
 
-- **CPU**: 64-bit processor (x86_64)
-- **RAM**: 4GB minimum (8GB+ recommended for memory analysis; Nebula AI benefits from 8GB+)
-- **Storage**: 8GB+ USB drive for bootable media
-- **Boot Support**: UEFI or Legacy BIOS
-- **Network**: Wired or wireless network adapter
+- **CPU**: 64-bit Intel/AMD processor (x86_64). Apple-silicon Macs and other ARM machines cannot boot it.
+- **RAM**: 4GB minimum (8GB+ recommended for memory analysis; Nebula AI needs ~2.5 GB free to load its model)
+- **Storage**: 8GB+ USB drive for bootable media — everything on it is erased
+- **Boot Support**: UEFI or Legacy BIOS, with **Secure Boot disabled** (the beta's bootloader is unsigned; the firmware shows "Invalid signature" or silently skips the stick otherwise)
+- **Network**: Wired or wireless network adapter (optional — Orion-X works fully offline)
+
+Before you change firmware settings on a **Windows laptop with BitLocker**, make sure you have the BitLocker recovery key (Microsoft account → Devices → Manage recovery keys): Windows may ask for it on the next Windows start after Secure Boot is toggled. Booting Orion-X does not read or modify the internal disk unless you mount or image it yourself; re-enable Secure Boot afterwards if your organisation requires it.
 
 For intensive operations like memory analysis of large dumps or processing multiple disk images, we recommend:
 
@@ -173,11 +200,13 @@ cmd /c copy /b orionx-phoenix-edition-<version>.iso.part-aa + orionx-phoenix-edi
 Get-FileHash orionx-phoenix-edition-<version>.iso -Algorithm SHA256
 ```
 
-`SHA256SUMS` lists the whole ISO **and** each part, so a corrupted download can be identified and re-fetched individually. A single `.part-*` file is not bootable.
+Run these in the folder that holds the downloads (`cd ~/Downloads` first if that is where they are). The parts are deliberately uneven: for v2.2.0-beta, `part-aa` and `part-ab` are 1000 MiB each and `part-ac` … `part-ag` are about 190 MiB each — that is expected, not a truncated download. On Windows, Explorer shows the joined file as about 2.88 GB (it counts in GiB); that is the same 3.09 GB file.
+
+`SHA256SUMS` lists the whole ISO **and** each part, so a corrupted download can be identified and re-fetched individually: the check prints one `OK` line per file (eight for the beta); re-download any file marked `FAILED` and run the check again. If you delete the parts after joining, the seven part lines report "No such file" — only the `.iso` line matters then. A single `.part-*` file is not bootable.
 
 #### Recommended: orionx-imager
 
-`orionx-imager` is the host-side USB writer for macOS, Linux and Windows. It downloads the release ISO, verifies its SHA-256, refuses to write to internal disks, asks for your password inside the app, and shows a real byte-accurate progress bar while writing. See [orionx-imager.md](orionx-imager.md) for installation and usage.
+`orionx-imager` is the host-side USB writer for **macOS and Linux** (it does not run on Windows yet — Windows users follow the Rufus steps below). It lives in the repository (`git clone https://github.com/jarocki/orion.git`, then `scripts/orionx-imager/orionx-imager`), needs only Python 3, and downloads the release for you — releases published in parts are reassembled and verified automatically — checks the SHA-256, refuses to write to internal disks, asks for your password inside the app, and shows a byte-accurate progress bar while writing. For the beta, name the tag: `--iso-release v2.2.0-beta` (plain `latest` means the latest *stable* release). See [orionx-imager.md](orionx-imager.md).
 
 #### Alternative: dd (Linux)
 
@@ -193,11 +222,13 @@ Get-FileHash orionx-phoenix-edition-<version>.iso -Algorithm SHA256
 
 #### Alternative: Rufus or balenaEtcher (Windows)
 
-1. Download the Orion-X Phoenix Edition ISO file
-2. Download and install [Rufus](https://rufus.ie) or [balenaEtcher](https://www.balena.io/etcher/)
-3. Insert your USB drive
-4. Open Rufus or balenaEtcher and follow the instructions to select the ISO and USB drive
-5. Create the bootable USB (select "DD Image mode" if prompted)
+1. Download every `.part-*` file plus `SHA256SUMS` and reassemble the ISO with `copy /b` as shown above; check the hash with `Get-FileHash` (PowerShell prints it in capital letters — only the letters and digits matter, not their case)
+2. Download and install [Rufus](https://rufus.ie) (portable version is fine) or [balenaEtcher](https://www.balena.io/etcher/)
+3. Insert your USB drive (8 GB or more; it will be erased)
+4. In Rufus: **Device** = your USB stick (check the size matches), **Boot selection** = the reassembled `.iso`, leave **Partition scheme** and the other defaults as Rufus proposes, click **START**
+5. When Rufus asks how to write the image, choose **"Write in DD Image mode"** — the "ISO Image mode" option does not boot Orion-X correctly
+6. If Windows pops up "You need to format the disk … before you can use it", click **Cancel** — the stick is correct; Windows simply cannot read Linux partitions
+7. Wait for READY, close Rufus, and eject the stick from the taskbar before unplugging
 
 #### Alternative: dd (macOS)
 
@@ -219,25 +250,33 @@ Get-FileHash orionx-phoenix-edition-<version>.iso -Algorithm SHA256
    diskutil eject /dev/diskN
    ```
 
-### Verifying Your Installation
+### Verifying the Download and the Boot
 
-To verify the integrity of your bootable media:
+Nothing is installed on the computer — this checks the file you downloaded and the stick you booted.
 
-1. Calculate the SHA-256 hash of the ISO before writing to USB:
+1. Calculate the SHA-256 hash of the ISO before writing it to USB:
    ```bash
-   # On Linux/macOS
+   # Linux
    sha256sum orionx-phoenix-edition-<version>.iso
-
-   # On Windows (PowerShell)
+   ```
+   ```bash
+   # macOS
+   shasum -a 256 orionx-phoenix-edition-<version>.iso
+   ```
+   ```powershell
+   # Windows (PowerShell) — prints the hash in capitals; case does not matter
    Get-FileHash orionx-phoenix-edition-<version>.iso -Algorithm SHA256
    ```
 
-2. Compare the calculated hash with the one provided on the download page (`orionx-imager` does this for you)
+2. Compare the result with the hash on the release page and in `SHA256SUMS` (`orionx-imager` does this for you when it downloads the release). For v2.2.0-beta the ISO hashes to `606e6179887ff7f82e9d05ed973333856c153a692d45983e16e35b12a0f0e49f`.
 
-3. After creating the bootable media, boot into Orion-X and verify the version:
+3. After booting Orion-X, open a terminal and check the image identity:
    ```bash
    grep ISO_VERSION= /etc/orionx-version
    ```
+   The beta prints `ISO_VERSION=v2.2.0-trixie-dev9` (see *About the beta* in §1); v2.2.0 final prints `ISO_VERSION=v2.2.0`.
+
+4. On v2.2.0 (not the beta image, which lacks the tool), run the built-in self-check: `sudo orionx-diag`. See [orionx-diag.md](orionx-diag.md).
 
 ## 3. Booting and Initial Setup
 
@@ -248,7 +287,7 @@ What you see depends on how your firmware boots the USB drive:
 - **UEFI**: a plain, readable GRUB menu with two entries — **Orion-X Live** and **Orion-X Live (failsafe)**. The default entry boots after a 5 s timeout.
 - **Legacy BIOS**: the same two entries on the themed isolinux menu.
 
-After you choose an entry, the Plymouth **"Orion-X Phoenix"** splash is shown while the kernel and live system start. On the very first boot the splash is followed by the first-boot wizard on the console (next section); on later boots the system goes straight to the login screen and desktop.
+After you choose an entry, the Plymouth **"Orion-X Phoenix"** splash is shown while the kernel and live system start. On the very first boot the splash is followed by the first-boot wizard on the console (next section); when it finishes, the desktop opens **already logged in** as the primary account. On later boots (persistence) the system goes straight to the desktop. The login screen appears only if you log out or lock the screen.
 
 ![Orion-X boot chain](images/orionx-boot-chain.svg)
 
@@ -258,13 +297,23 @@ To edit kernel parameters for a single boot, press **e** in the GRUB menu (UEFI)
 
 ### First-Boot Wizard
 
-On the first boot only, Orion-X pauses on the console (tty1) and shows a full-screen banner: **"the boot has PAUSED — your input is needed."** The wizard then asks, in order:
+Before the desktop appears, Orion-X pauses on the text console (tty1) and shows a full-screen banner: **"the boot has PAUSED — your input is needed."** This is the first-boot wizard, not a crash. It runs whenever its completion marker `/var/lib/orionx/.first-boot-done` is absent — on a plain (amnesic) stick that is **every boot**, because nothing is kept between boots; with persistence set up it runs once. The wizard asks, in order:
 
-1. **Hostname** for this deck
-2. **Primary account** — username and password (if you change the username, the live user is renamed)
-3. **Wi-Fi** — SSID and password, asked **only** when no wired link is detected
+1. **Hostname** for this deck — press Enter for the default `orionx-node`
+2. **Primary account** — the account name (default `orionx-operator`; if you change it, the live user is renamed) and a password. **Leave the password blank to keep the account passwordless** (the default; convenient on an air-gapped deck, unwise on a shared network). The account can use `sudo` either way.
+3. **Wi-Fi** — network name (SSID) and password, asked **only** when no wired link is detected
 
-Every prompt auto-continues with its default after 120 seconds, so an unattended boot still completes. When the wizard finishes, the system continues to the login screen and desktop.
+Every prompt auto-continues with its default after 120 seconds, so an unattended boot still completes (worst case about six minutes at the banner). When the wizard finishes, the desktop opens automatically logged in as the primary account — there is no login prompt on a normal boot. If you log out, the login screen asks for the password you set (press Enter if you left it blank).
+
+The wizard also does three things without asking:
+
+- **Generates WireGuard keys** for the mesh (`/etc/wireguard/wg0.conf` and `/etc/wireguard/mesh-private.key`), so `orionx-mesh join` works immediately.
+- **Prints an "SSH admin one-shot" credential** (a random password, a key fingerprint and a private key) to the console and writes it to `/etc/motd.d/orionx-ssh-admin` and `/etc/issue.d/orionx-ssh-admin.issue`, so you also see it in the terminal welcome text. **In this beta the credential cannot be used**: it targets the `root` account, and the image's SSH hardening disables root login. Ignore it. To remove the text from the login prompt and the terminal welcome:
+  ```bash
+  sudo rm -f /etc/motd.d/orionx-ssh-admin /etc/issue.d/*
+  ```
+  SSH itself stays enabled; disable it with `sudo systemctl disable --now ssh` if you do not need it.
+- **Skips Matrix registration** on the image (the Synapse server is not installed until you run `setup-matrix.sh --mode server`, §6).
 
 You can re-run the wizard at any time:
 
@@ -293,13 +342,16 @@ Orion-X can operate in two primary modes:
 - Configurations, collected evidence, and installed tools are preserved
 - Optional encrypted persistence for sensitive data
 
-A USB stick written with `dd` or `orionx-imager` contains **two** partitions (the live system and the EFI system partition). Persistence needs a **third** partition, which you create yourself in the free space after the image. This build does not expose persistence as a boot-menu entry; it is enabled with the `persistence` kernel parameter that Debian live-boot understands.
+**Advanced — skip this on your first boot.** Forgetting everything at power-off is the safe default, and the steps below repartition the very stick you booted from. Before you start, copy anything you want to keep to a second USB drive (§12).
+
+A USB stick written with `dd` or `orionx-imager` contains **two** partitions (the live system and the EFI system partition). Persistence needs a **third** partition, which you create yourself in the free space after the image. Persistence is **enabled by default**: `persistence` is already on the kernel command line of both boot entries, so Debian live-boot automatically uses any partition labelled `persistence` that contains a `persistence.conf` file. Only an *encrypted* volume needs a boot-menu edit (`persistence-encryption=luks`).
 
 To set up encrypted persistence:
 
 1. Boot Orion-X normally
-2. Create a third partition in the free space (replace `/dev/sdX` with the USB device, not a partition):
+2. Find the stick and create a third partition in its free space. Run `lsblk` first: the stick is the small device (8–64 GB) that carries the two Orion-X partitions; the computer's own disk is the large one — do not touch it. Replace `/dev/sdX` with the USB device, not a partition:
    ```bash
+   lsblk
    sudo fdisk /dev/sdX      # n (new), accept defaults to use the free space, w (write)
    lsblk /dev/sdX           # confirm the new partition, e.g. /dev/sdX3
    ```
@@ -313,7 +365,9 @@ To set up encrypted persistence:
    sudo umount /mnt
    sudo cryptsetup luksClose orionx_persist
    ```
-4. Reboot; at the boot menu press **e** (GRUB) or **Tab** (isolinux) and append `persistence persistence-encryption=luks` to the kernel line. You will be asked for the passphrase during boot.
+4. Reboot; at the boot menu press **e** (GRUB) or **Tab** (isolinux), append `persistence-encryption=luks` to the line that starts with `linux` (GRUB) or `append` (isolinux), then press **Ctrl+X** or **F10** (GRUB) or **Enter** (isolinux) to boot. You will be asked for the passphrase during boot. The menu waits 5 s, so press a key as soon as it appears.
+
+For an **unencrypted** persistence volume, skip the `cryptsetup` lines (`sudo mkfs.ext4 -L persistence /dev/sdX3`, then write `persistence.conf` to it) and reboot — no boot-menu edit is needed.
 
 ## 4. The Desktop
 
@@ -332,9 +386,10 @@ Applications → **Orion** (Phoenix icon) groups the Orion-X tools:
 - **Orion-X Mesh**
 - **Orion-X — Start Mesh**
 - **Orion-X Matrix Setup**
-- **Matrix Commander**
+- **Orion-X Matrix Comms (CLI)** — the `matrix-commander` terminal client
 - **Orion-X Artifact Analyzer**
 - **Orion-X Storyboard Generator**
+- **Pivotglass**
 
 ### Top Panel Widgets
 
@@ -344,12 +399,12 @@ The top panel shows, left to right:
 |---|---|
 | ▲ *interface* | Active network interface; shows ▼ when offline |
 | ◆ *N peers* | Connected mesh peers; shows — when the mesh is idle |
-| ◎ *scans* | Scan count |
-| ◉ *clients* | Client count |
+| ◎ *scans* | Number of scan / intrusion-detection events published to the event bus since boot (categories `ids`, `scan`, `recon`, `probe`, or sources `suricata`, `zeek`, `nucleotide`). `◎ 0` on a quiet deck is normal |
+| ◉ *clients* | Number of other machines on the local network segment that have exchanged traffic with this deck (live entries in the ARP/neighbour table) |
 
 ### Control Center
 
-The Control Center (`orionx-control-center`) opens automatically with the desktop session. Its header carries the tagline **"Designed for your 3am self"**, a **◈ COCKPIT** button that opens the Orion Cockpit, and a toast bar that reports every action you take. It is organized into seven tabs:
+The Control Center (`orionx-control-center`) opens automatically with the desktop session. Its header carries the tagline **"Designed for your 3am self"**, a **◈ COCKPIT** button that opens the Orion Cockpit, and a message line (the "toast bar") that reports the result of every action you take. It is organized into seven tabs:
 
 **Network · Mesh · Comms · Awareness · IR Tools · Nebula AI · Auto-Healing**
 
@@ -358,11 +413,11 @@ The Control Center (`orionx-control-center`) opens automatically with the deskto
 - **Comms** — Matrix setup and clients (see [Secure Communication](#6-secure-communication)).
 - **Awareness**
     - *Live health*: CPU load, memory, disk, uptime, Nebula AI, Network, Mesh, Firewall — each green/amber/red, refreshed every 3 s.
-    - *Threat posture* (radio): **Tier 0 · Passive**, **Tier 1 · Active Monitoring**, **Tier 2 · Deception** (opt-in). Stored in `~/.config/orionx/threat-posture`.
+    - *Threat posture* (radio) sets how actively the deck behaves on the network. **Tier 0 · Passive** — quiet monitoring only: passive host/network observation, no active probing (the default). **Tier 1 · Active Monitoring** — IDS-style detection (Suricata with rules) with Nebula contextualising alerts; Suricata must be enabled first (§10). **Tier 2 · Deception** — canaries, honeytokens and tarpits; explicit opt-in. Selecting a tier records it in `~/.config/orionx/threat-posture` for the detection tools and Nebula to read; nothing above Tier 0 is active unless you choose it.
     - *Audible alerts · R.A.I.N.*: **Enable audible alerts**, **Alert from severity** (Info / Notice / Warning / Critical; default Warning), **Volume** slider, **Spoken voice cue**, **Test alert** button. Stored in `~/.config/orionx/rain.json`. See [R.A.I.N.](#rain-real-time-audible-intrusion-notification).
-- **IR Tools** — Artifact Analyzer, Storyboard Generator, PCAP Analyzer, Lynis Security Audit, Download Samples, Toggle Theme. Click one, pick the file or folder it needs, and it runs. A tool that is not installed produces a clear message, not an error.
-- **Nebula AI** — runtime status, start/stop, the **Ask Nebula** chat pane, and the list of MCP tools (see [Nebula AI](#8-nebula-ai)).
-- **Auto-Healing** — an autonomy grid: for each class of action choose **off / propose / confirm / autonomous**. Stored in `~/.config/orionx/autonomy.json`.
+- **IR Tools** — Artifact Analyzer, Storyboard Generator, PCAP Analyzer, Lynis Security Audit (a host security checklist, `run-lynis.sh`), Download Samples, Toggle Theme. Click one, pick the file or folder it needs, and it runs. A tool that is not installed produces a clear message, not an error.
+- **Nebula AI** — runtime and integrity status, a **Warm up model** button (loads the model into memory ahead of your first question), the **Ask Nebula** chat pane, and the list of MCP tools (see [Nebula AI](#8-nebula-ai)). There are no start/stop buttons; the service is managed with `systemctl` (§8).
+- **Auto-Healing** — pre-approves how much Orion-X may do on its own when it detects a problem, per class of response: **Block IP** (drop traffic from a hostile source with nftables), **Kill process**, **Quarantine file** (move it to a sealed vault), **Isolate node** (cut this host off the network), **Rotate mesh keys**, **Revoke Matrix session**. For each choose **off** (never), **propose** (suggest only — the default), **confirm** (ask first) or **autonomous** (act, then tell you). Stored in `~/.config/orionx/autonomy.json`; the healing engine and Nebula read it before acting.
 
 ## 5. Networking
 
@@ -464,30 +519,37 @@ To verify your network configuration:
    orionx-mesh status
    ```
 
-4. Test connection to team infrastructure:
+4. Test connection to team infrastructure (replace `<host>` with the address of your evidence server, Matrix server, or another deck):
    ```bash
-   ping -c 4 [artifact-vault-ip]
+   ping -c 4 <host>
    ```
 
 5. Trace a path (if `traceroute` is installed on this build):
    ```bash
-   traceroute [destination]
+   traceroute <host>
    ```
+
+Orion-X makes **no outbound connection on its own**. A wired link is configured automatically when a cable is plugged in, and the wizard offers Wi-Fi when there is no cable, but nothing on the image phones home, checks for updates or syncs a clock over the internet. The commands that do reach out are the ones you run: `orionx-freshen-yara`, `orionx-freshen-suricata`, `download-samples.sh`, `nucleotide build`, `setup-matrix.sh`, the optional installers (§15), Pivotglass intelligence modules once you add API keys (§8), and `artifact-analyzer.py --upload` (§12). If you are investigating a compromised network, leave the cable out until you have decided the deck should be on it.
 
 ## 6. Secure Communication
 
 ### Matrix Setup
 
-Orion-X uses Matrix for secure, encrypted team communication. Start it from the Orion menu (**Orion-X Matrix Setup**), the Control Center **Comms** tab, or a terminal:
+Orion-X uses Matrix — an open, end-to-end-encrypted chat system (think Slack or Signal, but a server your team can run itself) — for team communication. The setup script has two modes:
 
-1. Open a terminal
-2. Run the Matrix setup script:
-   ```bash
-   sudo setup-matrix.sh
-   ```
-3. Choose your configuration mode:
-   - **Client Mode**: Connect to your team's existing Matrix server
-   - **Server Mode**: Configure this Orion-X instance as a Matrix homeserver
+- **Client mode** — connect this deck to a Matrix server your team already runs.
+- **Server mode** — run a Matrix homeserver (Synapse) on this deck for the team.
+
+**Both modes need network access**: the Element desktop client (both modes) and Synapse (server mode) are not on the image; the script adds the vendor package repositories and installs them with `apt-get`. On an air-gapped deck the script stops with an error. With one deck and no network there is nothing to talk to; `matrix-commander`, the terminal client, is the only Matrix piece on the image itself. In the default amnesic mode a server you set up disappears at power-off.
+
+Run it from a terminal, naming the mode:
+
+```bash
+sudo setup-matrix.sh --mode client
+sudo setup-matrix.sh --mode server
+```
+
+On the beta image the bare command `sudo setup-matrix.sh` (and the **Orion-X Matrix Setup** menu entry, which runs it bare) exits with `ERROR: --mode is required` — pass the flag. From v2.2.0 the bare command and the menu entry ask you to choose client or server. Everything else is prompted for; `setup-matrix.sh --help` lists the flags for unattended use.
 
 #### Client Mode Configuration
 
@@ -496,18 +558,19 @@ If connecting to an existing server:
 1. Enter the Matrix homeserver URL (e.g., `https://matrix.example.org`)
 2. Enter your Matrix user ID (`@username:server.org`)
 3. Enter your password
-4. The script configures the client for you
+4. The script installs Element (network) and configures it for that server
 
 #### Server Mode Configuration
 
 If setting up a local server:
 
-1. Enter a server name for the Matrix homeserver
+1. Enter a server name for the Matrix homeserver (default `orionx.local`)
 2. Create an admin username and password
 3. The script will:
+   - Install Synapse and Element from their package repositories (network)
    - Generate a secure configuration
    - Create a self-signed certificate
-   - Start the Matrix Synapse server
+   - Start the Matrix Synapse server (`matrix-synapse`, port 8448)
    - Register your admin user
    - Configure the client
 
@@ -515,7 +578,7 @@ If setting up a local server:
 
 Two clients are available:
 
-- **Matrix Commander** (Orion menu) — a lightweight command-line client, present on the base image.
+- **Orion-X Matrix Comms (CLI)** (Orion menu) — `matrix-commander`, a lightweight command-line client, present on the base image.
 - **Element** — the graphical Matrix client. Element is **not** on the base ISO; it is an optional post-boot installer that needs network access (see [Optional Installers](#15-optional-installers)):
   ```bash
   sudo /opt/orionx/optional/install-element.sh
@@ -594,11 +657,23 @@ Keys: **F11** toggles fullscreen; **Esc** or **q** quits. Flags: `--fullscreen` 
 
 ## 8. Nebula AI
 
-Nebula is Orion-X's on-device assistant: ollama serving **Qwen2.5-3B-Instruct** (Q4_K_M quantization), run by `nebula-runtime.service`. It answers questions, explains output, and can call a fixed set of local tools. Nothing leaves the deck.
+Nebula is Orion-X's on-device assistant: ollama serving **Qwen2.5-3B-Instruct** (a 1.9 GB open-source language model, stored in a compact "Q4_K_M" form), run by `nebula-runtime.service`. It answers questions, explains tool output, and can call a fixed set of local tools.
+
+**What "local" means here.** The model and everything you type stay on this machine: ollama listens on `127.0.0.1:11434` only, and its AppArmor profile confines what it can touch on disk (model files read-only, no writes to your home directory, no launching of system programs). Nebula never needs the internet. Network egress is **not** blocked by policy, though — on an air-gapped deck nothing can leave; on a connected deck treat ollama like any other local service.
+
+**When it starts.** `nebula-runtime.service` is enabled at boot, after `nebula-integrity-check.service` has verified the model's SHA-256 against `MANIFEST.sha256`. The model itself is loaded into memory on the first question (or when you click **Warm up model**), which can take a few minutes on a 4 GB machine — a red or amber Nebula light before you have asked anything is normal.
 
 ### Using Nebula
 
-From the Control Center → **Nebula AI** tab: check runtime status, start or stop it, chat in the **Ask Nebula** pane, and see the MCP tools it can call.
+From the Control Center → **Nebula AI** tab: check runtime and integrity status, click **Warm up model** to preload it, chat in the **Ask Nebula** pane, and see the MCP tools it can call. Good first questions: "What does this tshark output mean?" (paste it), or "Summarise ~/Analysis/pcaps/synthetic-sample.pcap" (Nebula calls `pcap_analyze` for you).
+
+Start, stop or restart the runtime from a terminal:
+
+```bash
+systemctl status nebula-runtime.service
+sudo systemctl restart nebula-runtime.service
+sudo systemctl stop nebula-runtime.service
+```
 
 From a terminal:
 
@@ -612,9 +687,11 @@ nebula tools --serve           # run the MCP tool server on stdio (for other cli
 
 ### MCP Tools
 
-Nebula reaches the system through an MCP tool server. Available tools:
+Nebula reaches the system through an MCP tool server. The twelve tools available in v2.2.0-beta:
 
-`nebula_status`, `systemctl_status`, `list_connections`, `wg_show`, `tshark_summary`, `pcap_analyze`, `artifact_analyze`, `oast_extract`, `oast_decode`, `oast_analyze`
+`nebula_status`, `systemctl_status`, `list_connections`, `wg_show`, `tshark_summary`, `pcap_analyze`, `artifact_analyze`, `oast_extract`, `oast_decode`, `oast_analyze`, `nucleotide_lookup`, `nucleotide_fingerprint`
+
+(`nebula tools` prints the current list with one-line descriptions.)
 
 Every call is schema-validated, executed argv-only (no shell), subject to a timeout, and audited to `/var/log/orionx/nebula-mcp.log`.
 
@@ -650,13 +727,13 @@ ap basic      # direct use → set → run module console
 ap --version
 ```
 
-Your first investigation, fully offline — type this inside the Pivotglass prompt:
+Your first investigation, fully offline — type this at the Pivotglass command prompt (the command box in the browser page that `ap` opens, or the `ap>` prompt of `ap basic` in a terminal):
 
 ```text
 workspace learn first-case
 ```
 
-The browser interface listens only on the local machine. Workspaces and configuration live in `~/.ap/` (on the live system they do not survive a reboot — export what you need). Fourteen optional intelligence modules (VirusTotal, Shodan, GreyNoise, OTX, urlscan, crt.sh, …) activate when you add keys and have connectivity; nothing is required for local pivoting. Exposing Pivotglass hunts to Nebula as MCP tools is a planned follow-up.
+The browser interface listens only on the local machine. (The tool is called `ap` after its package name, *adversary pursuit*; `pivotglass` runs the same launcher.) Workspaces and configuration live in `~/.ap/` (on the live system they do not survive a reboot — export what you need). Fourteen optional intelligence modules (VirusTotal, Shodan, GreyNoise, OTX, urlscan, crt.sh, …) activate when you add keys and have connectivity; nothing is required for local pivoting. Exposing Pivotglass hunts to Nebula as MCP tools is a planned follow-up.
 
 ## 9. Forensic Evidence Collection
 
@@ -904,9 +981,9 @@ For analyzing disk images:
    artifact-analyzer.py /path/to/disk.img -t disk
    ```
 
-4. Search for specific patterns with bulk_extractor (may not be present on this build — check with `command -v bulk_extractor`):
+4. Carve strings and patterns with `binwalk` or `strings` (`bulk_extractor` is **not** on the v2.2.0 image):
    ```bash
-   bulk_extractor -o output_dir /path/to/disk.img
+   strings -n 8 /path/to/disk.img | grep -i -E "http://|https://|@" | head
    ```
 
 ### Network Analysis
@@ -936,9 +1013,11 @@ For analyzing network captures:
    pcap-analyzer.py /path/to/capture.pcap
    ```
 
-4. Using Zeek for protocol analysis (may not be present on this build — check with `command -v zeek`):
+4. Using Zeek for protocol analysis (`zeek` and `zeek-cut` are on the image, installed under `/opt/zeek`). Zeek writes one log per protocol (`conn.log`, `dns.log`, `http.log`, …) into the current directory:
    ```bash
+   mkdir zeek-out && cd zeek-out
    zeek -r /path/to/capture.pcap
+   zeek-cut id.orig_h id.resp_h id.resp_p < conn.log | sort | uniq -c | sort -rn | head
    ```
 
 5. Automated network analysis:
@@ -980,22 +1059,24 @@ For analyzing log files:
 
 ### Detection and Classification Tools
 
-- **suricata** — network IDS with a bundled ruleset. Run it over a capture:
+- **suricata** — network intrusion detection system. **No signature ruleset is bundled** (only Debian's few built-in protocol-event rules), so fetch the ET-Open rules once while you have network access, then enable the service (it is installed but held back until you create the enable file):
+  ```bash
+  sudo orionx-freshen-suricata                     # network: downloads ET-Open into /var/lib/suricata/rules/
+  sudo touch /var/lib/suricata/orionx-enabled      # allow the service to start
+  sudo systemctl start suricata                    # live monitoring; alerts: sudo journalctl -u suricata -f
+  ```
+  Or run it once over a capture file instead of live traffic (rules still required for meaningful output):
   ```bash
   sudo suricata -r /path/to/capture.pcap -l /path/to/output_dir
   ```
-  Refresh the rules when you have network access:
+  Alerts land in `/var/log/suricata/` (`fast.log`, `eve.json`) and the journal. In v2.2.0 nothing forwards them to the event bus automatically; to hear one, publish it yourself with `orionx-event -s warning --source suricata -c ids "…"`.
+- **yara** — pattern matching against files, disk images and memory dumps. **No rules ship on the image**: `/opt/orionx/yara/` holds only a README and a lock file until you fetch rulesets (network). Scanning takes a rules *file* first, then the target:
   ```bash
-  sudo orionx-freshen-suricata
+  sudo orionx-freshen-yara                         # network: git-clones four rulesets into /opt/orionx/yara/rules-*/
+  ls /opt/orionx/yara/                             # rules-yara-rules/ rules-reversinglabs/ rules-binaryalert-managed/ rules-didierstevens/
+  yara -r /opt/orionx/yara/rules-yara-rules/index.yar /path/to/suspect_dir
   ```
-- **yara** — pattern matching against files, images and memory dumps, with rules under `/opt/orionx/yara/`:
-  ```bash
-  yara -r /opt/orionx/yara /path/to/suspect_dir
-  ```
-  Refresh the rules when you have network access:
-  ```bash
-  sudo orionx-freshen-yara
-  ```
+  `-r` recurses into the target directory. `index.yar` is the Yara-Rules project's aggregate file (it `include`s the whole set); any single `.yar` file under a `rules-*/` directory works the same way. See `/opt/orionx/yara/README.md` for the ruleset sources and licences.
 - **capa** — identifies capabilities in executables. It runs from its own Python virtual environment:
   ```bash
   /opt/orionx/venv/re/bin/capa /path/to/sample.exe
@@ -1070,38 +1151,22 @@ To combine multiple log sources into a coherent timeline:
    ```
 
 4. The storyboard generator will:
-   - Parse different log formats automatically
+   - Parse plain-text, CSV, JSON and XML logs automatically (each file becomes a *source*)
    - Extract timestamps and normalize them
+   - Deduce a severity (info / warning / error / critical) from keywords or a severity column
    - Sort events chronologically
-   - Color-code by severity
-   - Link events to their source files
 
 ### Visualizing the Timeline
 
-The storyboard generator creates visual timelines to help identify patterns:
+The output is a **static** report — there is nothing to click, sort or search in it, which also means it opens anywhere and prints cleanly:
 
-1. HTML timeline features:
-   - Color-coded events by severity (info, warning, error)
-   - Collapsible sections by source
-   - Sortable columns
-   - Search functionality
-   - Interactive time range selection
+1. HTML (`-o timeline.html`): a case header (name, ID, analyst, date range, event count) followed by every event in time order, each row showing time, source file and description, colour-coded by severity. Open it in Firefox (`firefox timeline.html`) and use **Print → Save to PDF** for reporting.
 
-2. Filtering the timeline view:
-   - By time range (before or after specific events)
-   - By severity level
-   - By log source
-   - By keyword or pattern
+2. Text (`-f text -o timeline.txt`): the same content as plain text, for pasting into a Matrix room or a ticket.
 
-3. Exporting and sharing:
-   - Save as HTML for interactive viewing
-   - Print to PDF for reporting
-   - Export as CSV for further analysis
+3. To narrow the view, narrow the input: point `-i` at a sub-directory or a single file, or pre-filter with `grep` into a working directory and run the generator on that.
 
-4. Integration with other tools:
-   - Link timeline events to original artifacts
-   - Import timeline data into other visualization tools
-   - Add annotations and investigator notes
+4. Export the underlying events for other tools by keeping your normalized logs alongside the report; the generator does not write CSV itself.
 
 ## 12. Data Management
 
@@ -1114,12 +1179,15 @@ For managing collected evidence and analysis results:
    # List available devices
    sudo fdisk -l
 
-   # Mount an external drive
+   # Mount an external drive (lsblk shows it; the laptop's own disk is the large one — leave it alone)
+   sudo mkdir -p /mnt/external
    sudo mount /dev/sdX1 /mnt/external
 
-   # Copy evidence to external storage
+   # Copy evidence to external storage, then unmount before you shut down
    cp -r /path/to/evidence/ /mnt/external/
+   sudo umount /mnt/external
    ```
+   In the default amnesic mode this is the **only** way anything survives power-off — analysis output, `~/Analysis/`, Pivotglass workspaces in `~/.ap/`, and any logs you want to attach to a bug report.
 
 2. RAM disk for temporary storage:
    ```bash
@@ -1140,31 +1208,21 @@ For managing collected evidence and analysis results:
 
 ### Uploading to Artifact Vault
 
-Orion-X can interface with centralized evidence repositories:
+An "artifact vault" is whatever central evidence server your team runs; Orion-X does not ship one, and nothing is uploaded unless you pass `--upload`. The analyzer takes the vault address and token from two environment variables (or the `--vault-url` / `--vault-token` flags); there is no configuration file.
 
-1. Configure vault connection:
+1. Configure the vault connection for this terminal session:
    ```bash
-   # Set environment variables for vault connection
    export ORIONX_VAULT_URL="https://vault.example.com"
    export ORIONX_VAULT_TOKEN="your_vault_token"
    ```
 
-2. Create a vault configuration file:
-   ```bash
-   sudo mkdir -p /etc/orionx
-   sudo tee /etc/orionx/vault_config.conf > /dev/null << EOF
-   ORIONX_VAULT_URL="https://vault.example.com"
-   ORIONX_VAULT_TOKEN="your_vault_token"
-   EOF
-   sudo chmod 600 /etc/orionx/vault_config.conf
-   ```
-
-3. Upload artifacts using the analyzer (it reads `ORIONX_VAULT_URL` / `ORIONX_VAULT_TOKEN` from the environment):
+2. Upload after analysis:
    ```bash
    artifact-analyzer.py /path/to/artifact --upload
    ```
+   Note: in v2.2.0 the analyzer validates the settings and logs the upload target, but the transfer itself is a stub — use the `curl` form below (or your vault's own client) to actually move data.
 
-4. Manual upload with curl:
+3. Manual upload with curl:
    ```bash
    # Upload a file to the vault API
    curl -X POST -H "Authorization: Bearer $ORIONX_VAULT_TOKEN" \
@@ -1211,7 +1269,7 @@ When handling forensic data:
 
 ### Switching Visual Themes
 
-Orion-X includes two visual themes for different operational contexts:
+Orion-X includes two **terminal** colour schemes for different operational contexts. The desktop look (Phoenix wallpaper, `Orion-X-Cyberdeck` theme) is the same in both.
 
 1. Using the theme toggle script (also **Toggle Theme** in the Control Center IR Tools tab):
    ```bash
@@ -1219,14 +1277,13 @@ Orion-X includes two visual themes for different operational contexts:
    ```
 
 2. The script will:
-   - Switch between dark/amber and green themes
-   - Update terminal colors
-   - Change the desktop wallpaper
-   - Modify the bash prompt
+   - Switch between the dark/amber and green schemes (remembered in `~/.orionx_theme`)
+   - Update xfce4-terminal colours and the bash prompt
+   - Re-assert the Phoenix wallpaper (there is one branded wallpaper; it does not change)
 
 3. Theme use guidelines:
-   - Dark/amber theme: Default for normal operations
-   - Green theme: Typically used for secure or root operations
+   - Dark/amber scheme: Default for normal operations
+   - Green scheme: Typically used for secure or root operations
    - Visual distinction helps prevent accidental execution of commands in the wrong context
 
 ### Visual Identity
@@ -1235,11 +1292,11 @@ Orion-X ships with a coherent visual identity across the boot chain and desktop:
 
 - **Plymouth splash** — "Orion-X Phoenix" theme on kernel handoff
 - **Boot menu** — plain, readable GRUB menu on UEFI; themed isolinux menu on BIOS
-- **Login screen** — Orion-X-Greeter with Phoenix backdrop and Iosevka font
+- **Login screen** — LightDM greeter with the Phoenix backdrop, Hack 11 font (seen only after you log out)
 - **XFCE desktop** — `Orion-X-Cyberdeck` GTK theme (Adwaita-dark fork with Phoenix red-orange `#FF5722` accent)
 - **Icons** — `Orion-X-Icons` (Papirus-Dark inheritance)
-- **Fonts** — Iosevka (SIL OFL-1.1) primary, Hack (permissive) secondary
-- **Terminal** — xfce4-terminal defaults to Iosevka 11pt, dark background, Phoenix accent selection
+- **Fonts** — Hack (Apache-2.0 / Bitstream Vera licence) throughout; UI monospace Hack 11
+- **Terminal** — xfce4-terminal defaults to Hack 12, dark background, Phoenix accent selection
 - **MOTD** — ASCII wordmark on login
 
 ### Customizing Terminal Environment
@@ -1337,38 +1394,51 @@ You can extend Orion-X with additional tools:
 
 ## 14. Sample Data
 
-Sample data lives under `/opt/orionx/data/samples/`. Synthetic samples are generated on the box; public samples are fetched on demand with `download-samples.sh` (also **Download Samples** in the Control Center IR Tools tab), which needs network access.
+The image ships a small set of **synthetic** samples — generated data with recognisable artefacts, not real evidence — in four sub-directories. The originals live under `/opt/orionx/data/samples/` (with a `SHA256SUMS`), and a working copy is placed in your home directory at first login:
+
+```text
+~/Analysis/
+├── pcaps/      synthetic-sample.pcap, apt_malware_traffic.pcap
+├── memory/     synthetic-mini.raw
+├── logs/       synthetic-syslog.log, synthetic-events.csv, synthetic-events.json, synthetic-events.xml
+└── firmware/   synthetic-firmware.bin
+```
+
+Each sub-directory has a `README.txt`; its **SYNTHETIC SAMPLES** section describes the files that ship (the older entries above it list public datasets that are *not* on the image). Work in `~/Analysis/` (it is yours to modify; in amnesic mode it is recreated fresh at every boot). **Public** samples are not on the image: `download-samples.sh` (also **Download Samples** in the Control Center IR Tools tab) fetches them over the network into the directory you name with `--samples-dir`, and `--offline` writes a few extra synthetic placeholders there instead:
 
 ```bash
 download-samples.sh --help
+download-samples.sh --samples-dir ~/Analysis/public            # network: maccdc2012_sample.pcap, dns_local_lookup.pcap
+download-samples.sh --offline --samples-dir ~/Analysis/extra   # no network: synthetic-traffic.pcap, synthetic-memdump.raw,
+                                                               #   synthetic-web-access.log, mini_sample_SYNTHETIC.raw
 ```
+
+The files named in those two comments exist **only** after you run the command; the examples below use what is on the image.
 
 ### Working with PCAP Samples
 
-Orion-X includes network traffic samples for analysis practice:
-
 1. Location of sample PCAPs:
    ```text
-   /opt/orionx/data/samples/
+   ~/Analysis/pcaps/          (originals: /opt/orionx/data/samples/pcaps/)
    ```
-   Files: `synthetic-traffic.pcap`, `maccdc2012_sample.pcap`, `dns_local_lookup.pcap`
+   Files: `synthetic-sample.pcap`, `apt_malware_traffic.pcap`
 
 2. Analyzing sample PCAPs:
    ```bash
    # Using Wireshark
-   wireshark /opt/orionx/data/samples/synthetic-traffic.pcap
+   wireshark ~/Analysis/pcaps/apt_malware_traffic.pcap
 
    # Using tshark
-   tshark -r /opt/orionx/data/samples/maccdc2012_sample.pcap -Y "http"
+   tshark -r ~/Analysis/pcaps/apt_malware_traffic.pcap -Y "http"
 
    # Using the Orion-X PCAP analyzer
-   pcap-analyzer.py /opt/orionx/data/samples/dns_local_lookup.pcap
+   pcap-analyzer.py ~/Analysis/pcaps/synthetic-sample.pcap
    ```
 
 3. Extracting files from PCAPs:
    ```bash
    # Extract all HTTP objects
-   tshark -r /opt/orionx/data/samples/maccdc2012_sample.pcap --export-objects http,./extracted_files
+   tshark -r ~/Analysis/pcaps/apt_malware_traffic.pcap --export-objects http,./extracted_files
    ```
 
 4. Practice exercises:
@@ -1379,24 +1449,24 @@ Orion-X includes network traffic samples for analysis practice:
 
 ### Memory Dump Analysis
 
-Practice memory forensics with included samples:
-
 1. Location of memory dumps:
    ```text
-   /opt/orionx/data/samples/
+   ~/Analysis/memory/         (originals: /opt/orionx/data/samples/memory/)
    ```
-   Files: `synthetic-memdump.raw`, `mini_sample_SYNTHETIC.raw`
+   File: `synthetic-mini.raw` — 1 KB: a PE (`MZ`) header followed by a repeated text pattern. It exercises the parsers and the analyzer; it is not a memory image, so Volatility's OS plugins find no kernel in it and stop with an "unsatisfied requirement" message.
 
 2. Analyzing memory dumps:
    ```bash
-   # Using Volatility 3
-   vol -f /opt/orionx/data/samples/synthetic-memdump.raw windows.info
+   # Confirm the tools see the sample
+   strings ~/Analysis/memory/synthetic-mini.raw | head -3
+   vol -f ~/Analysis/memory/synthetic-mini.raw banners.Banners   # runs; finds no OS banner in synthetic data
 
    # Using the artifact analyzer
-   artifact-analyzer.py /opt/orionx/data/samples/synthetic-memdump.raw -t memory
+   artifact-analyzer.py ~/Analysis/memory/synthetic-mini.raw -t memory
    ```
+   With a real dump: `vol -f memory.raw windows.info`, then `windows.pslist`, `windows.netscan`, `windows.cmdline` (§10).
 
-3. Practice exercises:
+3. Practice exercises (with a real dump from a lab machine):
    - Find hidden or injected processes
    - Analyze network connections
    - Extract authentication artifacts
@@ -1405,21 +1475,21 @@ Practice memory forensics with included samples:
 
 ### Firmware Analysis
 
-Analyze IoT firmware samples:
-
 1. Location of firmware samples:
    ```text
-   /opt/orionx/data/samples/
+   ~/Analysis/firmware/       (originals: /opt/orionx/data/samples/firmware/)
    ```
    File: `synthetic-firmware.bin`
 
 2. Basic firmware analysis:
    ```bash
+   cd ~/Analysis/firmware
+
    # Identify firmware components
-   binwalk /opt/orionx/data/samples/synthetic-firmware.bin
+   binwalk synthetic-firmware.bin
 
    # Extract firmware contents
-   binwalk -e /opt/orionx/data/samples/synthetic-firmware.bin
+   binwalk -e synthetic-firmware.bin
    ```
 
 3. Explore the extracted contents:
@@ -1436,30 +1506,28 @@ Analyze IoT firmware samples:
 
 ### Log File Examples
 
-Practice log analysis with sample datasets:
-
 1. Location of log samples:
    ```text
-   /opt/orionx/data/samples/
+   ~/Analysis/logs/           (originals: /opt/orionx/data/samples/logs/)
    ```
-   Files: `synthetic-syslog.log` (Linux syslog with SSH brute-force and firewall blocks), `synthetic-web-access.log` (Apache access log with SQL injection and path traversal)
+   Files: `synthetic-syslog.log` (15 lines of Linux syslog: SSH accepts and failures, firewall blocks, cron, mesh and Matrix entries) and `synthetic-events.csv`, `synthetic-events.json`, `synthetic-events.xml` (the same seven events in each of the three structured formats the storyboard generator parses).
 
 2. Analyzing various log types:
    ```bash
    # SSH brute-force in syslog
-   grep -i "failure" /opt/orionx/data/samples/synthetic-syslog.log
+   grep -i "failed\|failure\|invalid user" ~/Analysis/logs/synthetic-syslog.log
 
-   # Web attack logs
-   grep "' OR '1'='1" /opt/orionx/data/samples/synthetic-web-access.log
+   # Structured events
+   head ~/Analysis/logs/synthetic-events.csv
 
    # Automated log analysis
-   artifact-analyzer.py /opt/orionx/data/samples/synthetic-syslog.log -t log
+   artifact-analyzer.py ~/Analysis/logs/synthetic-syslog.log -t log
    ```
 
 3. Creating timelines from logs:
    ```bash
-   # Generate timeline from multiple logs
-   storyboard-gen.py -i /opt/orionx/data/samples/ -o attack_timeline.html
+   # Generate one timeline from all four log files
+   storyboard-gen.py -i ~/Analysis/logs/ -o ~/Analysis/attack_timeline.html
    ```
 
 4. Practice exercises:
@@ -1520,11 +1588,14 @@ If you encounter problems booting Orion-X:
    - Disable hardware in BIOS/UEFI that might be causing conflicts
 
 4. **Boot appears to stop at a text banner**
-   - That is the first-boot wizard waiting for input on tty1 ("the boot has PAUSED — your input is needed"). Answer the prompts, or wait: each prompt continues with its default after 120 s.
+   - That is the first-boot wizard waiting for input on tty1 ("the boot has PAUSED — your input is needed"). Answer the prompts, or wait: each prompt continues with its default after 120 s. On an amnesic stick it appears at every boot (§3).
 
-5. **"Invalid signature" with Secure Boot**
-   - Temporarily disable Secure Boot in BIOS/UEFI
-   - If Secure Boot is required, build a custom ISO with signed bootloader
+5. **The computer starts Windows (or its own system) again, or shows "Invalid signature"**
+   - Secure Boot is on. This release cannot boot with Secure Boot enabled — disable it in the firmware settings (Windows 11: Settings → System → Recovery → Advanced startup → Restart now → Troubleshoot → UEFI Firmware Settings), then choose the USB stick from the boot menu ("Use a device" on the same screen). Have your BitLocker recovery key to hand first (§2).
+   - Some laptops also need "Fast Boot" / "Fast Startup" turned off before the F-key boot menu appears.
+
+6. **Terminal welcome text shows an "SSH Admin One-Shot" password and key**
+   - Written by the first-boot wizard; it cannot be used on this image and can be removed (§3, *First-Boot Wizard*).
 
 ### Network Connectivity
 
@@ -1592,15 +1663,16 @@ If experiencing VPN or mesh connection issues:
      ```
    - Verify server endpoint is reachable:
      ```bash
-     ping -c 4 [server-ip]
+     ping -c 4 <server-ip>
      ```
    - Ensure the local interface is up:
      ```bash
      ip a
      ```
-   - Check WireGuard logs:
+   - See the tunnel state and any errors directly (the setup script brings the tunnel up with `wg-quick` in the foreground, so there is no systemd unit or journal to read — re-running the command shows the error):
      ```bash
-     journalctl -xeu wg-quick@orionx
+     sudo wg show orionx
+     sudo wg-quick down orionx; sudo wg-quick up orionx
      ```
 
 2. **VPN connected but no traffic**
@@ -1614,7 +1686,7 @@ If experiencing VPN or mesh connection issues:
      ```
    - Test connection to internal resources:
      ```bash
-     ping -c 4 [internal-resource-ip]
+     ping -c 4 <internal-resource-ip>
      ```
    - Verify DNS resolution through VPN:
      ```bash
@@ -1653,11 +1725,11 @@ For problems with Matrix communication:
 1. **Cannot connect to Matrix server**
    - Check if the server is reachable:
      ```bash
-     curl -I [matrix-server-url]
+     curl -I <matrix-server-url>
      ```
    - Look for SSL/TLS certificate issues:
      ```bash
-     curl -vI [matrix-server-url]
+     curl -vI <matrix-server-url>
      ```
 
 2. **Authentication failures**
@@ -1665,7 +1737,7 @@ For problems with Matrix communication:
    - Check for typing errors in your user ID
    - Re-run the setup script:
      ```bash
-     sudo setup-matrix.sh
+     sudo setup-matrix.sh --mode client
      ```
    - If you installed Element and want a clean client state:
      ```bash
@@ -1701,13 +1773,22 @@ For problems with Matrix communication:
      orionx-event -s warning --source manual -c test "R.A.I.N. check"
      ```
 
-2. **Nebula not responding**
+2. **Nebula not responding, or the Nebula light is red/amber**
+   - Before your first question the model is not loaded yet — that is normal. Click **Warm up model** in the Control Center → Nebula AI tab (or run `nebula warmup`) and allow a few minutes on a 4 GB machine.
    - Check the runtime:
      ```bash
      nebula status
      systemctl status nebula-runtime.service
      ```
-   - Start or stop it from the Control Center → Nebula AI tab
+   - Restart it:
+     ```bash
+     sudo systemctl restart nebula-runtime.service
+     ```
+   - If the runtime refuses to start, check the boot-time integrity gate. A failure here means the model on the stick does not match its manifest — a corrupt write (re-image the stick) or, on a stick that left your control, tampering:
+     ```bash
+     systemctl status nebula-integrity-check.service
+     sudo tail /var/log/orionx/nebula-integrity.log
+     ```
    - Review tool-call audit entries:
      ```bash
      sudo tail /var/log/orionx/nebula-mcp.log
@@ -1829,21 +1910,22 @@ mmls disk.img                  # List partitions
 fls -o 2048 disk.img           # List files in filesystem
 tshark -r capture.pcap         # Analyze network capture
 pcap-analyzer.py capture.pcap  # Orion-X PCAP triage
-suricata -r capture.pcap -l out/   # IDS over a capture
-yara -r /opt/orionx/yara DIR   # YARA scan
+suricata -r capture.pcap -l out/   # IDS over a capture (fetch rules first, §10)
+yara -r /opt/orionx/yara/rules-yara-rules/index.yar DIR   # YARA scan (after orionx-freshen-yara)
 /opt/orionx/venv/re/bin/capa sample.exe   # Capability analysis
 roast extract -f access.log -o table      # OAST domain extraction
 grep -i "error" logfile.log    # Search log files
 
 # Orion-X Scripts
-setup-matrix.sh                # Set up Matrix communication
-toggle-theme.sh                # Switch visual themes
-run-lynis.sh                   # Run security audit
+sudo setup-matrix.sh --mode client|server   # Set up Matrix communication (network)
+toggle-theme.sh                # Switch terminal colour scheme
+run-lynis.sh                   # Run Lynis host security audit
 artifact-analyzer.py           # Automated artifact analysis
 storyboard-gen.py              # Create event timeline
-download-samples.sh            # Fetch public sample data
-orionx-freshen-suricata        # Refresh suricata rules
-orionx-freshen-yara            # Refresh YARA rules
+download-samples.sh --samples-dir DIR   # Fetch public sample data (network)
+sudo orionx-freshen-suricata   # Fetch Suricata ET-Open rules (network)
+sudo orionx-freshen-yara       # Fetch YARA rulesets (network)
+sudo orionx-diag [--json]      # Self-check (v2.2.0; not on the beta image)
 
 # File Operations
 sha256sum file                 # Calculate SHA-256 hash
@@ -1870,13 +1952,16 @@ Important file locations within Orion-X:
 # Orion-X Files
 /opt/orionx/scripts/           # Orion-X scripts (symlinked into /usr/bin/)
 /opt/orionx/theme/             # Theme assets (wallpapers, etc.)
-/opt/orionx/data/samples/      # Sample data for analysis
-/opt/orionx/yara/              # YARA rules
+/opt/orionx/data/samples/      # Sample data originals (pcaps/ memory/ logs/ firmware/)
+/opt/orionx/yara/              # YARA README + lockfile; rules-*/ after orionx-freshen-yara
+/var/lib/suricata/rules/       # Suricata rules after orionx-freshen-suricata
+/opt/orionx/nucleotide/        # nucleotide lookup table + Snort rules
 /opt/orionx/venv/re/           # Python venv for RE tools (capa)
 /opt/orionx/optional/          # Optional post-boot installers
 /usr/local/bin/roast           # go-roast binary
-/usr/share/doc/orionx/         # Documentation
-/usr/share/doc/orionx/User_Guide.html   # This guide, rendered
+/usr/share/doc/orionx/         # Documentation (the beta image carries a pre-beta copy)
+/usr/share/doc/orionx/User_Guide.html   # This guide, rendered (open with firefox)
+/etc/motd.d/orionx-ssh-admin   # Wizard's SSH one-shot text (unusable in this beta; removable)
 
 # User Files (in the primary account's home)
 ~/.bashrc                      # Bash configuration
@@ -1884,6 +1969,9 @@ Important file locations within Orion-X:
 ~/.config/orionx/threat-posture   # Threat posture tier
 ~/.config/orionx/rain.json     # R.A.I.N. settings
 ~/.config/orionx/autonomy.json # Auto-Healing autonomy grid
+~/.orionx_theme                # Current terminal colour scheme
+~/Analysis/                    # Working copy of the sample data
+~/.ap/                         # Pivotglass workspaces
 ~/Desktop/                     # Desktop shortcuts
 ```
 
@@ -1904,7 +1992,7 @@ Ctrl+A/E                       # Move to start/end of line
 # Desktop Environment
 Alt+Tab                        # Switch between windows
 Alt+F4                         # Close current window
-Ctrl+Alt+L                     # Lock screen
+(no screen lock)               # Locking is disabled by design on the live account (issue #76)
 Print Screen                   # Take screenshot
 Alt+F2                         # Run command dialog
 Ctrl+Alt+Arrow                 # Switch workspace
@@ -1930,4 +2018,4 @@ Ctrl+E                         # Export packet dissections
 
 ---
 
-This User Guide provides a comprehensive overview of Orion-X Phoenix Edition v2.2.0 (Trixie line). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.
+This User Guide describes Orion-X Phoenix Edition v2.2.0-beta (Trixie line). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.

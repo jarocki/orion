@@ -67,12 +67,106 @@ the tail was cut finer than the 2 GB cap requires).
 ### Known limitations
 
 - Plain-text UEFI GRUB menu (graphical theme retired; identity is in Plymouth).
-- Model still inside the ISO → three-part download. Separate model asset is next.
-- Not yet merged to `develop`; `release.yml` still builds in a Bullseye container
-  and was not used for this release (published manually, see
-  `docs/release-process.md` §10).
+- Model still inside the ISO → seven-part download. Separate model asset is next.
+- Built from `feat/trixie-migration`, since merged to `develop` and carried on
+  `release/2.2.0`. `release.yml` built in a Bullseye container at the time and
+  was not used for this release (published manually, see
+  `docs/release-process.md` §10); the workflows now build in `debian:trixie-slim`.
+
+### Known issues in v2.2.0-beta
+
+Found by the pre-release accuracy audit and beta readers (2026-09-20); all are
+fixed on `release/2.2.0` for v2.2.0 unless noted.
+
+- **`orionx-diag` is missing from the image.** `scripts/build-iso.sh` rsyncs
+  `scripts/` over `/opt/orionx/scripts/` with `--delete`, and the tool lived
+  only in the chroot overlay, so every build removed it before the 0700 hook
+  could symlink it. Moved to `scripts/orionx-diag`, which the build stages, so
+  the tool ships again. Its stale assertions were corrected at the same time:
+  the radare2 package check and the `files` GRUB-theme-directory check were
+  removed, the socket check now targets `nebula-runtime.service`
+  (DEC-PHASE11-033 removed `nebula-runtime.socket`), and the hostname check now
+  requires only that `hostname` is set and agrees with `/etc/hostname` rather
+  than equalling `orionx` (DEC-PHASE12-021). The `branding` category's
+  `/boot/grub/grub.cfg` theme-directive check was replaced by one asserting
+  `Theme=orionx-phoenix` in `/etc/plymouth/plymouthd.conf`: DEC-PHASE11-044
+  retired the graphical GRUB theme, so the old check SKIPped on every live boot
+  and would have FAILed on any installed-to-disk system. The tool now runs 45
+  assertions across 10 categories.
+- **The image reports `ISO_VERSION=v2.2.0-trixie-dev9`** in `/etc/orionx-version`
+  and the MOTD — it was built with a development label. It is the v2.2.0-beta
+  build (SHA-256 `606e6179…e49f`). v2.2.0 is built with `ORIONX_VERSION=v2.2.0`
+  and the release runbook asserts the baked version equals the tag.
+- **radare2, bulk_extractor and the Iosevka font were listed but are absent.**
+  None is packaged in Debian trixie; they stay out of v2.2.0. Fonts are Hack
+  throughout (greeter Hack 11, terminal Hack 12); `md5deep` is provided by the
+  `hashdeep` package; Ghidra remains available via `install-ghidra.sh`. This
+  included the RE toolkit README baked onto the image at `/opt/orionx/re/`,
+  which listed radare2 as installed and told the operator to run `r2 <binary>`;
+  it now names what actually ships and points at `install-ghidra.sh`.
+- **`sudo setup-matrix.sh` without `--mode` exits 1**, including from the
+  Orion-menu entry. Pass `--mode client` or `--mode server` on the beta; v2.2.0
+  prompts for the mode. Both modes install Element (and server mode Synapse)
+  from the network — now documented.
+- **`yara -r /opt/orionx/yara <dir>` as printed in the beta docs fails**: yara
+  takes a rules file, and no rules ship until `sudo orionx-freshen-yara` runs.
+- **Docs and images baked into the ISO are pre-beta** (`/usr/share/doc/orionx/`
+  carries the Bullseye-era README and placeholder PNGs). The GitHub copies are
+  current; v2.2.0 is built after the doc fixes land and the baked README is
+  checked against the repo.
+- **`orionx-imager --iso-release` could not fetch split releases** (it looked
+  only for a single `.iso` asset, and `latest` skipped pre-releases). Fixed in
+  release/2.2.0 (DEC-PHASE12-019): parts are downloaded, joined and verified
+  against `SHA256SUMS`, and a tag or `--iso-release latest` with pre-releases
+  resolves correctly.
+- **First-boot wizard prints an unusable "SSH admin one-shot" credential** to
+  the console, `/etc/motd.d/` and `/etc/issue.d/` — root login is disabled by
+  the SSH hardening drop-in, so the key cannot be used. Documented as ignorable
+  and removable in the User Guide; the code fix is tracked separately.
+
+### Integration suites rebuilt against the image, not the source tree
+
+The two ISO suites were asserting against `iso/config/` rather than the built
+artifact, so several checks were testing a tree that no longer matched what
+shipped. Both now extract from the ISO. The corrections that changed a verdict:
+
+- **A `-e` test on a wants/ symlink was a false negative on every run.** The
+  `nebula-runtime.service` link targets an absolute path that does not resolve
+  inside an extracted tree, so a correctly-enabled unit was reported missing.
+  Now `-L`.
+- **Section 33 aborted the whole suite where `git` was absent.** The tracked-mode
+  assertion shelled out to `git ls-files`; a missing git exits 127 and every
+  later section went silently unreported. It now SKIPs when git is unavailable
+  or the tree is not a checkout, since it reads git metadata rather than the ISO.
+- **Skips were invisible in the summary.** `skip()` only echoed, so a run could
+  skip freely and still print "all N assertions passed". Skips are now counted
+  and reported.
+- Bootloader assertions (§1, §16c, §16d, §18) read the stale
+  `iso/config/includes.binary/` copies — which differ from the shipped ISO
+  (`set timeout=1` vs `5`, isolinux `10` vs `50`, no vesamenu) — and now extract
+  the real configs. 18c/18d/18e are inverted per DEC-PHASE11-044 to assert the
+  graphical GRUB theme is *gone*.
+- 23b-f inverted: Iosevka must be absent from fonts, dpkg and every shipped
+  config value (#85). Fonts asserted as `Hack 11`/`Hack 12` (DEC-PHASE11-031),
+  wallpaper as `orionx-wp-badge.png` (DEC-PHASE11-028), `md5deep` → `hashdeep`.
+- §10 xfconf paths `/home/orionx/…` → `/etc/skel/…`: the user is created at boot
+  by live-config, so `/home` is empty in the squashfs.
+- §15 replaced the bare-GGUF assertion with the consolidated ollama store layout
+  (DEC-PHASE12-016).
+
+Two failures previously read as image defects were defects in the tests:
+`22c` "invalid LOCKFILE.json" was `debian:trixie-slim` having no `python3` (the
+file parses and is byte-identical to source), and `26e` "installer does not
+refuse non-root" was an assignment to bash's **read-only `EUID`**, silently
+discarded, so the guard correctly never fired under a root container. The
+installer is correct; the test now drops privileges with `setpriv`/`runuser`.
 
 ## [v2.1.0-bullseye-rain] — 2026-09-13 (pre-release; final Bullseye build)
+
+This section collects everything that landed between v2.0.0-rc9 (2026-06-22)
+and the final Debian 11 "bullseye" image: the R.A.I.N. work and the W11-13/14
+runtime fixes at the top, then the Phase 11 tightening slices (W11-1 … W11-12)
+in reverse order as originally logged. The sub-headings keep their own dates.
 
 ### W11-13: Runtime Cascade Fix + Build-Wrapper Landing (2026-08-03)
 

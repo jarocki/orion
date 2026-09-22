@@ -42,16 +42,22 @@ its built-in synthetic demo feed and the narration is synthesised offline.
 
 ### Detection and Triage
 
-- **radare2** — reverse engineering framework
 - **YARA** — malware pattern matching; freshen rulesets via `sudo orionx-freshen-yara`
 - **Suricata IDS** — lazy-start network IDS; enable with
   `sudo touch /var/lib/suricata/orionx-enabled && systemctl start suricata`;
   freshen rules via `sudo orionx-freshen-suricata`
 - **capa** — capability detection for binaries (`/opt/orionx/venv/re/`)
-- **ssdeep**, **md5deep**, **python3-pefile** — fuzzy hashing and PE parsing
+- **ssdeep**, **hashdeep** (provides `md5deep`/`sha1deep`), **python3-pefile** —
+  fuzzy hashing, recursive hashing, and PE parsing
 - **volatility3** — memory forensics
 - **Wireshark / tshark / tcpdump** — network capture and analysis
-- **bulk_extractor** — feature extraction from disk images and captures
+- **binwalk**, **strings** — carving and pattern extraction
+
+**Not shipped on the Trixie (v2.2.0) image:** `radare2`, `bulk_extractor` and
+`nikto` have no candidate package in Debian 13 and are not installed by any
+other route. Earlier release text listed them; that text was wrong. Ghidra is
+the supported reverse-engineering option and installs post-boot via
+`/opt/orionx/optional/install-ghidra.sh`.
 
 ### AI Copilot — Nebula Runtime
 
@@ -91,11 +97,14 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 
 ### Diagnostic Tool
 
-- **`orionx-diag`** — 200-assertion self-check across 10 categories
-  (identity, packages, files, systemd, python, nebula, branding, freshen, optional, manifest)
+- **`orionx-diag`** — 45-assertion self-check across 10 categories (identity,
+  version-manifest, packages, files, systemd, python, nebula, branding, freshen,
+  optional). Run it as `sudo orionx-diag`.
 - `orionx-diag --json` for machine-readable output
 - `orionx-diag --category <name>` for targeted probes
 - See `docs/orionx-diag.md` for full reference.
+- **Not in v2.2.0-beta:** the tool was deleted by a build-staging bug and ships
+  again from the next build (DEC-PHASE12-021).
 
 ### Cyberdeck Visual Identity
 
@@ -105,7 +114,7 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 - **LightDM greeter**: Orion-X-Greeter with Phoenix backdrop
 - **XFCE GTK theme**: `Orion-X-Cyberdeck` (Adwaita-dark fork with Phoenix red-orange `#FF5722` accent)
 - **Icons**: `Orion-X-Icons` (Papirus-Dark inheritance + 4 custom SVG icons)
-- **Fonts**: **Iosevka** (primary, SIL OFL-1.1) + **Hack** (secondary, Apache-2.0) — community-developed only per DEC-PHASE11-013
+- **Fonts**: **Hack** (Apache-2.0) — the only monospace font on the image, community-developed only per DEC-PHASE11-013. Iosevka is *not* shipped: no `fonts-iosevka` candidate exists in Debian 13 (#85)
 - **MOTD** with ASCII wordmark on terminal login
 
 ---
@@ -239,7 +248,10 @@ Contributor guide: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
 ## Phase 11 Status
 
-16 slices landed on develop (2026-07-19 arc):
+16 slices landed on develop (2026-07-19 arc). This table is a **historical
+record of the Bullseye line** — it says what each slice set out to do, not what
+the current Trixie image contains. Where the two differ (radare2 and Iosevka in
+particular), "What's on the ISO" above is authoritative.
 
 | Slice | What |
 |---|---|
@@ -259,7 +271,7 @@ Contributor guide: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 | W11-6 | Suricata IDS Layer A (lazy-start + orionx-freshen-suricata) |
 | W11-7 | ClamAV dropped from base ISO to optional installer |
 | W11-8 | Optional installer framework (shared lib + 6 stubs) |
-| W11-11 | `orionx-diag` 200-assertion in-ISO diagnostic tool |
+| W11-11 | `orionx-diag` in-ISO diagnostic tool (current: 45 assertions — see `docs/orionx-diag.md`) |
 | W11-12 | `orionx-imager` host-side USB writer (GUI + CLI, macOS/Linux) |
 
 **Phase 12 (Trixie line, v2.2.0-beta):** base flip to Debian 13, Orion Cockpit,
@@ -282,7 +294,6 @@ carry their own licenses — see `manifest.json` for the full inventory.
 
 Key permissive dependencies:
 - Qwen2.5-3B-Instruct (Apache-2.0)
-- Iosevka font (SIL OFL-1.1)
 - Hack font (Bitstream Vera / Apache-2.0)
 - ET-Open Suricata rules (BSD-2-Clause)
 - YARA rules (licensing split documented in `/opt/orionx/yara/README.md`)

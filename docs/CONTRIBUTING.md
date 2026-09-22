@@ -4,7 +4,7 @@ Thank you for your interest in contributing to Orion-X Phoenix Edition! This doc
 
 ## Code of Conduct
 
-All contributors are expected to adhere to our Code of Conduct. Please be respectful of other contributors and maintain a positive and inclusive environment.
+The project does not yet have a separate Code of Conduct document. The expectation is simple: be respectful of other contributors, argue about evidence rather than people, and keep the environment one that a newcomer would want to join.
 
 ## How to Contribute
 
@@ -45,7 +45,7 @@ To set up a development environment:
 
 1. Clone the repository
 2. Install required dependencies (see README.md)
-3. Familiarize yourself with the ISO build system in the ISO/ directory
+3. Familiarize yourself with the ISO build system in the `iso/` directory (lower-case — `scripts/build-iso.sh` refuses an upper-case `ISO/` checkout) and its entry point `scripts/build-iso.sh`
 
 ## Testing
 
@@ -76,8 +76,11 @@ Thank you for helping improve Orion-X Phoenix Edition!
 ## Coding norms
 
 - **No JetBrains software** — per DEC-PHASE11-013, Orion-X does not include any
-  JetBrains-branded tools or fonts. Use Iosevka + Hack instead. Rationale in
-  the DEC.
+  JetBrains-branded tools or fonts. Use **Hack**, which is the only monospace
+  font the image ships. Iosevka is *not* shipped and is not scheduled: there is
+  no `fonts-iosevka` candidate in Debian 13 (trixie), so it cannot be pulled
+  from the archive the ISO builds against (#85). Do not reference Iosevka in
+  themes, `terminalrc`, `xsettings.xml`, or greeter config.
 - **Air-gap first** — every runtime path must fail cleanly (loud + non-zero
   exit) when the network is unreachable. See `orionx-freshen-yara`,
   `orionx-freshen-suricata`, and `install-*.sh` for reference patterns.
