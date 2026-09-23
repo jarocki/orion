@@ -13,6 +13,9 @@
 #   7. Correctly excludes test files
 #   8. Correctly excludes template placeholders (ORIONX_*)
 #   9. ShellCheck passes on the audit script
+#  10. Detection self-check: a planted literal secret IS reported, and
+#      keyword arguments (password=True) are NOT — so that '0 findings'
+#      means 'no hardcoded values', not 'the patterns match nothing'
 #
 # Production sequence: A CI pipeline or developer runs the credential
 # audit as part of security gating before merge. The script scans
@@ -271,6 +274,65 @@ if [[ $rc1 -eq 0 ]] && echo "$r1" | grep -qi 'usage' \
 else
     fail "CI security gate sequence" "rc1=$rc1 rc2=$rc2"
 fi
+
+# ===========================================================================
+# Detection self-check: the audit must actually FIND a hardcoded value
+# ===========================================================================
+#
+# Every assertion above this point is one-sided: it checks that nothing was
+# flagged. A scanner whose patterns matched *nothing at all* would satisfy all
+# of them, so "0 findings" on its own does not mean "no hardcoded credentials"
+# — it only means "nothing got flagged". These two controls close that gap:
+#
+#   positive — a planted literal secret MUST be reported (no false negatives)
+#   negative — keyword arguments (password=True, api_key=api_key) MUST NOT be
+#              reported (no false positives)
+#
+# Both fixtures live under scripts/, which the audit scans; tests/ is pruned.
+# They are removed by the EXIT trap whether or not the assertions pass.
+section "Detection Self-Check"
+
+POS_FIXTURE="$REPO_ROOT/scripts/zz-audit-selfcheck-pos.sh"
+NEG_FIXTURE="$REPO_ROOT/scripts/zz-audit-selfcheck-neg.sh"
+
+cleanup_fixtures() {
+    rm -f "$POS_FIXTURE" "$NEG_FIXTURE"
+}
+trap cleanup_fixtures EXIT
+
+cat > "$POS_FIXTURE" <<'FIXTURE'
+#!/usr/bin/env bash
+db_password = "hunter2swordfish"
+api_key: "sk-proj-abc123def456"
+FIXTURE
+
+cat > "$NEG_FIXTURE" <<'FIXTURE'
+#!/usr/bin/env bash
+call_provider(needs_api_key=True)
+run_chat(model=model, api_key=api_key, on_token=on_token)
+prompt_user(password=True)
+FIXTURE
+
+set +e
+selfcheck_output=$(bash "$AUDIT_SCRIPT" 2>&1)
+set -e
+
+if echo "$selfcheck_output" | grep -q 'FINDING.*zz-audit-selfcheck-pos'; then
+    pass "Detects a planted hardcoded credential (no false negatives)"
+else
+    fail "Detects a planted hardcoded credential (no false negatives)" \
+         "A literal password/api_key in $POS_FIXTURE was NOT reported — the patterns match nothing, so '0 findings' proves nothing"
+fi
+
+if echo "$selfcheck_output" | grep -q 'FINDING.*zz-audit-selfcheck-neg'; then
+    fail "Keyword arguments are not reported as credentials (no false positives)" \
+         "password=True / api_key=api_key were flagged — the pattern matches any '=', not a literal value"
+else
+    pass "Keyword arguments are not reported as credentials (no false positives)"
+fi
+
+cleanup_fixtures
+trap - EXIT
 
 # ===========================================================================
 # Summary
