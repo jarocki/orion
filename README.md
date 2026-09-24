@@ -43,9 +43,17 @@ its built-in synthetic demo feed and the narration is synthesised offline.
 ### Detection and Triage
 
 - **YARA** — malware pattern matching; freshen rulesets via `sudo orionx-freshen-yara`
-- **Suricata IDS** — lazy-start network IDS; enable with
-  `sudo touch /var/lib/suricata/orionx-enabled && systemctl start suricata`;
-  freshen rules via `sudo orionx-freshen-suricata`
+- **Port-scan detection** — `orionx-scanwatch` reads the firewall's own drop
+  log and raises a Cockpit event (and an audible R.A.I.N. cue) when one host
+  sweeps many ports. Runs by default, needs no rules and no network, and sends
+  no packets, so it works air-gapped at Tier 0. A wider second window also
+  catches timing-evasive scans such as `nmap -T2`.
+- **Suricata IDS** — lazy-start network IDS. It is **off by default and ships
+  no threat rules**: enable with
+  `sudo touch /var/lib/suricata/orionx-enabled && systemctl start suricata`,
+  then fetch rules with `sudo orionx-freshen-suricata` (needs a network).
+  Until both are done Suricata detects nothing — port-scan coverage on a stock
+  deck comes from `orionx-scanwatch` above.
 - **capa** — capability detection for binaries (`/opt/orionx/venv/re/`)
 - **ssdeep**, **hashdeep** (provides `md5deep`/`sha1deep`), **python3-pefile** —
   fuzzy hashing, recursive hashing, and PE parsing

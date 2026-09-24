@@ -124,6 +124,35 @@ fixed on `release/2.2.0` for v2.2.0 unless noted.
   the SSH hardening drop-in, so the key cannot be used. Documented as ignorable
   and removable in the User Guide; the code fix is tracked separately.
 
+### Port scans are now visible in the Cockpit (DEC-PHASE12-022)
+
+Reported from the reference deck: `nmap -Pn -A` against a booted Orion-X moved
+the Cockpit's network sparkline and produced **no event, no cue, and threat
+pressure still reading CALM**.
+
+The Cockpit was not at fault. Its network panel reads byte counters from
+`/proc/net/dev`, and a rate cannot express "one host touched 1000 ports" — the
+display had nothing to show because nothing was producing a signal. The signal
+itself already existed: `/etc/nftables.conf` ends its input chain with
+`log prefix "[ORIONX-DROP] " drop` (DEC-SEC-001), so the kernel had been
+recording every probe with SRC/DPT/PROTO the whole time. Nothing consumed it.
+
+`orionx-scanwatch` consumes it and emits onto the existing R.A.I.N. bus, so the
+event stream, the threat-pressure gauge and the audible cue all respond without
+a second detection path in the Cockpit. It is passive — reads a log, sends no
+packets, opens no port — so it is correct at Tier 0, and it needs no rules and
+no network, which matters because the documented primary use is air-gapped.
+
+Calibrated against the measured field rate. Against a DROP policy each probe
+waits out a timeout, so the reported scan swept ~4.3 ports/sec; a 10-second
+window could never hold the 50 distinct ports needed for `critical`, so the
+detector would have warned and then never escalated for the exact scan it was
+built to catch. The window is 15s: warning at ~3.5s, critical at ~12s. A second
+900-second window catches timing-evasive scans (`nmap -T2`) that stay under the
+fast one, since a detector that silently misses patient scanners gives false
+confidence. The source table is bounded so a spoofed-source flood cannot grow
+it without limit.
+
 ### orionx-diag: 7 of 46 assertions were false failures on a correct image
 
 The tool was absent from the beta, so v2.2.0-rc1 is the first image that ships

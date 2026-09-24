@@ -96,6 +96,7 @@ declare -A SCRIPT_MAP=(
     # (root-only diagnostic command). Source at /opt/orionx/scripts/ — no .sh
     # suffix per the orionx-mesh precedent.
     ["orionx-diag"]="/opt/orionx/scripts/orionx-diag"
+    ["orionx-scanwatch"]="/opt/orionx/scripts/rain/orionx-scanwatch"
     # First-boot wizard — was only reachable by full path (/opt/orionx/scripts/
     # security/first-boot-wizard.sh), painful on a console with no copy-paste
     # (operator report 2026-09-12). Give it a short PATH name so it is runnable

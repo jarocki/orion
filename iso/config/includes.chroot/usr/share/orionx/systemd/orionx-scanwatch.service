@@ -1,0 +1,36 @@
+# @decision DEC-PHASE12-022
+# @title Port-scan detection daemon feeding the R.A.I.N. bus
+# @status accepted
+# @rationale The Cockpit reads /proc/net/dev byte counters, which show a scan
+#   as a throughput bump and nothing else. /etc/nftables.conf already logs
+#   every dropped packet with SRC/DPT/PROTO (DEC-SEC-001); this consumes that
+#   log and emits bus events, so the event stream, threat-pressure gauge and
+#   audible cue all respond. Passive — reads a log, sends no packets, opens no
+#   port — so it is correct at Tier 0.
+
+[Unit]
+Description=Orion-X Port Scan Watch (nftables drop log -> R.A.I.N.)
+Documentation=man:nft(8)
+After=orionx-firewall.service systemd-journald.service
+Wants=orionx-firewall.service
+
+[Service]
+Type=simple
+ExecStart=/opt/orionx/scripts/rain/orionx-scanwatch
+Restart=on-failure
+RestartSec=5s
+# Reads the kernel journal; writes only to the event bus under /run/orionx.
+User=root
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/run/orionx
+RestrictAddressFamilies=AF_UNIX
+MemoryMax=64M
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

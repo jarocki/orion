@@ -40,6 +40,10 @@ UNIT_FILES=(
     "orionx-mesh-discover.timer"
     "orionx-firewall.service"
     "orionx-first-boot.service"
+    # DEC-PHASE12-022: consumes the firewall's own drop log and emits scan
+    # events onto the R.A.I.N. bus. Pairs with orionx-firewall.service, which
+    # produces the log it reads.
+    "orionx-scanwatch.service"
     # W10-1: Nebula AI runtime units (DEC-PHASE10-009, DEC-PHASE11-033)
     # nebula-integrity-check: oneshot, runs at boot before nebula-runtime
     # nebula-runtime: ollama daemon, auto-started (ollama loads the 1.9GB model
@@ -62,6 +66,7 @@ AUTOSTART_UNITS=(
     "orionx-mesh-health.timer"
     "orionx-firewall.service"
     "orionx-first-boot.service"
+    "orionx-scanwatch.service"
     # W10-1 Nebula: enable integrity-check (boot gate) + nebula-runtime.service.
     # DEC-PHASE10-009: integrity-check must be autoenabled — it is the boot gate.
     # DEC-PHASE11-033: nebula-runtime.service is auto-started DIRECTLY. Socket
