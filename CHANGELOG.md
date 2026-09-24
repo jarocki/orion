@@ -124,6 +124,44 @@ fixed on `release/2.2.0` for v2.2.0 unless noted.
   the SSH hardening drop-in, so the key cannot be used. Documented as ignorable
   and removable in the User Guide; the code fix is tracked separately.
 
+### orionx-diag: 7 of 46 assertions were false failures on a correct image
+
+The tool was absent from the beta, so v2.2.0-rc1 is the first image that ships
+it — and the first time it has ever run on a booted Orion-X system. It reported
+**7 failures on an image with no defects.** Each was verified against the rc1
+squashfs before being changed; none was a fault in the image. An operator
+running `sudo orionx-diag` would have concluded their deck was broken.
+
+- **`whoami == orionx-operator`** could never pass. The tool documents "invoke
+  as: sudo orionx-diag", under which `whoami` is `root`. It now reads
+  `SUDO_USER`, which is the actual intent.
+- **`nebula model file present`** stat'd
+  `models/Qwen2.5-3B-Instruct-Q4_K_M.gguf`, the bare path DEC-PHASE12-016
+  replaced with ollama's consolidated store. The 1.93 GB blob was present the
+  whole time — `MANIFEST.sha256` and the integrity check both passed alongside
+  the failure, and a missing model cannot pass an integrity check.
+- **`control_center.app importable`** shelled out to a bare `python3 -c`. The
+  package lives at `/opt/orionx/scripts/control_center`, which the
+  `orionx-control-center` wrapper puts on `sys.path` and a bare interpreter does
+  not. **This is issue #66** — filed as "module missing from sys.path"; the
+  module ships correctly and the diagnostic was wrong.
+- **Both freshen checks** looked in `/usr/local/bin`. The 0700 hook installs
+  them in `/usr/bin`, which is what `docs/orionx-diag.md` already documented.
+  They now resolve through `command -v` rather than a hardcoded directory.
+- **`suricata.service` lazy-start** used `systemctl show
+  --property=ConditionPathExists`, which returns empty on current systemd.
+  `systemctl cat` renders the unit with drop-ins, where the W11-6
+  `orionx-lazy.conf` condition actually lives.
+- **`orionx-installer-common.sh defines 7 functions`** expected
+  `orionx_mark_installed` and `orionx_check_installed`, which do not exist. The
+  library ships `orionx_apt_install` and `orionx_verify_sha256` — the set README
+  already documents.
+
+Six of the seven are verified fixed by running the corrected tool inside a
+chroot of the rc1 squashfs; the suricata one needs a booted systemd and is
+verified at the next build. The assertion count is **46**, not the 45 previously
+documented — skips are silent without `-v`, so a run looked like 45.
+
 ### Integration suites rebuilt against the image, not the source tree
 
 The two ISO suites were asserting against `iso/config/` rather than the built

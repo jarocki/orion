@@ -97,7 +97,7 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 
 ### Diagnostic Tool
 
-- **`orionx-diag`** — 45-assertion self-check across 10 categories (identity,
+- **`orionx-diag`** — 46-assertion self-check across 10 categories (identity,
   version-manifest, packages, files, systemd, python, nebula, branding, freshen,
   optional). Run it as `sudo orionx-diag`.
 - `orionx-diag --json` for machine-readable output
@@ -271,7 +271,7 @@ particular), "What's on the ISO" above is authoritative.
 | W11-6 | Suricata IDS Layer A (lazy-start + orionx-freshen-suricata) |
 | W11-7 | ClamAV dropped from base ISO to optional installer |
 | W11-8 | Optional installer framework (shared lib + 6 stubs) |
-| W11-11 | `orionx-diag` in-ISO diagnostic tool (current: 45 assertions — see `docs/orionx-diag.md`) |
+| W11-11 | `orionx-diag` in-ISO diagnostic tool (current: 46 assertions — see `docs/orionx-diag.md`) |
 | W11-12 | `orionx-imager` host-side USB writer (GUI + CLI, macOS/Linux) |
 
 **Phase 12 (Trixie line, v2.2.0-beta):** base flip to Debian 13, Orion Cockpit,

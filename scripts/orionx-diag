@@ -9,7 +9,7 @@
 #   the ISO that automates checking, testing, and verification that (a) ISO OS +
 #   tools correctly match the current repository version, (b) all expected tools
 #   and dependencies are installed and work properly."
-#   Ten check categories (45 assertions) cover identity, version manifest, base
+#   Ten check categories (46 assertions) cover identity, version manifest, base
 #   packages, file presence, systemd units, python imports, nebula runtime,
 #   branding, freshen scripts, and optional installers. Single-authority source:
 #   /etc/orionx-version KEY=VALUE manifest (written by 0700 hook at build time).
@@ -84,7 +84,7 @@ Categories:
   python            control_center.app importable; yara Python binding loads
   nebula            ollama binary + model SHA match + last-run status
   branding          Plymouth theme + plymouthd.conf, GTK theme, MOTD wordmark
-  freshen           orionx-freshen-yara + orionx-freshen-suricata symlinks
+  freshen           orionx-freshen-yara + orionx-freshen-suricata on PATH
   optional          installer scripts source common lib; common lib defines all functions
 
 Exit codes:
@@ -272,8 +272,11 @@ run_identity_checks() {
     local cat="identity"
 
     # 1a: whoami == orionx-operator
+    # This tool documents "invoke as: sudo orionx-diag", under which whoami is
+    # root — so a bare whoami check could NEVER pass when used as documented.
+    # SUDO_USER carries the real invoker; fall back to whoami without sudo.
     local actual_user
-    actual_user="$(whoami 2>/dev/null || echo unknown)"
+    actual_user="${SUDO_USER:-$(whoami 2>/dev/null || echo unknown)}"
     if [[ "$actual_user" == "orionx-operator" ]]; then
         check_pass "$cat" "whoami == orionx-operator" "$actual_user"
     else
@@ -432,20 +435,29 @@ run_files_checks() {
     local cat="files"
 
     # 4a: Nebula model file > 1.5 GB
-    local model="/opt/orionx/nebula/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
-    if [[ -f "$model" ]]; then
-        local model_size
-        model_size="$(stat -c%s "$model" 2>/dev/null || stat -f%z "$model" 2>/dev/null || echo 0)"
-        if [[ "$model_size" -gt 1610612736 ]]; then  # 1.5 GB in bytes
-            check_pass "$cat" "nebula model file present (>1.5 GB)" \
-                "$(( model_size / 1048576 )) MB"
-        else
-            check_fail "$cat" "nebula model file present (>1.5 GB)" \
-                "file exists but size ${model_size} bytes < 1.5 GB floor"
-        fi
+    # DEC-PHASE12-016 moved the weights into ollama's own store
+    # (models/blobs/sha256-*) and removed the bare
+    # models/Qwen2.5-3B-Instruct-Q4_K_M.gguf this used to stat, so the old path
+    # failed on every correct image while 4b (MANIFEST) and the nebula
+    # integrity check passed — a missing model cannot pass an integrity check.
+    local blobs_dir="/opt/orionx/nebula/models/blobs"
+    local model_size=0 model_blob="" b sz
+    if [[ -d "$blobs_dir" ]]; then
+        for b in "$blobs_dir"/sha256-*; do
+            [[ -f "$b" ]] || continue
+            sz="$(stat -c%s "$b" 2>/dev/null || stat -f%z "$b" 2>/dev/null || echo 0)"
+            if [[ "$sz" -gt "$model_size" ]]; then model_size="$sz"; model_blob="$b"; fi
+        done
+    fi
+    if [[ "$model_size" -gt 1610612736 ]]; then  # 1.5 GB in bytes
+        check_pass "$cat" "nebula model weights present (>1.5 GB)" \
+            "$(( model_size / 1048576 )) MB in $(basename "$model_blob")"
+    elif [[ -n "$model_blob" ]]; then
+        check_fail "$cat" "nebula model weights present (>1.5 GB)" \
+            "largest blob ${model_size} bytes < 1.5 GB floor"
     else
-        check_fail "$cat" "nebula model file present (>1.5 GB)" \
-            "$model absent"
+        check_fail "$cat" "nebula model weights present (>1.5 GB)" \
+            "no sha256-* blob under $blobs_dir"
     fi
 
     # 4b: MANIFEST.sha256
@@ -596,8 +608,14 @@ run_systemd_checks() {
             check_pass "$cat" "suricata.service masked or lazy-start gated" "masked"
         else
             # Check for ConditionPathExists= directive
+            # `systemctl show --property=ConditionPathExists` returns EMPTY on
+            # current systemd (conditions are not a scalar show property), so
+            # the old form failed even though the W11-6 drop-in at
+            # /etc/systemd/system/suricata.service.d/orionx-lazy.conf does set
+            # ConditionPathExists=/var/lib/suricata/orionx-enabled. `systemctl
+            # cat` renders the unit with its drop-ins applied.
             local condition
-            condition="$(systemctl show suricata.service --property=ConditionPathExists 2>/dev/null || echo "")"
+            condition="$(systemctl cat suricata.service 2>/dev/null || echo "")"
             if echo "$condition" | grep -q "ConditionPathExists="; then
                 check_pass "$cat" "suricata.service masked or lazy-start gated" \
                     "ConditionPathExists override active"
@@ -649,7 +667,13 @@ run_python_checks() {
 
     # 6a: control_center.app importable
     local cc_out cc_exit=0
-    cc_out="$(python3 -c 'from control_center.app import run_app' 2>&1)" || cc_exit=$?
+    # control_center lives at /opt/orionx/scripts/control_center, which is not
+    # on the default sys.path — the orionx-control-center wrapper inserts its
+    # own directory before importing. A bare `python3 -c` does not, so this
+    # failed on a working install and was filed as issue #66 ("module missing
+    # from sys.path"). Mirror what the wrapper does.
+    cc_out="$(PYTHONPATH="/opt/orionx/scripts${PYTHONPATH:+:$PYTHONPATH}" \
+              python3 -c 'from control_center.app import run_app' 2>&1)" || cc_exit=$?
     if [[ $cc_exit -eq 0 ]]; then
         check_pass "$cat" "control_center.app importable" ""
     else
@@ -829,54 +853,28 @@ run_branding_checks() {
 run_freshen_checks() {
     local cat="freshen"
 
-    # 9a: orionx-freshen-yara symlink exists + target executable
-    if [[ -L "/usr/local/bin/orionx-freshen-yara" ]]; then
-        local target
-        target="$(readlink -f "/usr/local/bin/orionx-freshen-yara" 2>/dev/null || echo "")"
+    # 9a/9b: the freshen commands resolve on PATH.
+    #
+    # The 0700 hook installs these under /usr/bin (the same SCRIPT_MAP that
+    # places orionx-diag itself), not /usr/local/bin, which is where this used
+    # to look — so both assertions failed on every image while the commands
+    # worked fine. Resolve through PATH rather than hardcoding a directory.
+    local tool path target
+    for tool in orionx-freshen-yara orionx-freshen-suricata; do
+        path="$(command -v "$tool" 2>/dev/null || echo "")"
+        if [[ -z "$path" ]]; then
+            check_fail "$cat" "$tool on PATH + target executable" \
+                "$tool not found on PATH"
+            continue
+        fi
+        target="$(readlink -f "$path" 2>/dev/null || echo "$path")"
         if [[ -x "$target" ]]; then
-            check_pass "$cat" "/usr/local/bin/orionx-freshen-yara symlink + target executable" \
-                "-> $target"
+            check_pass "$cat" "$tool on PATH + target executable" "$path -> $target"
         else
-            check_fail "$cat" "/usr/local/bin/orionx-freshen-yara symlink + target executable" \
-                "symlink exists but target not executable: $target"
+            check_fail "$cat" "$tool on PATH + target executable" \
+                "$path resolves to $target, which is not executable"
         fi
-    elif [[ -f "/usr/local/bin/orionx-freshen-yara" ]]; then
-        # Regular file (not symlink) is also acceptable
-        if [[ -x "/usr/local/bin/orionx-freshen-yara" ]]; then
-            check_pass "$cat" "/usr/local/bin/orionx-freshen-yara symlink + target executable" \
-                "(regular file, executable)"
-        else
-            check_fail "$cat" "/usr/local/bin/orionx-freshen-yara symlink + target executable" \
-                "file exists but not executable"
-        fi
-    else
-        check_fail "$cat" "/usr/local/bin/orionx-freshen-yara symlink + target executable" \
-            "/usr/local/bin/orionx-freshen-yara absent"
-    fi
-
-    # 9b: orionx-freshen-suricata symlink exists + target executable
-    if [[ -L "/usr/local/bin/orionx-freshen-suricata" ]]; then
-        local target
-        target="$(readlink -f "/usr/local/bin/orionx-freshen-suricata" 2>/dev/null || echo "")"
-        if [[ -x "$target" ]]; then
-            check_pass "$cat" "/usr/local/bin/orionx-freshen-suricata symlink + target executable" \
-                "-> $target"
-        else
-            check_fail "$cat" "/usr/local/bin/orionx-freshen-suricata symlink + target executable" \
-                "symlink exists but target not executable: $target"
-        fi
-    elif [[ -f "/usr/local/bin/orionx-freshen-suricata" ]]; then
-        if [[ -x "/usr/local/bin/orionx-freshen-suricata" ]]; then
-            check_pass "$cat" "/usr/local/bin/orionx-freshen-suricata symlink + target executable" \
-                "(regular file, executable)"
-        else
-            check_fail "$cat" "/usr/local/bin/orionx-freshen-suricata symlink + target executable" \
-                "file exists but not executable"
-        fi
-    else
-        check_fail "$cat" "/usr/local/bin/orionx-freshen-suricata symlink + target executable" \
-            "/usr/local/bin/orionx-freshen-suricata absent"
-    fi
+    done
 }
 
 # ---------------------------------------------------------------------------
@@ -920,8 +918,8 @@ run_optional_checks() {
             orionx_require_root
             orionx_require_network
             orionx_wget_extract
-            orionx_mark_installed
-            orionx_check_installed
+            orionx_apt_install
+            orionx_verify_sha256
         )
         local missing_fns=()
         local fn
