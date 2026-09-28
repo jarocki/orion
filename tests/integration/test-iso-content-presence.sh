@@ -3630,6 +3630,91 @@ else
     fail "34q: lightdm no-loop drop-in present (DEC-PHASE11-023 — bounded restart)" \
          "Missing/incomplete $_dropin — a failing X could loop the cold boot forever (Restart=always default)"
 fi
+section "35. W10-3/5/6 engines present in the squashfs (DEC-PHASE12-023/024/025)"
+
+# These three slices each shipped an operator-facing control whose engine did
+# not exist. The engines exist now — and this section is here because that is
+# exactly the kind of thing that disappears silently: orionx-diag was deleted
+# from the image by a staging bug (DEC-PHASE12-021) and nothing failed, because
+# no assertion demanded its presence. An unexecuted playbook and an absent
+# playbook look identical from the Cockpit.
+
+# 35a-c: W10-6 healing engine modules
+_heal_missing=""
+for _f in healing_lib.py playbooks.py engine.py orionx-heal orionx-heald; do
+    [[ -f "$SQF/opt/orionx/scripts/healing/$_f" ]] || _heal_missing="$_heal_missing $_f"
+done
+if [[ -z "$_heal_missing" ]]; then
+    pass "35a: W10-6 healing engine staged (all 5 modules)"
+else
+    fail "35a: W10-6 healing engine staged" "missing:$_heal_missing"
+fi
+if [[ -x "$SQF/opt/orionx/scripts/healing/orionx-heald" ]]; then
+    pass "35b: orionx-heald executable"
+else
+    fail "35b: orionx-heald executable" "daemon not executable in squashfs"
+fi
+if [[ -L "$SQF/usr/bin/orionx-heal" || -f "$SQF/usr/bin/orionx-heal" ]]; then
+    pass "35c: orionx-heal on PATH (operator control surface)"
+else
+    fail "35c: orionx-heal on PATH" "0700 SCRIPT_MAP entry missing"
+fi
+
+# 35d-e: W10-5 posture daemon
+if [[ -x "$SQF/opt/orionx/scripts/awareness/orionx-postured" ]]; then
+    pass "35d: W10-5 posture daemon staged + executable"
+else
+    fail "35d: W10-5 posture daemon staged + executable" \
+         "without it the threat-posture tier is a label again"
+fi
+if [[ -L "$SQF/usr/bin/orionx-postured" || -f "$SQF/usr/bin/orionx-postured" ]]; then
+    pass "35e: orionx-postured on PATH"
+else
+    fail "35e: orionx-postured on PATH" "0700 SCRIPT_MAP entry missing"
+fi
+
+# 35f-i: W10-3 MCP confinement. The profile and the dedicated uid are the
+# confinement; without them the tool server runs unconfined as root.
+if [[ -f "$SQF/etc/apparmor.d/usr.bin.nebula-mcp" ]]; then
+    pass "35f: nebula-mcp AppArmor profile shipped"
+else
+    fail "35f: nebula-mcp AppArmor profile shipped" "MCP server would run unconfined"
+fi
+if [[ -f "$SQF/etc/apparmor.d/usr.bin.nebula-mcp" ]] \
+   && ! grep -qE '^[[:space:]]*network[[:space:]]+inet6?[[:space:]]' "$SQF/etc/apparmor.d/usr.bin.nebula-mcp"; then
+    pass "35g: nebula-mcp profile grants no inet network (issue #53 class)"
+else
+    fail "35g: nebula-mcp profile grants no inet network" \
+         "an inet allow reintroduces the #53 over-broad-network problem"
+fi
+if [[ -f "$SQF/usr/bin/nebula-mcp" ]]; then
+    pass "35h: /usr/bin/nebula-mcp entrypoint shipped (AppArmor attachment path)"
+else
+    fail "35h: /usr/bin/nebula-mcp entrypoint shipped" \
+         "profile attachment path would not resolve"
+fi
+if grep -q '^nebula-mcp:' "$SQF/etc/passwd" 2>/dev/null; then
+    pass "35i: nebula-mcp system user created at build time"
+else
+    fail "35i: nebula-mcp system user created" \
+         "0616 hook did not run; unit would fail with User=nebula-mcp"
+fi
+
+# 35j-l: the three units are installed AND enabled. Staged-but-not-enabled is
+# the silent failure: the file exists, the test passes, nothing ever runs.
+for _u in orionx-heald orionx-postured nebula-mcp; do
+    if [[ -f "$SQF/lib/systemd/system/${_u}.service" || -f "$SQF/usr/lib/systemd/system/${_u}.service" ]]; then
+        pass "35j: ${_u}.service installed"
+    else
+        fail "35j: ${_u}.service installed" "0615 UNIT_FILES entry missing"
+    fi
+    if [[ -L "$SQF/etc/systemd/system/multi-user.target.wants/${_u}.service" ]]; then
+        pass "35k: ${_u}.service enabled at boot"
+    else
+        fail "35k: ${_u}.service enabled at boot" "0615 AUTOSTART_UNITS entry missing"
+    fi
+done
+
 # ===========================================================================
 # Summary
 # ===========================================================================
