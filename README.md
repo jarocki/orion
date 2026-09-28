@@ -158,6 +158,21 @@ cat orionx-phoenix-edition-v2.2.0-beta.iso.part-* > orionx-phoenix-edition-v2.2.
 shasum -a 256 -c SHA256SUMS      # Linux: sha256sum -c SHA256SUMS
 ```
 
+**Verify the signature before you boot it.** Every release is signed with:
+
+```
+4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF   John Jarocki <john@jarocki.org>
+```
+
+```bash
+gpg --recv-keys 4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF     # or import from a source you already trust
+gpg --verify SHA256SUMS.asc SHA256SUMS
+shasum -a 256 -c SHA256SUMS                  # Linux: sha256sum -c SHA256SUMS
+```
+
+Check that fingerprint against a source other than this page. A checksum on the
+same page as the download proves only that the file matches what the page says.
+
 The reassembled ISO must hash to
 `606e6179887ff7f82e9d05ed973333856c153a692d45983e16e35b12a0f0e49f`. A single
 `.part-*` file is not bootable on its own.

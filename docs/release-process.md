@@ -55,12 +55,32 @@ Before tagging:
   - `secrets.GPG_PRIVATE_KEY` — ASCII-armored private key
   - `secrets.GPG_PASSPHRASE` — passphrase for the key
 
-  Until these are provisioned, the GPG step runs with `continue-on-error: true`
-  and the DRAFT release is produced **without** `.asc` signature files. The
-  pipeline does not fail; the operator must either provision the key and
-  re-run, or attach signatures manually before publishing. Manual publishes
-  (§10) are unsigned today; `SHA256SUMS` on the release page is the integrity
-  authority.
+  The release signing identity is:
+
+  ```
+  pub   ed25519 2026-09-28 [SC] [expires: 2027-09-28]
+        4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF
+  uid   John Jarocki <john@jarocki.org>
+  ```
+
+  Publish that fingerprint somewhere a downloader can check it **independently
+  of this repository** — a personal site, a keyserver, a social profile. A
+  fingerprint that only appears next to the download it authenticates proves
+  nothing: whoever could tamper with the release could also edit the
+  fingerprint beside it.
+
+  Note the expiry. Renew before 2027-09-28, or signing breaks mid-release.
+
+  **These steps now hard-fail if the key is missing (DEC-PHASE12-026).** They
+  previously ran with `continue-on-error: true`, which meant the pipeline
+  happily produced a publishable draft with no signatures — and since the key
+  was never provisioned, every release it could produce was silently unsigned.
+  `SHA256SUMS` served from the same page as the ISO is not an integrity story:
+  it proves only that the file matches what that page claims. Anyone who can
+  replace the ISO can replace the checksum beside it.
+
+  If the signing step fails, provision the secrets. Do not re-add
+  `continue-on-error` to get a release out.
 - **`CHANGELOG.md` is updated** with a section for the version you are about
   to tag. The section heading must match one of:
   - `## [2.2.0] — <date or status>`

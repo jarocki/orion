@@ -6,8 +6,9 @@ name: Release Pipeline
 # @rationale Phase 8 W8-4/W8-5 deliverable. Tag-triggered workflow builds a
 #   reproducible ISO inside debian:trixie (same Docker pattern as qemu-test.yml
 #   to ensure live-build sees a Debian host), generates SHA-256/SHA-512 checksums,
-#   produces detached GPG signatures with continue-on-error so an unprovisioned key
-#   does not block release prep, and creates a DRAFT GitHub Release. DRAFT mode is
+#   produces detached GPG signatures — these HARD-FAIL if the key is missing,
+#   because an unsigned public release is not a releasable artifact — and
+#   creates a DRAFT GitHub Release. DRAFT mode is
 #   mandatory — the publish flip is the explicit W8-7 operator approve gate.
 #   workflow_dispatch trigger allows dry-run testing without a real tag push.
 
@@ -118,14 +119,28 @@ jobs:
       # -----------------------------------------------------------------------
       # Step 5: Import GPG key and sign artifacts
       #
-      # continue-on-error: true — if GPG_PRIVATE_KEY is not provisioned in
-      # repository secrets, this step skips gracefully. The release draft is
-      # still created; the operator can add signatures manually before publishing.
+      # These steps deliberately DO NOT set continue-on-error (DEC-PHASE12-026).
+      #
+      # They used to. The result was a pipeline that produced a publishable
+      # draft with no .asc files whenever the key was unprovisioned — and it
+      # was unprovisioned, so every release the pipeline could produce was
+      # silently unsigned. For a bootable image that runs as root on other
+      # people's networks, "download it and trust us" is not an integrity
+      # story: SHA256SUMS served from the same page as the ISO proves only
+      # that the file matches what that page claims.
+      #
+      # Failing loudly here means an unsigned release cannot be produced by
+      # accident. If this step fails, provision GPG_PRIVATE_KEY and
+      # GPG_PASSPHRASE in repository secrets — do not re-add continue-on-error.
+      #
+      # Signing identity (publish this fingerprint anywhere users can check it
+      # independently of this repository):
+      #   4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF
+      #   John Jarocki <john@jarocki.org>  ed25519, expires 2027-09-28
       # Signature files: *.iso.asc, SHA256SUMS.asc, SHA512SUMS.asc
       # -----------------------------------------------------------------------
       - name: Import GPG signing key
         id: gpg-import
-        continue-on-error: true
         uses: crazy-max/ghaction-import-gpg@v6
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
@@ -133,8 +148,6 @@ jobs:
 
       - name: Sign ISO and checksum files
         id: gpg-sign
-        continue-on-error: true
-        if: steps.gpg-import.outcome == 'success'
         run: |
           cd output
           # Sign each ISO (detached, armored)
