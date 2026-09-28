@@ -12,12 +12,15 @@ how much Orion-X may act on its own for each class of response:
     autonomous  — run it without asking, within this pre-approval
 
 Selections persist to ~/.config/orionx/autonomy.json — the SINGLE authority the
-healing engine (and Nebula) read before taking any action. Nothing acts beyond
-the level set here. Live playbook execution (block_ip via nftables,
-rotate_mesh_keys, isolate_node, kill_process, quarantine_file,
-revoke_matrix_session), reversibility with rollback timers, and the Merkle audit
-chain are the XL remainder of W10-6 and are tracked separately; this slice makes
-the tab real and gives the engine its pre-approval authority.
+healing engine reads before taking any action. Nothing acts beyond the level
+set here.
+
+The engine that consumes this file is orionx-heald (scripts/healing/,
+DEC-PHASE12-023). All six playbooks execute for real, each with an undo and a
+rollback timer, and every decision — including refusals — is sealed into a
+hash-chained audit ledger the operator can verify with `orionx-heal verify`.
+Until that engine landed, this grid was a control that controlled nothing: an
+operator could select "autonomous" and be wrong about it during an incident.
 
 @decision DEC-PHASE10-004
 @title Tiered per-action-class autonomy (off / propose / confirm / autonomous)
@@ -103,7 +106,15 @@ class _AutoHealingWidget:
         intro.set_line_wrap(True)
         self.box.pack_start(intro, False, False, 4)
 
+        # The engine fails closed: a key absent from autonomy.json is "off",
+        # not the _DEFAULT_LEVEL this grid displays. Rather than let the
+        # display and the authority disagree, materialise the full map on
+        # first open so the file says exactly what the operator is looking at.
         self._levels = _load_autonomy()
+        if any(cid not in self._levels for cid, _l, _d in _ACTION_CLASSES):
+            for cid, _label, _desc in _ACTION_CLASSES:
+                self._levels.setdefault(cid, _DEFAULT_LEVEL)
+            _save_autonomy(self._levels)
 
         grid = Gtk.Grid()
         grid.set_column_spacing(12)
@@ -131,11 +142,16 @@ class _AutoHealingWidget:
         self.box.pack_start(self._status, False, False, 4)
         self._refresh_status()
 
+        # The W10-6 plug-in surface: the autonomy engine (orionx-heald,
+        # DEC-PHASE12-023) lands in W10-6 and reads exactly this file.
         note = Gtk.Label()
         note.set_markup(
-            '<small>Live playbook execution + reversible actions + the tamper-evident '
-            "audit chain land in a follow-up slice; these pre-approvals are the "
-            "engine's authority. (W10-6)</small>"
+            "<small>These pre-approvals are the engine's authority. Live playbooks "
+            "run via orionx-heald; every action is reversible, expires on a "
+            "rollback timer, and is recorded in a tamper-evident chain.\n"
+            "Inspect with <tt>orionx-heal status</tt> · confirm with "
+            "<tt>orionx-heal confirm &lt;id&gt;</tt> · audit with "
+            "<tt>orionx-heal verify</tt>.</small>"
         )
         note.set_halign(Gtk.Align.START)
         note.set_line_wrap(True)

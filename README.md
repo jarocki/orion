@@ -103,6 +103,22 @@ Tools too large or freshness-sensitive for the base ISO live under
 All installers share `orionx-installer-common.sh`: root check, network check,
 apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 
+### Detection, Autonomy and Confinement
+
+- **Threat posture is enforced, not just displayed** — `orionx-postured` applies
+  the tier you select. Tier 0 starts nothing; Tier 1 starts Suricata and
+  publishes alerts with MITRE ATT&CK technique IDs; Tier 2 adds local-only
+  decoys and canary files. If a tier implies IDS coverage but Suricata has no
+  threat rules, the deck says so loudly rather than watching nothing in silence.
+- **Auto-healing** — `orionx-heald` executes the action classes you pre-approve
+  in the Control Center, with a real undo for each, rollback timers, and a
+  hash-chained audit ledger (`orionx-heal verify`). It fails closed: with no
+  autonomy file it does nothing. It will not block your own address, loopback or
+  the mesh.
+- **Confined AI tooling** — the MCP tool server runs as its own user under
+  AppArmor with no outbound network at all, so the local model can use forensic
+  tools without those tools gaining a network path.
+
 ### Diagnostic Tool
 
 - **`orionx-diag`** — 46-assertion self-check across 10 categories (identity,

@@ -1,0 +1,1562 @@
+#!/usr/bin/env python3
+"""orionx-postured — make the threat-posture tier mean something.
+
+@decision DEC-PHASE12-024
+@title Threat posture is enforced by a daemon, and a blind IDS says so out loud
+@status accepted
+@rationale W10-5 shipped the tier selector (DEC-PHASE10-005) and W11-6 Layer A
+  shipped Suricata behind a lazy-start gate (DEC-PHASE11-008). Nothing joined
+  them. Selecting "Tier 2 · Deception" wrote a '2' to
+  ~/.config/orionx/threat-posture, recoloured one Cockpit badge, and changed
+  nothing else: `nmap -Pn -A` against the deck at Tier 2 produced no Suricata
+  output at all. Three independent reasons, all real:
+
+    1. Nothing started suricata.service when the tier was raised.
+    2. Its drop-in sets ConditionPathExists=/var/lib/suricata/orionx-enabled
+       and that file never existed, so systemd skipped the unit and reported
+       success while doing nothing.
+    3. /var/lib/suricata/rules is empty. The 22 files in /etc/suricata/rules
+       are Debian's stock decoder/stream protocol-anomaly rules, not threat
+       signatures. ET-Open arrives only via `orionx-freshen-suricata`, which
+       needs a network the deck may not have.
+
+  This daemon closes all three, and the third one is the reason it exists.
+  A detector that is installed, enabled, running, and carrying no signatures
+  reports nothing — which is indistinguishable, from the operator's chair,
+  from a quiet network. That is the failure mode that made the deck look like
+  it was watching when it was not. So: SILENT NON-DETECTION IS A BUG. Whenever
+  a tier that implies IDS coverage is active without usable threat rules, this
+  daemon says so on the bus, at critical, naming the remedy, and keeps saying
+  it. It would rather be annoying than dishonest.
+
+  Design constraints that shaped it:
+
+  - Air-gap first. stdlib only, no pip, no network lookups. The ATT&CK map is
+    a static local table; the Nebula call is to 127.0.0.1.
+  - The model never gates an alert. Every alert is published BEFORE it is
+    queued for contextualisation, on a bounded queue, from a worker thread.
+    If ollama is absent, slow, or wedged, detection is unaffected.
+  - No second scan detector. orionx-scanwatch (DEC-PHASE12-022) already reports
+    port scans from the firewall's own drop log at Tier 0 and needs no rules.
+    Suricata's scan-class alerts for a source scanwatch just reported are
+    suppressed, so one scan is one story, not two.
+  - Deception is local and non-destructive: listening decoys and canary files
+    on this host. It never probes, scans, or sends anything to another host.
+    Tier 2 is the explicit operator opt-in DEC-PHASE9-008 requires.
+  - Runtime state only. The decoy firewall openings live in their own nft
+    table created at arm time and destroyed at disarm; /etc/nftables.conf
+    remains the single authority for base policy and is never edited.
+
+Usage:
+    orionx-postured                       # daemon (systemd)
+    orionx-postured --once --dry-run      # apply nothing, print the plan
+    orionx-postured --print-plan          # JSON plan for the current tier
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import queue
+import random
+import re
+import socket
+import string
+import subprocess
+import sys
+import threading
+import time
+from collections import OrderedDict
+from pathlib import Path
+
+# --- Paths (single authorities, all overridable for tests) ------------------
+
+# Written by the Control Center as the DESKTOP user; this daemon runs as root.
+# Root's own ~/.config is therefore the wrong place to look first, which is why
+# posture_candidates() searches the real home directories.
+POSTURE_RELPATH = Path(".config") / "orionx" / "threat-posture"
+DESKTOP_USER = "orionx-operator"          # iso/auto/config live-config.username
+HOME_ROOT = Path("/home")
+
+# The lazy-start gate from DEC-PHASE11-008. Creating it is what lets systemd
+# actually run suricata.service.
+SURICATA_GATE = Path("/var/lib/suricata/orionx-enabled")
+SURICATA_UNIT = "suricata.service"
+EVE_JSON = Path("/var/log/suricata/eve.json")
+
+# Where ET-Open lands (orionx-freshen-suricata) and where Debian's stock
+# protocol-anomaly rules live. Both are searched; only the first can hold
+# threat signatures.
+RULES_DIRS = (Path("/var/lib/suricata/rules"), Path("/etc/suricata/rules"))
+
+BUS = Path("/run/orionx/events.jsonl")
+STATUS_FILE = Path("/run/orionx/posture-status.json")
+CANARY_DIR = Path("/var/lib/orionx/canary")
+
+NEBULA_URL = "http://127.0.0.1:11434"     # DEC-006: localhost only, always.
+
+# --- Cadences ---------------------------------------------------------------
+
+POLL_SECONDS = 2.0            # posture file check
+REASSERT_SECONDS = 30.0       # re-apply drift (someone stopped suricata)
+CANARY_POLL_SECONDS = 5.0
+NO_RULES_FIRST = "critical"   # first announcement of a blind IDS
+NO_RULES_REPEAT = "warning"   # and it keeps repeating, forever, at this level
+NO_RULES_REANNOUNCE = 900.0
+ALERT_REANNOUNCE = 300.0      # per (sid, src, dport)
+MAX_ALERT_KEYS = 4096         # bounded memory; an alert storm must not OOM us
+SCAN_DEDUP_WINDOW = 180.0     # suppress Suricata scan alerts scanwatch owns
+NEBULA_QUEUE_MAX = 8          # drop context requests rather than block anything
+NEBULA_TIMEOUT = 20.0
+
+TIERS = ("0", "1", "2")
+TIER_LABEL = {
+    "0": "Tier 0 · Passive",
+    "1": "Tier 1 · Active Monitoring",
+    "2": "Tier 2 · Deception",
+}
+
+
+# ===========================================================================
+# PURE: threat posture
+# ===========================================================================
+
+def parse_tier(text: str | None) -> str:
+    """Coerce the contents of a threat-posture file to a tier id.
+
+    Default-safe in the paranoid direction that matters here: an unreadable,
+    empty, or corrupt file means Tier 0 — never silently arm deception or
+    start services because a byte got mangled. Tier 0 is also the tier that
+    changes nothing, so a broken file leaves the deck exactly as it booted.
+    """
+    if text is None:
+        return "0"
+    val = str(text).strip().splitlines()[0].strip() if str(text).strip() else ""
+    return val if val in TIERS else "0"
+
+
+def posture_candidates(explicit: str | os.PathLike | None = None,
+                       home_root: Path = HOME_ROOT,
+                       desktop_user: str = DESKTOP_USER,
+                       env: dict | None = None) -> list[Path]:
+    """Ordered list of places the posture file may live.
+
+    The Control Center writes it as the desktop user; systemd runs this as
+    root. Reading root's ~/.config would find nothing forever, so the real
+    home directories are searched too.
+    """
+    env = os.environ if env is None else env
+    out: list[Path] = []
+
+    def add(p: Path) -> None:
+        if p not in out:
+            out.append(p)
+
+    if explicit:
+        add(Path(explicit))
+    from_env = env.get("ORIONX_POSTURE_FILE")
+    if from_env:
+        add(Path(from_env))
+    add(home_root / desktop_user / POSTURE_RELPATH)
+    try:
+        for home in sorted(Path(home_root).iterdir()):
+            if home.is_dir():
+                add(home / POSTURE_RELPATH)
+    except OSError:
+        pass
+    add(Path.home() / POSTURE_RELPATH)
+    return out
+
+
+def pick_posture_file(candidates: list[Path]) -> Path | None:
+    """The newest existing candidate, or None.
+
+    Newest wins so that a second operator account cannot pin the deck to a
+    stale tier: the most recent deliberate selection is the live one.
+    """
+    best: Path | None = None
+    best_mtime = -1.0
+    for path in candidates:
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if mtime > best_mtime:
+            best, best_mtime = path, mtime
+    return best
+
+
+def read_tier(path: Path | None) -> str:
+    if path is None:
+        return "0"
+    try:
+        return parse_tier(Path(path).read_text(encoding="utf-8", errors="replace"))
+    except OSError:
+        return "0"
+
+
+# ===========================================================================
+# PURE: does Suricata actually have threat signatures?
+# ===========================================================================
+
+# Debian's suricata package ships these in /etc/suricata/rules. They fire on
+# malformed packets and protocol violations — useful, but they are not threat
+# signatures. A deck carrying only these detects no exploit, no malware, no
+# C2 and no scan, which is exactly the blindness this daemon must announce.
+STOCK_ANOMALY_RULES = frozenset({
+    "app-layer-events.rules", "decoder-events.rules", "dhcp-events.rules",
+    "dnp3-events.rules", "dns-events.rules", "files.rules", "ftp-events.rules",
+    "http-events.rules", "http2-events.rules", "ike-events.rules",
+    "ipsec-events.rules", "kerberos-events.rules", "modbus-events.rules",
+    "mqtt-events.rules", "nfs-events.rules", "ntp-events.rules",
+    "quic-events.rules", "rfb-events.rules", "smb-events.rules",
+    "smtp-events.rules", "ssh-events.rules", "stream-events.rules",
+    "tls-events.rules", "tftp-events.rules",
+})
+
+
+def is_threat_rule_file(name: str) -> bool:
+    """True if a .rules filename plausibly carries threat signatures.
+
+    Name-based, deliberately: the check must be cheap enough to run on every
+    reassert tick, and the distinction being drawn (stock anomaly set vs.
+    everything else) is exactly a naming convention in both Debian's package
+    and the ET-Open tarball.
+    """
+    base = os.path.basename(str(name))
+    if not base.endswith(".rules"):
+        return False
+    if base in STOCK_ANOMALY_RULES:
+        return False
+    return not base.endswith("-events.rules")
+
+
+def assess_rules(entries: list[tuple[str, int]]) -> dict:
+    """Classify a list of (path, size_bytes) rule files.
+
+    Returns {"threat_files", "threat_bytes", "anomaly_files", "usable"}.
+    `usable` means at least one non-empty threat-signature file — the only
+    condition under which Tier 1 or Tier 2 can honestly claim IDS coverage.
+    """
+    threat = [(p, n) for p, n in entries if is_threat_rule_file(p)]
+    anomaly = [(p, n) for p, n in entries if not is_threat_rule_file(p)]
+    threat_bytes = sum(n for _p, n in threat)
+    return {
+        "threat_files": len(threat),
+        "threat_bytes": threat_bytes,
+        "anomaly_files": len(anomaly),
+        "usable": any(n > 0 for _p, n in threat),
+    }
+
+
+def scan_rule_dirs(dirs=RULES_DIRS) -> list[tuple[str, int]]:
+    """Side-effecting companion to assess_rules(): stat the real rule dirs."""
+    entries: list[tuple[str, int]] = []
+    for d in dirs:
+        try:
+            for f in sorted(Path(d).iterdir()):
+                if f.name.endswith(".rules"):
+                    try:
+                        entries.append((f.name, f.stat().st_size))
+                    except OSError:
+                        entries.append((f.name, 0))
+        except OSError:
+            continue
+    return entries
+
+
+def no_rules_message(tier: str, status: dict) -> str:
+    """The loud one. Names the blindness, its consequence, and the remedy."""
+    return (
+        f"IDS COVERAGE GAP — {TIER_LABEL.get(tier, 'Tier ' + tier)} is active but "
+        f"Suricata has NO threat rules "
+        f"({status['threat_files']} signature file(s), "
+        f"{status['anomaly_files']} stock protocol-anomaly file(s)). "
+        "Exploits, malware, C2 and scans will NOT be detected — this deck is "
+        "not watching, it is only listening to itself. "
+        "Remedy: sudo orionx-freshen-suricata (requires network access). "
+        "Port-scan detection via orionx-scanwatch is unaffected and still works."
+    )
+
+
+# ===========================================================================
+# PURE: MITRE ATT&CK mapping
+# ===========================================================================
+#
+# Source: MITRE ATT&CK Enterprise matrix (v15, April 2024), technique IDs and
+# names transcribed by hand into this table. Keys on the left are Suricata
+# classtypes as defined in Debian's /etc/suricata/classification.config, plus
+# the ET-Open classtypes that tarball adds. Static and local by design: an
+# ATT&CK lookup over the network would fail exactly when the deck is air-
+# gapped, which is its documented primary use.
+#
+# Unmapped is a first-class answer. A wrong technique id is worse than none —
+# it sends an operator down the wrong hunt — so classtypes with no honest
+# single mapping (bad-unknown, misc-activity, policy-violation) return None.
+
+ATTACK_BY_CLASSTYPE: dict[str, tuple[str, str]] = {
+    "attempted-recon": ("T1595", "Active Scanning"),
+    "successful-recon-limited": ("T1595", "Active Scanning"),
+    "successful-recon-largescale": ("T1595", "Active Scanning"),
+    "network-scan": ("T1046", "Network Service Discovery"),
+    "rpc-portmap-decode": ("T1046", "Network Service Discovery"),
+    "external-ip-check": ("T1016", "System Network Configuration Discovery"),
+    "attempted-admin": ("T1068", "Exploitation for Privilege Escalation"),
+    "successful-admin": ("T1068", "Exploitation for Privilege Escalation"),
+    "attempted-user": ("T1203", "Exploitation for Client Execution"),
+    "successful-user": ("T1203", "Exploitation for Client Execution"),
+    "unsuccessful-user": ("T1110", "Brute Force"),
+    "default-login-attempt": ("T1078.001", "Valid Accounts: Default Accounts"),
+    "suspicious-login": ("T1078", "Valid Accounts"),
+    "credential-theft": ("T1555", "Credentials from Password Stores"),
+    "web-application-attack": ("T1190", "Exploit Public-Facing Application"),
+    "misc-attack": ("T1190", "Exploit Public-Facing Application"),
+    "exploit-kit": ("T1189", "Drive-by Compromise"),
+    "shellcode-detect": ("T1059", "Command and Scripting Interpreter"),
+    "system-call-detect": ("T1059", "Command and Scripting Interpreter"),
+    "trojan-activity": ("T1071", "Application Layer Protocol"),
+    "command-and-control": ("T1071", "Application Layer Protocol"),
+    "domain-c2": ("T1071.004", "Application Layer Protocol: DNS"),
+    "targeted-activity": ("T1071", "Application Layer Protocol"),
+    "pup-activity": ("T1176", "Browser Extensions"),
+    "non-standard-protocol": ("T1095", "Non-Application Layer Protocol"),
+    "protocol-command-decode": ("T1071", "Application Layer Protocol"),
+    "attempted-dos": ("T1499", "Endpoint Denial of Service"),
+    "successful-dos": ("T1499", "Endpoint Denial of Service"),
+    "denial-of-service": ("T1498", "Network Denial of Service"),
+    "social-engineering": ("T1566", "Phishing"),
+    "coin-mining": ("T1496", "Resource Hijacking"),
+    "suspicious-filename-detect": ("T1036", "Masquerading"),
+    "inappropriate-content": ("T1204", "User Execution"),
+    "string-detect": ("T1027", "Obfuscated Files or Information"),
+    "unusual-client-port-connection": ("T1571", "Non-Standard Port"),
+    # Deliberately unmapped: no honest single technique.
+    "bad-unknown": ("", ""),
+    "not-suspicious": ("", ""),
+    "unknown": ("", ""),
+    "misc-activity": ("", ""),
+    "policy-violation": ("", ""),
+    "tcp-connection": ("", ""),
+    "icmp-event": ("", ""),
+    "web-application-activity": ("", ""),
+}
+
+# ET-Open signatures are prefixed by ruleset name; used when a classtype is
+# missing or unmapped. Longest prefix wins, so "ET WEB_SERVER" beats "ET WEB".
+ATTACK_BY_SIGNATURE_PREFIX: dict[str, tuple[str, str]] = {
+    "ET SCAN": ("T1046", "Network Service Discovery"),
+    "ET EXPLOIT": ("T1190", "Exploit Public-Facing Application"),
+    "ET WEB_SERVER": ("T1190", "Exploit Public-Facing Application"),
+    "ET WEB_SPECIFIC_APPS": ("T1190", "Exploit Public-Facing Application"),
+    "ET WEB_CLIENT": ("T1189", "Drive-by Compromise"),
+    "ET ACTIVEX": ("T1189", "Drive-by Compromise"),
+    "ET MALWARE": ("T1071", "Application Layer Protocol"),
+    "ET TROJAN": ("T1071", "Application Layer Protocol"),
+    "ET ADWARE_PUP": ("T1176", "Browser Extensions"),
+    "ET MOBILE_MALWARE": ("T1071", "Application Layer Protocol"),
+    "ET COINMINER": ("T1496", "Resource Hijacking"),
+    "ET PHISHING": ("T1566", "Phishing"),
+    "ET SHELLCODE": ("T1059", "Command and Scripting Interpreter"),
+    "ET ATTACK_RESPONSE": ("T1059", "Command and Scripting Interpreter"),
+    "ET DOS": ("T1499", "Endpoint Denial of Service"),
+    "ET DNS": ("T1071.004", "Application Layer Protocol: DNS"),
+    "ET WORM": ("T1210", "Exploitation of Remote Services"),
+    "ET USER_AGENTS": ("T1071.001", "Application Layer Protocol: Web Protocols"),
+    "ET FTP": ("T1071.002", "Application Layer Protocol: File Transfer Protocols"),
+    "ET TELNET": ("T1021", "Remote Services"),
+    "ET RDP": ("T1021.001", "Remote Services: Remote Desktop Protocol"),
+    "ET SMB": ("T1021.002", "Remote Services: SMB/Windows Admin Shares"),
+    "GPL SHELLCODE": ("T1059", "Command and Scripting Interpreter"),
+    "GPL SCAN": ("T1046", "Network Service Discovery"),
+    "GPL EXPLOIT": ("T1190", "Exploit Public-Facing Application"),
+}
+
+# Orion-X's own deception producers.
+ATTACK_CANARY = ("T1083", "File and Directory Discovery")
+ATTACK_DECOY = ("T1046", "Network Service Discovery")
+
+# Suricata numeric severity (1 = most urgent) -> Orion-X bus severity.
+EVE_SEVERITY = {1: "critical", 2: "warning", 3: "notice"}
+
+# Classtypes and signature prefixes that mean "someone is scanning us".
+# orionx-scanwatch (DEC-PHASE12-022) already owns that story from the firewall
+# drop log, so these are candidates for suppression, not a second report.
+SCAN_CLASSTYPES = frozenset({
+    "attempted-recon", "network-scan", "successful-recon-limited",
+    "successful-recon-largescale", "rpc-portmap-decode",
+})
+SCAN_SIGNATURE_PREFIXES = ("ET SCAN", "GPL SCAN")
+
+
+def attack_technique(classtype: str | None,
+                     signature: str | None) -> tuple[str, str]:
+    """Map an alert to (technique_id, technique_name); ('','') if unmapped.
+
+    Classtype first (it is the rule author's own taxonomy), signature prefix
+    second (covers ET rules whose classtype is generic or absent).
+    """
+    ct = (classtype or "").strip().lower()
+    hit = ATTACK_BY_CLASSTYPE.get(ct)
+    if hit and hit[0]:
+        return hit
+    sig = (signature or "").strip()
+    best: tuple[str, str] = ("", "")
+    best_len = 0
+    for prefix, tech in ATTACK_BY_SIGNATURE_PREFIX.items():
+        if sig.upper().startswith(prefix) and len(prefix) > best_len:
+            best, best_len = tech, len(prefix)
+    return best
+
+
+def is_scan_alert(alert: dict) -> bool:
+    ct = (alert.get("classtype") or "").strip().lower()
+    if ct in SCAN_CLASSTYPES:
+        return True
+    sig = (alert.get("signature") or "").upper()
+    return any(sig.startswith(p) for p in SCAN_SIGNATURE_PREFIXES)
+
+
+# ===========================================================================
+# PURE: eve.json alert parsing
+# ===========================================================================
+
+def parse_eve_line(line: str) -> dict | None:
+    """Extract one Suricata alert from a line of eve.json.
+
+    eve.json is newline-delimited JSON carrying many event_types (flow, dns,
+    http, stats, ...). Only `alert` records are detections; everything else is
+    telemetry and is ignored here. Returns None for anything unparseable, so a
+    truncated final line during log rotation is a skip, not a crash.
+    """
+    line = (line or "").strip()
+    if not line or line[0] != "{":
+        return None
+    try:
+        rec = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(rec, dict) or rec.get("event_type") != "alert":
+        return None
+    alert = rec.get("alert")
+    if not isinstance(alert, dict):
+        return None
+    try:
+        sev = int(alert.get("severity", 3))
+    except (TypeError, ValueError):
+        sev = 3
+    try:
+        sid = int(alert.get("signature_id", 0))
+    except (TypeError, ValueError):
+        sid = 0
+    return {
+        "timestamp": str(rec.get("timestamp", "")),
+        "signature": str(alert.get("signature", "")).strip(),
+        "signature_id": sid,
+        "classtype": str(alert.get("category", "")).strip(),
+        "eve_severity": sev,
+        "src_ip": str(rec.get("src_ip", "")),
+        "src_port": rec.get("src_port"),
+        "dest_ip": str(rec.get("dest_ip", "")),
+        "dest_port": rec.get("dest_port"),
+        "proto": str(rec.get("proto", "")).lower(),
+    }
+
+
+def bus_severity(alert: dict) -> str:
+    """Suricata severity -> Orion-X bus severity (1 critical .. 4+ info)."""
+    return EVE_SEVERITY.get(int(alert.get("eve_severity", 3) or 3), "info")
+
+
+def dedup_key(alert: dict) -> tuple:
+    """One ongoing attack is one story. Key on what makes it distinct."""
+    return (alert.get("signature_id", 0), alert.get("src_ip", ""),
+            alert.get("dest_port"))
+
+
+def format_alert_message(alert: dict, technique: tuple[str, str]) -> str:
+    sig = alert.get("signature") or "unnamed signature"
+    src = alert.get("src_ip") or "?"
+    dst = alert.get("dest_ip") or "?"
+    sport = alert.get("src_port")
+    dport = alert.get("dest_port")
+    src_s = f"{src}:{sport}" if sport else src
+    dst_s = f"{dst}:{dport}" if dport else dst
+    tech = f" [{technique[0]} {technique[1]}]" if technique[0] else ""
+    proto = alert.get("proto") or "ip"
+    return f"{sig}{tech} — {src_s} → {dst_s} ({proto}) sid:{alert.get('signature_id', 0)}"
+
+
+class AlertDeduper:
+    """Bounded re-announce throttle keyed by dedup_key().
+
+    Bounded because a spoofed-source flood must not turn the detector into a
+    memory exhaustion attack against the deck it protects (same reasoning as
+    orionx-scanwatch's MAX_SOURCES).
+    """
+
+    def __init__(self, reannounce: float = ALERT_REANNOUNCE,
+                 max_keys: int = MAX_ALERT_KEYS):
+        self.reannounce = reannounce
+        self.max_keys = max_keys
+        self._seen: OrderedDict[tuple, float] = OrderedDict()
+
+    def should_publish(self, key: tuple, now: float) -> bool:
+        last = self._seen.get(key)
+        if last is not None and (now - last) < self.reannounce:
+            self._seen.move_to_end(key)
+            return False
+        if key not in self._seen and len(self._seen) >= self.max_keys:
+            self._seen.popitem(last=False)
+        self._seen[key] = now
+        self._seen.move_to_end(key)
+        return True
+
+    def tracked(self) -> int:
+        return len(self._seen)
+
+
+# --- Not reporting the same scan twice --------------------------------------
+
+_BUS_SCAN_SRC = re.compile(r"\bfrom\s+(\d{1,3}(?:\.\d{1,3}){3}|[0-9a-fA-F:]{3,})")
+
+
+def scan_sources_from_bus(lines, now: float,
+                          window: float = SCAN_DEDUP_WINDOW) -> set[str]:
+    """Sources orionx-scanwatch has already reported as scanning us, recently.
+
+    Reads the shared bus rather than duplicating scanwatch's state: the bus is
+    the existing single authority for what has been reported, so there is no
+    second place for the two detectors to disagree.
+    """
+    out: set[str] = set()
+    for line in lines:
+        line = (line or "").strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if rec.get("category") != "scan" or rec.get("source") != "firewall":
+            continue
+        try:
+            ts = float(rec.get("ts", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if ts and (now - ts) > window:
+            continue
+        m = _BUS_SCAN_SRC.search(str(rec.get("message", "")))
+        if m:
+            out.add(m.group(1))
+    return out
+
+
+def should_suppress(alert: dict, scan_sources: set[str]) -> bool:
+    """True if scanwatch already told this story for this source."""
+    return is_scan_alert(alert) and alert.get("src_ip", "") in scan_sources
+
+
+# ===========================================================================
+# PURE: what each tier actually means
+# ===========================================================================
+
+def tier_plan(tier: str, rules_usable: bool) -> dict:
+    """The desired system state for a tier. No side effects, fully testable.
+
+    Tier 0 — passive. Nothing is started, no gate file, no packets, no
+      listeners, no canaries. The deck observes only what it is already being
+      handed: orionx-scanwatch keeps reading the firewall's own drop log
+      (DEC-PHASE12-022), which costs nothing and sends nothing.
+
+    Tier 1 — active monitoring. Create the DEC-PHASE11-008 gate file, start
+      Suricata, ingest eve.json, publish alerts with ATT&CK context.
+
+    Tier 2 — everything in Tier 1, plus local deception: listening decoys and
+      canary files on this host, and only this host (DEC-PHASE9-008 opt-in).
+
+    Note Suricata is started at Tier 1/2 even with no threat rules. Refusing
+    to start would trade one silence for another; the protocol-anomaly rules
+    and flow records still have value. What must never happen is starting it
+    quietly — hence warn_no_rules, which the caller is required to announce.
+    """
+    tier = tier if tier in TIERS else "0"
+    ids = tier in ("1", "2")
+    return {
+        "tier": tier,
+        "label": TIER_LABEL[tier],
+        "gate_file": ids,
+        "suricata": ids,
+        "eve_ingest": ids,
+        "nebula_context": ids,
+        "deception": tier == "2",
+        "warn_no_rules": ids and not rules_usable,
+    }
+
+
+def plan_actions(prev: dict | None, new: dict) -> list[tuple]:
+    """Ordered actions to move from `prev` state to `new`.
+
+    Ordering is load-bearing in both directions: on the way up the gate file
+    must exist before systemd is asked to start the unit (ConditionPathExists
+    is evaluated at start, and a start attempted first is a silent no-op — the
+    exact trap that made Tier 2 do nothing). On the way down the unit is
+    stopped before the gate is removed, so the gate never disappears from
+    under a running service.
+    """
+    prev = prev or {"gate_file": False, "suricata": False, "eve_ingest": False,
+                    "deception": False, "warn_no_rules": False, "tier": None}
+    up: list[tuple] = []
+    down: list[tuple] = []
+
+    if new["gate_file"] and not prev.get("gate_file"):
+        up.append(("gate", "create"))
+    if new["suricata"] and not prev.get("suricata"):
+        up.append(("service", "start", SURICATA_UNIT))
+    if new["eve_ingest"] and not prev.get("eve_ingest"):
+        up.append(("eve", "start"))
+    if new["deception"] and not prev.get("deception"):
+        up.append(("deception", "arm"))
+
+    if prev.get("deception") and not new["deception"]:
+        down.append(("deception", "disarm"))
+    if prev.get("eve_ingest") and not new["eve_ingest"]:
+        down.append(("eve", "stop"))
+    if prev.get("suricata") and not new["suricata"]:
+        down.append(("service", "stop", SURICATA_UNIT))
+    if prev.get("gate_file") and not new["gate_file"]:
+        down.append(("gate", "remove"))
+
+    actions = down + up
+    if new["warn_no_rules"]:
+        actions.append(("warn", "no-rules"))
+    return actions
+
+
+# ===========================================================================
+# PURE: Nebula contextualizer prompt/response
+# ===========================================================================
+
+NEBULA_SYSTEM = (
+    "You are a concise SOC analyst on an offline incident-response laptop. "
+    "Explain one IDS alert in at most two plain-English sentences for a tired "
+    "operator at 3am: what the alert means and what to check first. "
+    "No preamble, no markdown, no speculation beyond the data given."
+)
+
+
+def build_context_prompt(alert: dict, technique: tuple[str, str]) -> str:
+    tech = f"{technique[0]} ({technique[1]})" if technique[0] else "unmapped"
+    return (
+        f"Suricata alert: {alert.get('signature', '')}\n"
+        f"Classification: {alert.get('classtype', 'unknown')}\n"
+        f"MITRE ATT&CK: {tech}\n"
+        f"Source: {alert.get('src_ip', '?')}:{alert.get('src_port', '?')}\n"
+        f"Destination: {alert.get('dest_ip', '?')}:{alert.get('dest_port', '?')}\n"
+        f"Protocol: {alert.get('proto', '?')}\n"
+        f"Suricata severity: {alert.get('eve_severity', '?')} (1 = highest)\n"
+    )
+
+
+def parse_nebula_response(body: str | bytes | None) -> str | None:
+    """Pull the text out of an ollama /api/generate response; None if absent."""
+    if not body:
+        return None
+    if isinstance(body, bytes):
+        try:
+            body = body.decode("utf-8", errors="replace")
+        except (UnicodeError, AttributeError):
+            return None
+    try:
+        obj = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    text = obj.get("response")
+    if not isinstance(text, str):
+        return None
+    text = text.strip()
+    return text or None
+
+
+def condense(text: str | None, limit: int = 240) -> str | None:
+    """One tidy line; the bus caps messages at 512 chars and R.A.I.N. speaks them."""
+    if not text:
+        return None
+    flat = " ".join(str(text).split())
+    if not flat:
+        return None
+    return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
+
+
+# ===========================================================================
+# EFFECTS: the event bus
+# ===========================================================================
+
+def publish(severity: str, source: str, category: str, message: str,
+            dry_run: bool = False) -> None:
+    """Fire-and-forget onto the bus via the orionx-event CLI.
+
+    Same mechanism as orionx-scanwatch and the Control Center: subprocess to
+    the CLI rather than importing rain_lib, so there is one writer contract
+    and no import coupling between detectors and the bus implementation.
+    """
+    if dry_run:
+        print(f"[{severity}] {source}/{category}: {message}", flush=True)
+        return
+    try:
+        subprocess.Popen(
+            ["orionx-event", "--severity", severity, "--source", source,
+             "--category", category, message],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        pass
+
+
+def tail_bus_lines(path: Path = BUS, max_lines: int = 400) -> list[str]:
+    """Last N lines of the bus, for scan-source de-duplication. Never raises."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.readlines()[-max_lines:]
+    except OSError:
+        return []
+
+
+# ===========================================================================
+# EFFECTS: Nebula contextualizer (best-effort, never gates an alert)
+# ===========================================================================
+
+def ollama_generate(prompt: str, base_url: str = NEBULA_URL,
+                    timeout: float = NEBULA_TIMEOUT) -> str | None:
+    """One non-streaming completion from the on-box model. None on any failure.
+
+    Imported lazily so that a deck without urllib quirks, or a unit test with
+    no network stack, never pays for it. DEC-006: 127.0.0.1 only, always.
+    """
+    import urllib.error  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+    try:
+        with urllib.request.urlopen(  # noqa: S310 - fixed localhost URL
+            urllib.request.Request(f"{base_url}/api/tags", method="GET"),
+            timeout=3,
+        ) as resp:
+            tags = json.loads(resp.read().decode("utf-8"))
+        models = tags.get("models") or []
+        if not models:
+            return None
+        model = str(models[0].get("name", ""))
+        if not model:
+            return None
+        payload = json.dumps({
+            "model": model,
+            "prompt": prompt,
+            "system": NEBULA_SYSTEM,
+            "stream": False,
+            "options": {"temperature": 0.2, "num_predict": 120},
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base_url}/api/generate", data=payload, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            return parse_nebula_response(resp.read())
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError,
+            ValueError, TypeError):
+        return None
+
+
+class Contextualizer:
+    """Asks the local model to explain an alert, on a worker thread.
+
+    Everything about this class is subordinate to one rule: THE MODEL NEVER
+    GATES AN ALERT. The caller publishes the detection first and offers it
+    here afterwards. The queue is small and non-blocking, so when the model is
+    slow the requests are dropped rather than allowed to back-pressure the
+    ingest loop. When it is absent, one notice is emitted and the rest are
+    silent — an operator should be told once that explanations are off, not
+    once per alert.
+    """
+
+    def __init__(self, transport=ollama_generate, dry_run: bool = False,
+                 maxsize: int = NEBULA_QUEUE_MAX):
+        self.transport = transport
+        self.dry_run = dry_run
+        self._q: queue.Queue = queue.Queue(maxsize=maxsize)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._unavailable_announced = False
+        self.dropped = 0
+        self.contextualised = 0
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, name="nebula-ctx",
+                                        daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        try:
+            self._q.put_nowait(None)
+        except queue.Full:
+            pass
+        self._thread = None
+
+    def offer(self, alert: dict, technique: tuple[str, str]) -> bool:
+        """Queue an alert for explanation. Never blocks; False if dropped."""
+        try:
+            self._q.put_nowait((alert, technique))
+            return True
+        except queue.Full:
+            self.dropped += 1
+            return False
+
+    def explain(self, alert: dict, technique: tuple[str, str]) -> str | None:
+        """Synchronous single explanation. Degrades to None, never raises."""
+        try:
+            return condense(self.transport(build_context_prompt(alert, technique)))
+        except Exception:  # noqa: BLE001 - a broken model must not kill detection
+            return None
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                item = self._q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+            alert, technique = item
+            text = self.explain(alert, technique)
+            if text is None:
+                if not self._unavailable_announced:
+                    self._unavailable_announced = True
+                    publish("notice", "nebula", "ids",
+                            "Nebula contextualizer unavailable — IDS alerts are "
+                            "publishing WITHOUT plain-language explanations. "
+                            "Detection is unaffected.", dry_run=self.dry_run)
+                continue
+            self.contextualised += 1
+            publish("info", "nebula", "ids",
+                    f"Context for sid:{alert.get('signature_id', 0)} — {text}",
+                    dry_run=self.dry_run)
+
+
+# ===========================================================================
+# EFFECTS: Tier 2 deception — local, non-destructive, reversible
+# ===========================================================================
+#
+# Two kinds of bait, both entirely on this host:
+#
+#   1. Listening decoys. Plain TCP accept-and-stall sockets on ports an
+#      intruder tries early. They answer with a fake banner, then hold the
+#      connection open (a tarpit) up to a cap, costing the scanner time and
+#      costing us one idle socket. They never connect out, never probe back,
+#      never scan. The whole reply surface is a hard-coded banner string.
+#
+#   2. Canary files. Obviously-fake credentials in a known directory whose
+#      access time is watched. Reading one is a detection; the file is then
+#      rewritten to re-arm it. Nothing in them is a real secret — each token
+#      is generated at arm time and is inert.
+#
+# The base firewall DROPs everything not explicitly permitted, so a decoy
+# socket alone would never see a packet. The opening is therefore made at
+# runtime, as a single rule inserted into the RUNNING inet orionx_firewall
+# input chain and deleted by handle at disarm. /etc/nftables.conf is never
+# edited: it stays the single authority for base policy, and a reboot returns
+# the deck to it with no residue.
+
+NFT_TABLE = "inet orionx_firewall"
+NFT_CHAIN = "input"
+NFT_COMMENT = "orionx-deception"
+
+# Chosen as classic early-probe bait that does not collide with anything
+# Orion-X runs (ollama 11434, WireGuard 51820, Matrix 8008/8448, sshd 22).
+DECOY_PORTS = (23, 2121, 2222, 4444)
+DECOY_BANNERS = {
+    23: "\r\nDebian GNU/Linux 11\r\nlogin: ",
+    2121: "220 ProFTPD 1.3.6 Server (backup) [10.0.0.1]\r\n",
+    2222: "SSH-2.0-OpenSSH_7.9p1 Debian-10+deb10u2\r\n",
+    4444: "\r\nMicrosoft Windows [Version 10.0.19044.1288]\r\n\r\nC:\\> ",
+}
+DECOY_MAX_CONNECTIONS = 32     # bounded: a decoy must not exhaust the deck
+DECOY_HOLD_SECONDS = 120.0     # tarpit dwell cap, then close politely
+
+CANARY_MARKER = "ORIONX-CANARY-DO-NOT-USE"
+CANARY_FILES = ("credentials.txt", "wallet.dat", "id_rsa_backup",
+                ".git-credentials")
+
+
+def honeytoken(rng=None) -> str:
+    """A unique, inert, obviously-fake credential string.
+
+    Generated at arm time rather than stored as a literal for two reasons:
+    every deck's token is distinct, so a leaked one identifies which deck it
+    came from; and no credential-shaped literal ever lives in the repo where
+    a secret scanner would have to decide whether it is real.
+    """
+    rng = rng or random.SystemRandom()
+    body = "".join(rng.choice(string.ascii_uppercase + string.digits)
+                   for _ in range(16))
+    return f"AKIA{body}"
+
+
+def canary_content(name: str, token: str) -> str:
+    """Bait that is convincing to a grep and useless to an attacker."""
+    header = f"# {CANARY_MARKER} — Orion-X deception canary (DEC-PHASE12-024)\n"
+    if name == ".git-credentials":
+        return f"{header}https://svc-deploy:{token}@git.internal.example\n"
+    if name == "id_rsa_backup":
+        return (f"{header}-----BEGIN OPENSSH PRIVATE KEY-----\n{token}\n"
+                "-----END OPENSSH PRIVATE KEY-----\n")
+    if name == "wallet.dat":
+        return f"{header}wallet_seed={token}\nbalance=14.20183\n"
+    return (f"{header}aws_access_key_id={token}\n"
+            f"aws_secret_access_key={token}{token}\n"
+            "vpn_psk=orionx-lab-shared-secret\n")
+
+
+def canary_tripped(baseline_atime: float, current_atime: float) -> bool:
+    """True if the file has been read since it was armed.
+
+    Uses atime, which on a `relatime` mount (Debian's default) is updated when
+    the existing atime is not newer than mtime — true immediately after we
+    write the file, so the FIRST read is always caught. Later reads inside the
+    24h relatime window would not be, which is why a trip rewrites the file:
+    re-arming restores the atime == mtime condition that makes the next read
+    visible again.
+    """
+    return current_atime > baseline_atime
+
+
+def decoy_alert_message(port: int, peer: str) -> str:
+    tech = ATTACK_DECOY
+    return (f"DECEPTION TRIPPED — decoy service on tcp/{port} was contacted by "
+            f"{peer} [{tech[0]} {tech[1]}]. Nothing on this deck legitimately "
+            f"listens on tcp/{port}; this connection is unsolicited.")
+
+
+def canary_alert_message(path: str) -> str:
+    tech = ATTACK_CANARY
+    return (f"CANARY READ — honeytoken file {path} was opened "
+            f"[{tech[0]} {tech[1]}]. No Orion-X process reads this file; "
+            "something enumerated the filesystem for credentials.")
+
+
+class DecoyListener:
+    """One accept-and-stall TCP socket. Bounded, local, reply-only."""
+
+    def __init__(self, port: int, on_hit, bind: str = "0.0.0.0",
+                 hold: float = DECOY_HOLD_SECONDS,
+                 max_conns: int = DECOY_MAX_CONNECTIONS):
+        self.port = port
+        self.on_hit = on_hit
+        self.bind = bind
+        self.hold = hold
+        self._sem = threading.Semaphore(max_conns)
+        self._sock: socket.socket | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.hits = 0
+
+    def start(self) -> bool:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((self.bind, self.port))
+            sock.listen(16)
+            sock.settimeout(0.5)
+        except OSError:
+            return False
+        self._sock = sock
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._serve,
+                                        name=f"decoy-{self.port}", daemon=True)
+        self._thread.start()
+        return True
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._sock is not None:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
+            self._sock = None
+        self._thread = None
+
+    def _serve(self) -> None:
+        while not self._stop.is_set() and self._sock is not None:
+            try:
+                conn, addr = self._sock.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            self.hits += 1
+            try:
+                self.on_hit(self.port, addr[0])
+            except Exception:  # noqa: BLE001 - a decoy must never kill the daemon
+                pass
+            if not self._sem.acquire(blocking=False):
+                # At the connection cap: report the hit, then close. Detection
+                # is the point; the tarpit is a bonus we decline to pay for.
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                continue
+            threading.Thread(target=self._hold, args=(conn,),
+                             name=f"decoy-{self.port}-conn", daemon=True).start()
+
+    def _hold(self, conn: socket.socket) -> None:
+        """Send the banner, then stall. Never reads attacker data into logic."""
+        try:
+            conn.settimeout(1.0)
+            banner = DECOY_BANNERS.get(self.port, "\r\n")
+            try:
+                conn.sendall(banner.encode("utf-8", errors="replace"))
+            except OSError:
+                return
+            deadline = time.time() + self.hold
+            while time.time() < deadline and not self._stop.is_set():
+                time.sleep(1.0)
+                try:
+                    conn.sendall(b"\0")   # keep it warm, reveal nothing
+                except OSError:
+                    return
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+            self._sem.release()
+
+
+class DeceptionField:
+    """Tier 2's whole footprint: decoys, canaries, and the runtime nft opening."""
+
+    def __init__(self, canary_dir: Path = CANARY_DIR,
+                 ports=DECOY_PORTS, dry_run: bool = False,
+                 runner=subprocess.run):
+        self.canary_dir = Path(canary_dir)
+        self.ports = tuple(ports)
+        self.dry_run = dry_run
+        self.runner = runner
+        self.listeners: list[DecoyListener] = []
+        self.baselines: dict[str, float] = {}
+        self.armed = False
+        self.firewall_open = False
+
+    # --- firewall opening (runtime only, reversible) ---
+    def _nft(self, args: list[str]) -> bool:
+        if self.dry_run:
+            print(f"[dry-run] nft {' '.join(args)}", flush=True)
+            return True
+        try:
+            res = self.runner(["nft", *args], capture_output=True, text=True,
+                              timeout=10, check=False)
+            return res.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    def open_firewall(self) -> bool:
+        ports = ", ".join(str(p) for p in self.ports)
+        return self._nft(["insert", "rule", *NFT_TABLE.split(), NFT_CHAIN,
+                          "tcp", "dport", "{", ports, "}", "accept",
+                          "comment", f'"{NFT_COMMENT}"'])
+
+    def close_firewall(self) -> bool:
+        """Delete our rule by handle. Leaves every other rule untouched."""
+        if self.dry_run:
+            print("[dry-run] nft delete deception rule", flush=True)
+            return True
+        try:
+            res = self.runner(["nft", "-a", "list", "chain", *NFT_TABLE.split(),
+                               NFT_CHAIN], capture_output=True, text=True,
+                              timeout=10, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        ok = True
+        for line in (res.stdout or "").splitlines():
+            if NFT_COMMENT not in line:
+                continue
+            m = re.search(r"#\s*handle\s+(\d+)", line)
+            if m:
+                ok = self._nft(["delete", "rule", *NFT_TABLE.split(), NFT_CHAIN,
+                                "handle", m.group(1)]) and ok
+        return ok
+
+    # --- canaries ---
+    def plant_canaries(self) -> list[Path]:
+        planted: list[Path] = []
+        if self.dry_run:
+            return [self.canary_dir / n for n in CANARY_FILES]
+        try:
+            self.canary_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return planted
+        for name in CANARY_FILES:
+            path = self.canary_dir / name
+            try:
+                path.write_text(canary_content(name, honeytoken()),
+                                encoding="utf-8")
+                os.chmod(path, 0o644)
+                self.baselines[str(path)] = path.stat().st_atime
+                planted.append(path)
+            except OSError:
+                continue
+        return planted
+
+    def remove_canaries(self) -> None:
+        if self.dry_run:
+            return
+        for key in list(self.baselines):
+            try:
+                Path(key).unlink()
+            except OSError:
+                pass
+            self.baselines.pop(key, None)
+
+    def check_canaries(self) -> list[str]:
+        """Return the canaries read since arming, and re-arm each one."""
+        tripped: list[str] = []
+        for key, baseline in list(self.baselines.items()):
+            path = Path(key)
+            try:
+                atime = path.stat().st_atime
+            except OSError:
+                continue
+            if not canary_tripped(baseline, atime):
+                continue
+            tripped.append(key)
+            try:
+                name = path.name
+                path.write_text(canary_content(name, honeytoken()),
+                                encoding="utf-8")
+                self.baselines[key] = path.stat().st_atime
+            except OSError:
+                self.baselines.pop(key, None)
+        return tripped
+
+    # --- lifecycle ---
+    def arm(self, on_decoy_hit) -> dict:
+        self.firewall_open = self.open_firewall()
+        planted = self.plant_canaries()
+        bound: list[int] = []
+        if not self.dry_run:
+            for port in self.ports:
+                listener = DecoyListener(port, on_decoy_hit)
+                if listener.start():
+                    self.listeners.append(listener)
+                    bound.append(port)
+        else:
+            bound = list(self.ports)
+        self.armed = True
+        return {"ports": bound, "canaries": [str(p) for p in planted],
+                "firewall_open": self.firewall_open}
+
+    def disarm(self) -> None:
+        for listener in self.listeners:
+            listener.stop()
+        self.listeners = []
+        self.remove_canaries()
+        self.close_firewall()
+        self.firewall_open = False
+        self.armed = False
+
+
+# ===========================================================================
+# EFFECTS: service + gate control
+# ===========================================================================
+
+def systemctl(verb: str, unit: str, dry_run: bool = False,
+              runner=subprocess.run) -> bool:
+    if dry_run:
+        print(f"[dry-run] systemctl {verb} {unit}", flush=True)
+        return True
+    try:
+        res = runner(["systemctl", verb, unit], capture_output=True,
+                     text=True, timeout=30, check=False)
+        return res.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def service_active(unit: str, runner=subprocess.run) -> bool:
+    try:
+        res = runner(["systemctl", "is-active", unit], capture_output=True,
+                     text=True, timeout=5, check=False)
+        return (res.stdout or "").strip() == "active"
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def set_gate(present: bool, path: Path = SURICATA_GATE,
+             dry_run: bool = False) -> bool:
+    """Create or remove the DEC-PHASE11-008 ConditionPathExists sentinel."""
+    if dry_run:
+        print(f"[dry-run] gate {'create' if present else 'remove'} {path}",
+              flush=True)
+        return True
+    try:
+        if present:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+        elif path.exists():
+            path.unlink()
+        return True
+    except OSError:
+        return False
+
+
+# ===========================================================================
+# EFFECTS: eve.json ingest
+# ===========================================================================
+
+class EveTailer:
+    """Follow eve.json from the end, surviving rotation and absence.
+
+    Starts at EOF: on entering Tier 1 the operator wants what happens next,
+    not a replay of a log that may be hours old. Rotation is detected by inode
+    change, and a missing file is a normal state (Suricata may not have
+    written one yet), retried quietly rather than treated as an error.
+    """
+
+    def __init__(self, path: Path = EVE_JSON, on_line=None,
+                 poll: float = 1.0):
+        self.path = Path(path)
+        self.on_line = on_line
+        self.poll = poll
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.lines_read = 0
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, name="eve-tail",
+                                        daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread = None
+
+    def _run(self) -> None:
+        fh = None
+        inode = None
+        try:
+            while not self._stop.is_set():
+                if fh is None:
+                    try:
+                        fh = open(self.path, "r", encoding="utf-8",
+                                  errors="replace")
+                        fh.seek(0, os.SEEK_END)
+                        inode = os.fstat(fh.fileno()).st_ino
+                    except OSError:
+                        fh = None
+                        self._stop.wait(self.poll)
+                        continue
+                line = fh.readline()
+                if line:
+                    self.lines_read += 1
+                    if self.on_line is not None:
+                        try:
+                            self.on_line(line)
+                        except Exception:  # noqa: BLE001 - never kill the tail
+                            pass
+                    continue
+                try:
+                    if os.stat(self.path).st_ino != inode:
+                        fh.close()
+                        fh = None
+                        continue
+                except OSError:
+                    fh.close()
+                    fh = None
+                    continue
+                self._stop.wait(self.poll)
+        finally:
+            if fh is not None:
+                try:
+                    fh.close()
+                except OSError:
+                    pass
+
+
+# ===========================================================================
+# The enforcer — ties the pure plan to the effects
+# ===========================================================================
+
+class PostureDaemon:
+    def __init__(self, args):
+        self.args = args
+        self.dry_run = bool(args.dry_run)
+        self.posture_path = pick_posture_file(
+            posture_candidates(args.posture_file))
+        self.rules_dirs = [Path(d) for d in (args.rules_dir or RULES_DIRS)]
+        self.eve_path = Path(args.eve)
+        self.state: dict | None = None
+        self.rules = assess_rules(scan_rule_dirs(self.rules_dirs))
+        self.deduper = AlertDeduper()
+        self.scan_sources: set[str] = set()
+        self._scan_refreshed = 0.0
+        self.last_no_rules_warn = 0.0
+        self.no_rules_announced = False
+        self.tailer = EveTailer(self.eve_path, on_line=self._on_eve_line)
+        self.deception = DeceptionField(Path(args.canary_dir),
+                                        dry_run=self.dry_run)
+        self.nebula = Contextualizer(dry_run=self.dry_run)
+        if args.no_nebula:
+            self.nebula = None
+        self.alerts_published = 0
+        self.alerts_suppressed = 0
+
+    # --- bus helper ---
+    def emit(self, severity: str, category: str, message: str,
+             source: str = "postured") -> None:
+        publish(severity, source, category, message, dry_run=self.dry_run)
+
+    # --- rules ---
+    def refresh_rules(self) -> None:
+        self.rules = assess_rules(scan_rule_dirs(self.rules_dirs))
+
+    def warn_no_rules(self, tier: str, now: float) -> None:
+        """Say it loudly, say it first, and keep saying it.
+
+        Escalation is inverted on purpose: the FIRST announcement is critical
+        because the operator has just armed a tier believing they gained
+        coverage they do not have — that is the moment the truth matters most.
+        Repeats drop to warning so a permanently air-gapped deck nags rather
+        than screams, but it never stops nagging and never goes silent.
+        """
+        first = not self.no_rules_announced
+        if not first and (now - self.last_no_rules_warn) < NO_RULES_REANNOUNCE:
+            return
+        self.no_rules_announced = True
+        self.last_no_rules_warn = now
+        self.emit(NO_RULES_FIRST if first else NO_RULES_REPEAT, "ids",
+                  no_rules_message(tier, self.rules))
+
+    # --- eve ingest ---
+    def _refresh_scan_sources(self, now: float) -> None:
+        if (now - self._scan_refreshed) < 10.0:
+            return
+        self._scan_refreshed = now
+        self.scan_sources = scan_sources_from_bus(tail_bus_lines(), now)
+
+    def _on_eve_line(self, line: str) -> None:
+        alert = parse_eve_line(line)
+        if alert is None:
+            return
+        now = time.time()
+        self._refresh_scan_sources(now)
+        if should_suppress(alert, self.scan_sources):
+            # orionx-scanwatch already reported this source from the firewall
+            # drop log. One scan is one story.
+            self.alerts_suppressed += 1
+            return
+        if not self.deduper.should_publish(dedup_key(alert), now):
+            return
+        technique = attack_technique(alert.get("classtype"),
+                                     alert.get("signature"))
+        # Publish FIRST. The model is never in the path of a detection.
+        self.emit(bus_severity(alert), "ids",
+                  format_alert_message(alert, technique), source="suricata")
+        self.alerts_published += 1
+        if self.nebula is not None and bus_severity(alert) in ("warning",
+                                                               "critical"):
+            self.nebula.offer(alert, technique)
+
+    # --- deception callbacks ---
+    def _on_decoy_hit(self, port: int, peer: str) -> None:
+        self.emit("critical", "deception", decoy_alert_message(port, peer))
+
+    def _check_canaries(self) -> None:
+        if not self.deception.armed:
+            return
+        for path in self.deception.check_canaries():
+            self.emit("critical", "deception", canary_alert_message(path))
+
+    # --- apply ---
+    def execute(self, actions: list[tuple], tier: str) -> list[str]:
+        done: list[str] = []
+        now = time.time()
+        for action in actions:
+            kind = action[0]
+            if kind == "gate":
+                set_gate(action[1] == "create", dry_run=self.dry_run)
+            elif kind == "service":
+                systemctl(action[1], action[2], dry_run=self.dry_run)
+            elif kind == "eve":
+                if action[1] == "start":
+                    self.tailer.start()
+                    if self.nebula is not None:
+                        self.nebula.start()
+                else:
+                    self.tailer.stop()
+                    if self.nebula is not None:
+                        self.nebula.stop()
+            elif kind == "deception":
+                if action[1] == "arm":
+                    info = self.deception.arm(self._on_decoy_hit)
+                    ports = ", ".join(f"tcp/{p}" for p in info["ports"])
+                    self.emit("warning", "deception",
+                              f"Tier 2 deception ARMED — decoys on {ports or 'none'}, "
+                              f"{len(info['canaries'])} canary file(s) in "
+                              f"{self.deception.canary_dir}. Local and "
+                              "non-destructive: nothing is sent to any other host.")
+                    if not info["firewall_open"]:
+                        self.emit("warning", "deception",
+                                  "Deception decoys are listening but the firewall "
+                                  "opening FAILED — the base DROP policy will absorb "
+                                  "probes before they reach a decoy. Canary files "
+                                  "are unaffected. Check `nft list ruleset`.")
+                else:
+                    self.deception.disarm()
+                    self.emit("notice", "deception",
+                              "Tier 2 deception disarmed — decoys closed, canaries "
+                              "removed, runtime firewall opening deleted.")
+            elif kind == "warn":
+                self.warn_no_rules(tier, now)
+            done.append(":".join(str(a) for a in action))
+        return done
+
+    def write_status(self) -> None:
+        """Runtime truth for the Cockpit: what is actually enforced, right now."""
+        if self.dry_run or self.state is None:
+            return
+        payload = {
+            "ts": time.time(),
+            "tier": self.state["tier"],
+            "label": self.state["label"],
+            "ids_expected": self.state["suricata"],
+            "ids_active": (service_active(SURICATA_UNIT)
+                           if self.state["suricata"] else False),
+            "rules_usable": self.rules["usable"],
+            "threat_rule_files": self.rules["threat_files"],
+            "anomaly_rule_files": self.rules["anomaly_files"],
+            "deception_armed": self.deception.armed,
+            "alerts_published": self.alerts_published,
+            "alerts_suppressed": self.alerts_suppressed,
+            "posture_file": str(self.posture_path or ""),
+        }
+        try:
+            STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = STATUS_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload), encoding="utf-8")
+            os.replace(tmp, STATUS_FILE)
+        except OSError:
+            pass
+
+    def apply_tier(self, tier: str) -> list[str]:
+        self.refresh_rules()
+        plan = tier_plan(tier, self.rules["usable"])
+        actions = plan_actions(self.state, plan)
+        if self.state is None or self.state["tier"] != plan["tier"]:
+            self.emit("notice", "posture",
+                      f"Posture enforcement: {plan['label']} — "
+                      f"suricata={'on' if plan['suricata'] else 'off'}, "
+                      f"eve-ingest={'on' if plan['eve_ingest'] else 'off'}, "
+                      f"deception={'armed' if plan['deception'] else 'off'}")
+        done = self.execute(actions, plan["tier"])
+        self.state = plan
+        self.write_status()
+        return done
+
+    def run(self) -> int:
+        last_reassert = 0.0
+        last_canary = 0.0
+        tier = "0"
+        try:
+            while True:
+                self.posture_path = pick_posture_file(
+                    posture_candidates(self.args.posture_file))
+                new_tier = read_tier(self.posture_path)
+                now = time.time()
+                if self.state is None or new_tier != self.state["tier"]:
+                    tier = new_tier
+                    self.apply_tier(tier)
+                    last_reassert = now
+                elif (now - last_reassert) >= REASSERT_SECONDS:
+                    last_reassert = now
+                    # Drift check: enforcement is continuous, not one-shot. If
+                    # something stopped Suricata behind our back, the tier is a
+                    # lie until we put it back — and we say so.
+                    self.refresh_rules()
+                    if self.state["suricata"] and not service_active(SURICATA_UNIT):
+                        self.emit("warning", "ids",
+                                  f"Suricata is not running while {self.state['label']} "
+                                  "is selected — restarting it.")
+                        set_gate(True, dry_run=self.dry_run)
+                        systemctl("start", SURICATA_UNIT, dry_run=self.dry_run)
+                    if self.state["suricata"] and not self.rules["usable"]:
+                        self.warn_no_rules(self.state["tier"], now)
+                    self.write_status()
+                if (now - last_canary) >= CANARY_POLL_SECONDS:
+                    last_canary = now
+                    self._check_canaries()
+                time.sleep(self.args.poll)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if self.deception.armed:
+                self.deception.disarm()
+            self.tailer.stop()
+            if self.nebula is not None:
+                self.nebula.stop()
+        return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="orionx-postured",
+        description="Enforce the Orion-X threat-posture tier and publish "
+                    "AI-contextualised IDS detections onto the R.A.I.N. bus.",
+    )
+    ap.add_argument("--posture-file", default=None,
+                    help="explicit threat-posture file (default: auto-discover)")
+    ap.add_argument("--eve", default=str(EVE_JSON),
+                    help="Suricata eve.json path (default: %(default)s)")
+    ap.add_argument("--rules-dir", action="append", default=None,
+                    help="rules directory to assess (repeatable)")
+    ap.add_argument("--canary-dir", default=str(CANARY_DIR),
+                    help="Tier 2 canary directory (default: %(default)s)")
+    ap.add_argument("--poll", type=float, default=POLL_SECONDS,
+                    help="posture poll interval in seconds (default: %(default)s)")
+    ap.add_argument("--no-nebula", action="store_true",
+                    help="disable the Nebula contextualizer entirely")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="print actions and events instead of performing them")
+    ap.add_argument("--once", action="store_true",
+                    help="apply the current tier once and exit")
+    ap.add_argument("--print-plan", action="store_true",
+                    help="print the JSON plan for the current tier and exit")
+    args = ap.parse_args(argv)
+
+    daemon = PostureDaemon(args)
+    tier = read_tier(daemon.posture_path)
+
+    if args.print_plan:
+        plan = tier_plan(tier, daemon.rules["usable"])
+        print(json.dumps({"posture_file": str(daemon.posture_path or ""),
+                          "rules": daemon.rules, "plan": plan}, indent=2))
+        return 0
+
+    if args.once:
+        done = daemon.apply_tier(tier)
+        print(f"tier={tier} actions={done or ['none']}", flush=True)
+        return 0
+
+    return daemon.run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

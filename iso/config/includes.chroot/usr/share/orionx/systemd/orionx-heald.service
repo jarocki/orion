@@ -1,0 +1,64 @@
+# @decision DEC-PHASE12-023
+# @title Auto-healing engine daemon (W10-6 execution half)
+# @status accepted
+# @rationale The Control Center's autonomy grid (DEC-PHASE10-004) has let the
+#   operator pre-approve automatic response per action class since W10-6's
+#   first slice, and nothing consumed it — "autonomous" meant nothing would
+#   happen. This unit runs the consumer.
+#
+#   It is enabled at boot on purpose, and that is safe because the engine fails
+#   closed: ~/.config/orionx/autonomy.json is the single authority and an
+#   absent or corrupt file resolves to "off" for every class. A deck whose
+#   operator has never opened the tab therefore boots with the daemon running
+#   and doing nothing at all, which is the correct default: the capability is
+#   present the moment consent is given, and no consent is manufactured by
+#   installing it.
+#
+#   Hardening is looser than orionx-scanwatch.service because the job is the
+#   opposite one: scanwatch only reads a log, while this writes nftables rules,
+#   stops units, moves files and re-keys WireGuard. ProtectSystem=strict with
+#   an explicit ReadWritePaths list keeps the writable surface to the ledger,
+#   the quarantine vault and the mesh key; CAP_NET_ADMIN is required for nft
+#   and wg, CAP_KILL for kill_process, and DAC_OVERRIDE/CHOWN/FOWNER for
+#   sealing and restoring quarantined files with their original ownership.
+
+[Unit]
+Description=Orion-X Auto-Healing Engine (R.A.I.N. events -> reversible playbooks)
+Documentation=man:nft(8) man:wg(8)
+After=orionx-firewall.service network.target
+Wants=orionx-firewall.service
+
+[Service]
+Type=simple
+ExecStart=/opt/orionx/scripts/healing/orionx-heald
+Restart=on-failure
+RestartSec=5s
+User=root
+# The autonomy grid is written by the Control Center running as the desktop
+# user, so the root daemon must be pointed at THAT file, not /root/.config.
+# live-config.username=orionx-operator (iso/auto/config) is the single
+# source for this name; healing_lib falls back to the first uid>=1000 if
+# the account is ever renamed.
+Environment=ORIONX_OPERATOR_USER=orionx-operator
+
+# The ledger must survive a restart, so it is NOT on tmpfs.
+StateDirectory=orionx/healing
+ReadWritePaths=/var/lib/orionx /run/orionx /etc/wireguard
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_KILL CAP_DAC_OVERRIDE CAP_CHOWN CAP_FOWNER
+AmbientCapabilities=CAP_NET_ADMIN CAP_KILL
+MemoryMax=128M
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""orionx-heal — operator control surface for the auto-healing engine.
+
+The engine acts inside standing consent; this is where the operator exercises
+the judgement that consent deliberately withholds — confirming a parked action,
+undoing one early, renewing one that should outlast its timer, and auditing the
+chain afterwards.
+
+    orionx-heal status              # consent levels + what is in force
+    orionx-heal list                # the playbook registry: does / undoes
+    orionx-heal pending             # actions awaiting your confirmation
+    orionx-heal confirm <id>        # the explicit acknowledgement path
+    orionx-heal deny <id>
+    orionx-heal undo <id>           # revert now, before the timer
+    orionx-heal renew <id> [--ttl S]
+    orionx-heal run block_ip --target 1.2.3.4   # manual, guards still apply
+    orionx-heal verify              # walk the Merkle chain
+    orionx-heal log [-n N]
+
+@decision DEC-PHASE12-023
+@title Confirmation is an explicit out-of-band operator act, never a timeout
+@status accepted
+@rationale The "confirm" autonomy level only means something if nothing else
+  can supply the confirmation. It is therefore a separate command the human
+  runs, recorded in the chain as its own entry, and a proposal that is never
+  answered LAPSES rather than escalating — an unanswered question is a "no".
+  The alternative (auto-approve after N minutes) would collapse "confirm" into
+  a slow "autonomous", which is precisely the false reassurance this work
+  exists to remove.
+
+  A manual `run` is above autonomy — the operator is the authority and does not
+  need to pre-approve themselves — but it is NOT above the guards. Nothing in
+  this tool can block the address you are typing from.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from pathlib import Path
+
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+
+import engine as eng  # noqa: E402
+import healing_lib as hl  # noqa: E402
+
+
+def _engine(args) -> eng.Engine:
+    return eng.Engine(dry_run=getattr(args, "dry_run", False), verbose=True,
+                      state_dir=Path(args.state_dir))
+
+
+def cmd_list(args) -> int:
+    print("Auto-healing playbooks (static registry — DEC-PHASE12-023)\n")
+    for p in hl.REGISTRY:
+        ttl = (f"{p.default_ttl / 60:.0f}m" if p.default_ttl else "no timer")
+        print(f"  {p.name}")
+        print(f"      does   : {p.summary}")
+        print(f"      undoes : {p.undo_summary}")
+        print(f"      target : {p.param or '(host-wide)'}    rollback: {ttl}"
+              f"    {'fully reversible' if p.fully_reversible else 'PARTLY one-way'}")
+        print()
+    return 0
+
+
+def cmd_status(args) -> int:
+    e = _engine(args)
+    autonomy = e.autonomy()
+    src = hl.AUTONOMY_FILE
+    print(f"Standing consent  : {src}")
+    if not src.exists():
+        print("  (file absent — every action class is OFF; the engine will not act)")
+    print()
+    for p in hl.REGISTRY:
+        lvl = hl.level_for(autonomy, p.name)
+        disp = hl.disposition(lvl)
+        mark = "!" if disp == hl.ACT_EXECUTE else " "
+        print(f"  {mark} {p.name:<24} {lvl:<12} -> {disp}")
+    entries = e.entries()
+    ok, bad, why = hl.verify_chain(entries)
+    now = time.time()
+    print(f"\nAudit chain       : {e.chain_file()}  ({len(entries)} records, "
+          f"{'INTACT' if ok else 'BROKEN at #' + str(bad)})")
+    if not ok:
+        print(f"  {why}")
+    active = hl.active_actions(entries)
+    print(f"\nIn force ({len(active)}):")
+    for a in sorted(active, key=lambda x: x.applied_at):
+        print(f"  {a.action_id}  {a.playbook:<22} {a.target or '(host)':<20} "
+              f"{hl.describe_remaining(a, now)}")
+    pend = hl.pending_actions(entries)
+    if pend:
+        print(f"\nAwaiting confirmation ({len(pend)}):")
+        for a in pend:
+            print(f"  {a.action_id}  {a.playbook:<22} {a.target or '(host)'}"
+                  f"   -> orionx-heal confirm {a.action_id}")
+    return 0 if ok else 1
+
+
+def cmd_pending(args) -> int:
+    e = _engine(args)
+    pend = hl.pending_actions(e.entries())
+    if not pend:
+        print("Nothing awaiting confirmation.")
+        return 0
+    for a in pend:
+        print(f"{a.action_id}  {a.playbook}  {a.target or '(host)'}")
+    return 0
+
+
+def cmd_confirm(args) -> int:
+    ok, msg = _engine(args).confirm(args.action_id)
+    print(msg)
+    return 0 if ok else 1
+
+
+def cmd_deny(args) -> int:
+    ok, msg = _engine(args).deny(args.action_id)
+    print(msg)
+    return 0 if ok else 1
+
+
+def cmd_undo(args) -> int:
+    ok, msg = _engine(args).undo(args.action_id)
+    print(msg)
+    return 0 if ok else 1
+
+
+def cmd_renew(args) -> int:
+    ok, msg = _engine(args).renew(args.action_id, ttl=args.ttl)
+    print(msg)
+    return 0 if ok else 1
+
+
+def cmd_run(args) -> int:
+    """Manual execution. Above consent, never above the guards."""
+    if args.playbook not in hl.PLAYBOOKS:
+        print(f"unknown playbook {args.playbook!r}; try: orionx-heal list",
+              file=sys.stderr)
+        return 2
+    e = _engine(args)
+    target = args.target or ""
+    allowed, why = hl.check_target(args.playbook, target, e.guards)
+    if not allowed:
+        print(f"refused: {why}", file=sys.stderr)
+        e.record(kind=hl.KIND_REFUSED, playbook=args.playbook, target=target,
+                 level="manual", reason=why)
+        return 1
+    ok = e.execute(args.playbook, target, "manual", "operator ran it by hand")
+    return 0 if ok else 1
+
+
+def cmd_verify(args) -> int:
+    """Walk the chain and report the FIRST broken link, with its neighbours."""
+    e = _engine(args)
+    entries = e.entries()
+    if not entries:
+        print(f"Audit chain is empty ({e.chain_file()}) — nothing to verify.")
+        return 0
+    ok, bad, why = hl.verify_chain(entries)
+    if ok:
+        print(f"Audit chain INTACT: {len(entries)} records, head "
+              f"{hl.head_hash(entries)[:32]}…")
+        return 0
+    print(f"Audit chain BROKEN at record #{bad} of {len(entries)}", file=sys.stderr)
+    print(f"  {why}", file=sys.stderr)
+    ctx = entries[bad]
+    print(f"  record #{bad}: kind={ctx.get('kind')} playbook={ctx.get('playbook')} "
+          f"target={ctx.get('target')} iso={ctx.get('iso')}", file=sys.stderr)
+    print("  Records before this point are still verified; everything from here "
+          "on is untrustworthy.", file=sys.stderr)
+    return 1
+
+
+def cmd_log(args) -> int:
+    e = _engine(args)
+    entries = e.entries()[-args.number:]
+    for i, en in enumerate(entries):
+        print(f"{en.get('iso', '?')}  {str(en.get('kind', '?')):<9} "
+              f"{str(en.get('playbook', '')):<22} {str(en.get('target', '')):<18} "
+              f"{str(en.get('action_id', '')):<13} {str(en.get('reason', ''))[:60]}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="orionx-heal",
+        description="Operator control surface for the Orion-X auto-healing engine.")
+    ap.add_argument("--state-dir", default=str(hl.STATE_DIR),
+                    help="ledger + vault directory (default: %(default)s)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="print intended actions; change nothing")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("list", help="show the playbook registry").set_defaults(fn=cmd_list)
+    sub.add_parser("status", help="consent levels, chain health, actions in force"
+                   ).set_defaults(fn=cmd_status)
+    sub.add_parser("pending", help="actions awaiting confirmation"
+                   ).set_defaults(fn=cmd_pending)
+    sub.add_parser("verify", help="walk the Merkle audit chain"
+                   ).set_defaults(fn=cmd_verify)
+
+    for name, fn, helptext in (
+        ("confirm", cmd_confirm, "approve a parked action and run it"),
+        ("deny", cmd_deny, "decline a parked action"),
+        ("undo", cmd_undo, "revert an action now"),
+    ):
+        sp = sub.add_parser(name, help=helptext)
+        sp.add_argument("action_id")
+        sp.set_defaults(fn=fn)
+
+    sp = sub.add_parser("renew", help="extend an action's rollback timer")
+    sp.add_argument("action_id")
+    sp.add_argument("--ttl", type=float, default=None,
+                    help="seconds (0 = no timer); default is the playbook's own")
+    sp.set_defaults(fn=cmd_renew)
+
+    sp = sub.add_parser("run", help="run a playbook by hand")
+    sp.add_argument("playbook", choices=list(hl.PLAYBOOK_NAMES))
+    sp.add_argument("--target", default="", help="IP, PID, path or Matrix user id")
+    sp.set_defaults(fn=cmd_run)
+
+    sp = sub.add_parser("log", help="tail the audit chain")
+    sp.add_argument("-n", "--number", type=int, default=20)
+    sp.set_defaults(fn=cmd_log)
+
+    args = ap.parse_args(argv)
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

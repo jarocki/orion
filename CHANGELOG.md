@@ -124,6 +124,72 @@ fixed on `release/2.2.0` for v2.2.0 unless noted.
   the SSH hardening drop-in, so the key cannot be used. Documented as ignorable
   and removable in the User Guide; the code fix is tracked separately.
 
+### W10-3 / W10-5 / W10-6 completed — three surfaces that shipped without engines
+
+Three operator-facing controls persisted a setting that nothing consumed. Each
+said so in its own docstring, and each is now real.
+
+**W10-6 auto-healing (DEC-PHASE12-023).** The tab let an operator pre-approve
+`autonomous` for `block_ip` and six other action classes; nothing executed. An
+operator could reasonably believe the deck blocked attackers by itself and be
+wrong during an incident. `orionx-heald` now consumes the R.A.I.N. bus and the
+autonomy grid and runs the six playbooks, each with a real undo: `block_ip`
+(dedicated `inet orionx_healing` table, so blocks are additive and removable),
+`kill_process` (resolves PID→unit, because SIGKILL on a `Restart=always` PID
+just respawns it), `quarantine_file`, `isolate_node`, `rotate_mesh_keys`,
+`revoke_matrix_session`. Rollback timers with state that survives a restart, a
+hash-chained append-only ledger that is both the audit record and the rollback
+authority (six distinct tamper shapes are detected, including a self-consistent
+forgery spliced onto the wrong predecessor), and guards that run *before*
+consent and cannot be lifted by any level — the engine refuses to block the
+operator's own address, loopback or the mesh subnet. Gating fails closed:
+missing, truncated or malformed `autonomy.json` resolves to `off` everywhere.
+
+Two bugs were found en route, both the silent-failure class this work exists to
+remove: the daemon runs as root and so read `/root/.config`, meaning the grid
+could read `autonomous` while the engine did nothing; and `--once` processed
+nothing because the bus tail seeked to EOF first.
+
+**W10-5 threat posture (DEC-PHASE12-024).** Selecting a tier wrote a file whose
+only consumer was the Cockpit's badge colour. `orionx-postured` now enforces it:
+Tier 0 starts nothing and sends nothing; Tier 1 creates the DEC-PHASE11-008 gate
+file, starts Suricata, ingests `eve.json` and publishes alerts with MITRE ATT&CK
+technique IDs from a static local table; Tier 2 adds local-only deception
+(listening decoys and canary files on this host). Alerts Suricata raises for a
+source `orionx-scanwatch` already reported are suppressed rather than
+double-counted, and the Nebula contextualizer is strictly best-effort — an
+absent or slow model never gates an alert.
+
+Its most important behaviour is **loud degradation**. Suricata with no threat
+rules is indistinguishable, from the operator's seat, from Suricata seeing
+nothing, which is exactly why a live `nmap` sweep went unreported. A tier that
+implies IDS coverage without usable rules now announces the gap, its
+consequence, and the remedy, and keeps repeating it.
+
+**W10-3 MCP confinement (DEC-PHASE12-025).** The tool server ran with argv
+validation, timeouts and audit logging, but none of the DEC-007 confinement.
+It now runs as a dedicated `nebula-mcp` system user under an AppArmor profile,
+with no outbound network enforced three independent ways (`PrivateNetwork=yes`,
+`RestrictAddressFamilies=AF_UNIX`, `IPAddressDeny=any`) plus a profile that
+permits only `network unix`. Loopback to ollama is gone too, so a compromised
+tool server cannot turn around and drive the model. Transport moved to a unix
+socket, which a network namespace has no opinion about. Model-in-the-loop
+tool-calling now works and is bounded by two gates over one authority: the
+server refuses any name outside the static registry even when the client gate is
+bypassed entirely.
+
+Argument validation was strengthened rather than preserved: path arguments must
+`realpath` inside an allowlist of evidence roots, token arguments match a strict
+pattern, and nothing may begin with `-` (option injection into tshark is real
+even with no shell). Two tools that genuinely depend on what confinement removes
+now report *why* they are unavailable instead of returning misleading empty
+output.
+
+Tests: `test_healing.sh` (62), `test_mcp_confinement.sh` (143),
+`test_awareness_daemon.sh` (13), all mutation-tested — deliberately breaking the
+failsafe, the lock-out guard, the no-rules warning and the chain verifier each
+produced failures. Full sweep: **52 suites green, 0 red.**
+
 ### Port scans are now visible in the Cockpit (DEC-PHASE12-022)
 
 Reported from the reference deck: `nmap -Pn -A` against a booted Orion-X moved

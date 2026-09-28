@@ -1,0 +1,144 @@
+#!/bin/bash
+# shellcheck shell=bash
+set -euo pipefail
+#
+# Orion-X Phoenix Edition — nebula-mcp service account
+#
+# @decision DEC-PHASE12-025
+# @title Dedicated `nebula-mcp` system user, created at build time, owning
+#   nothing but its audit log
+# @status accepted
+# @rationale DEC-007 requires the MCP tool server to be sandboxed, and
+#   MASTER_PLAN's W10-3 row names a dedicated `nebula-mcp` user as the first of
+#   the three mechanisms. Until now the server ran as whoever launched it —
+#   in practice root, via `nebula tools --serve` — so a bug in a tool the model
+#   chose to run was a bug running as root.
+#
+#   WHAT THE ACCOUNT GETS, and why it is this little. The twelve tools read
+#   pcaps, logs, systemd unit state and NetworkManager state. Every path they
+#   legitimately read is world-readable on the image (/opt/orionx/data,
+#   /var/log/orionx, /run/orionx, and the operator's ~/Analysis, which
+#   live-config creates 0755 from /etc/skel). So the account needs NO
+#   supplementary groups at all — not adm, not netdev, not wireshark. The one
+#   thing it must write is the DEC-007 audit log, and that is granted by
+#   owning a single pre-created file rather than by owning /var/log/orionx,
+#   which nebula-runtime and nebula-integrity-check also write as root.
+#
+#   Rejected: adding nebula-mcp to `adm` so it could read all of /var/log. The
+#   only log a tool reads is /var/log/orionx/*, which is already readable, and
+#   adm would hand a compromised tool server auth.log and the journal.
+#   Rejected: --no-create-home with home=/nonexistent. Python wants somewhere
+#   for XDG cache; /var/lib/nebula-mcp exists, is owned by the account and is
+#   read-only at runtime anyway (ProtectSystem=strict), so nothing accumulates.
+#
+#   IDEMPOTENT. live-build can re-enter a chroot, and this hook is also the
+#   kind of thing that gets run twice by hand during a debug session. Every
+#   step is guarded; running it again changes nothing and exits 0.
+#
+#   NOT IN SCOPE HERE: installing nebula-mcp.service. That is
+#   0615-install-systemd-units.hook.chroot's single authority
+#   (DEC-PHASE7-SYSTEMD-INSTALL-001) and this hook must not create a second
+#   one. The unit is staged at /usr/share/orionx/systemd/nebula-mcp.service.
+#
+#   References: DEC-007, DEC-PHASE10-005, DEC-PHASE12-025.
+
+MCP_USER="nebula-mcp"
+MCP_GROUP="nebula-mcp"
+MCP_HOME="/var/lib/nebula-mcp"
+MCP_SHELL="/usr/sbin/nologin"
+LOG_DIR="/var/log/orionx"
+AUDIT_LOG="$LOG_DIR/nebula-mcp.log"
+PROFILE="/etc/apparmor.d/usr.bin.nebula-mcp"
+
+echo "[nebula-mcp-user] Creating the confined MCP tool-server account..."
+
+# ---------------------------------------------------------------------------
+# 1. Group
+# ---------------------------------------------------------------------------
+if getent group "$MCP_GROUP" >/dev/null 2>&1; then
+    echo "[nebula-mcp-user] group $MCP_GROUP already exists"
+else
+    groupadd --system "$MCP_GROUP"
+    echo "[nebula-mcp-user] created group: $MCP_GROUP"
+fi
+
+# ---------------------------------------------------------------------------
+# 2. User — system account, no login shell, no password, no extra groups
+# ---------------------------------------------------------------------------
+if getent passwd "$MCP_USER" >/dev/null 2>&1; then
+    echo "[nebula-mcp-user] user $MCP_USER already exists"
+else
+    useradd \
+        --system \
+        --gid "$MCP_GROUP" \
+        --home-dir "$MCP_HOME" \
+        --create-home \
+        --shell "$MCP_SHELL" \
+        --comment "Orion-X Nebula MCP tool server (confined, DEC-PHASE12-025)" \
+        "$MCP_USER"
+    echo "[nebula-mcp-user] created user: $MCP_USER (shell $MCP_SHELL)"
+fi
+
+# Lock the account outright: no password, no expiry games, no su into it.
+passwd --lock "$MCP_USER" >/dev/null 2>&1 || true
+
+# Re-assert the invariants even when the account pre-existed, so a hand-edited
+# chroot cannot leave a shell behind.
+usermod --shell "$MCP_SHELL" --home "$MCP_HOME" "$MCP_USER"
+
+# ---------------------------------------------------------------------------
+# 3. Home — exists, owned, and private. Runtime mounts it read-only anyway.
+# ---------------------------------------------------------------------------
+mkdir -p "$MCP_HOME"
+chown "$MCP_USER:$MCP_GROUP" "$MCP_HOME"
+chmod 0750 "$MCP_HOME"
+
+# ---------------------------------------------------------------------------
+# 4. Audit log — the ONE writable path the service gets (DEC-007).
+#    Pre-created and owned here so the unit needs ReadWritePaths=/var/log/orionx
+#    without owning the directory that root-run Nebula units also write.
+# ---------------------------------------------------------------------------
+mkdir -p "$LOG_DIR"
+chmod 0755 "$LOG_DIR"
+touch "$AUDIT_LOG"
+chown "$MCP_USER:$MCP_GROUP" "$AUDIT_LOG"
+chmod 0640 "$AUDIT_LOG"
+echo "[nebula-mcp-user] audit log ready: $AUDIT_LOG ($MCP_USER:$MCP_GROUP 0640)"
+
+# ---------------------------------------------------------------------------
+# 5. Entrypoint sanity — the unit's ExecStart and the AppArmor attachment path
+#    both name /usr/bin/nebula-mcp. If includes.chroot did not stage it, fail
+#    the build here rather than shipping a unit that cannot start.
+# ---------------------------------------------------------------------------
+if [ ! -f /usr/bin/nebula-mcp ]; then
+    echo "[nebula-mcp-user] ERROR: /usr/bin/nebula-mcp missing (includes.chroot)" >&2
+    exit 1
+fi
+# Only if needed: includes.chroot already ships it 0755, and re-chmod'ing a
+# file that is already correct is how a hook fails on a read-only bind mount.
+[ -x /usr/bin/nebula-mcp ] || chmod 0755 /usr/bin/nebula-mcp
+
+# ---------------------------------------------------------------------------
+# 6. AppArmor profile — verify it parses at build time.
+#    Non-fatal: the chroot's apparmor_parser cannot always load policy into a
+#    kernel it is not running under. A parse FAILURE is fatal, because that is
+#    a syntax error we can and should catch here.
+# ---------------------------------------------------------------------------
+if [ ! -f "$PROFILE" ]; then
+    echo "[nebula-mcp-user] ERROR: $PROFILE missing (includes.chroot)" >&2
+    exit 1
+fi
+if command -v apparmor_parser >/dev/null 2>&1; then
+    if apparmor_parser --preprocess "$PROFILE" >/dev/null 2>&1; then
+        echo "[nebula-mcp-user] AppArmor profile parses: $PROFILE"
+    else
+        echo "[nebula-mcp-user] ERROR: $PROFILE failed to parse" >&2
+        apparmor_parser --preprocess "$PROFILE" >/dev/null || true
+        exit 1
+    fi
+else
+    echo "[nebula-mcp-user] WARNING: apparmor_parser absent; profile not syntax-checked"
+fi
+
+echo "[nebula-mcp-user] done."
+exit 0

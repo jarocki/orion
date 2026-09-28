@@ -92,6 +92,7 @@ class Cockpit(Gtk.Window):
         self.flash = 0.0                    # 1.0 on a new warning/critical, decays
         self.systems = {"NEBULA": False, "FIREWALL": False, "MESH": False, "R.A.I.N.": False}
         self.posture = "0"
+        self.posture_status: dict = {}
         self.t0 = time.time()
 
         GLib.timeout_add(FPS_MS, self._tick)
@@ -139,6 +140,9 @@ class Cockpit(Gtk.Window):
         self.systems["MESH"] = L.mesh_up()
         self.systems["R.A.I.N."] = L.process_running("orionx-rain")
         self.posture = L.posture_tier()
+        # DEC-PHASE12-024: what the tier is ENFORCING, not just what it is set
+        # to. Empty dict when orionx-postured is not running.
+        self.posture_status = L.posture_status()
         if self.demo:
             self.systems.update({"NEBULA": True, "FIREWALL": True, "MESH": True, "R.A.I.N.": True})
         return True
@@ -278,10 +282,12 @@ class Cockpit(Gtk.Window):
         cr.stroke()
         self._text(cr, 22, 38, "ORION-X", 22, L.EMBER, bold=True, glow=1.0)
         self._text(cr, 22 + 118, 38, "//  COCKPIT", 16, L.DIM)
-        # posture badge
-        label = L.POSTURE_LABEL.get(self.posture, "TIER 0 · PASSIVE")
+        # posture badge — DEC-PHASE12-024: a tier that cannot detect says so.
+        label, badge_state = L.posture_badge(self.posture, self.posture_status)
         col = {"0": L.GREEN, "1": L.AMBER, "2": L.RED}.get(self.posture, L.GREEN)
-        bw = 220
+        if badge_state in ("warn", "blind"):
+            col = L.RED
+        bw = 300 if badge_state != "ok" else 220
         bx = W - 16 - 180 - bw - 16
         self._rrect(cr, bx, 14, bw, 30, 6)
         cr.set_source_rgba(*col, 0.12)

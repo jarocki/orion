@@ -1,0 +1,187 @@
+#include <tunables/global>
+
+# @decision DEC-PHASE12-025
+# @title AppArmor profile: nebula-mcp tool server — AF_UNIX only, no shell,
+#   evidence paths read-only
+# @status accepted
+# @rationale DEC-007 requires the MCP tool server to be sandboxed; MASTER_PLAN's
+#   W10-3 row and the usr.bin.ollama rationale both spell out what that means
+#   here: a different user from ollama, a different profile, and "no network at
+#   all". This profile is that second clause.
+#
+#   NETWORK — and why this is not issue #53 again. #53 is open against
+#   usr.bin.ollama because that profile allows `network inet stream` and then
+#   tries to narrow it with deny rules; AppArmor 3.x cannot express
+#   "loopback peers only", so the allow wins and the confinement is weaker than
+#   the comment claims. That bind exists only because ollama must serve
+#   127.0.0.1:11434. This server must serve nothing over IP: every one of its
+#   twelve tools reads a local file, a systemd unit or a NetworkManager state.
+#   So the profile allows `network unix` and NOTHING else. AppArmor's rule
+#   semantics make that total — once any network rule is present, every
+#   unlisted address family is denied — and the explicit deny lines below are
+#   for the auditor and the test, not for the kernel. There is no
+#   "too broad" allow to tighten later, because there is no inet allow at all.
+#   nebula-mcp.service adds PrivateNetwork=yes on top, so the denial holds even
+#   if this profile fails to load.
+#
+#   ATTACHMENT — the ollama lesson, applied. AppArmor keys a profile on the
+#   executable the kernel actually execs, and for a #!-script that is the
+#   interpreter, not the script. The attachment path below is therefore
+#   documentation and defence-in-depth; the mechanism that actually attaches
+#   this profile is `AppArmorProfile=nebula-mcp` in nebula-mcp.service
+#   (aa_change_onexec), which is path-independent. usr.bin.ollama silently
+#   never attached for months because its path was wrong — this profile does
+#   not depend on getting a path right.
+#
+#   EXEC — children inherit (ix), they do not escape. Every tool binary is
+#   `ix`, so tshark, roast, nucleotide and the analyzers run under THIS
+#   profile rather than transitioning to their own, more permissive one
+#   (usr.bin.tshark grants capability net_raw; nothing launched by the model
+#   should have it). Shells are denied by name so "no shell" is greppable as
+#   well as true.
+#
+#   FILES — read-only on the evidence roots that mcp_server.read_roots()
+#   allows, one writable file for the audit log, and the socket directory.
+#   The two lists are meant to be compared: if a path is added to one and not
+#   the other, the tool fails closed with a clear AppArmor denial rather than
+#   reading something the validator thought it had excluded.
+#
+#   Style follows usr.bin.ollama / usr.bin.tshark (Phase 7 convention).
+#   References: DEC-007, DEC-006, DEC-PHASE10-011, issue #53.
+
+profile nebula-mcp /usr/bin/nebula-mcp flags=(attach_disconnected) {
+  #include <abstractions/base>
+  #include <abstractions/python>
+
+  # ---------------------------------------------------------------------
+  # Network: unix domain sockets ONLY.
+  # The JSON-RPC transport is /run/nebula-mcp/nebula-mcp.sock; D-Bus (for
+  # systemctl / nmcli) is also AF_UNIX. Nothing else is permitted.
+  # ---------------------------------------------------------------------
+  network unix stream,
+  network unix dgram,
+  # Explicit for audit + test. AppArmor already denies every family not named
+  # above; these lines make the intent impossible to misread.
+  deny network inet,
+  deny network inet6,
+  deny network raw,
+  deny network packet,
+  deny network netlink,
+
+  # ---------------------------------------------------------------------
+  # No shell. Ever. The server builds argv and execve()s it directly.
+  # ---------------------------------------------------------------------
+  deny /bin/sh x,
+  deny /bin/bash x,
+  deny /bin/dash x,
+  deny /usr/bin/sh x,
+  deny /usr/bin/bash x,
+  deny /usr/bin/dash x,
+  deny /usr/bin/zsh x,
+  deny /usr/bin/perl x,
+
+  # ---------------------------------------------------------------------
+  # Own code
+  # ---------------------------------------------------------------------
+  /usr/bin/nebula-mcp r,
+  /usr/bin/python3* ix,
+  /usr/bin/env ix,
+  /opt/orionx/scripts/nebula/** r,
+  /opt/orionx/scripts/** r,
+  /usr/lib/python3*/** r,
+  /usr/lib/** rm,
+  /usr/local/lib/** rm,
+  /lib/** rm,
+
+  # ---------------------------------------------------------------------
+  # The twelve tools. ix = run under this profile; a child of the tool
+  # server is never less confined than the tool server.
+  # ---------------------------------------------------------------------
+  /usr/bin/nebula ix,
+  /usr/bin/systemctl ix,
+  /usr/bin/nmcli ix,
+  /usr/bin/tshark ix,
+  /usr/bin/dumpcap ix,
+  /usr/bin/pcap-analyzer.py ix,
+  /usr/bin/artifact-analyzer.py ix,
+  /usr/bin/orionx-nucleotide-watch ix,
+  /usr/bin/nucleotide ix,
+  /usr/local/bin/roast ix,
+  # wg is listed so an unconfined run still works; under the unit's
+  # PrivateNetwork=yes the tool reports itself unavailable instead of lying.
+  /usr/bin/wg ix,
+
+  # ---------------------------------------------------------------------
+  # Evidence roots — READ ONLY. Mirrors mcp_server._DEFAULT_READ_ROOTS.
+  # ---------------------------------------------------------------------
+  /opt/orionx/data/** r,
+  /opt/orionx/nucleotide/** r,
+  /opt/orionx/nebula/models/ r,
+  /opt/orionx/nebula/models/* r,
+  /var/lib/orionx/** r,
+  /var/log/orionx/ r,
+  /var/log/orionx/** r,
+  /run/orionx/ r,
+  /run/orionx/** r,
+  /srv/orionx/** r,
+  # The operator's working directory, read-only. ProtectHome=tmpfs in the unit
+  # hides the rest of /home; this is the one bind-mounted exception.
+  /home/*/Analysis/ r,
+  /home/*/Analysis/** r,
+
+  # ---------------------------------------------------------------------
+  # Writable: the audit log, and the socket directory. Nothing else.
+  # ---------------------------------------------------------------------
+  /var/log/orionx/nebula-mcp.log rw,
+  /run/nebula-mcp/ rw,
+  /run/nebula-mcp/** rw,
+
+  # ---------------------------------------------------------------------
+  # IPC the read-only tools need: systemd and NetworkManager over D-Bus.
+  # ---------------------------------------------------------------------
+  /run/dbus/system_bus_socket rw,
+  /run/systemd/private rw,
+  /run/systemd/journal/socket rw,
+  /run/systemd/journal/stdout rw,
+
+  # ---------------------------------------------------------------------
+  # Minimal /proc and /etc. abstractions/nameservice is deliberately NOT
+  # included: it pulls in resolver and DNS access this profile must not have.
+  # ---------------------------------------------------------------------
+  /proc/ r,
+  /proc/@{pid}/status r,
+  /proc/@{pid}/cmdline r,
+  /proc/cpuinfo r,
+  /proc/meminfo r,
+  /etc/passwd r,
+  /etc/group r,
+  /etc/nsswitch.conf r,
+  /etc/localtime r,
+
+  # ---------------------------------------------------------------------
+  # Hard denials. Redundant against AppArmor's default-deny, explicit so the
+  # threat model is legible and the unit test can assert it.
+  # ---------------------------------------------------------------------
+  deny /home/** w,
+  deny /home/*/.ssh/** rwx,
+  deny /home/*/.local/share/nebula/** rw,
+  deny /root/** rwx,
+  deny /etc/shadow rwx,
+  deny /etc/gshadow rwx,
+  deny /etc/wireguard/** rwx,
+  deny /etc/ssh/** w,
+  deny /opt/orionx/nebula/models/** w,
+  deny /boot/** rwx,
+  deny /dev/mem rwx,
+  deny /dev/kmem rwx,
+  deny /dev/net/tun rwx,
+
+  # No privilege escalation surface at all: the unit drops the whole
+  # capability bounding set, and the profile grants no capability either.
+  deny capability sys_admin,
+  deny capability sys_module,
+  deny capability net_admin,
+  deny capability net_raw,
+  deny capability setuid,
+  deny capability setgid,
+}

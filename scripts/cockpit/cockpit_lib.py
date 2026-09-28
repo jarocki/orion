@@ -57,6 +57,11 @@ SEVERITIES = ("info", "notice", "warning", "critical")
 
 EVENT_LOG = Path("/run/orionx/events.jsonl")
 POSTURE_FILE = Path.home() / ".config" / "orionx" / "threat-posture"
+# Runtime truth written by orionx-postured (DEC-PHASE12-024): what the tier is
+# actually enforcing, as opposed to what it was set to. The distinction is the
+# whole point — a tier can be selected while the IDS behind it carries no
+# threat rules and therefore detects nothing.
+POSTURE_STATUS_FILE = Path("/run/orionx/posture-status.json")
 PRESSURE_HALF_LIFE = 60.0   # seconds for an event's contribution to halve
 
 
@@ -310,6 +315,36 @@ def posture_tier(path: Path = POSTURE_FILE) -> str:
 POSTURE_LABEL = {"0": "TIER 0 · PASSIVE", "1": "TIER 1 · ACTIVE", "2": "TIER 2 · DECEPTION"}
 
 
+def posture_status(path: Path = POSTURE_STATUS_FILE) -> dict[str, Any]:
+    """Enforcement status from orionx-postured; {} if the daemon is not running."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def posture_badge(tier: str, status: dict[str, Any] | None = None) -> tuple[str, str]:
+    """(label, state) for the header badge, where state is ok|warn|blind.
+
+    'blind' is the honest answer for a tier that promises IDS coverage while
+    Suricata has no threat rules: the badge must not read like everything is
+    fine when nothing can be detected. 'warn' means the daemon that enforces
+    the tier is not reporting at all, so the badge is a wish, not a fact.
+    """
+    label = POSTURE_LABEL.get(tier, POSTURE_LABEL["0"])
+    status = status or {}
+    if tier == "0":
+        return label, "ok"
+    if not status:
+        return label + "  ⚠ UNENFORCED", "warn"
+    if status.get("ids_expected") and not status.get("rules_usable", False):
+        return label + "  ⚠ NO IDS RULES", "blind"
+    if status.get("ids_expected") and not status.get("ids_active", False):
+        return label + "  ⚠ IDS DOWN", "warn"
+    return label, "ok"
+
+
 def lerp(a: float, b: float, t: float) -> float:
     """Linear interpolation used for smooth needle/bar animation."""
     return a + (b - a) * max(0.0, min(1.0, t))
@@ -324,5 +359,6 @@ __all__ = [
     "SEVERITY_COLOR", "SEVERITY_WEIGHT", "SEVERITIES", "EVENT_LOG", "POSTURE_FILE",
     "parse_event", "EventTail", "pressure", "pressure_color", "read_net_bytes", "RateTracker",
     "sparkline_points", "fmt_rate", "fmt_age", "service_active", "process_running", "mesh_up",
-    "posture_tier", "POSTURE_LABEL", "lerp", "now", "math",
+    "posture_tier", "POSTURE_LABEL", "POSTURE_STATUS_FILE", "posture_status",
+    "posture_badge", "lerp", "now", "math",
 ]

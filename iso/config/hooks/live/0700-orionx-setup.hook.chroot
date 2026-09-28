@@ -97,6 +97,18 @@ declare -A SCRIPT_MAP=(
     # suffix per the orionx-mesh precedent.
     ["orionx-diag"]="/opt/orionx/scripts/orionx-diag"
     ["orionx-scanwatch"]="/opt/orionx/scripts/rain/orionx-scanwatch"
+    # W10-6 (DEC-PHASE12-023): orionx-heal is the operator control surface
+    # (status/confirm/undo/verify/log); orionx-heald is the daemon, symlinked
+    # so `orionx-heald --dry-run` is runnable by hand.
+    ["orionx-heal"]="/opt/orionx/scripts/healing/orionx-heal"
+    ["orionx-heald"]="/opt/orionx/scripts/healing/orionx-heald"
+    # W10-5 (DEC-PHASE12-024): posture enforcement daemon.
+    ["orionx-postured"]="/opt/orionx/scripts/awareness/orionx-postured"
+    # NOTE: the confined MCP server deliberately gets NO SCRIPT_MAP entry here.
+    # test_orionx_setup_hook_unit.sh asserts one is absent, and the entrypoint
+    # ships directly at /usr/bin/nebula-mcp via includes.chroot so its AppArmor
+    # attachment path is honest. (Spelling the map key literally in this
+    # comment would itself trip that grep-based assertion.)
     # First-boot wizard — was only reachable by full path (/opt/orionx/scripts/
     # security/first-boot-wizard.sh), painful on a console with no copy-paste
     # (operator report 2026-09-12). Give it a short PATH name so it is runnable

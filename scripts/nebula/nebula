@@ -41,6 +41,11 @@ import sys
 _VERSION = "0.1.0"
 _NEBULA_BANNER = "nebula (Orion-X Nebula AI CLI) v" + _VERSION
 
+# Transport for the confined MCP tool server (DEC-PHASE12-025). Kept as a
+# literal so --help works without importing mcp_server; mcp_server.DEFAULT_SOCKET
+# is the authority and test_mcp_confinement.sh asserts the two agree.
+_MCP_SOCKET = "/run/nebula-mcp/nebula-mcp.sock"
+
 
 def _ensure_package_on_path() -> None:
     """Add scripts/ parent to sys.path so ``import nebula`` works when the
@@ -76,7 +81,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         return 1
 
     import json  # noqa: PLC0415
-    data = collect_status()
+    data = collect_status(probe_daemon=not getattr(args, "offline", False))
     if getattr(args, "json", False):
         print(json.dumps(data, indent=2))
     else:
@@ -123,10 +128,16 @@ def cmd_tools(args: argparse.Namespace) -> int:
     _ensure_package_on_path()
     if getattr(args, "serve", False):
         try:
-            from nebula.mcp_server import serve_stdio  # noqa: PLC0415
+            from nebula.mcp_server import serve_stdio, serve_unix  # noqa: PLC0415
         except ImportError as exc:
             print(f"ERROR: cannot import nebula.mcp_server: {exc}", file=sys.stderr)
             return 1
+        # DEC-PHASE12-025: the unix socket is the transport used under
+        # confinement (PrivateNetwork=yes makes a port impossible and stdio
+        # requires the client to be the parent). stdio stays for direct use.
+        sock = getattr(args, "socket", None)
+        if sock:
+            return serve_unix(sock)
         return serve_stdio()
 
     try:
@@ -146,6 +157,43 @@ def cmd_tools(args: argparse.Namespace) -> int:
         avail = "" if t["available"] else "  [not installed]"
         print(f"  {t['name']}{flag} — {t['description']}{avail}")
     return 0
+
+
+def cmd_ask(args: argparse.Namespace) -> int:
+    """Ask the model a question it may answer by running a local tool.
+
+    DEC-PHASE12-025: the model chooses; the confined server's static registry
+    decides what is choosable. --tool bypasses the model entirely and is the
+    only path that may confirm an "active" tool.
+    """
+    _ensure_package_on_path()
+    try:
+        from nebula.toolchat import run_cli  # noqa: PLC0415
+    except ImportError as exc:
+        print(f"ERROR: cannot import nebula.toolchat: {exc}", file=sys.stderr)
+        return 1
+
+    tool_args: dict[str, str] = {}
+    for pair in (args.arg or []):
+        key, sep, value = pair.partition("=")
+        if not sep:
+            print(f"ERROR: --arg expects key=value, got {pair!r}", file=sys.stderr)
+            return 2
+        tool_args[key] = value
+
+    prompt = " ".join(args.prompt) if args.prompt else ""
+    if not prompt and not args.tool:
+        print("ERROR: give a question, or --tool <name>", file=sys.stderr)
+        return 2
+
+    return run_cli(
+        prompt=prompt,
+        socket_path=args.socket,
+        max_steps=args.max_steps,
+        tool=args.tool,
+        tool_args=tool_args,
+        allow_active=args.allow_active,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +226,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Output full status as JSON.",
+    )
+    sp_status.add_argument(
+        "--offline",
+        action="store_true",
+        help=(
+            "Skip the ollama loopback probe and report only file-derived facts. "
+            "Used by the confined MCP tool server, which has no loopback."
+        ),
     )
 
     # nebula warmup
@@ -218,6 +274,44 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run the MCP tool server over stdio (JSON-RPC 2.0).",
     )
+    sp_tools.add_argument(
+        "--socket",
+        metavar="PATH",
+        nargs="?",
+        const=_MCP_SOCKET,
+        default=None,
+        help=f"With --serve: listen on a unix socket instead of stdio (default: {_MCP_SOCKET}).",
+    )
+
+    # nebula ask (W10-3 model-in-the-loop, DEC-PHASE12-025)
+    sp_ask = subparsers.add_parser(
+        "ask",
+        help="Ask the local model a question it may answer by running a local tool.",
+    )
+    sp_ask.add_argument("prompt", nargs="*", help="The question to ask.")
+    sp_ask.add_argument(
+        "--socket", metavar="PATH", default=_MCP_SOCKET,
+        help="Unix socket of the confined MCP tool server (default: %(default)s).",
+    )
+    sp_ask.add_argument(
+        "--max-steps", type=int, default=4, metavar="N",
+        help="Maximum tool calls the model may make for one question (default: %(default)s).",
+    )
+    sp_ask.add_argument(
+        "--tool", metavar="NAME",
+        help="Run one tool directly, bypassing the model (operator invocation).",
+    )
+    sp_ask.add_argument(
+        "--arg", action="append", metavar="KEY=VALUE",
+        help="Argument for --tool; repeatable.",
+    )
+    sp_ask.add_argument(
+        "--allow-active", action="store_true",
+        help=(
+            "Confirm an ACTIVE tool. Only valid with --tool: the model can never "
+            "invoke an active tool on its own initiative."
+        ),
+    )
 
     # nebula version (as a subcommand, mirrors --version)
     subparsers.add_parser(
@@ -246,6 +340,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.subcommand == "tools":
         return cmd_tools(args)
+
+    if args.subcommand == "ask":
+        return cmd_ask(args)
 
     # No subcommand given — print help and exit 0
     parser.print_help()

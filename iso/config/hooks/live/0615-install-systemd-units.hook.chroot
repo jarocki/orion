@@ -54,6 +54,19 @@ UNIT_FILES=(
     "nebula-integrity-check.service"
     "nebula-runtime.service"
     "nebula-warmup.service"
+    # ---- W10-3/5/6 completion (DEC-PHASE12-023/024/025) --------------------
+    # orionx-heald: consumes the R.A.I.N. bus and the operator's autonomy grid
+    #   and executes the six healing playbooks. Sits in front of
+    #   orionx-firewall's table (its own table, priority -10).
+    # orionx-postured: enforces the threat-posture tier. Before this, the tier
+    #   selector persisted a value nothing consumed — elevating to Deception
+    #   changed a Cockpit label and started nothing.
+    # nebula-mcp: the confined MCP tool server (own uid, PrivateNetwork,
+    #   AppArmor). Serves a unix socket; never talks to ollama, so it is
+    #   deliberately NOT ordered on nebula-runtime.service.
+    "orionx-heald.service"
+    "orionx-postured.service"
+    "nebula-mcp.service"
 )
 
 # ---------------------------------------------------------------------------
@@ -78,6 +91,17 @@ AUTOSTART_UNITS=(
     # nebula-warmup.service is deliberately NOT listed here (DEC-PHASE10-010 opt-in).
     "nebula-integrity-check.service"
     "nebula-runtime.service"
+    # All three fail closed, so autostarting them costs nothing on a deck whose
+    # operator never opens the relevant tab:
+    #   orionx-heald   — an absent or corrupt autonomy.json resolves to "off"
+    #                    for every action class, so it acts on nothing.
+    #   orionx-postured— an absent or corrupt threat-posture file resolves to
+    #                    Tier 0, which starts no services and sends no packets.
+    #   nebula-mcp     — loads no model; idle cost is negligible (unlike
+    #                    nebula-warmup, which stays opt-in per DEC-PHASE10-010).
+    "orionx-heald.service"
+    "orionx-postured.service"
+    "nebula-mcp.service"
 )
 
 echo "[install-systemd-units] Installing Orion-X systemd units from $SOURCE_DIR to $TARGET_DIR"
