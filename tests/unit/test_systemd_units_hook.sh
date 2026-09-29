@@ -256,10 +256,10 @@ done
 # removed (W11-14f offline boot); nebula-runtime.socket removed (DEC-PHASE11-033).
 UNIT_FILES_BLOCK="$(awk '/^UNIT_FILES=\(/{p=1} p{print} /^\)/{if(p) p=0}' "$HOOK_FILE")"
 UNIT_FILES_COUNT="$(grep -c '".*\.service"\|".*\.timer"\|".*\.socket"' <(echo "$UNIT_FILES_BLOCK") || true)"
-if [[ "$UNIT_FILES_COUNT" -eq 13 ]]; then
-    pass "UNIT_FILES array has exactly 13 members"
+if [[ "$UNIT_FILES_COUNT" -eq 14 ]]; then
+    pass "UNIT_FILES array has exactly 14 members"
 else
-    fail "UNIT_FILES array has exactly 13 members" \
+    fail "UNIT_FILES array has exactly 14 members" \
          "Found $UNIT_FILES_COUNT; expected 9"
 fi
 

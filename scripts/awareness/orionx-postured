@@ -47,6 +47,58 @@
     table created at arm time and destroyed at disarm; /etc/nftables.conf
     remains the single authority for base policy and is never edited.
 
+@decision DEC-PHASE12-028
+@title Zeek is ingested if it is there, discovered at runtime, by this daemon
+  rather than by a second one
+@status accepted
+@rationale Zeek is not in Debian 13 main. The build tries to install it from
+  the OpenSUSE Build Service (0500 hook, DEC-PHASE12-003/015) and that block
+  is SOFT-FAIL, so whether a given ISO has Zeek is decided by whether a repo
+  answered during the build. `grep -c zeek iso/chroot.files` on the 2026-09-27
+  image returns 0: the shipped deck has no Zeek, while 0700 skips its symlink
+  and artifact-analyzer.py still lists zeek as a wrapped tool. An operator can
+  also install it post-boot at any time (/opt/orionx/optional/install-zeek.sh).
+
+  So "is Zeek present" is not a build-time fact and must not be treated as
+  one. This daemon re-checks on every reassert cycle. Zeek installed an hour
+  after boot is ingested an hour after boot, with no restart, no rebuild, and
+  no reconfiguration — and the transition is ANNOUNCED, so the operator learns
+  their deck just gained a capability.
+
+  Why here and not in a new daemon: this daemon already owns the tier, already
+  tails an IDS log, already maps alerts to ATT&CK, already de-duplicates scans
+  against orionx-scanwatch, and already writes the Cockpit's status file. A
+  second daemon would need its own copy of the tier to decide what to do with
+  a notice, and two things holding a tier is two things that drift. Zeek ingest
+  is therefore a subordinate reader inside the existing enforcement loop.
+
+  Zeek ingest is NOT tier-gated, and that is deliberate. Reading a log file the
+  deck has already written costs nothing and sends nothing, exactly like
+  orionx-scanwatch at Tier 0 (DEC-PHASE12-022). Gating it behind Tier 1 would
+  mean a Tier 0 deck with Zeek running throws away detections it already has.
+  It appears in tier_plan() as a plan key that is True at every tier so that
+  `--print-plan` states it outright rather than leaving it implicit.
+
+  What is ingested, and what is deliberately not:
+    notice.log — Zeek's own judgements. This is the signal; every notice is a
+      candidate event, severity-mapped, ATT&CK-tagged where honest.
+    weird.log  — protocol anomalies. Individually near-worthless and extremely
+      high volume, so these are AGGREGATED: a weird type only reaches the bus
+      when it bursts past a threshold in a window. Publishing them one by one
+      would bury the notices that matter.
+    conn.log   — NOT alerted on. Connection records are the wrong shape for an
+      alert and would flood the bus. They are counted, and the count is used
+      for one thing: proving Zeek is not blind. Zeek running with a log
+      directory that produces zero connections is the same failure as Suricata
+      with no rules, and it gets the same treatment — said out loud.
+
+  Not reporting one scan three times. Three detectors can now see the same
+  sweep: orionx-scanwatch from the firewall drop log, Suricata from its rules,
+  and Zeek from Scan::Port_Scan. SCAN_REPORTER_PRECEDENCE fixes the order once
+  — firewall, then suricata, then zeek — and each reporter suppresses a scan
+  source that anything ahead of it already published. The bus itself is the
+  shared state, so there is no second place for the three to disagree.
+
 Usage:
     orionx-postured                       # daemon (systemd)
     orionx-postured --once --dry-run      # apply nothing, print the plan
@@ -60,6 +112,7 @@ import os
 import queue
 import random
 import re
+import shutil
 import socket
 import string
 import subprocess
@@ -92,6 +145,53 @@ RULES_DIRS = (Path("/var/lib/suricata/rules"), Path("/etc/suricata/rules"))
 BUS = Path("/run/orionx/events.jsonl")
 STATUS_FILE = Path("/run/orionx/posture-status.json")
 CANARY_DIR = Path("/var/lib/orionx/canary")
+CAPTURE_STATE_DIR = Path("/run/orionx/capture")
+
+# --- Zeek (DEC-PHASE12-028) -------------------------------------------------
+# Zeek may be absent, may arrive later, and may write its logs in any of
+# several places depending on how it was started. All three are runtime
+# questions, re-asked on every reassert cycle.
+#
+# /opt/zeek is where the OBS zeek-core package lands (DEC-PHASE12-003). The
+# others cover a hand-built install and a distro package, in case the install
+# path changes under us.
+ZEEK_BIN_CANDIDATES = (
+    Path("/opt/zeek/bin/zeek"),
+    Path("/usr/local/zeek/bin/zeek"),
+    Path("/usr/bin/zeek"),
+)
+# Searched in order; the first directory holding a readable Zeek log wins.
+# /opt/zeek/logs/current is zeekctl's live directory; /var/log/zeek/current is
+# the convention an operator running `zeek -i` by hand is told to use by
+# install-zeek.sh; /var/lib/orionx/zeek is where Orion-X's own offline runs go.
+ZEEK_LOG_DIRS = (
+    Path("/opt/zeek/logs/current"),
+    Path("/var/log/zeek/current"),
+    Path("/var/log/zeek"),
+    Path("/var/lib/orionx/zeek"),
+)
+ZEEK_NOTICE_LOG = "notice.log"
+ZEEK_WEIRD_LOG = "weird.log"
+ZEEK_CONN_LOG = "conn.log"
+
+# weird.log is aggregated, not forwarded: N of the same weird type inside the
+# window is one event. Chosen so a genuinely broken/attacked protocol surfaces
+# within a minute while ordinary internet noise never reaches the bus.
+ZEEK_WEIRD_WINDOW = 60.0
+ZEEK_WEIRD_BURST = 25
+ZEEK_WEIRD_REANNOUNCE = 600.0
+ZEEK_MAX_WEIRD_KEYS = 1024
+
+# How long Zeek may be watched with zero conn.log records before that silence
+# is reported as possible blindness rather than as a quiet network.
+ZEEK_LIVENESS_SECONDS = 600.0
+ZEEK_STATE_REANNOUNCE = 900.0
+
+# Precedence for "who owns this scan". Fixed once, here, so three detectors
+# cannot tell the same story three times. scanwatch is first because it reads
+# the kernel's own drop log and needs no rules and no network; Suricata second
+# because its signatures carry more detail than a Zeek Scan:: notice.
+SCAN_REPORTER_PRECEDENCE = ("firewall", "suricata", "zeek")
 
 NEBULA_URL = "http://127.0.0.1:11434"     # DEC-006: localhost only, always.
 
@@ -520,15 +620,41 @@ class AlertDeduper:
 _BUS_SCAN_SRC = re.compile(r"\bfrom\s+(\d{1,3}(?:\.\d{1,3}){3}|[0-9a-fA-F:]{3,})")
 
 
-def scan_sources_from_bus(lines, now: float,
-                          window: float = SCAN_DEDUP_WINDOW) -> set[str]:
-    """Sources orionx-scanwatch has already reported as scanning us, recently.
+def upstream_scan_reporters(reporter: str) -> tuple[str, ...]:
+    """The reporters that outrank `reporter` for scan attribution.
 
-    Reads the shared bus rather than duplicating scanwatch's state: the bus is
-    the existing single authority for what has been reported, so there is no
-    second place for the two detectors to disagree.
+    A detector suppresses a scan only when something AHEAD of it in
+    SCAN_REPORTER_PRECEDENCE already published that source. Deriving this from
+    one ordered tuple is what keeps the rule symmetric: adding a fourth
+    detector means adding one name, not editing three suppression checks.
+
+    An unknown reporter outranks nothing, so a detector that is not in the
+    precedence list publishes rather than falling silent. Failing open is
+    correct here — a duplicate event is noise, a suppressed event is a missed
+    detection, and this project's recurring bug is the second one.
+    """
+    try:
+        idx = SCAN_REPORTER_PRECEDENCE.index(reporter)
+    except ValueError:
+        return ()
+    return SCAN_REPORTER_PRECEDENCE[:idx]
+
+
+def scan_sources_from_bus(lines, now: float,
+                          window: float = SCAN_DEDUP_WINDOW,
+                          sources: tuple[str, ...] = ("firewall",)) -> set[str]:
+    """Scan sources the named reporters have already published, recently.
+
+    Reads the shared bus rather than duplicating each detector's state: the bus
+    is the existing single authority for what has been reported, so there is no
+    second place for the detectors to disagree.
+
+    `sources` defaults to ("firewall",) — orionx-scanwatch alone — which is the
+    Suricata behaviour this has always had. Zeek passes the wider tuple from
+    upstream_scan_reporters("zeek"), so it defers to both.
     """
     out: set[str] = set()
+    wanted = set(sources)
     for line in lines:
         line = (line or "").strip()
         if not line:
@@ -539,7 +665,7 @@ def scan_sources_from_bus(lines, now: float,
             continue
         if not isinstance(rec, dict):
             continue
-        if rec.get("category") != "scan" or rec.get("source") != "firewall":
+        if rec.get("category") != "scan" or rec.get("source") not in wanted:
             continue
         try:
             ts = float(rec.get("ts", 0.0))
@@ -556,6 +682,521 @@ def scan_sources_from_bus(lines, now: float,
 def should_suppress(alert: dict, scan_sources: set[str]) -> bool:
     """True if scanwatch already told this story for this source."""
     return is_scan_alert(alert) and alert.get("src_ip", "") in scan_sources
+
+
+class ScanLedger:
+    """Who has already reported a scan from a given source, and when.
+
+    Three detectors can now see one sweep: orionx-scanwatch (a separate
+    process, reading the firewall drop log), Suricata (this daemon, via
+    eve.json) and Zeek (this daemon, via notice.log). Without a shared answer
+    to "has this already been said", one nmap run produces three stories.
+
+    Two inputs, one answer:
+
+      - Other processes are learned from the BUS, which is the existing
+        cross-process authority for what has been published.
+      - This daemon's OWN publications are recorded directly. That is not a
+        shortcut around the bus, it is strictly more reliable: recognising our
+        own Suricata alert by regexing its message back off the bus would make
+        dedup depend on message prose, and Suricata alert text does not even
+        contain the word "from". Reading our own memory for our own actions
+        cannot disagree with itself.
+
+    Bounded, for the same reason AlertDeduper is: a spoofed-source flood must
+    not turn de-duplication into a memory exhaustion attack on the deck.
+    """
+
+    def __init__(self, window: float = SCAN_DEDUP_WINDOW,
+                 max_keys: int = MAX_ALERT_KEYS):
+        self.window = window
+        self.max_keys = max_keys
+        # (reporter, src) -> last report time
+        self._seen: OrderedDict[tuple[str, str], float] = OrderedDict()
+
+    def record(self, reporter: str, src: str, now: float) -> None:
+        if not src:
+            return
+        key = (reporter, src)
+        if key not in self._seen and len(self._seen) >= self.max_keys:
+            self._seen.popitem(last=False)
+        self._seen[key] = now
+        self._seen.move_to_end(key)
+
+    def merge_bus(self, reporter: str, sources: set[str], now: float) -> None:
+        for src in sources:
+            self.record(reporter, src, now)
+
+    def reported_by(self, reporters, src: str, now: float) -> str | None:
+        """Which of `reporters` reported `src` inside the window, if any."""
+        for reporter in reporters:
+            ts = self._seen.get((reporter, src))
+            if ts is not None and (now - ts) <= self.window:
+                return reporter
+        return None
+
+    def tracked(self) -> int:
+        return len(self._seen)
+
+
+def should_suppress_scan(reporter: str, src: str, ledger: ScanLedger,
+                         now: float) -> str | None:
+    """Name of the detector that already owns this scan source, or None.
+
+    Returns the owner rather than a bool so the suppression can be explained
+    in the status file and in a log line. A suppression nobody can account for
+    is indistinguishable from a detector that stopped working.
+    """
+    if not src:
+        return None
+    return ledger.reported_by(upstream_scan_reporters(reporter), src, now)
+
+
+# ===========================================================================
+# PURE: Zeek — is it here, and what is it saying? (DEC-PHASE12-028)
+# ===========================================================================
+
+def find_zeek_binary(candidates=ZEEK_BIN_CANDIDATES,
+                     use_path: bool = True) -> Path | None:
+    """The Zeek binary, or None. Re-asked every cycle, never cached at boot.
+
+    `use_path` controls the PATH fallback. It is on by default, because a deck
+    where someone built Zeek into an unusual prefix and symlinked it should
+    still be ingested. It is OFF when the operator passed --zeek-bin: an
+    explicit override is authoritative, and silently searching PATH anyway
+    would mean the flag does not actually control what is used.
+    """
+    for cand in candidates:
+        cand = Path(cand)
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return cand
+    if not use_path:
+        return None
+    found = shutil.which("zeek")
+    return Path(found) if found else None
+
+
+def assess_zeek_logs(dirs=ZEEK_LOG_DIRS, logs=(ZEEK_NOTICE_LOG,
+                                               ZEEK_WEIRD_LOG,
+                                               ZEEK_CONN_LOG)) -> dict:
+    """Which Zeek log directory to read, and why not, when there is none.
+
+    The three failure states are kept DISTINCT because they call for three
+    different things from the operator, and collapsing them into "no Zeek
+    logs" is how a permissions bug gets mistaken for a quiet network:
+
+      absent     — no candidate directory exists. Zeek has not been run.
+      unreadable — a directory exists but this daemon cannot read it. THIS IS
+                   THE DANGEROUS ONE: Zeek may be detecting plenty and we are
+                   blind to all of it. Reported at warning, repeatedly.
+      empty      — readable, but holds none of the logs we consume.
+      ok         — readable and holding at least one log.
+    """
+    considered: list[str] = []
+    unreadable: list[str] = []
+    empty: list[str] = []
+    for d in dirs:
+        d = Path(d)
+        considered.append(str(d))
+        if not d.is_dir():
+            continue
+        if not os.access(d, os.R_OK | os.X_OK):
+            unreadable.append(str(d))
+            continue
+        present = [name for name in logs if (d / name).is_file()]
+        if not present:
+            empty.append(str(d))
+            continue
+        return {"state": "ok", "dir": str(d), "logs": present,
+                "considered": considered, "unreadable": unreadable}
+    if unreadable:
+        return {"state": "unreadable", "dir": unreadable[0], "logs": [],
+                "considered": considered, "unreadable": unreadable}
+    if empty:
+        return {"state": "empty", "dir": empty[0], "logs": [],
+                "considered": considered, "unreadable": []}
+    return {"state": "absent", "dir": "", "logs": [],
+            "considered": considered, "unreadable": []}
+
+
+def detect_zeek(bin_candidates=ZEEK_BIN_CANDIDATES,
+                log_dirs=ZEEK_LOG_DIRS, use_path: bool = True) -> dict:
+    """Runtime Zeek status: installed?, logs where?, usable?
+
+    `usable` is the only field the ingest acts on, and it means exactly
+    "there is a readable log directory to tail". Note it does NOT require the
+    binary: a deck handed a Zeek log directory from elsewhere can still be
+    given the analysis, and refusing to read logs because the binary that
+    produced them is not installed locally would be pedantry with a cost.
+    """
+    binary = find_zeek_binary(bin_candidates, use_path=use_path)
+    logs = assess_zeek_logs(log_dirs)
+    return {
+        "installed": binary is not None,
+        "binary": str(binary or ""),
+        "log_state": logs["state"],
+        "log_dir": logs["dir"],
+        "logs": logs["logs"],
+        "considered": logs["considered"],
+        "usable": logs["state"] == "ok",
+    }
+
+
+def zeek_state_message(zeek: dict) -> tuple[str, str]:
+    """(severity, message) describing the current Zeek state. Never silent.
+
+    Absence is a NOTICE, not a critical: Zeek missing is a capability the deck
+    does not have, and it says so while naming the remedy. That is a different
+    thing from Suricata claiming coverage it does not have, which is a lie and
+    is reported as critical (no_rules_message). Unreadable logs ARE a warning,
+    because that is detection happening where we cannot see it.
+    """
+    if zeek["usable"]:
+        return ("notice",
+                f"Zeek ingest ACTIVE — reading {', '.join(zeek['logs'])} from "
+                f"{zeek['log_dir']}. Notices reach the R.A.I.N. bus with ATT&CK "
+                "context; scans already reported by the firewall or Suricata "
+                "are not repeated.")
+    if zeek["log_state"] == "unreadable":
+        return ("warning",
+                f"Zeek log directory {zeek['log_dir']} EXISTS BUT IS NOT "
+                "READABLE by orionx-postured. Zeek may be detecting and this "
+                "deck cannot see any of it — that is silent non-detection, not "
+                "a quiet network. Fix with: sudo chmod o+rx "
+                f"{zeek['log_dir']}")
+    if not zeek["installed"]:
+        return ("notice",
+                "Zeek is NOT installed on this deck, so there is no protocol "
+                "analysis or connection record layer. Suricata and "
+                "orionx-scanwatch are unaffected. Install it with: sudo "
+                "/opt/orionx/optional/install-zeek.sh — no rebuild or restart "
+                "is needed, this daemon picks it up on its next cycle.")
+    if zeek["log_state"] == "empty":
+        return ("notice",
+                f"Zeek is installed ({zeek['binary']}) but {zeek['log_dir']} "
+                "holds no logs yet, so there is nothing to ingest. Give it "
+                "traffic with: sudo zeek -i <iface>  (or capture first with "
+                "sudo orionx-capture start <iface>, then zeek -r the pcap).")
+    return ("notice",
+            f"Zeek is installed ({zeek['binary']}) but no log directory was "
+            f"found. Searched: {', '.join(zeek['considered'])}. Nothing to "
+            "ingest until Zeek writes somewhere this daemon looks.")
+
+
+# --- Zeek log formats: TSV (default) and JSON (LogAscii::use_json) ---------
+
+def zeek_fields_from_header(line: str) -> list[str] | None:
+    """Column names from a Zeek TSV `#fields` header line, else None."""
+    if not line.startswith("#fields"):
+        return None
+    parts = line.rstrip("\n").split("\t")
+    return [p for p in parts[1:] if p] or None
+
+
+def zeek_fields_from_file(path, max_header_lines: int = 12) -> list[str] | None:
+    """Prime the column list by reading a Zeek log's header.
+
+    Needed because the tailer starts at EOF: without this, a TSV log that was
+    already open when we attached has no column names and every row is
+    unparseable. Re-read on every (re)open, so log rotation cannot leave us
+    decoding new rows with a stale header.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for _ in range(max_header_lines):
+                line = fh.readline()
+                if not line:
+                    break
+                fields = zeek_fields_from_header(line)
+                if fields:
+                    return fields
+                if not line.startswith("#"):
+                    break
+    except OSError:
+        return None
+    return None
+
+
+def zeek_record(line: str, fields: list[str] | None) -> dict | None:
+    """One Zeek log line -> dict, for both the TSV and JSON log formats.
+
+    Zeek writes TSV by default and JSON when LogAscii::use_json is set, and
+    which one a given deck produces depends on local policy this daemon does
+    not control. Handling only TSV would mean a JSON-configured Zeek is
+    ingested as zero events — silent non-detection again, this time caused by
+    a config file nobody remembered.
+
+    Zeek's unset marker "-" and empty marker "(empty)" become None, so callers
+    test for a value rather than for a sentinel string.
+    """
+    line = (line or "").strip()
+    if not line or line.startswith("#"):
+        return None
+    if line.startswith("{"):
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            return None
+        if not isinstance(rec, dict):
+            return None
+        return {k: (None if v in ("-", "(empty)") else v)
+                for k, v in rec.items()}
+    if not fields:
+        return None
+    parts = line.split("\t")
+    if len(parts) < len(fields):
+        parts += [None] * (len(fields) - len(parts))
+    out: dict = {}
+    for name, value in zip(fields, parts):
+        out[name] = None if value in ("-", "(empty)", "", None) else value
+    return out
+
+
+# --- What a Zeek notice means ----------------------------------------------
+
+# Severity by Notice::Type.
+#
+# VERIFIED, not assumed: every entry below whose comment does not say
+# otherwise was checked against the Notice::Type enums actually defined by
+# Zeek 8.1.1 (`redef enum Notice::Type` across base/ and policy/). An earlier
+# draft of this table listed SSL::Invalid_Server_Cert and Intel::Notice, and
+# neither exists — they would have been dead rows giving a false impression of
+# coverage. Docs are claims; the installed scripts are proof.
+#
+# Anything unlisted is published at "notice" rather than dropped. Zeek's notice
+# framework is extensible and a deck may load site policy or zkg packages, so
+# an unknown type is a detection this table has not met yet, not noise.
+ZEEK_NOTE_SEVERITY = {
+    # --- Scan:: is NOT part of stock Zeek. --------------------------------
+    # Zeek removed policy/misc/scan years ago; 8.1.1 defines no Scan:: notice
+    # at all. These entries exist because a deck can add scan detection via a
+    # zkg package or site policy, and because the scan DE-DUPLICATION below
+    # must be correct the day someone does. They are the one part of this
+    # table that is deliberately speculative, and they cost nothing when the
+    # notices never appear.
+    "Scan::Port_Scan": "warning",
+    "Scan::Address_Scan": "warning",
+    # --- credential attacks ----------------------------------------------
+    "SSH::Password_Guessing": "critical",
+    "SSH::Login_By_Password_Guesser": "critical",
+    "FTP::Bruteforcing": "critical",
+    # --- exploitation ------------------------------------------------------
+    "HTTP::SQL_Injection_Attacker": "critical",
+    "HTTP::SQL_Injection_Victim": "critical",
+    "Heartbleed::SSL_Heartbeat_Attack": "critical",
+    "Heartbleed::SSL_Heartbeat_Attack_Success": "critical",
+    "Heartbleed::SSL_Heartbeat_Odd_Length": "warning",
+    "Software::Vulnerable_Version": "warning",
+    # --- intel and signature hits -----------------------------------------
+    "Intel::Intel": "critical",
+    "Signatures::Sensitive_Signature": "warning",
+    "Signatures::Multiple_Signatures": "warning",
+    "Signatures::Multiple_Sig_Responders": "warning",
+    "Signatures::Count_Signature": "notice",
+    # --- transport and crypto hygiene -------------------------------------
+    "SSL::Weak_Key": "warning",
+    "SSL::Old_Version": "notice",
+    "SSL::Certificate_Expired": "notice",
+    "SSL::Certificate_Not_Valid_Yet": "notice",
+    "SSL::Certificate_Expires_Soon": "info",
+    # --- recon and reputation ---------------------------------------------
+    "Traceroute::Detected": "notice",
+    "SSH::Interesting_Hostname_Login": "warning",
+    "SSH::Watched_Country_Login": "warning",
+    "SMTP::Blocklist_Blocked_Host": "warning",
+    "SMTP::Blocklist_Error_Message": "notice",
+    "DNS::External_Name": "notice",
+    "Weird::Activity": "notice",
+    # --- Zeek telling us Zeek is blind ------------------------------------
+    # The most important rows in the table: these are the difference between
+    # "nothing happened" and "we did not see what happened".
+    "CaptureLoss::Too_Much_Loss": "warning",
+    "CaptureLoss::Too_Little_Traffic": "warning",
+    "Conn::Content_Gap": "warning",
+    "PacketFilter::Dropped_Packets": "warning",
+    "PacketFilter::Compile_Failure": "critical",
+    "PacketFilter::Install_Failure": "critical",
+    "PacketFilter::Cannot_BPF_Shunt_Conn": "notice",
+    "Conn::Retransmission_Inconsistency": "notice",
+}
+
+# Notices that mean the SENSOR is degraded rather than the network is hostile.
+# These get extra prose on the bus, because "Zeek reported nothing" and "Zeek
+# reported that it cannot see" must never read the same to a tired operator.
+ZEEK_BLINDNESS_NOTES = frozenset({
+    "CaptureLoss::Too_Much_Loss",
+    "CaptureLoss::Too_Little_Traffic",
+    "Conn::Content_Gap",
+    "PacketFilter::Dropped_Packets",
+    "PacketFilter::Compile_Failure",
+    "PacketFilter::Install_Failure",
+})
+
+# ATT&CK by Notice::Type. Deliberately sparse: an unmapped notice yields
+# ("", "") and says nothing about ATT&CK rather than guessing a technique.
+# A wrong technique id in an incident report is worse than no technique id.
+ATTACK_BY_ZEEK_NOTE: dict[str, tuple[str, str]] = {
+    "Scan::Port_Scan": ("T1046", "Network Service Discovery"),
+    "Scan::Address_Scan": ("T1018", "Remote System Discovery"),
+    "Traceroute::Detected": ("T1018", "Remote System Discovery"),
+    "SSH::Password_Guessing": ("T1110", "Brute Force"),
+    "SSH::Login_By_Password_Guesser": ("T1110", "Brute Force"),
+    "FTP::Bruteforcing": ("T1110", "Brute Force"),
+    "HTTP::SQL_Injection_Attacker": ("T1190", "Exploit Public-Facing Application"),
+    "HTTP::SQL_Injection_Victim": ("T1190", "Exploit Public-Facing Application"),
+    "Heartbleed::SSL_Heartbeat_Attack": ("T1190", "Exploit Public-Facing Application"),
+    "Heartbleed::SSL_Heartbeat_Attack_Success": ("T1190", "Exploit Public-Facing Application"),
+    "Software::Vulnerable_Version": ("T1190", "Exploit Public-Facing Application"),
+    "SSL::Weak_Key": ("T1557", "Adversary-in-the-Middle"),
+    "SSL::Old_Version": ("T1557", "Adversary-in-the-Middle"),
+    "DNS::External_Name": ("T1071.004", "Application Layer Protocol: DNS"),
+}
+
+
+def zeek_attack_technique(note: str | None) -> tuple[str, str]:
+    """ATT&CK technique for a Zeek notice type, or ("", "") when unmapped."""
+    return ATTACK_BY_ZEEK_NOTE.get(str(note or ""), ("", ""))
+
+
+def is_zeek_scan_notice(note: str | None) -> bool:
+    """True for the Zeek notices that describe a scan of this deck.
+
+    Prefix match on the Scan:: namespace rather than an exact list, so a
+    site-local Scan::Something policy is deduplicated too.
+    """
+    return str(note or "").startswith("Scan::")
+
+
+def parse_zeek_notice(rec: dict | None) -> dict | None:
+    """Normalise a notice.log record into this daemon's alert shape."""
+    if not isinstance(rec, dict):
+        return None
+    note = rec.get("note")
+    if not note:
+        return None
+    actions = rec.get("actions") or ""
+    if isinstance(actions, list):
+        actions = ",".join(str(a) for a in actions)
+    return {
+        "note": str(note),
+        "msg": str(rec.get("msg") or ""),
+        "sub": str(rec.get("sub") or ""),
+        "src_ip": str(rec.get("src") or rec.get("id.orig_h") or ""),
+        "dest_ip": str(rec.get("dst") or rec.get("id.resp_h") or ""),
+        "dest_port": rec.get("p") or rec.get("id.resp_p"),
+        "proto": str(rec.get("proto") or ""),
+        "actions": str(actions),
+    }
+
+
+def zeek_notice_severity(alert: dict) -> str:
+    """Bus severity for a Zeek notice, honouring Zeek's own escalation.
+
+    A site that attached Notice::ACTION_ALARM to a type has said explicitly
+    that this one matters here. Respecting that is how local policy reaches
+    the operator without this table having to know about it.
+    """
+    sev = ZEEK_NOTE_SEVERITY.get(alert.get("note", ""), "notice")
+    if "ACTION_ALARM" in alert.get("actions", "") and sev == "notice":
+        return "warning"
+    return sev
+
+
+def zeek_dedup_key(alert: dict) -> tuple:
+    return ("zeek", alert.get("note", ""), alert.get("src_ip", ""),
+            alert.get("dest_port"))
+
+
+def format_zeek_message(alert: dict, technique: tuple[str, str]) -> str:
+    note = alert.get("note") or "Zeek notice"
+    src = alert.get("src_ip") or "?"
+    dst = alert.get("dest_ip") or "?"
+    dport = alert.get("dest_port")
+    dst_s = f"{dst}:{dport}" if dport else dst
+    tech = f" [{technique[0]} {technique[1]}]" if technique[0] else ""
+    msg = alert.get("msg") or ""
+    detail = f" — {msg}" if msg else ""
+    blind = ""
+    if note in ZEEK_BLINDNESS_NOTES:
+        blind = (" — THIS IS A SENSOR PROBLEM, NOT A QUIET NETWORK: Zeek is "
+                 "reporting it is missing traffic.")
+    return f"Zeek {note}{tech}: {src} → {dst_s}{detail}{blind}"
+
+
+class WeirdAggregator:
+    """weird.log is a firehose; this turns a burst into one honest event.
+
+    Zeek's weird.log records every protocol oddity it sees, and on a real
+    network that is thousands of lines an hour of things nobody should be
+    paged about. Forwarding them one-for-one would drown notice.log's actual
+    detections on the shared bus, which would make the bus less useful than
+    before Zeek was ingested at all.
+
+    So a weird type is only published once it BURSTS: `burst` occurrences of
+    the same (name, source) inside `window`. That keeps the ordinary drip
+    silent while a protocol being actively abused or mangled still surfaces.
+    Bounded, like every other table in this daemon.
+    """
+
+    def __init__(self, window: float = ZEEK_WEIRD_WINDOW,
+                 burst: int = ZEEK_WEIRD_BURST,
+                 reannounce: float = ZEEK_WEIRD_REANNOUNCE,
+                 max_keys: int = ZEEK_MAX_WEIRD_KEYS):
+        self.window = window
+        self.burst = burst
+        self.reannounce = reannounce
+        self.max_keys = max_keys
+        # (name, src) -> {"hits": [ts...], "last_alert": ts}
+        self._keys: OrderedDict[tuple[str, str], dict] = OrderedDict()
+
+    def observe(self, name: str, src: str, now: float) -> dict | None:
+        if not name:
+            return None
+        key = (name, src or "")
+        st = self._keys.get(key)
+        if st is None:
+            if len(self._keys) >= self.max_keys:
+                self._keys.popitem(last=False)
+            st = {"hits": [], "last_alert": 0.0}
+            self._keys[key] = st
+        self._keys.move_to_end(key)
+        st["hits"].append(now)
+        cutoff = now - self.window
+        while st["hits"] and st["hits"][0] < cutoff:
+            st["hits"].pop(0)
+        if len(st["hits"]) < self.burst:
+            return None
+        if (now - st["last_alert"]) < self.reannounce:
+            return None
+        st["last_alert"] = now
+        count = len(st["hits"])
+        st["hits"].clear()
+        return {"name": name, "src": src or "?", "count": count,
+                "window": self.window}
+
+    def tracked(self) -> int:
+        return len(self._keys)
+
+
+def format_weird_message(burst: dict) -> str:
+    return (f"Zeek protocol anomaly burst: {burst['count']}x "
+            f"{burst['name']} from {burst['src']} in "
+            f"{burst['window']:.0f}s (weird.log)")
+
+
+def zeek_blind(conn_records: int, watch_started: float, now: float,
+               threshold: float = ZEEK_LIVENESS_SECONDS) -> bool:
+    """True when Zeek has been watched long enough to expect SOMETHING.
+
+    Zeek tailing a live log directory that produces zero connection records
+    for ten minutes is the Suricata-with-no-rules failure wearing a different
+    hat: it looks exactly like a calm network from the operator's chair. The
+    conn.log count is the cheapest honest liveness signal available, which is
+    the only thing conn.log is used for here.
+    """
+    if watch_started <= 0:
+        return False
+    return conn_records == 0 and (now - watch_started) >= threshold
 
 
 # ===========================================================================
@@ -580,6 +1221,16 @@ def tier_plan(tier: str, rules_usable: bool) -> dict:
     to start would trade one silence for another; the protocol-anomaly rules
     and flow records still have value. What must never happen is starting it
     quietly — hence warn_no_rules, which the caller is required to announce.
+
+    zeek_ingest is True at EVERY tier, including Tier 0, and is stated here
+    rather than left implicit so `--print-plan` answers the question honestly
+    (DEC-PHASE12-028). Reading a log file Zeek has already written costs
+    nothing, opens nothing and sends nothing — the same reasoning that puts
+    orionx-scanwatch at Tier 0. A Tier 0 deck with Zeek running would
+    otherwise throw away detections it already has, which is not what "passive"
+    is supposed to mean. Whether anything is actually ingested still depends on
+    Zeek being installed and its logs being readable, which is a RUNTIME
+    question re-asked every cycle, not a tier decision.
     """
     tier = tier if tier in TIERS else "0"
     ids = tier in ("1", "2")
@@ -589,6 +1240,7 @@ def tier_plan(tier: str, rules_usable: bool) -> dict:
         "gate_file": ids,
         "suricata": ids,
         "eve_ingest": ids,
+        "zeek_ingest": True,
         "nebula_context": ids,
         "deception": tier == "2",
         "warn_no_rules": ids and not rules_usable,
@@ -606,9 +1258,19 @@ def plan_actions(prev: dict | None, new: dict) -> list[tuple]:
     under a running service.
     """
     prev = prev or {"gate_file": False, "suricata": False, "eve_ingest": False,
-                    "deception": False, "warn_no_rules": False, "tier": None}
+                    "zeek_ingest": False, "deception": False,
+                    "warn_no_rules": False, "tier": None}
     up: list[tuple] = []
     down: list[tuple] = []
+
+    # Zeek ingest is tier-independent, so in practice this fires once on the
+    # first plan and never again. It goes through the action machinery anyway
+    # rather than being started off to the side, so there is one place that
+    # starts and stops ingestion and `--print-plan` shows it.
+    if new.get("zeek_ingest") and not prev.get("zeek_ingest"):
+        up.append(("zeek", "start"))
+    if prev.get("zeek_ingest") and not new.get("zeek_ingest"):
+        down.append(("zeek", "stop"))
 
     if new["gate_file"] and not prev.get("gate_file"):
         up.append(("gate", "create"))
@@ -1216,22 +1878,35 @@ def set_gate(present: bool, path: Path = SURICATA_GATE,
 
 
 # ===========================================================================
-# EFFECTS: eve.json ingest
+# EFFECTS: log tailing (Suricata eve.json, Zeek logs)
 # ===========================================================================
 
-class EveTailer:
-    """Follow eve.json from the end, surviving rotation and absence.
+class LogTailer:
+    """Follow a log file from the end, surviving rotation and absence.
 
     Starts at EOF: on entering Tier 1 the operator wants what happens next,
     not a replay of a log that may be hours old. Rotation is detected by inode
     change, and a missing file is a normal state (Suricata may not have
     written one yet), retried quietly rather than treated as an error.
+
+    Used for BOTH Suricata's eve.json and Zeek's logs (DEC-PHASE12-028). This
+    class was already generic when it served only Suricata; giving Zeek a
+    second copy would have meant two rotation implementations to keep
+    correct, so it was renamed and reused rather than duplicated.
+
+    `on_open(path)` fires after each (re)open, before the seek to EOF. Zeek's
+    TSV format needs it: the column names live in a `#fields` header at the
+    top of the file, so a tailer that only ever sees the tail cannot decode a
+    single row. Re-firing on rotation is the point — a rotated log has a new
+    header, and decoding new rows with stale columns would silently mangle
+    every field.
     """
 
     def __init__(self, path: Path = EVE_JSON, on_line=None,
-                 poll: float = 1.0):
+                 poll: float = 1.0, on_open=None):
         self.path = Path(path)
         self.on_line = on_line
+        self.on_open = on_open
         self.poll = poll
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -1241,7 +1916,8 @@ class EveTailer:
         if self._thread is not None:
             return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._run, name="eve-tail",
+        self._thread = threading.Thread(target=self._run,
+                                        name=f"tail-{self.path.name}",
                                         daemon=True)
         self._thread.start()
 
@@ -1256,6 +1932,11 @@ class EveTailer:
             while not self._stop.is_set():
                 if fh is None:
                     try:
+                        if self.on_open is not None:
+                            try:
+                                self.on_open(self.path)
+                            except Exception:  # noqa: BLE001 - never kill tail
+                                pass
                         fh = open(self.path, "r", encoding="utf-8",
                                   errors="replace")
                         fh.seek(0, os.SEEK_END)
@@ -1292,6 +1973,174 @@ class EveTailer:
 
 
 # ===========================================================================
+# EFFECTS: Zeek ingest (DEC-PHASE12-028)
+# ===========================================================================
+
+class ZeekIngest:
+    """Tails the Zeek logs that carry signal, and re-checks whether Zeek exists.
+
+    SUBORDINATE BY CONSTRUCTION. It holds no tier, makes no posture decision,
+    and publishes nothing itself: it hands callbacks back to PostureDaemon,
+    which owns the bus voice and the de-duplication ledger. It can be started
+    and stopped, and the daemon is what decides when.
+
+    It owns exactly one piece of state the daemon does not: which Zeek log
+    directory is currently being read, and the tailers attached to it. When
+    Zeek appears, moves, or goes away, `sync()` reattaches — so a deck that
+    gains Zeek at 03:00 is ingesting it at 03:00 without a restart.
+    """
+
+    def __init__(self, on_notice=None, on_weird=None, on_conn=None,
+                 bin_candidates=ZEEK_BIN_CANDIDATES,
+                 log_dirs=ZEEK_LOG_DIRS, poll: float = 1.0,
+                 use_path: bool = True):
+        self.on_notice = on_notice
+        self.on_weird = on_weird
+        self.on_conn = on_conn
+        self.bin_candidates = bin_candidates
+        self.log_dirs = log_dirs
+        self.poll = poll
+        self.use_path = use_path
+        self.state = detect_zeek(bin_candidates, log_dirs, use_path)
+        self.active_dir: str = ""
+        self.running = False
+        self.conn_records = 0
+        self.notices_read = 0
+        self.weird_read = 0
+        self.watch_started = 0.0
+        self._tailers: list[LogTailer] = []
+        # Per-log TSV column names, refreshed on every (re)open.
+        self._fields: dict[str, list[str] | None] = {}
+
+    # --- detection ---
+    def refresh(self) -> dict:
+        """Re-ask whether Zeek is here. Cheap: a few stat() calls."""
+        self.state = detect_zeek(self.bin_candidates, self.log_dirs,
+                                 self.use_path)
+        return self.state
+
+    def state_fingerprint(self) -> tuple:
+        """What must change before the operator is told again."""
+        return (self.state["installed"], self.state["log_state"],
+                self.state["log_dir"])
+
+    # --- tailing ---
+    def _prime_fields(self, path) -> None:
+        self._fields[Path(path).name] = zeek_fields_from_file(path)
+
+    def _handle(self, name: str, line: str) -> None:
+        rec = zeek_record(line, self._fields.get(name))
+        if rec is None:
+            return
+        if name == ZEEK_NOTICE_LOG:
+            alert = parse_zeek_notice(rec)
+            if alert is not None:
+                self.notices_read += 1
+                if self.on_notice is not None:
+                    self.on_notice(alert)
+        elif name == ZEEK_WEIRD_LOG:
+            self.weird_read += 1
+            if self.on_weird is not None:
+                self.on_weird(
+                    str(rec.get("name") or ""),
+                    str(rec.get("id.orig_h") or rec.get("src") or ""))
+        elif name == ZEEK_CONN_LOG:
+            # Counted, never alerted on. This is the liveness signal that
+            # separates "Zeek sees a calm network" from "Zeek sees nothing".
+            self.conn_records += 1
+            if self.on_conn is not None:
+                self.on_conn(rec)
+
+    def sync(self) -> bool:
+        """Attach, reattach, or detach to match reality. True if attached.
+
+        Returns whether ingest is running afterwards, so the caller can
+        announce a transition without having to infer it.
+        """
+        self.refresh()
+        if not self.state["usable"]:
+            if self.running:
+                self.stop()
+            return False
+        if self.running and self.active_dir == self.state["log_dir"]:
+            return True
+        if self.running:
+            self.stop()
+        self.start()
+        return self.running
+
+    def start(self) -> bool:
+        if self.running or not self.state["usable"]:
+            return False
+        log_dir = Path(self.state["log_dir"])
+        for name in (ZEEK_NOTICE_LOG, ZEEK_WEIRD_LOG, ZEEK_CONN_LOG):
+            path = log_dir / name
+            if not path.is_file():
+                continue
+            self._prime_fields(path)
+            tailer = LogTailer(
+                path, poll=self.poll,
+                on_line=lambda line, n=name: self._handle(n, line),
+                on_open=self._prime_fields,
+            )
+            tailer.start()
+            self._tailers.append(tailer)
+        if not self._tailers:
+            return False
+        self.active_dir = str(log_dir)
+        self.watch_started = time.time()
+        self.running = True
+        return True
+
+    def stop(self) -> None:
+        for tailer in self._tailers:
+            tailer.stop()
+        self._tailers = []
+        self.running = False
+        self.active_dir = ""
+        self.watch_started = 0.0
+
+    def status(self) -> dict:
+        return {
+            "installed": self.state["installed"],
+            "binary": self.state["binary"],
+            "log_state": self.state["log_state"],
+            "log_dir": self.active_dir or self.state["log_dir"],
+            "ingesting": self.running,
+            "notices": self.notices_read,
+            "weird": self.weird_read,
+            "conn_records": self.conn_records,
+        }
+
+
+def capture_status(state_dir: Path = CAPTURE_STATE_DIR) -> list[dict]:
+    """Active PCAP captures, read from orionx-capture's runtime state.
+
+    Folded into this daemon's status file so the Cockpit reads ONE status
+    authority. orionx-capture owns the capture; this is a read.
+    """
+    out: list[dict] = []
+    try:
+        entries = sorted(Path(state_dir).glob("*.json"))
+    except OSError:
+        return out
+    for entry in entries:
+        if entry.name.endswith(".request.json"):
+            continue
+        try:
+            rec = json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(rec, dict):
+            out.append({"iface": rec.get("iface"),
+                        "budget_mb": rec.get("budget_mb"),
+                        "duration": rec.get("duration"),
+                        "started": rec.get("started"),
+                        "out_path": rec.get("out_path")})
+    return out
+
+
+# ===========================================================================
 # The enforcer — ties the pure plan to the effects
 # ===========================================================================
 
@@ -1308,9 +2157,26 @@ class PostureDaemon:
         self.deduper = AlertDeduper()
         self.scan_sources: set[str] = set()
         self._scan_refreshed = 0.0
+        # One ledger for "who already reported this scan source", shared by
+        # the Suricata and Zeek paths (DEC-PHASE12-028).
+        self.scan_ledger = ScanLedger()
+        self.zeek = ZeekIngest(on_notice=self._on_zeek_notice,
+                               on_weird=self._on_zeek_weird,
+                               bin_candidates=[Path(d) for d in args.zeek_bin]
+                               if args.zeek_bin else ZEEK_BIN_CANDIDATES,
+                               log_dirs=[Path(d) for d in args.zeek_log_dir]
+                               if args.zeek_log_dir else ZEEK_LOG_DIRS,
+                               # An explicit --zeek-bin is authoritative.
+                               use_path=not args.zeek_bin)
+        self.weird = WeirdAggregator()
+        self._zeek_fingerprint: tuple | None = None
+        self._zeek_last_announce = 0.0
+        self._zeek_blind_announced = False
+        self.zeek_published = 0
+        self.zeek_suppressed = 0
         self.last_no_rules_warn = 0.0
         self.no_rules_announced = False
-        self.tailer = EveTailer(self.eve_path, on_line=self._on_eve_line)
+        self.tailer = LogTailer(self.eve_path, on_line=self._on_eve_line)
         self.deception = DeceptionField(Path(args.canary_dir),
                                         dry_run=self.dry_run)
         self.nebula = Contextualizer(dry_run=self.dry_run)
@@ -1350,7 +2216,12 @@ class PostureDaemon:
         if (now - self._scan_refreshed) < 10.0:
             return
         self._scan_refreshed = now
-        self.scan_sources = scan_sources_from_bus(tail_bus_lines(), now)
+        self.scan_sources = scan_sources_from_bus(tail_bus_lines(), now,
+                                                  sources=("firewall",))
+        # orionx-scanwatch is a separate process, so the bus is how we learn
+        # what it has said. Suricata and Zeek are this process, and record
+        # themselves directly.
+        self.scan_ledger.merge_bus("firewall", self.scan_sources, now)
 
     def _on_eve_line(self, line: str) -> None:
         alert = parse_eve_line(line)
@@ -1365,6 +2236,10 @@ class PostureDaemon:
             return
         if not self.deduper.should_publish(dedup_key(alert), now):
             return
+        if is_scan_alert(alert):
+            # Claim this scan source for Suricata, so the Zeek path below does
+            # not tell the same story a third time.
+            self.scan_ledger.record("suricata", alert.get("src_ip", ""), now)
         technique = attack_technique(alert.get("classtype"),
                                      alert.get("signature"))
         # Publish FIRST. The model is never in the path of a detection.
@@ -1374,6 +2249,92 @@ class PostureDaemon:
         if self.nebula is not None and bus_severity(alert) in ("warning",
                                                                "critical"):
             self.nebula.offer(alert, technique)
+
+    # --- zeek callbacks (DEC-PHASE12-028) ---
+    def _on_zeek_notice(self, alert: dict) -> None:
+        """One Zeek notice -> at most one bus event.
+
+        The suppression check is what stops an nmap sweep being announced
+        three times: orionx-scanwatch owns it from the firewall drop log,
+        Suricata owns it next, and Zeek defers to both. The suppression is
+        COUNTED rather than merely skipped, because a suppression nobody can
+        account for looks exactly like a detector that quietly died.
+        """
+        now = time.time()
+        self._refresh_scan_sources(now)
+        note = alert.get("note", "")
+        if is_zeek_scan_notice(note):
+            owner = should_suppress_scan("zeek", alert.get("src_ip", ""),
+                                         self.scan_ledger, now)
+            if owner is not None:
+                self.zeek_suppressed += 1
+                return
+            self.scan_ledger.record("zeek", alert.get("src_ip", ""), now)
+        if not self.deduper.should_publish(zeek_dedup_key(alert), now):
+            return
+        technique = zeek_attack_technique(note)
+        severity = zeek_notice_severity(alert)
+        self.emit(severity, "ids", format_zeek_message(alert, technique),
+                  source="zeek")
+        self.zeek_published += 1
+        if note in ZEEK_BLINDNESS_NOTES:
+            # Zeek just said it is missing traffic. Do not let that be
+            # mistaken for a quiet network on the next liveness check.
+            self._zeek_blind_announced = True
+        if self.nebula is not None and severity in ("warning", "critical"):
+            self.nebula.offer(
+                {"signature": note, "src_ip": alert.get("src_ip"),
+                 "dest_ip": alert.get("dest_ip"),
+                 "dest_port": alert.get("dest_port"),
+                 "proto": alert.get("proto"), "classtype": "zeek-notice",
+                 "signature_id": 0}, technique)
+
+    def _on_zeek_weird(self, name: str, src: str) -> None:
+        burst = self.weird.observe(name, src, time.time())
+        if burst is None:
+            return
+        self.emit("notice", "ids", format_weird_message(burst), source="zeek")
+        self.zeek_published += 1
+
+    def _sync_zeek(self, now: float) -> None:
+        """Re-ask whether Zeek exists, and say so whenever the answer changes.
+
+        This is the whole "no rebuild, no restart" promise in one method: it
+        runs on every reassert cycle, so Zeek installed at any point after
+        boot is ingested from the next cycle, and the operator is TOLD, rather
+        than having to notice new event types appearing.
+        """
+        was_running = self.zeek.running
+        self.zeek.sync()
+        fingerprint = self.zeek.state_fingerprint()
+        changed = fingerprint != self._zeek_fingerprint
+        due = (now - self._zeek_last_announce) >= ZEEK_STATE_REANNOUNCE
+        severity, message = zeek_state_message(self.zeek.state)
+
+        # A degraded state repeats; a healthy one is announced on change only.
+        # An unreadable log directory must nag: that is active blindness.
+        repeat = due and self.zeek.state["log_state"] == "unreadable"
+        if changed or repeat:
+            self._zeek_fingerprint = fingerprint
+            self._zeek_last_announce = now
+            if self.zeek.running and not was_running and changed:
+                self._zeek_blind_announced = False
+            self.emit(severity, "ids", message, source="zeek")
+
+        # Zeek attached to a live log directory that has produced no
+        # connection at all is the Suricata-with-no-rules failure again.
+        if (self.zeek.running and not self._zeek_blind_announced
+                and zeek_blind(self.zeek.conn_records,
+                               self.zeek.watch_started, now)):
+            self._zeek_blind_announced = True
+            self.emit("warning", "ids",
+                      f"Zeek has been reading {self.zeek.active_dir} for "
+                      f"{ZEEK_LIVENESS_SECONDS / 60:.0f} minutes and conn.log "
+                      "has produced ZERO connection records. That is not a "
+                      "quiet network, it is a sensor that is probably not "
+                      "attached to any traffic — check that Zeek is running "
+                      "against a live interface (`zeek -i <iface>`) and that "
+                      "the interface sees packets.", source="zeek")
 
     # --- deception callbacks ---
     def _on_decoy_hit(self, port: int, peer: str) -> None:
@@ -1395,6 +2356,11 @@ class PostureDaemon:
                 set_gate(action[1] == "create", dry_run=self.dry_run)
             elif kind == "service":
                 systemctl(action[1], action[2], dry_run=self.dry_run)
+            elif kind == "zeek":
+                if action[1] == "start":
+                    self._sync_zeek(now)
+                else:
+                    self.zeek.stop()
             elif kind == "eve":
                 if action[1] == "start":
                     self.tailer.start()
@@ -1447,6 +2413,13 @@ class PostureDaemon:
             "alerts_published": self.alerts_published,
             "alerts_suppressed": self.alerts_suppressed,
             "posture_file": str(self.posture_path or ""),
+            # DEC-PHASE12-028. Zeek ingest and PCAP capture are folded in here
+            # rather than given status files of their own, so the Cockpit has
+            # one runtime-truth authority to read instead of three.
+            "zeek": self.zeek.status(),
+            "zeek_published": self.zeek_published,
+            "zeek_suppressed": self.zeek_suppressed,
+            "capture": capture_status(),
         }
         try:
             STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -1499,6 +2472,10 @@ class PostureDaemon:
                         systemctl("start", SURICATA_UNIT, dry_run=self.dry_run)
                     if self.state["suricata"] and not self.rules["usable"]:
                         self.warn_no_rules(self.state["tier"], now)
+                    # Zeek may have been installed since the last cycle, or
+                    # its log directory may have appeared, moved or become
+                    # unreadable. All three are runtime facts (DEC-PHASE12-028).
+                    self._sync_zeek(now)
                     self.write_status()
                 if (now - last_canary) >= CANARY_POLL_SECONDS:
                     last_canary = now
@@ -1509,6 +2486,7 @@ class PostureDaemon:
         finally:
             if self.deception.armed:
                 self.deception.disarm()
+            self.zeek.stop()
             self.tailer.stop()
             if self.nebula is not None:
                 self.nebula.stop()
@@ -1529,6 +2507,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="rules directory to assess (repeatable)")
     ap.add_argument("--canary-dir", default=str(CANARY_DIR),
                     help="Tier 2 canary directory (default: %(default)s)")
+    ap.add_argument("--zeek-log-dir", action="append", default=None,
+                    help="Zeek log directory to watch (repeatable; default: "
+                         "auto-discover)")
+    ap.add_argument("--zeek-bin", action="append", default=None,
+                    help="candidate Zeek binary path (repeatable; default: "
+                         "auto-discover)")
     ap.add_argument("--poll", type=float, default=POLL_SECONDS,
                     help="posture poll interval in seconds (default: %(default)s)")
     ap.add_argument("--no-nebula", action="store_true",
@@ -1547,7 +2531,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.print_plan:
         plan = tier_plan(tier, daemon.rules["usable"])
         print(json.dumps({"posture_file": str(daemon.posture_path or ""),
-                          "rules": daemon.rules, "plan": plan}, indent=2))
+                          "rules": daemon.rules,
+                          "zeek": daemon.zeek.state,
+                          "capture": capture_status(),
+                          "plan": plan}, indent=2))
         return 0
 
     if args.once:

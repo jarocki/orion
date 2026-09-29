@@ -67,6 +67,12 @@ UNIT_FILES=(
     "orionx-heald.service"
     "orionx-postured.service"
     "nebula-mcp.service"
+    # DEC-PHASE12-028: bounded on-demand PCAP capture, one instance per
+    # interface. A template unit — deliberately NOT in AUTOSTART_UNITS below:
+    # `systemctl enable` on a bare template fails, and more importantly a deck
+    # that starts recording by itself would fill its own memory unattended
+    # (the live overlay is RAM). Capture is an operator action.
+    "orionx-capture@.service"
 )
 
 # ---------------------------------------------------------------------------

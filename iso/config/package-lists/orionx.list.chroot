@@ -90,7 +90,15 @@ wireshark
 # 2026-08-07 ISO. tshark is the interface the MCP tool-server design and the
 # operator's `triage` verb actually call, so its absence is load-bearing.
 tshark
-# EXTERNAL: zeek             — install via https://zeek.org/get-zeek/
+# EXTERNAL: zeek — NOT in Debian 13 main. Two install paths, one package:
+#   build-time: iso/config/hooks/live/0500-install-external-tools.hook.chroot
+#     installs zeek-core from the OBS security:zeek/Debian_13 repo. SOFT-FAIL,
+#     so an ISO can legitimately ship without it (the 2026-09-27 image did).
+#   post-boot:  sudo /opt/orionx/optional/install-zeek.sh  (DEC-PHASE12-028)
+#     same package, same repo, plus a pinned signing-key fingerprint.
+# Either way orionx-postured DETECTS Zeek at runtime and starts ingesting its
+# logs with no rebuild (DEC-PHASE12-028), so absence here is not a dead end.
+# (The old pointer at zeek.org/get-zeek was never the path this deck uses.)
 
 # GUI Networking (rc4: Wi-Fi and wired connectivity via NetworkManager)
 # NM daemon + CLI; postinst enables NetworkManager.service automatically.
