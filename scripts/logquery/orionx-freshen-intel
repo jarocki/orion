@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# @decision DEC-PHASE12-027
+# @title Orion-X logquery threat-intel freshen (CISA KEV catalog)
+# @status accepted
+# @rationale Mirrors orionx-freshen-yara (DEC-PHASE11-005) and
+#   orionx-freshen-suricata (DEC-PHASE11-008): an explicit, operator-run
+#   command that pulls volatile intel when the deck has a network, so the
+#   tool that consumes it can work later without one. Orion-X is NOT
+#   air-gapped — it has Shields Up posture levels — so "fetch when connected,
+#   use whenever" is the accurate shape, not "offline forever".
+#
+#   What it adds beyond the two it mirrors: those scripts fetch and stop,
+#   leaving no record of when. This one writes fetched.json beside the
+#   catalog with the fetch time, the source URL and the SHA-256, because
+#   orionx-logquery reports the intel's age on every single run and it cannot
+#   do that from a file with no clock. A catalog without its metadata is
+#   reported as UNDATED rather than assumed current.
+#
+#   The curated half of the intel (tool signatures, research scanners,
+#   datacenter ASNs, notable paths) is NOT fetched: it lives in
+#   scripts/logquery/intel-base.json, versions with the code, and is
+#   reviewable in a diff. Only the weekly-changing KEV catalog is fetched.
+#
+# @decision DEC-PHASE12-027
+# @title Intel refresh is operator-invoked; there is no systemd unit
+# @status accepted
+# @rationale A first pass shipped a .service + weekly .timer for this. That
+#   was wrong twice, and test_offline_boot.sh caught the first reason: the
+#   unit carried Wants=network-online.target, and no Orion-X unit may, because
+#   a deck that boots disconnected would stall waiting for a network that is
+#   not coming. Being offline mid-incident is a normal state for this thing,
+#   and a boot that hangs is a far worse failure than intel that is a month
+#   old — especially when the tool already reports its own age on every run.
+#
+#   The second reason is the one that settles it: a timer decides on the
+#   operator's behalf when the deck reaches out to the internet. That is
+#   exactly the decision the Shields Up posture exists to keep in their hands.
+#   orionx-freshen-yara (DEC-PHASE11-005) and orionx-freshen-suricata
+#   (DEC-PHASE11-008) are both plain scripts on PATH for the same reason, and
+#   this is the third member of that family, not an exception to it.
+#
+#   What makes operator-invoked refresh safe here is the staleness reporting:
+#   orionx-logquery states the cache's age on every single run and says STALE
+#   in the banner, in its JSON, and on the bus. The operator is told when to
+#   run this; they are not left to remember.
+#
+# Usage:
+#   sudo orionx-freshen-intel              # fetch into the system cache
+#   ORIONX_LOGQUERY_INTEL_DIR=… orionx-freshen-intel --no-root   # user cache
+#   orionx-freshen-intel --status          # what is cached, and how old
+
+set -euo pipefail
+
+KEV_URL="https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+KEV_HOST="www.cisa.gov"
+DEFAULT_DIR="/var/lib/orionx/logquery/intel"
+CACHE_DIR="${ORIONX_LOGQUERY_INTEL_DIR:-$DEFAULT_DIR}"
+
+# Resolve the sibling Python modules whether running from the repo or from
+# the rsynced /opt/orionx/scripts/ tree.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+REQUIRE_ROOT=1
+STATUS_ONLY=0
+for arg in "$@"; do
+    case "$arg" in
+        --no-root) REQUIRE_ROOT=0 ;;
+        --status)  STATUS_ONLY=1; REQUIRE_ROOT=0 ;;
+        -h|--help)
+            sed -n '1,30p' "${BASH_SOURCE[0]}" | grep '^#' | sed 's/^# \{0,1\}//'
+            exit 0 ;;
+        *)
+            echo "ERROR: unknown argument: $arg" >&2
+            exit 1 ;;
+    esac
+done
+
+log()  { echo "[orionx-freshen-intel] $*"; }
+err()  { echo "ERROR: [orionx-freshen-intel] $*" >&2; }
+
+# ---------------------------------------------------------------------------
+# --status: report what is cached without touching the network
+# ---------------------------------------------------------------------------
+if [[ $STATUS_ONLY -eq 1 ]]; then
+    ORIONX_LOGQUERY_INTEL_DIR="$CACHE_DIR" \
+        python3 "$SCRIPT_DIR/orionx-logquery" --intel-status
+    exit $?
+fi
+
+# ---------------------------------------------------------------------------
+# preflight
+# ---------------------------------------------------------------------------
+if [[ $REQUIRE_ROOT -eq 1 && $EUID -ne 0 ]]; then
+    err "requires root (writes to $CACHE_DIR)."
+    err "  For a user-owned cache instead:"
+    err "    ORIONX_LOGQUERY_INTEL_DIR=\"\$HOME/.cache/orionx/logquery/intel\" \\"
+    err "      orionx-freshen-intel --no-root"
+    exit 1
+fi
+
+# Fail loudly on no network rather than leaving a half-written cache. The
+# operator needs to know the intel did NOT refresh — a silent no-op here is
+# exactly how stale intel gets presented as current later.
+if ! getent hosts "$KEV_HOST" >/dev/null 2>&1; then
+    err "$KEV_HOST unreachable (no network, DNS, or Shields Up is blocking it)."
+    err "  The existing cache is untouched, and orionx-logquery will keep"
+    err "  reporting its true age. Re-run this on a connected node."
+    exit 1
+fi
+
+mkdir -p "$CACHE_DIR"
+tmp="$(mktemp)"
+# shellcheck disable=SC2064
+trap "rm -f '$tmp'" EXIT
+
+log "Fetching the CISA KEV catalog from $KEV_HOST"
+if ! wget -q --timeout=60 -O "$tmp" "$KEV_URL"; then
+    err "download failed. The existing cache is untouched."
+    exit 1
+fi
+
+if [[ ! -s "$tmp" ]]; then
+    err "downloaded an empty file. The existing cache is untouched."
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# transform + record the fetch time
+#
+# The catalog is reshaped to {CVE: {ransomware, vendor, product, due}} so the
+# enrichment lookup is a dict hit rather than a scan, and the fetch metadata
+# is written through logquery_intel.write_metadata — the same function that
+# orionx-logquery reads — so there is exactly one authority for what a
+# recorded fetch looks like.
+# ---------------------------------------------------------------------------
+log "Transforming the catalog and recording the fetch time"
+ORIONX_LOGQUERY_INTEL_DIR="$CACHE_DIR" python3 - "$tmp" "$CACHE_DIR" "$KEV_URL" "$SCRIPT_DIR" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+downloaded, cache_dir, url, script_dir = (
+    sys.argv[1], Path(sys.argv[2]), sys.argv[3], sys.argv[4])
+sys.path.insert(0, script_dir)
+
+try:
+    raw = json.loads(Path(downloaded).read_text())
+except ValueError as exc:
+    print(f"ERROR: downloaded file is not valid JSON: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+entries = raw.get("vulnerabilities")
+if not isinstance(entries, list) or not entries:
+    print("ERROR: catalog has no 'vulnerabilities' list — refusing to install "
+          "it over the existing cache", file=sys.stderr)
+    raise SystemExit(1)
+
+catalog = {}
+for item in entries:
+    cve = item.get("cveID")
+    if not cve:
+        continue
+    known = str(item.get("knownRansomwareCampaignUse", "")).strip().lower()
+    catalog[cve] = {
+        "ransomware": known == "known",
+        "vendor": item.get("vendorProject", ""),
+        "product": item.get("product", ""),
+        "due": item.get("dueDate", ""),
+    }
+
+import logquery_intel
+
+tmp_out = cache_dir / "kev.json.tmp"
+tmp_out.write_text(json.dumps(catalog, sort_keys=True) + "\n")
+tmp_out.replace(cache_dir / logquery_intel.CATALOG_FILE)
+
+meta = logquery_intel.write_metadata(
+    cache_dir,
+    source_url=url,
+    digest=logquery_intel.sha256_file(cache_dir / logquery_intel.CATALOG_FILE),
+    catalog_count=len(catalog),
+    catalog_version=str(raw.get("catalogVersion", "")),
+)
+print(f"{len(catalog)} KEV entries, fetch recorded at {meta['fetched_iso']}")
+PY
+
+log "Complete. Cache: $CACHE_DIR"
+ORIONX_LOGQUERY_INTEL_DIR="$CACHE_DIR" \
+    python3 "$SCRIPT_DIR/orionx-logquery" --intel-status || true

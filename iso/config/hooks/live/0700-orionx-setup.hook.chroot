@@ -106,6 +106,12 @@ declare -A SCRIPT_MAP=(
     ["orionx-postured"]="/opt/orionx/scripts/awareness/orionx-postured"
     # DEC-PHASE12-028: bounded on-demand PCAP capture control surface.
     ["orionx-capture"]="/opt/orionx/scripts/awareness/orionx-capture"
+    # DEC-PHASE12-027: forensic log correlation + its intel refresh. The
+    # refresh is a script on PATH, not a timer, deliberately — when the deck
+    # reaches out to the network is a Shields Up decision that stays with the
+    # operator, same as orionx-freshen-yara/suricata.
+    ["orionx-logquery"]="/opt/orionx/scripts/logquery/orionx-logquery"
+    ["orionx-freshen-intel"]="/opt/orionx/scripts/logquery/orionx-freshen-intel"
     # NOTE: the confined MCP server deliberately gets NO SCRIPT_MAP entry here.
     # test_orionx_setup_hook_unit.sh asserts one is absent, and the entrypoint
     # ships directly at /usr/bin/nebula-mcp via includes.chroot so its AppArmor
