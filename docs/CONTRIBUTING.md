@@ -81,7 +81,7 @@ Thank you for helping improve Orion-X Phoenix Edition!
   no `fonts-iosevka` candidate in Debian 13 (trixie), so it cannot be pulled
   from the archive the ISO builds against (#85). Do not reference Iosevka in
   themes, `terminalrc`, `xsettings.xml`, or greeter config.
-- **Air-gap first** — every runtime path must fail cleanly (loud + non-zero
+- **Offline-tolerant** — every runtime path must fail cleanly (loud + non-zero
   exit) when the network is unreachable. See `orionx-freshen-yara`,
   `orionx-freshen-suricata`, and `install-*.sh` for reference patterns.
 - **Single authority** — every operational fact has one owner module. Adding

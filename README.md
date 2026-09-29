@@ -16,7 +16,8 @@ internet connection at all.
 In the project's own words: a **live, USB-bootable cyberdeck** for incident
 responders working in contested network infrastructure — a locked-down,
 forensic-first Linux environment with an AI copilot, mesh-encrypted team comms,
-and a curated malware-analysis toolkit, designed to work fully air-gapped.
+and a curated malware-analysis toolkit, with **Shields Up** posture levels
+that raise active defenses as the situation demands.
 
 Mission verbs: **monitor** / **detect** / **defend** / **triage** / **timeline**.
 
@@ -46,7 +47,7 @@ its built-in synthetic demo feed and the narration is synthesised offline.
 - **Port-scan detection** — `orionx-scanwatch` reads the firewall's own drop
   log and raises a Cockpit event (and an audible R.A.I.N. cue) when one host
   sweeps many ports. Runs by default, needs no rules and no network, and sends
-  no packets, so it works air-gapped at Tier 0. A wider second window also
+  no packets, so it needs no network and works at Tier 0. A wider second window also
   catches timing-evasive scans such as `nmap -T2`.
 - **Suricata IDS** — lazy-start network IDS. It is **off by default and ships
   no threat rules**: enable with

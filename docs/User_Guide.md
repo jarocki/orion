@@ -120,7 +120,12 @@ The "Phoenix" name symbolizes the toolkit's ability to help organizations rise f
 
 - **ISO / image** — the single file that contains the whole Orion-X system; you copy it onto a USB stick.
 - **Live system** — an operating system that runs from removable media and memory instead of being installed.
-- **Air-gapped** — a computer with no network connection at all. Orion-X is built to work that way.
+- **Shields Up** — Orion-X's posture levels. The deck raises its active
+  defenses as the situation demands, rather than assuming one fixed stance.
+  Most capabilities work with no network connection, and the AI assistant
+  never sends your data anywhere regardless of posture (DEC-006). Note we
+  deliberately avoid the term *air-gapped*: almost nothing truly is, and
+  believing otherwise is how people get caught out.
 - **SHA-256 / hash** — a fingerprint of a file. If your copy's fingerprint matches the published one, the file is intact.
 - **UEFI / BIOS / Secure Boot** — the computer's firmware and its start-up rules. Secure Boot must be off for the beta to start.
 - **Deck** — an Orion-X machine (from "cyberdeck"). **Node** — the same thing, seen from the network.
@@ -300,7 +305,7 @@ To edit kernel parameters for a single boot, press **e** in the GRUB menu (UEFI)
 Before the desktop appears, Orion-X pauses on the text console (tty1) and shows a full-screen banner: **"the boot has PAUSED — your input is needed."** This is the first-boot wizard, not a crash. It runs whenever its completion marker `/var/lib/orionx/.first-boot-done` is absent — on a plain (amnesic) stick that is **every boot**, because nothing is kept between boots; with persistence set up it runs once. The wizard asks, in order:
 
 1. **Hostname** for this deck — press Enter for the default `orionx-node`
-2. **Primary account** — the account name (default `orionx-operator`; if you change it, the live user is renamed) and a password. **Leave the password blank to keep the account passwordless** (the default; convenient on an air-gapped deck, unwise on a shared network). The account can use `sudo` either way.
+2. **Primary account** — the account name (default `orionx-operator`; if you change it, the live user is renamed) and a password. **Leave the password blank to keep the account passwordless** (the default; convenient on a disconnected deck, unwise on a shared network). The account can use `sudo` either way.
 3. **Wi-Fi** — network name (SSID) and password, asked **only** when no wired link is detected
 
 Every prompt auto-continues with its default after 120 seconds, so an unattended boot still completes (worst case about six minutes at the banner). When the wizard finishes, the desktop opens automatically logged in as the primary account — there is no login prompt on a normal boot. If you log out, the login screen asks for the password you set (press Enter if you left it blank).
@@ -540,7 +545,7 @@ Orion-X uses Matrix — an open, end-to-end-encrypted chat system (think Slack o
 - **Client mode** — connect this deck to a Matrix server your team already runs.
 - **Server mode** — run a Matrix homeserver (Synapse) on this deck for the team.
 
-**Both modes need network access**: the Element desktop client (both modes) and Synapse (server mode) are not on the image; the script adds the vendor package repositories and installs them with `apt-get`. On an air-gapped deck the script stops with an error. With one deck and no network there is nothing to talk to; `matrix-commander`, the terminal client, is the only Matrix piece on the image itself. In the default amnesic mode a server you set up disappears at power-off.
+**Both modes need network access**: the Element desktop client (both modes) and Synapse (server mode) are not on the image; the script adds the vendor package repositories and installs them with `apt-get`. On a disconnected deck the script stops with an error. With one deck and no network there is nothing to talk to; `matrix-commander`, the terminal client, is the only Matrix piece on the image itself. In the default amnesic mode a server you set up disappears at power-off.
 
 Run it from a terminal, naming the mode:
 
@@ -659,7 +664,7 @@ Keys: **F11** toggles fullscreen; **Esc** or **q** quits. Flags: `--fullscreen` 
 
 Nebula is Orion-X's on-device assistant: ollama serving **Qwen2.5-3B-Instruct** (a 1.9 GB open-source language model, stored in a compact "Q4_K_M" form), run by `nebula-runtime.service`. It answers questions, explains tool output, and can call a fixed set of local tools.
 
-**What "local" means here.** The model and everything you type stay on this machine: ollama listens on `127.0.0.1:11434` only, and its AppArmor profile confines what it can touch on disk (model files read-only, no writes to your home directory, no launching of system programs). Nebula never needs the internet. Network egress is **not** blocked by policy, though — on an air-gapped deck nothing can leave; on a connected deck treat ollama like any other local service.
+**What "local" means here.** The model and everything you type stay on this machine: ollama listens on `127.0.0.1:11434` only, and its AppArmor profile confines what it can touch on disk (model files read-only, no writes to your home directory, no launching of system programs). Nebula never needs the internet. Network egress is **not** blocked by policy, though — on a disconnected deck nothing can leave; on a connected deck treat ollama like any other local service.
 
 **When it starts.** `nebula-runtime.service` is enabled at boot, after `nebula-integrity-check.service` has verified the model's SHA-256 against `MANIFEST.sha256`. The model itself is loaded into memory on the first question (or when you click **Warm up model**), which can take a few minutes on a 4 GB machine — a red or amber Nebula light before you have asked anything is normal.
 
@@ -716,7 +721,7 @@ Subcommands: `extract`, `decode`, `analyze` (input from stdin or `-f FILE`; outp
 
 ### Pivotglass: Adversary-Infrastructure Hunting
 
-Pivotglass is an AI-augmented framework for hunting, pivoting on, and discovering adversary infrastructure, indicators and TTPs. It keeps every investigation in a workspace with evidence, provenance and a relationship graph, can export STIX 2, and — importantly for a deck that is often air-gapped — ships a **complete offline learning investigation** that needs no API key, model, account or network.
+Pivotglass is an AI-augmented framework for hunting, pivoting on, and discovering adversary infrastructure, indicators and TTPs. It keeps every investigation in a workspace with evidence, provenance and a relationship graph, can export STIX 2, and — importantly for a deck that is often disconnected — ships a **complete offline learning investigation** that needs no API key, model, account or network.
 
 Launch it from **Applications → Orion → Pivotglass**, or from a terminal:
 
@@ -1553,7 +1558,7 @@ as post-boot installers under `/opt/orionx/optional/`:
 ### Usage
 
 ```bash
-# Verify network first (Orion-X is designed for air-gap — installers require net)
+# Verify network first — optional installers fetch from the internet by design
 sudo /opt/orionx/optional/install-clamav.sh
 ```
 
@@ -1561,7 +1566,7 @@ Each installer:
 
 - Requires root (`sudo`)
 - Verifies network connectivity to the download source first
-- Exits cleanly with an error message on air-gap (no partial installs)
+- Exits cleanly with an error message when offline (no partial installs)
 - Uses the shared `lib/orionx-installer-common.sh` for logging, apt/wget helpers,
   and SHA256 verification
 
