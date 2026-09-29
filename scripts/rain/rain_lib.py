@@ -41,6 +41,7 @@ import os
 import shutil
 import subprocess
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -142,7 +143,69 @@ def save_config(cfg: dict[str, Any]) -> bool:
 
 
 # --- Emission ---------------------------------------------------------------
-def emit_event(severity: str, source: str, category: str, message: str) -> bool:
+# ---------------------------------------------------------------------------
+# Structured detail (DEC-PHASE12-029)
+#
+# The bus carried only a flat message string, so the Cockpit could say "port
+# scan from 192.168.4.77" and nothing more — an operator could not see the
+# signature that fired, the rule that triggered, or the matching content. Any
+# drill-down needs that detail to exist on the bus in the first place.
+#
+# It must not arrive at the cost of the bus's integrity. Single-line appends to
+# an O_APPEND fd are atomic only below PIPE_BUF (4096 on Linux), and there are
+# now many concurrent emitters (scanwatch, postured, healing, nucleotide, the
+# Control Center...). A fat detail payload would push a line over that limit
+# and let two emitters interleave, corrupting the record precisely when it
+# matters most. So detail is budgeted, and anything that does not fit spills to
+# a sidecar file the event points at rather than being silently dropped.
+# ---------------------------------------------------------------------------
+
+DETAIL_DIR = Path("/run/orionx/details")
+
+# Total serialized line budget. PIPE_BUF is 4096; leave generous headroom for
+# the envelope and for multi-byte UTF-8 expanding past len() in characters.
+LINE_BUDGET = 3072
+_DETAIL_VALUE_MAX = 512
+
+
+def _shrink_detail(detail: dict[str, Any], envelope_len: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split detail into (inline, overflow) so the line stays under budget.
+
+    Sheds in a deliberate order: oversized individual values first (a 40 KB
+    packet hexdump is the usual culprit), then whole keys, longest first.
+    Whatever is shed goes to the sidecar — never quietly discarded.
+    """
+    inline: dict[str, Any] = {}
+    overflow: dict[str, Any] = {}
+    for k, v in detail.items():
+        if isinstance(v, str) and len(v) > _DETAIL_VALUE_MAX:
+            overflow[k] = v
+            inline[k] = v[:_DETAIL_VALUE_MAX - 1] + "\u2026"
+        else:
+            inline[k] = v
+    # Still too big? Drop whole keys, longest serialization first.
+    while inline and envelope_len + len(json.dumps(inline, ensure_ascii=False)) > LINE_BUDGET:
+        worst = max(inline, key=lambda k: len(json.dumps({k: inline[k]}, ensure_ascii=False)))
+        overflow.setdefault(worst, inline[worst])
+        del inline[worst]
+    return inline, overflow
+
+
+def _write_sidecar(event_id: str, payload: dict[str, Any]) -> str | None:
+    """Persist the full detail next to the bus. Returns a path, or None."""
+    try:
+        DETAIL_DIR.mkdir(parents=True, exist_ok=True)
+        path = DETAIL_DIR / f"{event_id}.json"
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(tmp, path)          # atomic; a reader never sees a partial file
+        return str(path)
+    except OSError:
+        return None
+
+
+def emit_event(severity: str, source: str, category: str, message: str,
+               detail: dict[str, Any] | None = None) -> bool:
     """Append one event to the bus. Safe to call from anywhere; never raises.
 
     Emitters that cannot import this module (e.g. the Control Center, which is
@@ -157,7 +220,29 @@ def emit_event(severity: str, source: str, category: str, message: str) -> bool:
         "category": str(category)[:64] or "general",
         "message": str(message)[:512],
     }
+
+    # Structured detail, budgeted so the line stays atomically appendable.
+    if isinstance(detail, dict) and detail:
+        event["id"] = uuid.uuid4().hex[:16]
+        envelope = len(json.dumps(event, ensure_ascii=False)) + len('"detail":,') + 2
+        inline, overflow = _shrink_detail(detail, envelope)
+        if overflow:
+            ref = _write_sidecar(event["id"], detail)
+            if ref:
+                inline["_full"] = ref
+            else:
+                # Sidecar unavailable (read-only /run, no space). Say so in the
+                # record rather than presenting a truncated detail as complete.
+                inline["_truncated"] = True
+        if inline:
+            event["detail"] = inline
+
     line = json.dumps(event, ensure_ascii=False) + "\n"
+    if len(line.encode("utf-8")) > LINE_BUDGET + 512:
+        # Last-resort guard: never risk a non-atomic append. Drop detail and
+        # keep the event, because losing the alert is worse than losing detail.
+        event.pop("detail", None)
+        line = json.dumps(event, ensure_ascii=False) + "\n"
     try:
         # O_APPEND makes concurrent single-line appends atomic (< PIPE_BUF),
         # so multiple emitters never interleave a line.

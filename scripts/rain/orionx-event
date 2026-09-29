@@ -19,6 +19,7 @@ Exit status: 0 if the event was written, 1 otherwise.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -47,14 +48,33 @@ def main(argv: list[str] | None = None) -> int:
         "--category", "-c", default="general",
         help="event category, e.g. ids, service, posture (default: general)",
     )
+    parser.add_argument(
+        "--detail", "-d", default=None, metavar="JSON",
+        help="structured detail as a JSON object, e.g. "
+             "\'{\"src_ip\":\"10.0.0.9\",\"signature\":\"ET SCAN Nmap\"}\'. "
+             "Drives the Cockpit drill-down view. Oversized values spill to a "
+             "sidecar file so the bus line stays atomically appendable.",
+    )
     parser.add_argument("message", nargs="+", help="human-readable event message")
     args = parser.parse_args(argv)
+
+    detail = None
+    if args.detail:
+        try:
+            detail = json.loads(args.detail)
+        except ValueError as exc:
+            print(f"orionx-event: --detail is not valid JSON: {exc}", file=sys.stderr)
+            return 2
+        if not isinstance(detail, dict):
+            print("orionx-event: --detail must be a JSON object", file=sys.stderr)
+            return 2
 
     ok = rain_lib.emit_event(
         severity=args.severity,
         source=args.source,
         category=args.category,
         message=" ".join(args.message),
+        detail=detail,
     )
     if not ok:
         print("orionx-event: failed to write to the event bus", file=sys.stderr)

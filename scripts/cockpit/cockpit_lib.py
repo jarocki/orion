@@ -86,12 +86,20 @@ def parse_event(line: str) -> dict[str, Any] | None:
         ts = float(obj.get("ts", 0.0))
     except (TypeError, ValueError):
         ts = 0.0
+    # Structured detail (DEC-PHASE12-029) rides through untruncated so the
+    # drill-down view can show the source IP, signature, matching content and
+    # triggering rule. The summary line stays clipped to 160 for the stream.
+    detail = obj.get("detail")
+    if not isinstance(detail, dict):
+        detail = {}
     return {
         "ts": ts,
         "severity": sev,
         "source": str(obj.get("source", "?"))[:24],
         "category": str(obj.get("category", ""))[:24],
         "message": str(obj.get("message", ""))[:160],
+        "id": str(obj.get("id", ""))[:32],
+        "detail": detail,
     }
 
 
@@ -362,3 +370,102 @@ __all__ = [
     "posture_tier", "POSTURE_LABEL", "POSTURE_STATUS_FILE", "posture_status",
     "posture_badge", "lerp", "now", "math",
 ]
+
+# ---------------------------------------------------------------------------
+# Defensive / deceptive actions (DEC-PHASE12-029)
+#
+# The auto-healing engine (DEC-PHASE12-023) parks an action as "pending" when
+# the operator set that action class to `confirm`. Until now the only way to
+# see or approve one was `orionx-heal pending` / `orionx-heal confirm <id>` on
+# a terminal — which means the deck could be holding a blocked-IP decision
+# while the Cockpit, the thing the operator is actually watching, showed
+# nothing about it. These readers put that state on the dashboard.
+#
+# Reading is best-effort and never raises: the Cockpit runs as the operator and
+# the chain lives under /var/lib/orionx/healing, so a permission failure is
+# expected and must degrade to "unknown", never to a crash or a false "no
+# pending actions" — claiming there is nothing to approve when there is would
+# be the worst possible lie for this panel to tell.
+# ---------------------------------------------------------------------------
+
+HEAL_CHAIN = Path("/var/lib/orionx/healing/chain.jsonl")
+
+
+def _heal_cli(args: list[str], timeout: float = 4.0) -> tuple[int, str]:
+    """Run orionx-heal, returning (rc, combined output). Never raises."""
+    try:
+        r = subprocess.run(["orionx-heal", *args], capture_output=True,
+                           text=True, timeout=timeout, check=False)
+        return r.returncode, (r.stdout or "") + (r.stderr or "")
+    except (OSError, subprocess.SubprocessError):
+        return 127, ""
+
+
+def healing_actions(chain: Path = HEAL_CHAIN) -> dict[str, Any]:
+    """Current healing state: {'readable': bool, 'pending': [...], 'active': [...]}.
+
+    `readable` False means we could not read the chain — the panel must say so
+    rather than render an empty list that looks like "nothing happening".
+    """
+    out: dict[str, Any] = {"readable": False, "pending": [], "active": [], "reason": ""}
+    try:
+        raw = Path(chain).read_text(encoding="utf-8")
+    except PermissionError:
+        out["reason"] = "chain not readable as this user"
+        return out
+    except OSError:
+        out["reason"] = "no healing chain yet"
+        out["readable"] = True          # absent chain genuinely means no actions
+        return out
+
+    state: dict[str, dict[str, Any]] = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(e, dict):
+            continue
+        aid = str(e.get("action_id", ""))
+        if not aid:
+            continue
+        rec = state.setdefault(aid, {})
+        rec["action_id"] = aid
+        for k in ("playbook", "target", "level", "status", "kind", "ts", "expires_at", "reason"):
+            if k in e:
+                rec[k] = e[k]
+    out["readable"] = True
+    for rec in state.values():
+        st = str(rec.get("status") or rec.get("kind") or "")
+        if st == "pending":
+            out["pending"].append(rec)
+        elif st == "active":
+            out["active"].append(rec)
+    out["pending"].sort(key=lambda r: float(r.get("ts") or 0), reverse=True)
+    out["active"].sort(key=lambda r: float(r.get("ts") or 0), reverse=True)
+    return out
+
+
+def approve_action(action_id: str) -> tuple[bool, str]:
+    """Approve one pending action. Returns (ok, human-readable outcome).
+
+    Privilege is the interesting case: the chain is root-owned and the Cockpit
+    is not root. If escalation is unavailable we return the exact command for
+    the operator to run rather than failing silently — an approval that
+    quietly did nothing is indistinguishable from one that worked, and this
+    button arms real defensive actions.
+    """
+    aid = str(action_id).strip()
+    if not aid:
+        return False, "no action selected"
+    rc, out = _heal_cli(["confirm", aid])
+    if rc == 0:
+        return True, f"approved {aid}"
+    if rc == 127:
+        return False, "orionx-heal not found on PATH"
+    tail = (out or "").strip().splitlines()
+    why = tail[-1][:80] if tail else f"exit {rc}"
+    return False, f"not approved ({why}) — run: sudo orionx-heal confirm {aid}"

@@ -82,6 +82,8 @@ class Cockpit(Gtk.Window):
         self.add(self.da)
         self.da.connect("draw", self._draw)
         self.connect("key-press-event", self._on_key)
+        self.da.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+        self.da.connect("button-press-event", self._on_click)
         self.connect("destroy", Gtk.main_quit)
 
         # --- live state ---
@@ -93,6 +95,15 @@ class Cockpit(Gtk.Window):
         self.systems = {"NEBULA": False, "FIREWALL": False, "MESH": False, "R.A.I.N.": False}
         self.posture = "0"
         self.posture_status: dict = {}
+        # Drill-down + approval state (DEC-PHASE12-029).
+        self.sel = -1                  # index into the displayed event list; -1 = none
+        self.drill = False             # detail overlay open
+        self.heal: dict = {"readable": False, "pending": [], "active": [], "reason": ""}
+        self.heal_sel = 0
+        self.toast = ""                # transient outcome line
+        self.toast_until = 0.0
+        self._approve_rect: tuple[float, float, float, float] | None = None
+        self._shown: list = []         # events as last drawn, so keys and clicks agree
         self.t0 = time.time()
 
         GLib.timeout_add(FPS_MS, self._tick)
@@ -143,6 +154,7 @@ class Cockpit(Gtk.Window):
         # DEC-PHASE12-024: what the tier is ENFORCING, not just what it is set
         # to. Empty dict when orionx-postured is not running.
         self.posture_status = L.posture_status()
+        self.heal = L.healing_actions()
         if self.demo:
             self.systems.update({"NEBULA": True, "FIREWALL": True, "MESH": True, "R.A.I.N.": True})
         return True
@@ -162,9 +174,73 @@ class Cockpit(Gtk.Window):
                 self.fullscreen()
             self._fs = not self._fs
             return True
-        if name in ("Escape", "q"):
+        if name == "Escape":
+            # Escape backs out of the overlay first; only then does it quit.
+            # Quitting the dashboard because the operator dismissed a detail
+            # view would be its own small betrayal.
+            if self.drill:
+                self.drill = False
+                self.da.queue_draw()
+                return True
             Gtk.main_quit()
             return True
+        if name == "q":
+            Gtk.main_quit()
+            return True
+
+        n = len(self._shown)
+        if name in ("Up", "k") and n:
+            self.sel = (self.sel - 1) % n if self.sel >= 0 else 0
+            self.da.queue_draw()
+            return True
+        if name in ("Down", "j") and n:
+            self.sel = (self.sel + 1) % n if self.sel >= 0 else 0
+            self.da.queue_draw()
+            return True
+        if name in ("Return", "KP_Enter") and 0 <= self.sel < n:
+            self.drill = not self.drill
+            self.da.queue_draw()
+            return True
+        if name in ("Tab", "Right", "Left") and self.heal["pending"]:
+            self.heal_sel = (self.heal_sel + 1) % len(self.heal["pending"])
+            self.da.queue_draw()
+            return True
+        if name in ("a", "A"):
+            self._approve_selected()
+            return True
+        return False
+
+    # ------------------------------------------------------------- approval
+    def _approve_selected(self) -> None:
+        pend = self.heal["pending"]
+        if not pend:
+            self._say("nothing awaiting approval")
+            return
+        rec = pend[self.heal_sel % len(pend)]
+        ok, msg = L.approve_action(str(rec.get("action_id", "")))
+        self._say(msg)
+        # Re-read rather than assume it worked: the engine is the authority on
+        # whether the action actually moved out of pending.
+        self.heal = L.healing_actions()
+        self.da.queue_draw()
+
+    def _say(self, msg: str) -> None:
+        self.toast = msg[:96]
+        self.toast_until = time.time() + 6.0
+
+    def _on_click(self, _w, ev) -> bool:
+        r = self._approve_rect
+        if r and r[0] <= ev.x <= r[0] + r[2] and r[1] <= ev.y <= r[1] + r[3]:
+            self._approve_selected()
+            return True
+        # Click an event row to select it; double-click opens the drill-down.
+        for i, (ry, rh) in enumerate(getattr(self, "_row_rects", [])):
+            if ry <= ev.y <= ry + rh:
+                self.sel = i
+                if getattr(ev, "type", None) is not None and int(ev.type) == int(Gdk.EventType._2BUTTON_PRESS):
+                    self.drill = True
+                self.da.queue_draw()
+                return True
         return False
 
     # ------------------------------------------------------------------ drawing
@@ -184,17 +260,39 @@ class Cockpit(Gtk.Window):
 
         rx = pad + left_w + pad
         rw = W - rx - pad
-        g_h = int(body_h * 0.42)
-        n_h = int(body_h * 0.30)
-        s_h = body_h - g_h - n_h - pad * 2
-        self._gauge_panel(cr, rx, body_y, rw, g_h)
-        self._net_panel(cr, rx, body_y + g_h + pad, rw, n_h)
-        self._systems_panel(cr, rx, body_y + g_h + n_h + pad * 2, rw, s_h)
+        # Actions get their own band. It is deliberately above the fold on the
+        # right rather than tucked at the bottom: a pending APPROVE is the most
+        # time-critical thing this dashboard can show.
+        a_h = int(body_h * 0.26)
+        g_h = int(body_h * 0.32)
+        n_h = int(body_h * 0.22)
+        s_h = body_h - a_h - g_h - n_h - pad * 3
+        self._actions_panel(cr, rx, body_y, rw, a_h)
+        self._gauge_panel(cr, rx, body_y + a_h + pad, rw, g_h)
+        self._net_panel(cr, rx, body_y + a_h + g_h + pad * 2, rw, n_h)
+        self._systems_panel(cr, rx, body_y + a_h + g_h + n_h + pad * 3, rw, s_h)
 
         if self.flash > 0.0:  # visual twin of the R.A.I.N. cue
             cr.set_source_rgba(*L.RED, 0.16 * self.flash)
             cr.rectangle(0, 0, W, H)
             cr.fill()
+
+        if self.toast and time.time() < self.toast_until:
+            tw = min(W - 2 * pad, 620.0)
+            tx = (W - tw) / 2
+            ty = H - 52.0
+            cr.set_source_rgba(0.05, 0.06, 0.07, 0.95)
+            self._rrect(cr, tx, ty, tw, 30.0, 6.0)
+            cr.fill()
+            cr.set_source_rgba(*L.AMBER, 0.85)
+            cr.set_line_width(1.0)
+            self._rrect(cr, tx, ty, tw, 30.0, 6.0)
+            cr.stroke()
+            self._text(cr, tx + tw / 2, ty + 20, self.toast, 11, L.AMBER, align="center")
+
+        # Overlay last so it sits above every panel.
+        if self.drill:
+            self._drill_overlay(cr, W, H)
         return False
 
     # --- primitives ---
@@ -308,12 +406,24 @@ class Cockpit(Gtk.Window):
         row_h = 22
         rows = int(ch // row_h)
         events = list(self.tail.events)[-rows:][::-1]   # newest first
+        # The selection is an index into exactly what is on screen. Keeping the
+        # drawn list and the row geometry means keyboard and mouse can never
+        # disagree about which event the operator means.
+        self._shown = events
+        self._row_rects = []
         now = time.time()
         if not events:
             self._text(cr, cx + cw / 2, cy + ch / 2, "— no events yet — publish one with: orionx-event -s warning 'hello'  —",
                        12, L.DIM, align="center")
         for i, ev in enumerate(events):
             ry = cy + i * row_h + 16
+            self._row_rects.append((ry - 16, row_h))
+            if i == self.sel:
+                cr.set_source_rgba(*L.AMBER, 0.14)
+                cr.rectangle(cx, ry - 16, cw, row_h)
+                cr.fill()
+                if ev.get("detail"):
+                    self._text(cr, cx + cw - 6, ry, "\u21b5 detail", 9.5, L.AMBER, align="right")
             age = now - ev["ts"] if ev["ts"] else 0
             fade = max(0.35, 1.0 - min(age, 600) / 800.0)
             col = L.SEVERITY_COLOR.get(ev["severity"], L.DIM)
@@ -330,6 +440,132 @@ class Cockpit(Gtk.Window):
             msg = ev["message"]
             self._text(cr, cx + 230, ry, msg, 11.5, tuple(c * fade for c in (0.9, 0.9, 0.9)))
         cr.restore()
+
+    # --- defensive / deceptive actions + APPROVE (DEC-PHASE12-029) ---
+    def _actions_panel(self, cr, x, y, w, h):
+        """What the deck has done, and what it is waiting to be allowed to do.
+
+        The auto-healing engine parks an action as `pending` whenever the
+        operator set that class to `confirm`. Before this panel, that decision
+        was visible only to `orionx-heal pending` on a terminal — so the deck
+        could be holding a block-this-host decision while the dashboard the
+        operator was actually watching said nothing.
+        """
+        cx, cy, cw, ch = self._panel(cr, x, y, w, h, "DEFENSIVE ACTIONS")
+        cr.save()
+        cr.rectangle(cx, cy, cw, ch)
+        cr.clip()
+        self._approve_rect = None
+        pend = self.heal.get("pending", [])
+        act = self.heal.get("active", [])
+
+        if not self.heal.get("readable", False):
+            # Never render an empty list here: "no pending actions" and "I
+            # could not look" must not look the same on a defensive dashboard.
+            self._text(cr, cx + 8, cy + 20, "state unknown \u2014 " + (self.heal.get("reason") or "cannot read chain"),
+                       11, L.AMBER)
+            self._text(cr, cx + 8, cy + 38, "run: sudo orionx-heal status", 10, L.DIM)
+            cr.restore()
+            return
+
+        ry = cy + 18
+        if pend:
+            rec = pend[self.heal_sel % len(pend)]
+            self._text(cr, cx + 8, ry, f"AWAITING APPROVAL  ({len(pend)})", 11, L.RED, bold=True)
+            ry += 20
+            self._text(cr, cx + 8, ry,
+                       f"{rec.get('playbook','?')} \u2192 {str(rec.get('target','?'))[:28]}", 12,
+                       (0.95, 0.95, 0.95))
+            ry += 17
+            self._text(cr, cx + 8, ry, f"id {str(rec.get('action_id',''))[:16]}", 10, L.DIM)
+            ry += 22
+            bw, bh = 104.0, 26.0
+            bx, by = cx + 8, ry
+            cr.set_source_rgba(*L.RED, 0.22)
+            self._rrect(cr, bx, by, bw, bh, 6.0)
+            cr.fill()
+            cr.set_source_rgba(*L.RED, 0.95)
+            cr.set_line_width(1.2)
+            self._rrect(cr, bx, by, bw, bh, 6.0)
+            cr.stroke()
+            self._text(cr, bx + bw / 2, by + 17, "APPROVE?", 11.5, L.RED, bold=True, align="center")
+            self._approve_rect = (bx, by, bw, bh)
+            self._text(cr, bx + bw + 10, by + 17, "[a]  Tab: next", 10, L.DIM)
+            ry += bh + 10
+        else:
+            self._text(cr, cx + 8, ry, "nothing awaiting approval", 11, L.DIM)
+            ry += 20
+
+        if act:
+            self._text(cr, cx + 8, ry, f"IN FORCE  ({len(act)})", 11, L.AMBER, bold=True)
+            ry += 18
+            for rec in act[:3]:
+                self._text(cr, cx + 8, ry,
+                           f"\u2022 {rec.get('playbook','?')} \u2192 {str(rec.get('target','?'))[:26]}",
+                           10.5, (0.85, 0.85, 0.85))
+                ry += 15
+        cr.restore()
+
+    # --- drill-down overlay ---
+    def _drill_overlay(self, cr, W, H):
+        """The answer to "why did that fire?" — source, signature, evidence.
+
+        Everything shown here comes from the event's structured detail
+        (DEC-PHASE12-029). An event without detail says so plainly instead of
+        rendering an empty box that looks like a broken panel.
+        """
+        if not (0 <= self.sel < len(self._shown)):
+            return
+        ev = self._shown[self.sel]
+        pad = 40.0
+        w = min(760.0, W - pad * 2)
+        h = min(430.0, H - pad * 2)
+        x = (W - w) / 2
+        y = (H - h) / 2
+        cr.set_source_rgba(0, 0, 0, 0.72)
+        cr.rectangle(0, 0, W, H)
+        cr.fill()
+        cr.set_source_rgba(0.05, 0.06, 0.07, 0.98)
+        self._rrect(cr, x, y, w, h, 10.0)
+        cr.fill()
+        col = L.SEVERITY_COLOR.get(ev["severity"], L.DIM)
+        cr.set_source_rgba(*col, 0.9)
+        cr.set_line_width(1.4)
+        self._rrect(cr, x, y, w, h, 10.0)
+        cr.stroke()
+
+        self._text(cr, x + 18, y + 28, "EVENT DETAIL", 12, col, bold=True)
+        self._text(cr, x + w - 18, y + 28, "Esc / \u21b5 to close", 10, L.DIM, align="right")
+        self._text(cr, x + 18, y + 52,
+                   f"{ev['severity'].upper()}  {ev['source']}/{ev['category']}", 11, col)
+        self._text(cr, x + 18, y + 72, ev["message"][:96], 11.5, (0.93, 0.93, 0.93))
+
+        d = ev.get("detail") or {}
+        ry = y + 102
+        if not d:
+            self._text(cr, x + 18, ry,
+                       "This event carries no structured detail.", 11, L.AMBER)
+            self._text(cr, x + 18, ry + 18,
+                       "Its emitter has not been updated to publish evidence yet.", 10, L.DIM)
+            return
+        # Lead with the fields an operator reaches for first.
+        order = ["src_ip", "dest_ip", "signature", "sid", "technique", "scan_kind",
+                 "distinct_ports", "window_seconds", "protocols", "latest_dport",
+                 "detector", "evidence", "triggering_rule", "ports_seen"]
+        keys = [k for k in order if k in d] + [k for k in sorted(d) if k not in order]
+        for k in keys:
+            if ry > y + h - 26:
+                self._text(cr, x + 18, ry, "\u2026", 11, L.DIM)
+                break
+            v = d[k]
+            if isinstance(v, list):
+                v = ", ".join(str(i) for i in v[:14]) + ("\u2026" if len(v) > 14 else "")
+            label = k.replace("_", " ")
+            if k == "_full":
+                label, v = "full evidence", str(v)
+            self._text(cr, x + 18, ry, label, 10.5, L.DIM)
+            self._text(cr, x + 190, ry, str(v)[:74], 11, (0.9, 0.9, 0.9))
+            ry += 18
 
     # --- threat gauge ---
     def _gauge_panel(self, cr, x, y, w, h):
