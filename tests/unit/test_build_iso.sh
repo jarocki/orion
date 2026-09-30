@@ -1068,19 +1068,37 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "[T36] Bootloader menus: plain GRUB text menu + BIOS vesamenu (DEC-PHASE11-044)"
 
-# T36.a: generator must NOT emit the gfxmenu `set theme=` directive (retired).
-if ! grep -qF "set theme=/boot/grub/themes/orionx/theme.txt" "$BUILD_SCRIPT"; then
-    pass "T36.a: GRUB gfxmenu 'set theme=' retired from generator (DEC-PHASE11-044)"
+# T36.a/b: the invariant is that a DEFAULT build emits a plain GRUB menu — not
+# that the theme strings are absent from the generator. DEC-PHASE12-030 revives
+# the gfxmenu behind ORIONX_GRUB_THEME=1 precisely so the assets and the
+# generator lines survive for hardware testing, and asserting on their mere
+# presence would forbid that. What must never regress is the default: the
+# hardware evidence (rc1-79 no font, rc1-81 unreadable menu) has not changed,
+# and an unreadable boot menu costs the operator the failsafe entry.
+#
+# So: the directives may appear ONLY inside the ORIONX_GRUB_THEME guard.
+_grub_guard="$(awk '/ORIONX_GRUB_THEME:-0/{g=1} g&&/^    fi$/{g=0;next} g' "$BUILD_SCRIPT")"
+_grub_outside="$(grep -vFx -f <(printf '%s\n' "$_grub_guard") "$BUILD_SCRIPT" 2>/dev/null || cat "$BUILD_SCRIPT")"
+
+if ! printf '%s' "$_grub_outside" | grep -qF "set theme=/boot/grub/themes/orionx/theme.txt"; then
+    pass "T36.a: 'set theme=' appears only under ORIONX_GRUB_THEME (default plain — DEC-PHASE11-044/12-030)"
 else
-    fail "T36.a: generator still emits 'set theme=' — gfxmenu theme not retired"
+    fail "T36.a: 'set theme=' emitted unconditionally — default GRUB menu is not plain"
 fi
 
-# T36.b: generator GRUB menu must be plain — no gfxterm/gfxmenu/gfxmode/loadfont.
-# (These broke rendering on real hardware; the Plymouth splash carries identity.)
-if ! grep -qE "insmod gfxmenu|insmod gfxterm|set gfxmode|^\s*loadfont " "$BUILD_SCRIPT"; then
-    pass "T36.b: GRUB menu is plain text (no gfxterm/gfxmenu/gfxmode/loadfont — DEC-PHASE11-044)"
+if ! printf '%s' "$_grub_outside" | grep -qE "insmod gfxmenu|insmod gfxterm|set gfxmode|^\s*loadfont "; then
+    pass "T36.b: GRUB graphics directives are opt-in only (default plain text — DEC-PHASE11-044/12-030)"
 else
-    fail "T36.b: generator still contains GRUB graphics directives — menu can error/unreadable"
+    fail "T36.b: GRUB graphics directives emitted unconditionally — menu can error/unreadable"
+fi
+
+# T36.b2: the flag must default OFF. A revival that ships by accident is the
+# regression this whole guard exists to prevent.
+if grep -qF 'ORIONX_GRUB_THEME:-0' "$BUILD_SCRIPT"; then
+    pass "T36.b2: GRUB theme flag defaults to off"
+else
+    fail "T36.b2: GRUB theme flag does not default to off" \
+         "ORIONX_GRUB_THEME must default to 0 — see DEC-PHASE12-030"
 fi
 
 # T36.c: the readable GRUB menu still offers both entries + a visible timeout.
