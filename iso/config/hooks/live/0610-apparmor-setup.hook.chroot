@@ -11,7 +11,27 @@ if command -v systemctl &>/dev/null; then
     systemctl enable apparmor
 fi
 
-# Add AppArmor boot parameter if not present
+# Add the AppArmor boot parameter for an INSTALLED-TO-DISK system only.
+#
+# @decision DEC-PHASE12-031
+# @title /etc/default/grub is not the live cmdline authority
+# @status accepted
+# @rationale This edit does nothing on the live ISO and quietly did nothing
+#   for the whole life of the project. A live boot takes its cmdline from
+#   iso/auto/config's --bootappend-live, generated into isolinux.cfg/grub.cfg
+#   by scripts/build-iso.sh — /etc/default/grub is only consulted by
+#   update-grub on an installed system. DEC-PHASE11-012 made
+#   --bootappend-live the single authority precisely to stop this class of
+#   dead second authority, and this hook was one.
+#
+#   Consequence: security=apparmor never reached /proc/cmdline, so
+#   apparmor.service's ConditionSecurity=apparmor failed, the service never
+#   started, and the deck ran with ZERO profiles loaded while the README
+#   advertised ollama as AppArmor-confined (DEC-PHASE10-011). Observed on
+#   v2.2.0-rc3: `aa-status` reports "Failed to get profiles: 2", 0 loaded.
+#
+#   The token is now in --bootappend-live. This block is kept because it is
+#   correct for an installed system, and is explicitly NOT the live path.
 GRUB_FILE="/etc/default/grub"
 if [ -f "$GRUB_FILE" ]; then
     if ! grep -q "apparmor=1" "$GRUB_FILE"; then

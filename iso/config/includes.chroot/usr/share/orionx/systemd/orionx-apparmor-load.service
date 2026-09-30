@@ -1,0 +1,51 @@
+# @decision DEC-PHASE12-031
+# @title Load AppArmor profiles on a live boot, where Debian's unit refuses
+# @status accepted
+# @rationale Debian's apparmor.service is gated on
+#     ConditionSecurity=apparmor
+#     ConditionPathExists=!/run/live/overlay/work
+#   The second condition is TRUE on every live boot — /run/live/overlay/work
+#   is the live overlay's work directory — so the stock unit deliberately
+#   skips itself on exactly the system Orion-X is. Combined with the cmdline
+#   bug (the apparmor token lived in /etc/default/grub, which a live boot
+#   never reads), the deck ran with ZERO profiles loaded while the README
+#   advertised ollama as confined (DEC-PHASE10-011).
+#
+#   Observed on v2.2.0-rc3: `aa-status` returns "Failed to get profiles: 2"
+#   and zero loaded profiles; nebula-mcp.service could not start because
+#   AppArmor denied change_onexec with info="label not found". nebula-mcp was
+#   the ONLY component that noticed, because it is designed to fail closed
+#   (DEC-PHASE12-025). Every other profile — ollama, synapse, tshark,
+#   volatility3, wg — silently ran unconfined, which is the worse outcome:
+#   a confinement that is advertised and absent is more dangerous than one
+#   that was never claimed.
+#
+#   This unit loads /etc/apparmor.d unconditionally and early, and is ordered
+#   before the confined services so their change_onexec finds a label. It
+#   does not replace apparmor.service; on an installed system that unit runs
+#   normally and re-loading a profile is idempotent.
+
+[Unit]
+Description=Orion-X AppArmor profile load (live-boot path)
+Documentation=man:apparmor_parser(8)
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target nebula-mcp.service nebula-runtime.service
+ConditionSecurity=apparmor
+ConditionPathIsDirectory=/etc/apparmor.d
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# -r replaces an already-loaded profile, so this is safe alongside
+# apparmor.service on an installed system. Per-file so one bad profile
+# cannot prevent the rest from loading — a partial confinement is worth
+# more than none, and the failure is visible in the journal.
+ExecStart=/bin/sh -c 'rc=0; for p in /etc/apparmor.d/*; do [ -f "$p" ] || continue; \
+  /sbin/apparmor_parser -r "$p" || { echo "orionx-apparmor-load: FAILED $p" >&2; rc=1; }; \
+  done; /sbin/aa-status --enforced >/dev/null 2>&1 || echo "orionx-apparmor-load: no enforced profiles" >&2; exit $rc'
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=sysinit.target

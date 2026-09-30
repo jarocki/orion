@@ -200,6 +200,16 @@ if grep -qE '127\.0\.0\.1:11434' "$PD"; then pass "Nebula pinned to localhost on
 if ! grep -qE 'pip install|import requests|import yaml' "$PD"; then pass "stdlib only (air-gapped safe)"; else fail "stdlib only" "external dependency found"; fi
 if grep -q 'ConditionPathExists\|orionx-enabled' "$PD"; then pass "knows the DEC-PHASE11-008 suricata gate"; else fail "knows the suricata gate"; fi
 if grep -qE 'ExecStart=.*orionx-postured' "$UNIT"; then pass "unit ExecStart points at the daemon"; else fail "unit ExecStart points at the daemon"; fi
+# DEC-PHASE12-032: detection must not wait on the optional model runtime.
+# On rc3 this unit sat inactive with a pending job because it was ordered
+# After=nebula-runtime.service, so Shields Up enforcement and Zeek ingest were
+# dormant — the exact inversion of "the model never gates an alert".
+if grep -qE '^After=.*nebula-runtime' "$UNIT"; then
+  fail "postured is not ordered behind the model runtime" \
+       "After=nebula-runtime.service makes detection wait on optional enrichment"
+else
+  pass "postured is not ordered behind the model runtime (DEC-PHASE12-032)"
+fi
 if command -v ruff >/dev/null 2>&1; then
   if ruff check "$PD" >/dev/null 2>&1; then pass "ruff check clean"; else fail "ruff check clean" "$(ruff check "$PD" 2>&1 | tail -3)"; fi
 fi

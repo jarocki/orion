@@ -250,6 +250,51 @@ else
 fi
 
 # ============================================================
+# AppArmor must be ACTIVE on a live boot, not merely staged
+# (DEC-PHASE12-031)
+#
+# Every assertion above checks that profiles are well-formed and staged. None
+# checked whether a single profile is ever LOADED — and on v2.2.0-rc3 none
+# were: aa-status reported "Failed to get profiles: 2", zero loaded, while the
+# README advertised ollama as confined. A profile that ships and never loads
+# is worse than no profile, because it is believed.
+#
+# Two independent causes, one assertion each.
+# ============================================================
+echo ""
+echo "--- Live-boot AppArmor activation ---"
+
+AUTO_CONFIG="$PROJECT_ROOT/iso/auto/config"
+if grep -q 'security=apparmor' "$AUTO_CONFIG" 2>/dev/null; then
+    pass "live cmdline carries security=apparmor (--bootappend-live, the single authority)"
+else
+    fail "live cmdline carries security=apparmor" \
+         "without it ConditionSecurity=apparmor fails and apparmor.service never starts; /etc/default/grub does NOT work for a live boot (DEC-PHASE11-012)"
+fi
+
+AA_UNIT="$PROJECT_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/orionx-apparmor-load.service"
+if [[ -f "$AA_UNIT" ]]; then
+    pass "orionx-apparmor-load.service present (live-boot profile loader)"
+else
+    fail "orionx-apparmor-load.service present" \
+         "Debian apparmor.service has ConditionPathExists=!/run/live/overlay/work, true on every live boot, so it skips itself"
+fi
+
+H615="$PROJECT_ROOT/iso/config/hooks/live/0615-install-systemd-units.hook.chroot"
+if [[ "$(grep -c 'orionx-apparmor-load.service' "$H615" 2>/dev/null)" -ge 2 ]]; then
+    pass "apparmor loader is both installed and autostarted"
+else
+    fail "apparmor loader is both installed and autostarted" \
+         "needs entries in BOTH UNIT_FILES and AUTOSTART_UNITS; staged-but-not-enabled loads nothing"
+fi
+
+if grep -q 'apparmor_parser -r' "$AA_UNIT" 2>/dev/null; then
+    pass "loader replaces profiles idempotently (-r), safe beside apparmor.service"
+else
+    fail "loader uses apparmor_parser -r" "non-idempotent load conflicts on an installed system"
+fi
+
+# ============================================================
 # Summary
 # ============================================================
 echo ""

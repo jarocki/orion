@@ -980,6 +980,9 @@ ISOLINUX_EOF
         log "  GRUB gfxmenu theme ENABLED (ORIONX_GRUB_THEME=1) — see DEC-PHASE12-030"
         log "  NOTE: this path failed on UEFI hardware twice (DEC-PHASE11-044)."
         log "        Verify the menu is READABLE on the reference deck before shipping."
+        # shellcheck disable=SC2016  # single quotes are deliberate: this is
+        # literal grub.cfg text. Any $ in it belongs to GRUB's own parser, not
+        # the shell, and expanding it here would corrupt the generated config.
         grub_theme_block='
 # Graphical menu (ORIONX_GRUB_THEME=1, DEC-PHASE12-030). Order matters:
 # gfxmode and the font must be in place before gfxterm is selected, or GRUB
