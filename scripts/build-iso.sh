@@ -953,6 +953,49 @@ ISOLINUX_EOF
     #   future revival needs only the generator lines back).
     #   Single authority preserved (DEC-PHASE11-012): generated every build.
     # -----------------------------------------------------------------------
+    # ---------------------------------------------------------------------
+    # Optional GRUB gfxmenu revival — OFF unless ORIONX_GRUB_THEME=1.
+    #
+    # @decision DEC-PHASE12-030
+    # @title GRUB theme revivable behind a build flag, never the default
+    # @status accepted
+    # @rationale DEC-PHASE11-044 retired the gfxmenu theme after it failed on
+    #   real UEFI hardware twice — rc1-79 loaded no font, rc1-81 errored and
+    #   rendered an UNREADABLE menu (operator report 2026-09-12). An unreadable
+    #   boot menu is worse than a plain one: the operator cannot pick the
+    #   failsafe entry, which is the entry that exists for when things are
+    #   already wrong. The assets were deliberately kept for a future revival,
+    #   so reviving should cost one flag, not a re-derivation.
+    #
+    #   It stays opt-in because the evidence against it is hardware evidence
+    #   and nothing has changed about that hardware. ORIONX_GRUB_THEME=1
+    #   produces a testable image; if it renders correctly on the reference
+    #   deck across a couple of firmware/panel combos, flipping the default is
+    #   a one-line change with a decision record behind it. Until then the
+    #   Phoenix boot identity remains the Plymouth splash, which paints after
+    #   i915 KMS and does not depend on GRUB's font stack at all.
+    # ---------------------------------------------------------------------
+    local grub_theme_block=""
+    if [[ "${ORIONX_GRUB_THEME:-0}" == "1" ]]; then
+        log "  GRUB gfxmenu theme ENABLED (ORIONX_GRUB_THEME=1) — see DEC-PHASE12-030"
+        log "  NOTE: this path failed on UEFI hardware twice (DEC-PHASE11-044)."
+        log "        Verify the menu is READABLE on the reference deck before shipping."
+        grub_theme_block='
+# Graphical menu (ORIONX_GRUB_THEME=1, DEC-PHASE12-030). Order matters:
+# gfxmode and the font must be in place before gfxterm is selected, or GRUB
+# falls back with no font loaded — the rc1-79 failure. `|| true` semantics do
+# not exist in grub.cfg, so each step is attempted and GRUB degrades to its
+# text console on failure rather than aborting.
+insmod all_video
+insmod gfxterm
+insmod png
+set gfxmode=auto
+loadfont /boot/grub/fonts/unicode.pf2
+terminal_output gfxterm
+set theme=/boot/grub/themes/orionx/theme.txt
+'
+    fi
+
     cat > "$grub_cfg" << GRUB_EOF
 # GENERATED — do not edit — regenerate via scripts/build-iso.sh
 #
@@ -984,7 +1027,7 @@ ISOLINUX_EOF
 serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
 terminal_input --append serial
 terminal_output --append serial
-
+${grub_theme_block}
 set timeout=5
 set default=0
 
