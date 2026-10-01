@@ -174,6 +174,22 @@ class EventTail:
         return new
 
 
+# Categories that describe the DECK's own condition rather than a threat to it
+# (DEC-PHASE12-034). These are excluded from threat pressure.
+#
+# Observed on hardware: Suricata was failing to start, orionx-postured warned
+# about it every 30s, and the gauge read "5.1 ELEVATED" on an idle machine with
+# nothing attacking it. The deck was frightening itself with its own
+# self-diagnosis. A threat gauge that rises because a service is unhealthy
+# teaches the operator that the gauge means nothing, which is the one thing it
+# cannot afford to teach.
+#
+# Health events still appear in the stream, still carry their severity, still
+# sound the R.A.I.N. cue. They just do not count as threat, because they are
+# not threat.
+SELF_STATUS_CATEGORIES = frozenset({"health", "posture", "service", "tooling"})
+
+
 def pressure(events, now: float, half_life: float = PRESSURE_HALF_LIFE) -> float:
     """Threat pressure 0..100: severity-weighted sum with exponential decay.
 
@@ -183,6 +199,8 @@ def pressure(events, now: float, half_life: float = PRESSURE_HALF_LIFE) -> float
     """
     total = 0.0
     for ev in events:
+        if ev.get("category") in SELF_STATUS_CATEGORIES:
+            continue
         age = max(0.0, now - float(ev.get("ts", now)))
         w = SEVERITY_WEIGHT.get(ev.get("severity", "notice"), 8.0)
         total += w * (0.5 ** (age / half_life))

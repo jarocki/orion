@@ -2146,6 +2146,8 @@ def capture_status(state_dir: Path = CAPTURE_STATE_DIR) -> list[dict]:
 
 class PostureDaemon:
     def __init__(self, args):
+        # DEC-PHASE12-034: bounded Suricata restart state.
+        self._suricata_recovery = {"attempts": 0, "last_attempt": 0.0, "given_up": False}
         self.args = args
         self.dry_run = bool(args.dry_run)
         self.posture_path = pick_posture_file(
@@ -2189,6 +2191,58 @@ class PostureDaemon:
     def emit(self, severity: str, category: str, message: str,
              source: str = "postured") -> None:
         publish(severity, source, category, message, dry_run=self.dry_run)
+
+    # --- suricata recovery (DEC-PHASE12-034) -------------------------------
+    #
+    # This used to re-emit a warning and re-issue `systemctl start` on every
+    # 30s reassert, unconditionally. Observed on hardware: Suricata 7.0.10
+    # exits 1 immediately (no interface configured on a stock image), systemd
+    # hits "start request repeated too quickly", and the deck settles into a
+    # loop that did two kinds of damage.
+    #
+    # It flooded the bus. Every entry in the operator's event stream was this
+    # one message, so the Cockpit showed nothing else — the stream stopped
+    # being a record of what happened to the deck.
+    #
+    # Worse, it drove THREAT PRESSURE to "ELEVATED" on an idle machine with
+    # nothing attacking it, because the gauge weights by severity and these
+    # were warnings. A threat gauge inflated by the deck's own self-diagnosis
+    # teaches the operator to ignore it, which is the one thing it cannot
+    # afford.
+    #
+    # So: bounded attempts, exponential-ish backoff, one escalation, and a
+    # self-status category that is not a detection.
+    SURICATA_MAX_ATTEMPTS = 3
+    SURICATA_RETRY_BACKOFF = 300.0     # seconds between attempts after the first
+
+    def _suricata_recover(self, now: float) -> None:
+        st = self._suricata_recovery
+        if st["given_up"]:
+            return                      # already said it; silence beats a loop
+        if st["attempts"] and (now - st["last_attempt"]) < self.SURICATA_RETRY_BACKOFF:
+            return
+        st["attempts"] += 1
+        st["last_attempt"] = now
+        if st["attempts"] > self.SURICATA_MAX_ATTEMPTS:
+            st["given_up"] = True
+            self.emit("critical", "health",
+                      f"Suricata will not stay running after "
+                      f"{self.SURICATA_MAX_ATTEMPTS} attempts — IDS coverage is "
+                      f"OFF while {self.state['label']} is selected. Not retrying. "
+                      "Check: systemctl status suricata; journalctl -u suricata -n 50. "
+                      "Port-scan detection via orionx-scanwatch is unaffected.")
+            return
+        self.emit("warning", "health",
+                  f"Suricata is not running while {self.state['label']} is "
+                  f"selected — restart attempt {st['attempts']} of "
+                  f"{self.SURICATA_MAX_ATTEMPTS}.")
+        set_gate(True, dry_run=self.dry_run)
+        systemctl("start", SURICATA_UNIT, dry_run=self.dry_run)
+
+    def _suricata_recovery_reset(self) -> None:
+        """Called when the tier changes: a new posture earns a fresh attempt."""
+        self._suricata_recovery = {"attempts": 0, "last_attempt": 0.0,
+                                   "given_up": False}
 
     # --- rules ---
     def refresh_rules(self) -> None:
@@ -2434,6 +2488,9 @@ class PostureDaemon:
         plan = tier_plan(tier, self.rules["usable"])
         actions = plan_actions(self.state, plan)
         if self.state is None or self.state["tier"] != plan["tier"]:
+            # A deliberate posture change earns Suricata a fresh set of
+            # attempts; giving up is scoped to the tier that was failing.
+            self._suricata_recovery_reset()
             self.emit("notice", "posture",
                       f"Posture enforcement: {plan['label']} — "
                       f"suricata={'on' if plan['suricata'] else 'off'}, "
@@ -2465,11 +2522,7 @@ class PostureDaemon:
                     # lie until we put it back — and we say so.
                     self.refresh_rules()
                     if self.state["suricata"] and not service_active(SURICATA_UNIT):
-                        self.emit("warning", "ids",
-                                  f"Suricata is not running while {self.state['label']} "
-                                  "is selected — restarting it.")
-                        set_gate(True, dry_run=self.dry_run)
-                        systemctl("start", SURICATA_UNIT, dry_run=self.dry_run)
+                        self._suricata_recover(now)
                     if self.state["suricata"] and not self.rules["usable"]:
                         self.warn_no_rules(self.state["tier"], now)
                     # Zeek may have been installed since the last cycle, or

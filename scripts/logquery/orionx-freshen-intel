@@ -60,7 +60,20 @@ CACHE_DIR="${ORIONX_LOGQUERY_INTEL_DIR:-$DEFAULT_DIR}"
 
 # Resolve the sibling Python modules whether running from the repo or from
 # the rsynced /opt/orionx/scripts/ tree.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve through the symlink. 0700's SCRIPT_MAP installs this as
+# /usr/bin/orionx-freshen-intel -> /opt/orionx/scripts/logquery/..., so
+# dirname(BASH_SOURCE) is /usr/bin and the sibling modules are not there.
+# Observed on hardware: "ModuleNotFoundError: No module named 'logquery_intel'".
+# Every other SCRIPT_MAP tool already resolves; this one did not.
+_SELF="${BASH_SOURCE[0]}"
+while [ -L "$_SELF" ]; do
+    _LINK="$(readlink "$_SELF")"
+    case "$_LINK" in
+        /*) _SELF="$_LINK" ;;
+        *)  _SELF="$(dirname "$_SELF")/$_LINK" ;;
+    esac
+done
+SCRIPT_DIR="$(cd "$(dirname "$_SELF")" && pwd)"
 
 REQUIRE_ROOT=1
 STATUS_ONLY=0

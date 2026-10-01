@@ -29,7 +29,8 @@
 
 # Define paths
 THEME_DIR="/opt/orionx/theme"
-WALLPAPER_DIR="$THEME_DIR/wallpapers"
+# WALLPAPER_DIR removed: set-wallpaper.sh owns wallpaper selection now
+# (DEC-PHASE12-035), so this script no longer resolves asset paths.
 
 # Log file
 LOGFILE="/var/log/orionx/theme_toggle.log"
@@ -63,16 +64,32 @@ fi
 # Both themes use the phoenix asset — the only staged branded wallpaper.
 # Stale references to orionx-green-wallpaper.png / orionx-dark-wallpaper.png
 # have been removed (DEC-PHASE9-003): those files do not exist in the ISO.
-WALLPAPER="$WALLPAPER_DIR/orionx-phoenix-wallpaper.png"
-log "Setting XFCE wallpaper to phoenix asset: $WALLPAPER"
-if command -v xfconf-query > /dev/null 2>&1; then
-    xfconf-query -c xfce4-desktop \
-        -p /backdrop/screen0/monitor0/workspace0/last-image \
-        -s "$WALLPAPER" 2>/dev/null \
-        || log "WARNING: xfconf-query failed — XFCE session may not be running"
-    log "XFCE wallpaper updated to $WALLPAPER"
+# Delegate to set-wallpaper.sh — the single authority (DEC-PHASE12-035).
+#
+# This used to write /backdrop/screen0/monitor0/workspace0/last-image directly.
+# That path is the exact bug set-wallpaper.sh was written to fix: XFCE 4.20
+# names backdrops by connector (monitoreDP-1, monitorLVDS-1...), so a hardcoded
+# "monitor0" matches nothing on real hardware and the write silently does
+# nothing. Reported from the reference deck as "Toggle Theme stopped doing
+# anything" — it had almost certainly never worked there.
+#
+# Worse, the old code logged "XFCE wallpaper updated" unconditionally after the
+# `||` branch, so it claimed success in exactly the case where it had failed.
+#
+# Two scripts setting the wallpaper two different ways is the dual-authority
+# pattern this project keeps paying for. set-wallpaper.sh enumerates the real
+# properties, waits out the xfdesktop registration race, and handles both path
+# shapes. It is the authority; this calls it.
+SET_WALLPAPER="/opt/orionx/scripts/set-wallpaper.sh"
+[ -x "$SET_WALLPAPER" ] || SET_WALLPAPER="$(dirname "$0")/set-wallpaper.sh"
+if [ -x "$SET_WALLPAPER" ]; then
+    if "$SET_WALLPAPER"; then
+        log "XFCE wallpaper set via set-wallpaper.sh"
+    else
+        log "WARNING: set-wallpaper.sh failed — wallpaper unchanged"
+    fi
 else
-    log "xfconf-query not found, unable to update XFCE wallpaper at runtime"
+    log "WARNING: set-wallpaper.sh not found — wallpaper unchanged (looked in /opt/orionx/scripts and alongside this script)"
 fi
 
 # Update xfce4-terminal color theme

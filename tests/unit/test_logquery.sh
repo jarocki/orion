@@ -768,6 +768,41 @@ if [[ $PEND -gt 0 ]]; then
 fi
 
 printf "\n===========================================\n"
+
+# ---------------------------------------------------------------------------
+# Symlink-safe path resolution (DEC-PHASE12-027)
+#
+# 0700's SCRIPT_MAP installs these as /usr/bin/<name> -> /opt/orionx/scripts/...
+# so anything deriving its module path from dirname(BASH_SOURCE) without
+# resolving the link lands in /usr/bin and cannot import its siblings.
+# Reported from hardware: `orionx-freshen-intel` died with
+# "ModuleNotFoundError: No module named 'logquery_intel'". Every other
+# SCRIPT_MAP tool already resolved; this one did not.
+# ---------------------------------------------------------------------------
+section "Symlink-safe invocation"
+
+for _tool in orionx-logquery orionx-freshen-intel; do
+    _src="$REPO_ROOT/scripts/logquery/$_tool"
+    if grep -qE 'readlink|realpath|\.resolve\(\)' "$_src"; then
+        pass "$_tool resolves symlinks before deriving its module path"
+    else
+        fail "$_tool resolves symlinks before deriving its module path" \
+             "invoked via /usr/bin it will look for siblings in /usr/bin"
+    fi
+done
+
+# Prove it rather than grep for it: invoke through a real symlink and confirm
+# the import stage is reached (it may then fail on network, which is fine).
+_LT="$(mktemp -d "$REPO_ROOT/tmp/linktest.XXXXXX")"
+ln -sf "$REPO_ROOT/scripts/logquery/orionx-freshen-intel" "$_LT/orionx-freshen-intel"
+_OUT="$(ORIONX_LOGQUERY_INTEL_DIR="$_LT/cache" bash "$_LT/orionx-freshen-intel" --no-root 2>&1 || true)"
+if echo "$_OUT" | grep -q 'ModuleNotFoundError'; then
+    fail "freshen-intel imports its siblings when run via a symlink" "$(echo "$_OUT" | tail -2)"
+else
+    pass "freshen-intel imports its siblings when run via a symlink"
+fi
+rm -rf "$_LT"
+
 printf "  Results: ${GREEN}%s passed${NC}, ${RED}%s failed${NC}\n" "$PASS" "$FAIL"
 if [[ $PEND -gt 0 ]]; then
     printf "  (${YEL}%s pending${NC} central hook wiring — see WIRING above)\n" "$PEND"
