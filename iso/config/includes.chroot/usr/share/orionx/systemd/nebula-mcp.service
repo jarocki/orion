@@ -114,7 +114,23 @@ PrivateDevices=yes
 # owned by nebula-mcp.
 ReadWritePaths=/var/log/orionx
 RuntimeDirectory=nebula-mcp
-RuntimeDirectoryMode=0755
+RuntimeDirectoryMode=0750
+
+# DEC-PHASE12-033: the runtime directory is the access gate, not the socket.
+#
+# The `+` prefix runs this outside the sandbox (as root, no SystemCallFilter),
+# which is the point: the one privileged action this service needs happens
+# here, once, and the long-running server stays fully confined. Previously the
+# server itself tried to chgrp its socket — syscall 92, blocked by
+# ~@privileged, which killed it with SIGSYS rather than returning the OSError
+# its try/except expected (observed rc4: status=31/SYS, 3 restarts). It could
+# not have worked anyway: SupplementaryGroups= is empty, so chgrp to `sudo`
+# from uid nebula-mcp is EPERM.
+#
+# 0770 nebula-mcp:sudo — the server (owner) creates the socket, the operator
+# (member of sudo, which live-config grants) can traverse. Only root can
+# change this, and no mode on the socket inside can widen it.
+ExecStartPre=+/bin/sh -c 'chgrp sudo /run/nebula-mcp && chmod 0770 /run/nebula-mcp'
 UMask=0027
 
 # --- resources: bounded, on a deck that may be running on battery -----------

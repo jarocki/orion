@@ -393,8 +393,22 @@ section "Unix-socket transport (the PrivateNetwork answer)"
 want "server can bind a unix socket"    'def serve_unix' "$MCP"
 want "server still supports stdio"      'def serve_stdio' "$MCP"
 want "both transports share one handler" 'def handle_line' "$MCP"
-want "socket is chmod 0660"             'os.chmod\(path, 0o660\)' "$MCP"
-want "socket is chgrp'd to the operator group" 'shutil.chown\(path, group=group\)' "$MCP"
+want "socket is chmod 0666 (directory-gated, DEC-PHASE12-033)" 'os.chmod\(path, 0o666\)' "$MCP"
+# The server must do NO privileged work: chown is syscall 92, blocked by
+# SystemCallFilter=~@privileged, and seccomp kills with SIGSYS rather than
+# raising the OSError the old try/except expected (rc4: status=31/SYS, three
+# restarts). The chgrp now happens in the unit's ExecStartPre, outside the
+# sandbox. Asserting ABSENCE here is the regression guard.
+if ! grep -qE 'shutil\.chown|os\.chown' "$MCP"; then
+    pass "server performs no chown (would SIGSYS under ~@privileged)"
+else
+    fail "server performs no chown" "chown is syscall 92; seccomp kills the process, the except clause never runs"
+fi
+if grep -qE "^ExecStartPre=\+.*chgrp sudo /run/nebula-mcp" "$UNIT"; then
+    pass "privileged socket-dir setup runs outside the sandbox (ExecStartPre=+)"
+else
+    fail "privileged socket-dir setup runs outside the sandbox" "needs ExecStartPre=+ ... chgrp sudo /run/nebula-mcp"
+fi
 want "oversized requests are rejected"  '_MAX_LINE_BYTES' "$MCP"
 deny "server never opens an IP socket"  'AF_INET|socket\.create_connection|urllib' "$MCP"
 want "bridge connects over AF_UNIX"     'socket\.AF_UNIX' "$TOOLCHAT"
@@ -428,7 +442,15 @@ SRV_PID=$!
 for _ in $(seq 1 50); do [[ -S "$SOCK" ]] && break; sleep 0.1; done
 if [[ -S "$SOCK" ]]; then pass "server created the unix socket"; else fail "server created the unix socket" "$(cat "$TMP/server.out")"; fi
 PERMS="$(ls -l "$SOCK" 2>/dev/null | cut -c1-10)"
-if [[ "$PERMS" == "srw-rw----" ]]; then pass "socket is 0660 (not world-connectable)"; else fail "socket is 0660" "$PERMS"; fi
+# DEC-PHASE12-033: the socket is world-rw and the 0770 runtime directory
+# is the gate. The old 0660+chgrp pair could not work — chown is syscall 92,
+# which ~@privileged blocks, and seccomp kills with SIGSYS instead of raising
+# the OSError the code caught (rc4: status=31/SYS, three restarts).
+if [[ "$PERMS" == "srw-rw-rw-" ]]; then
+    pass "socket is 0666, access gated by the 0770 directory"
+else
+    fail "socket is 0666, access gated by the 0770 directory" "got $PERMS"
+fi
 
 # ===========================================================================
 section "Model-in-the-loop: containment by the static registry"

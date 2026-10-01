@@ -627,24 +627,42 @@ def _prepare_socket_path(path: str) -> None:
 
 
 def _grant_socket_access(path: str, group: str = SOCKET_GROUP) -> str:
-    """chmod 0660 and chgrp the socket so the operator — and only the operator
-    — can connect. Returns a short description of what was actually applied.
+    """Make the socket reachable by the operator. Returns what was applied.
 
-    Best-effort by design: on a build host the group may not exist, and the
-    socket is still 0660 owned by nebula-mcp, which fails closed (nobody but
-    the server user and root can connect) rather than open.
+    @decision DEC-PHASE12-033
+    @title Access control lives on the runtime directory, not the socket
+    @status accepted
+    @rationale This used to chmod 0660 and then chgrp the socket to `sudo`,
+      wrapped in try/except as "best-effort". Two things were wrong with that,
+      and the first killed the service.
+
+      1. The chgrp is syscall 92 (chown), which the unit's
+         SystemCallFilter=~@privileged blocks. Seccomp does not raise OSError —
+         it delivers SIGSYS and the process dies. The except clause could never
+         run. Observed on v2.2.0-rc4: status=31/SYS, core-dump, three restarts
+         in thirty seconds. A defensive handler written for a failure mode that
+         cannot occur is worse than none, because it reads as handled.
+
+      2. Even permitted, it could not have worked. The service runs as
+         nebula-mcp with SupplementaryGroups= deliberately empty, so it is not
+         a member of `sudo`; chgrp to a group you do not belong to is EPERM for
+         a non-root uid. The "best-effort" path would always have degraded to
+         0660 nebula-mcp:nebula-mcp — unreachable by orionx-operator — so
+         `nebula ask` could never have connected.
+
+      So the socket does no privileged work at all. The unit's ExecStartPre
+      (prefixed `+`, therefore outside the sandbox) sets the runtime directory
+      to 0770 nebula-mcp:sudo, and the socket is created world-rw inside it.
+      The directory is the gate: only root can change it, traversal requires
+      membership of `sudo`, and a mode on the socket cannot widen that. This
+      is strictly less privilege than before — no chown syscall, no extra group
+      membership — and unlike before, it works.
     """
-    applied = "0660"
     try:
-        os.chmod(path, 0o660)
+        os.chmod(path, 0o666)
     except OSError:
         return "unchanged"
-    try:
-        shutil.chown(path, group=group)
-        applied += f" root-group={group}"
-    except (OSError, LookupError, KeyError):
-        applied += " (group unchanged)"
-    return applied
+    return "0666 inside 0770 dir (directory-gated)"
 
 
 def serve_unix(
