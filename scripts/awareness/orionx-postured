@@ -122,6 +122,13 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 
+# Sibling module (DEC-PHASE12-038). __file__ MUST be resolved first: the 0700
+# hook symlinks /usr/bin/orionx-postured at /opt/orionx/scripts/awareness/
+# orionx-postured, so a naive dirname(__file__) is /usr/bin and this import
+# fails at boot with the daemon dead and the tier unenforced.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import suricata_capture as capture  # noqa: E402
+
 # --- Paths (single authorities, all overridable for tests) ------------------
 
 # Written by the Control Center as the DESKTOP user; this daemon runs as root.
@@ -208,6 +215,12 @@ MAX_ALERT_KEYS = 4096         # bounded memory; an alert storm must not OOM us
 SCAN_DEDUP_WINDOW = 180.0     # suppress Suricata scan alerts scanwatch owns
 NEBULA_QUEUE_MAX = 8          # drop context requests rather than block anything
 NEBULA_TIMEOUT = 20.0
+
+# DEC-PHASE12-038. How often capture self-status repeats once announced. Long,
+# because a degraded capture state is persistent by nature and the bus is the
+# operator's only record of everything else that happened to the deck.
+CAPTURE_REANNOUNCE = 900.0
+CAPTURE_VERIFY_EVERY = 60.0   # re-ask the engine what it is attached to
 
 TIERS = ("0", "1", "2")
 TIER_LABEL = {
@@ -1203,7 +1216,7 @@ def zeek_blind(conn_records: int, watch_started: float, now: float,
 # PURE: what each tier actually means
 # ===========================================================================
 
-def tier_plan(tier: str, rules_usable: bool) -> dict:
+def tier_plan(tier: str, rules_usable: bool, live_ifaces=None) -> dict:
     """The desired system state for a tier. No side effects, fully testable.
 
     Tier 0 — passive. Nothing is started, no gate file, no packets, no
@@ -1234,16 +1247,42 @@ def tier_plan(tier: str, rules_usable: bool) -> dict:
     """
     tier = tier if tier in TIERS else "0"
     ids = tier in ("1", "2")
+
+    # DEC-PHASE12-038. `live_ifaces` is the measured set of interfaces
+    # carrying packets. Three states, not two:
+    #
+    #   None  — the heartbeat has not reported yet. Only reachable through
+    #           --print-plan before the first sample and through callers that
+    #           predate this parameter; the plan then describes the tier's
+    #           INTENT, exactly as it did before, and says capture is unknown.
+    #   ()    — measured, and nothing is carrying traffic. Suricata is NOT
+    #           started: with an empty af-packet list it exits 1 immediately
+    #           ("No interface found in config for af-packet", measured on
+    #           7.0.10), so starting it would buy a restart storm and a lie.
+    #   (...) — start, capturing on exactly these.
+    #
+    # The daemon always passes a measured value, so the None branch never
+    # decides anything on real hardware. It exists so the pure function has
+    # one honest answer for "nobody has measured yet" instead of guessing.
+    known = live_ifaces is not None
+    chosen = tuple(sorted(set(live_ifaces))) if known else ()
+    capture_ok = (not known) or bool(chosen)
+
     return {
         "tier": tier,
         "label": TIER_LABEL[tier],
         "gate_file": ids,
-        "suricata": ids,
+        "suricata": ids and capture_ok,
         "eve_ingest": ids,
         "zeek_ingest": True,
         "nebula_context": ids,
         "deception": tier == "2",
         "warn_no_rules": ids and not rules_usable,
+        # Interfaces Suricata should capture on. Empty at Tier 0 because Tier
+        # 0 starts nothing and sends nothing.
+        "capture_ifaces": chosen if ids else (),
+        # True only when we have MEASURED that there is nothing to capture.
+        "warn_no_capture": bool(ids and known and not chosen),
     }
 
 
@@ -1259,7 +1298,8 @@ def plan_actions(prev: dict | None, new: dict) -> list[tuple]:
     """
     prev = prev or {"gate_file": False, "suricata": False, "eve_ingest": False,
                     "zeek_ingest": False, "deception": False,
-                    "warn_no_rules": False, "tier": None}
+                    "warn_no_rules": False, "tier": None,
+                    "capture_ifaces": ()}
     up: list[tuple] = []
     down: list[tuple] = []
 
@@ -1274,8 +1314,26 @@ def plan_actions(prev: dict | None, new: dict) -> list[tuple]:
 
     if new["gate_file"] and not prev.get("gate_file"):
         up.append(("gate", "create"))
-    if new["suricata"] and not prev.get("suricata"):
+
+    # DEC-PHASE12-038. The interface list must be on disk BEFORE systemd is
+    # asked to start the unit, for the same reason the gate file must: the
+    # engine reads its config once, at start. Writing it afterwards would
+    # mean the first start captured the previous set and nobody noticed
+    # until the next restart.
+    prev_ifaces = tuple(prev.get("capture_ifaces") or ())
+    new_ifaces = tuple(new.get("capture_ifaces") or ())
+    starting = new["suricata"] and not prev.get("suricata")
+    changed = (new["suricata"] and prev.get("suricata")
+               and new_ifaces != prev_ifaces)
+    if new_ifaces and (starting or changed):
+        up.append(("capture", "write", new_ifaces))
+    if starting:
         up.append(("service", "start", SURICATA_UNIT))
+    elif changed:
+        # Not stop+start: a restart is one systemd transaction, so there is
+        # no window in which the unit is enabled with no process and the
+        # reassert loop sees it as crashed and spends a recovery attempt.
+        up.append(("service", "restart", SURICATA_UNIT))
     if new["eve_ingest"] and not prev.get("eve_ingest"):
         up.append(("eve", "start"))
     if new["deception"] and not prev.get("deception"):
@@ -1293,6 +1351,8 @@ def plan_actions(prev: dict | None, new: dict) -> list[tuple]:
     actions = down + up
     if new["warn_no_rules"]:
         actions.append(("warn", "no-rules"))
+    if new.get("warn_no_capture"):
+        actions.append(("warn", "no-capture"))
     return actions
 
 
@@ -1358,22 +1418,36 @@ def condense(text: str | None, limit: int = 240) -> str | None:
 # ===========================================================================
 
 def publish(severity: str, source: str, category: str, message: str,
-            dry_run: bool = False) -> None:
+            dry_run: bool = False, detail: dict | None = None) -> None:
     """Fire-and-forget onto the bus via the orionx-event CLI.
 
     Same mechanism as orionx-scanwatch and the Control Center: subprocess to
     the CLI rather than importing rain_lib, so there is one writer contract
     and no import coupling between detectors and the bus implementation.
+
+    `detail` is structured evidence for the Cockpit drill-down: the
+    interfaces involved, the measured packet rates, the config path, the
+    exact thing that failed. A message tells the operator what happened; the
+    detail is what they need to act without reconstructing it by hand. An
+    unserialisable detail is dropped rather than losing the event with it.
     """
     if dry_run:
-        print(f"[{severity}] {source}/{category}: {message}", flush=True)
+        extra = f" {json.dumps(detail, sort_keys=True)}" if detail else ""
+        print(f"[{severity}] {source}/{category}: {message}{extra}",
+              flush=True)
         return
+    argv = ["orionx-event", "--severity", severity, "--source", source,
+            "--category", category]
+    if detail:
+        try:
+            argv += ["--detail", json.dumps(detail, sort_keys=True,
+                                            default=str)]
+        except (TypeError, ValueError):
+            pass
+    argv.append(message)
     try:
-        subprocess.Popen(
-            ["orionx-event", "--severity", severity, "--source", source,
-             "--category", category, message],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        subprocess.Popen(argv, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
     except OSError:
         pass
 
@@ -1498,13 +1572,20 @@ class Contextualizer:
             if text is None:
                 if not self._unavailable_announced:
                     self._unavailable_announced = True
-                    publish("notice", "nebula", "ids",
+                    # `tooling`, not `ids`: the message itself says detection
+                    # is unaffected, so it must not move the threat gauge.
+                    publish("notice", "nebula", "tooling",
                             "Nebula contextualizer unavailable — IDS alerts are "
                             "publishing WITHOUT plain-language explanations. "
                             "Detection is unaffected.", dry_run=self.dry_run)
                 continue
             self.contextualised += 1
-            publish("info", "nebula", "ids",
+            # `tooling`, not `ids`. This is an annotation of an alert that was
+            # already published under `ids`; emitting it as `ids` too counted
+            # every real detection twice in the panel's scan widget and in
+            # pressure() — about 2x whenever Ollama was up, 1x when it was not,
+            # so the gauge moved according to model availability.
+            publish("info", "nebula", "tooling",
                     f"Context for sid:{alert.get('signature_id', 0)} — {text}",
                     dry_run=self.dry_run)
 
@@ -2187,10 +2268,33 @@ class PostureDaemon:
         self.alerts_published = 0
         self.alerts_suppressed = 0
 
+        # --- capture (DEC-PHASE12-038) ---
+        self.sysfs = Path(args.sysfs)
+        self.capture_yaml = Path(args.interfaces_yaml)
+        self.suricata_config = Path(args.suricata_config)
+        self.heartbeat = capture.InterfaceHeartbeat(
+            window=args.live_window, min_packets=args.live_packets,
+            quiet_demote=args.quiet_demote, max_ifaces=args.max_ifaces,
+            pinned=tuple(args.capture_iface or ()))
+        self.brake = capture.ReconfigureBrake(cooldown=args.reconfig_cooldown)
+        self._last_heartbeat = 0.0
+        self._verify_due = 0.0
+        self._verify: dict = {"verified": None, "attached": [],
+                              "reason": "not yet checked"}
+        self._capture_announced: dict[str, float] = {}
+        self._attached_since = 0.0
+        self._blind_announced = False
+        self._config_verdict: dict | None = None
+        self._brake_decision: dict = {"act": False, "reason": "no-sample"}
+        # One synchronous sample before anything is applied, so the very
+        # first plan is made against measured interfaces rather than a guess.
+        self.heartbeat_tick(time.time())
+
     # --- bus helper ---
     def emit(self, severity: str, category: str, message: str,
-             source: str = "postured") -> None:
-        publish(severity, source, category, message, dry_run=self.dry_run)
+             source: str = "postured", detail: dict | None = None) -> None:
+        publish(severity, source, category, message, dry_run=self.dry_run,
+                detail=detail)
 
     # --- suricata recovery (DEC-PHASE12-034) -------------------------------
     #
@@ -2229,20 +2333,203 @@ class PostureDaemon:
                       f"Suricata will not stay running after "
                       f"{self.SURICATA_MAX_ATTEMPTS} attempts — IDS coverage is "
                       f"OFF while {self.state['label']} is selected. Not retrying. "
-                      "Check: systemctl status suricata; journalctl -u suricata -n 50. "
-                      "Port-scan detection via orionx-scanwatch is unaffected.")
+                      "Check: systemctl status suricata; journalctl -u suricata -n 50; "
+                      f"suricata -T -v -c {self.suricata_config}. "
+                      "Port-scan detection via orionx-scanwatch is unaffected.",
+                      detail={"reason": "suricata-gave-up",
+                              "attempts": self.SURICATA_MAX_ATTEMPTS,
+                              "capture_ifaces": list(
+                                  self.state.get("capture_ifaces") or ()),
+                              "config": str(self.suricata_config),
+                              "config_verdict": self._config_verdict})
             return
+        ifaces = tuple(self.state.get("capture_ifaces") or ())
         self.emit("warning", "health",
                   f"Suricata is not running while {self.state['label']} is "
                   f"selected — restart attempt {st['attempts']} of "
-                  f"{self.SURICATA_MAX_ATTEMPTS}.")
+                  f"{self.SURICATA_MAX_ATTEMPTS} "
+                  f"(capture: {', '.join(ifaces) or 'none'}).",
+                  detail={"reason": "suricata-restart",
+                          "attempt": st["attempts"],
+                          "max_attempts": self.SURICATA_MAX_ATTEMPTS,
+                          "capture_ifaces": list(ifaces)})
         set_gate(True, dry_run=self.dry_run)
+        # Re-assert the interface list before retrying. A recovery that
+        # starts the engine against a stale config is a recovery that
+        # succeeds into the wrong state (DEC-PHASE12-038).
+        self.write_capture_config(ifaces, now)
         systemctl("start", SURICATA_UNIT, dry_run=self.dry_run)
+        self._verify_due = now + capture.VERIFY_GRACE_SECONDS
 
     def _suricata_recovery_reset(self) -> None:
         """Called when the tier changes: a new posture earns a fresh attempt."""
         self._suricata_recovery = {"attempts": 0, "last_attempt": 0.0,
                                    "given_up": False}
+
+    # --- capture: heartbeat, config, verification (DEC-PHASE12-038) --------
+
+    def heartbeat_tick(self, now: float) -> tuple:
+        """Sample the kernel's interface counters. Cheap enough to do often.
+
+        Four sysfs reads per interface per tick, no subprocess, no netlink,
+        no network. This is the Loop stage for capture: an interface that
+        appears, disappears, wakes up or goes quiet changes the answer here
+        and nowhere else.
+        """
+        self._last_heartbeat = now
+        self.heartbeat.observe(capture.sample_interfaces(self.sysfs), now)
+        return self.heartbeat.selected(now)
+
+    def capture_target(self, now: float) -> tuple:
+        """What Suricata should capture on, after the anti-thrash brake.
+
+        The brake, not the heartbeat, has the last word: the heartbeat says
+        what is true, the brake says whether now is an acceptable moment to
+        restart a running IDS over it. When the brake says no, the plan keeps
+        describing the set already applied, so plan_actions() diffs to
+        nothing and no restart happens.
+        """
+        desired = self.heartbeat.selected(now)
+        decision = self.brake.decide(desired, now,
+                                     present=self.heartbeat.present)
+        self._brake_decision = decision
+        if decision["act"]:
+            return desired
+        return tuple(self.brake.applied or ())
+
+    def announce_capture(self, key: str, severity: str, message: str,
+                         detail: dict, now: float,
+                         repeat: float = CAPTURE_REANNOUNCE) -> None:
+        """Say it once per condition, then only on a timer or on a change.
+
+        Keyed by CONDITION rather than by message text, so a rate that
+        changes by one packet does not re-announce the same problem. Any
+        other key clears this one: moving from "no live interface" to
+        "capturing" is a change the operator must hear immediately, not at
+        the next repeat interval.
+        """
+        last = self._capture_announced.get(key)
+        if last is not None and (now - last) < repeat:
+            return
+        self._capture_announced = {key: now}
+        self.emit(severity, "health", message, source="suricata",
+                  detail=detail)
+
+    def capture_preflight(self, now: float) -> bool:
+        """Would Suricata accept this configuration? Ask it, do not assume.
+
+        Runs before the first start of a tier, not on every reassert: it
+        loads the full ruleset and costs seconds. Returns False only when the
+        engine positively rejected the config — "no rules" is a valid config
+        with nothing to match on, which DEC-PHASE12-024's own warning owns,
+        and refusing to start on it would mean a deck that has not fetched
+        ET-Open yet gets no protocol-anomaly detection either.
+        """
+        verdict = capture.check_config(self.suricata_config,
+                                       binary=capture.SURICATA_BIN)
+        self._config_verdict = verdict
+        if verdict["verdict"] == "absent":
+            sev, msg, detail = capture.absent_message(self.state["label"])
+            self.announce_capture("suricata-absent", sev, msg, detail, now)
+            return False
+        if verdict["verdict"] == "invalid":
+            sev, msg, detail = capture.invalid_config_message(
+                verdict, self.suricata_config)
+            self.announce_capture("config-rejected", sev, msg, detail, now)
+            return False
+        return True
+
+    def write_capture_config(self, ifaces, now: float) -> bool:
+        """Generate the af-packet include. Idempotent by content."""
+        res = capture.write_interfaces_yaml(ifaces, self.capture_yaml,
+                                            dry_run=self.dry_run)
+        if not res["ok"]:
+            self.announce_capture(
+                "config-unwritable", "critical",
+                f"Could not write the Suricata interface list "
+                f"{self.capture_yaml}: {res['error']}. Consequence: the IDS "
+                "will capture on the PREVIOUS interface set, or not start at "
+                "all. " + capture.SCANWATCH_NOTE + " Remedy: check that "
+                "/var/lib/suricata is writable and that orionx-postured.service "
+                "still lists it in ReadWritePaths (`systemctl cat "
+                "orionx-postured`).",
+                {"reason": "config-unwritable", "path": res["path"],
+                 "error": res["error"]}, now)
+            return False
+        return True
+
+    def verify_capture(self, now: float) -> dict:
+        """Ask the RUNNING engine what it attached to, and say so honestly.
+
+        This is the Check stage, and the reason this work exists. `systemctl
+        start suricata` exiting 0 means systemd forked a process. The engine's
+        own iface-list is the only thing that can say a capture socket was
+        opened on the interface Orion-X asked for.
+        """
+        desired = tuple(self.state.get("capture_ifaces") or ())
+        if not service_active(SURICATA_UNIT):
+            self._verify = {"verified": False, "attached": [],
+                            "reason": "suricata.service is not active"}
+            self._attached_since = 0.0
+            return self._verify
+
+        res = capture.verify_capture(desired)
+        self._verify = res
+
+        # Checked FIRST, and at critical: the engine is up, it answers, it
+        # lists the interface, and its capture socket never opened. Nothing
+        # else on the deck can see this failure.
+        if res.get("socket_errors"):
+            sev, msg, detail = capture.socket_error_message(res)
+            self.announce_capture("capture-socket-error", sev, msg, detail,
+                                  now)
+            self._attached_since = 0.0
+            return res
+
+        if res["verified"] is None:
+            sev, msg, detail = capture.unverified_message(res, desired)
+            self.announce_capture("capture-unverified", sev, msg, detail, now)
+            self._attached_since = 0.0
+            return res
+
+        if not res["verified"]:
+            sev, msg, detail = capture.capture_mismatch_message(
+                res, desired, self.state["label"])
+            self.announce_capture("iface-mismatch", sev, msg, detail, now)
+            self._attached_since = 0.0
+            return res
+
+        if not self._attached_since:
+            self._attached_since = now
+        if res["total_packets"] > 0:
+            self._blind_announced = False
+            sev, msg, detail = capture.capture_ok_message(
+                res, self.state["label"])
+            # Healthy state is announced on CHANGE, not on a timer: a working
+            # IDS that says so every fifteen minutes is noise that buries the
+            # one time it stops working.
+            self.announce_capture("capture-verified", sev, msg, detail, now,
+                                  repeat=float("inf"))
+        elif (not self._blind_announced
+              and (now - self._attached_since) >= capture.CAPTURE_BLIND_SECONDS):
+            self._blind_announced = True
+            sev, msg, detail = capture.capture_blind_message(
+                res, now - self._attached_since)
+            self.announce_capture("capture-blind", sev, msg, detail, now)
+        return res
+
+    def warn_no_capture(self, now: float) -> None:
+        """No interface is carrying traffic, so Suricata was not started."""
+        if self.heartbeat.warming_up(now):
+            # Not measured yet. Saying "no interface is carrying traffic" one
+            # second after start, on a deck whose NIC is fine, is a false
+            # alarm the operator pays for in trust.
+            return
+        status = self.heartbeat.status(now)
+        sev, msg, detail = capture.no_live_message(status,
+                                                   self.state["label"])
+        detail["tier"] = self.state["tier"]
+        self.announce_capture("no-live-interface", sev, msg, detail, now)
 
     # --- rules ---
     def refresh_rules(self) -> None:
@@ -2262,7 +2549,16 @@ class PostureDaemon:
             return
         self.no_rules_announced = True
         self.last_no_rules_warn = now
-        self.emit(NO_RULES_FIRST if first else NO_RULES_REPEAT, "ids",
+        # Category `health`, NOT `ids`. A blind IDS is genuinely critical, so
+        # the severity policy above is unchanged — but it is a fact about this
+        # deck, not a detection. pressure() in cockpit_lib weights `ids` by
+        # severity and does not exclude it, so publishing this as `ids` drove
+        # THREAT PRESSURE to ELEVATED on an idle machine and re-spiked every
+        # NO_RULES_REANNOUNCE seconds, flashing the screen red and ticking the
+        # scan counter. That is byte-for-byte the incident DEC-PHASE12-034 was
+        # written to stop, thirty lines from its own fix. RESILIENCE.md rule 5:
+        # self-diagnosis is not a threat.
+        self.emit(NO_RULES_FIRST if first else NO_RULES_REPEAT, "health",
                   no_rules_message(tier, self.rules))
 
     # --- eve ingest ---
@@ -2373,7 +2669,11 @@ class PostureDaemon:
             self._zeek_last_announce = now
             if self.zeek.running and not was_running and changed:
                 self._zeek_blind_announced = False
-            self.emit(severity, "ids", message, source="zeek")
+            # `health`, not `ids`. zeek_state_message() describes THIS DECK's
+            # Zeek capability — installed, absent, logs unreadable — and not
+            # anything Zeek detected. Zeek's actual notices below are `ids`,
+            # because those are detections. RESILIENCE.md rule 5.
+            self.emit(severity, "health", message, source="zeek")
 
         # Zeek attached to a live log directory that has produced no
         # connection at all is the Suricata-with-no-rules failure again.
@@ -2381,7 +2681,8 @@ class PostureDaemon:
                 and zeek_blind(self.zeek.conn_records,
                                self.zeek.watch_started, now)):
             self._zeek_blind_announced = True
-            self.emit("warning", "ids",
+            # Self-diagnosis: a sensor reporting on itself, not a detection.
+            self.emit("warning", "health",
                       f"Zeek has been reading {self.zeek.active_dir} for "
                       f"{ZEEK_LIVENESS_SECONDS / 60:.0f} minutes and conn.log "
                       "has produced ZERO connection records. That is not a "
@@ -2408,7 +2709,19 @@ class PostureDaemon:
             kind = action[0]
             if kind == "gate":
                 set_gate(action[1] == "create", dry_run=self.dry_run)
+            elif kind == "capture":
+                self.write_capture_config(action[2], now)
             elif kind == "service":
+                if action[1] in ("start", "restart"):
+                    # Check before Do: a config the engine will reject is
+                    # worth one clear message, not three silent exit-1s and
+                    # an exhausted attempt budget.
+                    if not self.capture_preflight(now):
+                        done.append("service:refused:" + action[2])
+                        continue
+                    self._attached_since = 0.0
+                    self._blind_announced = False
+                    self._verify_due = now + capture.VERIFY_GRACE_SECONDS
                 systemctl(action[1], action[2], dry_run=self.dry_run)
             elif kind == "zeek":
                 if action[1] == "start":
@@ -2445,7 +2758,10 @@ class PostureDaemon:
                               "Tier 2 deception disarmed — decoys closed, canaries "
                               "removed, runtime firewall opening deleted.")
             elif kind == "warn":
-                self.warn_no_rules(tier, now)
+                if action[1] == "no-capture":
+                    self.warn_no_capture(now)
+                else:
+                    self.warn_no_rules(tier, now)
             done.append(":".join(str(a) for a in action))
         return done
 
@@ -2474,6 +2790,24 @@ class PostureDaemon:
             "zeek_published": self.zeek_published,
             "zeek_suppressed": self.zeek_suppressed,
             "capture": capture_status(),
+            # DEC-PHASE12-038. ids_capture is runtime truth about the IDS's
+            # own capture, kept separate from `capture`, which is
+            # orionx-capture's operator-requested PCAP state. Two different
+            # facts; one status file, two keys, no ambiguity.
+            "ids_capture": {
+                "desired": list(self.state.get("capture_ifaces") or ()),
+                "verified": self._verify.get("verified"),
+                "configured": self._verify.get("configured"),
+                "capturing": self._verify.get("capturing"),
+                "socket_errors": self._verify.get("socket_errors") or {},
+                "attached": self._verify.get("attached") or [],
+                "packets": self._verify.get("packets") or {},
+                "reason": self._verify.get("reason"),
+                "config": str(self.suricata_config),
+                "interfaces_file": str(self.capture_yaml),
+                "heartbeat": self.heartbeat.status(time.time()),
+                "brake": self.brake.status(),
+            },
         }
         try:
             STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -2484,20 +2818,39 @@ class PostureDaemon:
             pass
 
     def apply_tier(self, tier: str) -> list[str]:
+        now = time.time()
         self.refresh_rules()
-        plan = tier_plan(tier, self.rules["usable"])
+        target = self.capture_target(now)
+        plan = tier_plan(tier, self.rules["usable"], live_ifaces=target)
         actions = plan_actions(self.state, plan)
-        if self.state is None or self.state["tier"] != plan["tier"]:
+        prev_ifaces = tuple((self.state or {}).get("capture_ifaces") or ())
+        tier_changed = self.state is None or self.state["tier"] != plan["tier"]
+        if tier_changed or prev_ifaces != tuple(plan["capture_ifaces"]):
             # A deliberate posture change earns Suricata a fresh set of
-            # attempts; giving up is scoped to the tier that was failing.
+            # attempts, and so does a new interface set: "it would not start
+            # on eth0" is not evidence about wlan0, and refusing to try the
+            # NIC the operator just plugged in would be the daemon giving up
+            # on a situation it has never actually attempted.
             self._suricata_recovery_reset()
+        if tier_changed:
             self.emit("notice", "posture",
                       f"Posture enforcement: {plan['label']} — "
                       f"suricata={'on' if plan['suricata'] else 'off'}, "
                       f"eve-ingest={'on' if plan['eve_ingest'] else 'off'}, "
-                      f"deception={'armed' if plan['deception'] else 'off'}")
-        done = self.execute(actions, plan["tier"])
+                      f"deception={'armed' if plan['deception'] else 'off'}",
+                      detail={"tier": plan["tier"],
+                              "capture_ifaces": list(plan["capture_ifaces"])})
+        # self.state is the plan being applied before execute() runs, so the
+        # messages execute() emits describe the state being entered rather
+        # than the one being left.
         self.state = plan
+        done = self.execute(actions, plan["tier"])
+        if plan["suricata"]:
+            self.brake.note_applied(tuple(plan["capture_ifaces"]), now)
+        elif not plan["gate_file"]:
+            # Torn down. The next Tier 1 must be a first apply, not a diff
+            # against a set belonging to an engine that is no longer running.
+            self.brake.reset()
         self.write_status()
         return done
 
@@ -2511,6 +2864,21 @@ class PostureDaemon:
                     posture_candidates(self.args.posture_file))
                 new_tier = read_tier(self.posture_path)
                 now = time.time()
+                if (now - self._last_heartbeat) >= self.args.heartbeat:
+                    # DEC-PHASE12-038. The interface heartbeat runs on its own
+                    # cadence, faster than the 30s reassert, because a USB NIC
+                    # plugged in mid-incident should be watched in seconds and
+                    # a yanked one must leave the config before the engine is
+                    # next started against a device that no longer exists.
+                    self.heartbeat_tick(now)
+                    if self.state is not None and self.state["tier"] in ("1",
+                                                                         "2"):
+                        target = self.capture_target(now)
+                        if (tuple(self.state.get("capture_ifaces") or ())
+                                != target):
+                            self.apply_tier(self.state["tier"])
+                            last_reassert = now
+
                 if self.state is None or new_tier != self.state["tier"]:
                     tier = new_tier
                     self.apply_tier(tier)
@@ -2525,6 +2893,18 @@ class PostureDaemon:
                         self._suricata_recover(now)
                     if self.state["suricata"] and not self.rules["usable"]:
                         self.warn_no_rules(self.state["tier"], now)
+                    # DEC-PHASE12-038, the Check stage. Being "active" is not
+                    # being attached: ask the engine itself, on a cycle,
+                    # because an interface can go away under a running
+                    # process and nothing else would notice.
+                    if self.state["suricata"] and now >= self._verify_due:
+                        self._verify_due = now + CAPTURE_VERIFY_EVERY
+                        self.verify_capture(now)
+                    # A measured no-capture state keeps nagging. It is not a
+                    # transient: without an interface there is no IDS, and
+                    # the operator planning around one must hear that.
+                    if self.state.get("warn_no_capture"):
+                        self.warn_no_capture(now)
                     # Zeek may have been installed since the last cycle, or
                     # its log directory may have appeared, moved or become
                     # unreadable. All three are runtime facts (DEC-PHASE12-028).
@@ -2546,7 +2926,10 @@ class PostureDaemon:
         return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """The CLI, separated from main() so tests can construct a real args
+    object and drive the daemon in-process instead of reimplementing
+    defaults that would then drift from the ones that ship."""
     ap = argparse.ArgumentParser(
         prog="orionx-postured",
         description="Enforce the Orion-X threat-posture tier and publish "
@@ -2568,6 +2951,39 @@ def main(argv: list[str] | None = None) -> int:
                          "auto-discover)")
     ap.add_argument("--poll", type=float, default=POLL_SECONDS,
                     help="posture poll interval in seconds (default: %(default)s)")
+    # --- capture (DEC-PHASE12-038) ---
+    ap.add_argument("--capture-iface", action="append", default=None,
+                    metavar="IFACE",
+                    help="always capture on this interface, live or not "
+                         "(repeatable). For a SPAN/monitor port that is "
+                         "deliberately silent between probes. It must still "
+                         "exist: one unopenable device fails the whole engine.")
+    ap.add_argument("--sysfs", default=str(capture.SYSFS_NET),
+                    help="interface counter root (default: %(default)s)")
+    ap.add_argument("--interfaces-yaml", default=str(capture.INTERFACES_YAML),
+                    help="generated af-packet include (default: %(default)s)")
+    ap.add_argument("--suricata-config", default=str(capture.ORIONX_YAML),
+                    help="Suricata config to validate (default: %(default)s)")
+    ap.add_argument("--heartbeat", type=float,
+                    default=capture.HEARTBEAT_SECONDS,
+                    help="interface sampling interval (default: %(default)s)")
+    ap.add_argument("--live-window", type=float, default=capture.LIVE_WINDOW,
+                    help="seconds a packet delta is measured over "
+                         "(default: %(default)s)")
+    ap.add_argument("--live-packets", type=int,
+                    default=capture.LIVE_MIN_PACKETS,
+                    help="packets within the window that mean 'live' "
+                         "(default: %(default)s)")
+    ap.add_argument("--quiet-demote", type=float,
+                    default=capture.QUIET_DEMOTE_SECONDS,
+                    help="seconds a captured interface may be quiet before "
+                         "it is dropped (default: %(default)s)")
+    ap.add_argument("--reconfig-cooldown", type=float,
+                    default=capture.RECONFIG_COOLDOWN,
+                    help="minimum seconds between Suricata reconfigures "
+                         "(default: %(default)s)")
+    ap.add_argument("--max-ifaces", type=int, default=capture.MAX_CAPTURE_IFACES,
+                    help="most interfaces captured at once (default: %(default)s)")
     ap.add_argument("--no-nebula", action="store_true",
                     help="disable the Nebula contextualizer entirely")
     ap.add_argument("--dry-run", action="store_true",
@@ -2576,17 +2992,26 @@ def main(argv: list[str] | None = None) -> int:
                     help="apply the current tier once and exit")
     ap.add_argument("--print-plan", action="store_true",
                     help="print the JSON plan for the current tier and exit")
-    args = ap.parse_args(argv)
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
 
     daemon = PostureDaemon(args)
     tier = read_tier(daemon.posture_path)
 
     if args.print_plan:
-        plan = tier_plan(tier, daemon.rules["usable"])
+        now = time.time()
+        target = daemon.capture_target(now)
+        plan = tier_plan(tier, daemon.rules["usable"], live_ifaces=target)
         print(json.dumps({"posture_file": str(daemon.posture_path or ""),
                           "rules": daemon.rules,
                           "zeek": daemon.zeek.state,
                           "capture": capture_status(),
+                          "ids_capture": daemon.heartbeat.status(now),
+                          "suricata_config": capture.check_config(
+                              daemon.suricata_config),
                           "plan": plan}, indent=2))
         return 0
 

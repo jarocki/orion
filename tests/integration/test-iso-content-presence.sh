@@ -3715,6 +3715,56 @@ for _u in orionx-heald orionx-postured nebula-mcp; do
     fi
 done
 
+section "36. Suricata actually captures (DEC-PHASE12-038)"
+
+# Debian's unit hardcodes -c /etc/suricata/suricata.yaml, and that file
+# hardcodes `af-packet: - interface: eth0`. On a deck with no eth0 the engine
+# exits 1 immediately, forever — verified against suricata 7.0.10. These
+# assert the Orion-X capture surface that replaces it actually ships.
+for _f in etc/suricata/orionx.yaml \
+          var/lib/suricata/orionx-interfaces.yaml \
+          etc/systemd/system/suricata.service.d/orionx-capture.conf; do
+    if [[ -f "$SQF/$_f" ]]; then
+        pass "36a: /$_f shipped"
+    else
+        fail "36a: /$_f shipped" "without it Suricata runs Debian's eth0 config and cannot start"
+    fi
+done
+
+# The override must repoint ExecStart at the Orion-X config, or the drop-in is
+# decoration and the engine still reads Debian's eth0 default.
+_DROPIN="$SQF/etc/systemd/system/suricata.service.d/orionx-capture.conf"
+if [[ -f "$_DROPIN" ]] && grep -qE '^ExecStart=.*orionx\.yaml' "$_DROPIN"; then
+    pass "36b: drop-in repoints ExecStart at orionx.yaml"
+else
+    fail "36b: drop-in repoints ExecStart at orionx.yaml" "engine would still read Debian's eth0 config"
+fi
+
+# Restart=no: postured owns restart policy with bounded attempts
+# (DEC-PHASE12-034). systemd restarting underneath it reintroduces the storm.
+if [[ -f "$_DROPIN" ]] && grep -qE '^Restart=no' "$_DROPIN"; then
+    pass "36c: drop-in sets Restart=no (postured owns bounded recovery)"
+else
+    fail "36c: drop-in sets Restart=no" "systemd auto-restart would reintroduce the loop postured bounds"
+fi
+
+# The generated interface file must live where postured can write it: its unit
+# is ProtectSystem=strict and /etc is read-only to it.
+if grep -qE 'var/lib/suricata' "$_DROPIN" 2>/dev/null || \
+   [[ -f "$SQF/var/lib/suricata/orionx-interfaces.yaml" ]]; then
+    pass "36d: generated interface config lives under a writable path"
+else
+    fail "36d: generated interface config lives under a writable path" \
+         "postured runs ProtectSystem=strict; /etc is read-only to it"
+fi
+
+# The capture library ships beside the daemon that imports it.
+if [[ -f "$SQF/opt/orionx/scripts/awareness/suricata_capture.py" ]]; then
+    pass "36e: suricata_capture.py staged beside orionx-postured"
+else
+    fail "36e: suricata_capture.py staged beside orionx-postured" "postured would ImportError at start"
+fi
+
 # ===========================================================================
 # Summary
 # ===========================================================================

@@ -389,12 +389,29 @@ def format_bounds(iface: str, file_mb: int, files: int, duration: int,
 # EFFECTS: the bus, posture read-only, state and request files
 # ===========================================================================
 
+# "capture", not "health" (DEC-PHASE12-040). Both are in
+# rain_lib.STATUS_CATEGORIES and so both are excluded from THREAT PRESSURE —
+# the gauge safety no longer depends on choosing the generic label. Given
+# that, the specific one is better: it lets the Cockpit filter capture
+# activity distinctly instead of lumping it with every other self-report.
 def publish(severity: str, message: str, category: str = "capture",
             source: str = "capture", dry_run: bool = False) -> None:
     """Fire-and-forget onto the bus via the orionx-event CLI.
 
     Same contract as orionx-scanwatch and orionx-postured: subprocess to the
     CLI rather than importing rain_lib, so there is one writer convention.
+
+    The default category is `health`, and it used to be `capture`. Every one
+    of this file's events is a statement about the deck's OWN capture
+    instrumentation — it started, it stopped, it could not enumerate
+    interfaces — and not one of them is a detection. pressure() in
+    cockpit_lib weights by severity and excludes `health`, `posture`,
+    `service` and `tooling`; it did not exclude `capture`, so a failed
+    capture added +20 to THREAT PRESSURE and flashed the screen red, and a
+    few in a row read ELEVATED on a deck nothing was attacking.
+    RESILIENCE.md rule 5: self-diagnosis is not a threat. Keeping it as the
+    DEFAULT rather than editing eleven call sites means there is one place
+    this is decided, so a twelfth site cannot reintroduce it by omission.
     """
     if dry_run:
         print(f"[{severity}] {source}/{category}: {message}", flush=True)

@@ -214,6 +214,79 @@ if command -v ruff >/dev/null 2>&1; then
   if ruff check "$PD" >/dev/null 2>&1; then pass "ruff check clean"; else fail "ruff check clean" "$(ruff check "$PD" 2>&1 | tail -3)"; fi
 fi
 
+section "Self-diagnosis is not a threat (RESILIENCE.md rule 5)"
+# The Cockpit's pressure() gauge weights by severity and excludes exactly
+# health/posture/service/tooling. It does NOT exclude `ids`. So every event
+# this daemon emits ABOUT ITSELF must avoid `ids`, or the deck frightens
+# itself with its own health messages and the gauge stops meaning anything.
+#
+# This is asserted on what actually reaches the bus, not by reading the
+# source: a dry run prints "[severity] source/category: message", and a run
+# with no traffic and no rules produces nothing but self-diagnosis, so not
+# one line of it may be categorised `ids`.
+CATTMP="$REPO_ROOT/tmp/awareness-cat.$$"
+mkdir -p "$CATTMP/sys/lo/statistics" "$CATTMP/sys/enp2s0/statistics"
+echo 772 > "$CATTMP/sys/lo/type"; echo 500000 > "$CATTMP/sys/lo/statistics/rx_packets"
+echo 1 > "$CATTMP/sys/enp2s0/type"; echo 1000 > "$CATTMP/sys/enp2s0/statistics/rx_packets"
+echo 1 > "$CATTMP/posture"
+CATOUT="$(python3 "$PD" --once --dry-run --no-nebula --posture-file "$CATTMP/posture" \
+          --sysfs "$CATTMP/sys" --interfaces-yaml "$CATTMP/ifaces.yaml" \
+          --rules-dir "$CATTMP/rules" --canary-dir "$CATTMP/canary" \
+          --live-window 0 --zeek-log-dir "$CATTMP/zeek" 2>&1)"
+if [[ -n "$CATOUT" ]]; then pass "dry run emits events to inspect"; else fail "dry run emits events" "no output"; fi
+if ! echo "$CATOUT" | grep -q '/ids:'; then
+  pass "no self-diagnosis event is categorised 'ids' (would inflate THREAT PRESSURE)"
+else
+  fail "self-diagnosis categorised as ids" "$(echo "$CATOUT" | grep '/ids:' | head -2)"
+fi
+if echo "$CATOUT" | grep -q 'IDS COVERAGE GAP'; then
+  if echo "$CATOUT" | grep 'IDS COVERAGE GAP' | grep -q '/health:'; then
+    pass "the no-rules coverage gap is published as health"
+  else
+    fail "no-rules coverage gap category" "$(echo "$CATOUT" | grep 'IDS COVERAGE GAP' | head -1)"
+  fi
+else
+  fail "no-rules coverage gap announced" "$CATOUT"
+fi
+if echo "$CATOUT" | grep -q 'Zeek' && echo "$CATOUT" | grep 'Zeek' | grep -q '/health:'; then
+  pass "Zeek capability self-status is published as health"
+elif ! echo "$CATOUT" | grep -q 'Zeek'; then
+  pass "Zeek capability self-status not emitted in this run (nothing to report)"
+else
+  fail "Zeek self-status category" "$(echo "$CATOUT" | grep 'Zeek' | head -1)"
+fi
+# The three remaining `ids` emitters must be detections and nothing else.
+IDS_SITES="$(grep -c '"ids"' "$PD")"
+if [[ "$IDS_SITES" == "3" ]]; then
+  pass "exactly 3 'ids' emit sites remain (suricata alert, zeek notice, zeek weird)"
+else
+  fail "ids emit site count" "expected 3 detection sites, found $IDS_SITES: $(grep -n '\"ids\"' "$PD" | tr '\n' ' ')"
+fi
+# orionx-capture's PCAP events are self-status too, and shared the defect.
+CAP="$REPO_ROOT/scripts/awareness/orionx-capture"
+# Assert the EFFECT, not which literal was chosen. What matters is that a
+# failed PCAP capture cannot move THREAT PRESSURE; whether that is spelled
+# "health" or "capture" is a labelling choice, and both are in
+# rain_lib.STATUS_CATEGORIES. The previous form named one literal and so went
+# red when the other, equally safe, more specific one was picked — a test
+# failing for a reason unrelated to the property it guards (RESILIENCE rule 1).
+_CAPCAT="$(grep -oE 'def publish\(severity: str, message: str, category: str = "[a-z]+"' "$CAP" | grep -oE '"[a-z]+"$' | tr -d '"')"
+if python3 - "$REPO_ROOT" "$_CAPCAT" <<'PYCAP'
+import sys, pathlib
+from importlib.machinery import SourceFileLoader
+root, cat = pathlib.Path(sys.argv[1]), sys.argv[2]
+rl = SourceFileLoader("rain_lib", str(root/"scripts/rain/rain_lib.py")).load_module()
+cl = SourceFileLoader("cl", str(root/"scripts/cockpit/cockpit_lib.py")).load_module()
+import time; now = time.time()
+ok = bool(cat) and not rl.is_threat_category(cat) \
+     and cl.pressure([{"ts": now, "severity": "critical", "category": cat}], now) == 0.0
+print(f"  capture default category = {cat!r}; contributes "
+      f"{cl.pressure([{'ts': now, 'severity': 'critical', 'category': cat}], now)} to pressure")
+sys.exit(0 if ok else 1)
+PYCAP
+then pass "orionx-capture's default category is excluded from THREAT PRESSURE"; else fail "orionx-capture default category" "PCAP failures would add to THREAT PRESSURE"; fi
+rm -rf "$CATTMP"
+
 printf "\n===========================================\n"
 printf "  Results: ${GREEN}%s passed${NC}, ${RED}%s failed${NC}\n" "$PASS" "$FAIL"
 printf "===========================================\n"

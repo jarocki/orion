@@ -203,8 +203,19 @@ if grep -q 'suricata -T -v -c' "$FRESHEN"; then
 else
     fail "T11 runtime check" "script never runs suricata -T"
 fi
-# `suricata -T` exits 0 even when it matched no rule files (measured on
-# 7.0.10), so an exit-status gate would be another lie. The count is the gate.
+# Parse the loaded-rule count rather than gating on exit status.
+#
+# CORRECTION: an earlier version of this comment claimed `suricata -T` exits 0
+# when it matched no rule files. Re-measured on the ISO's suricata 7.0.10 with
+# a config naming only a nonexistent rule file: it exits **1**. The original
+# claim was wrong.
+#
+# Parsing the count is still right, and for a better reason than the one first
+# given: exit 1 is ambiguous. It means "something was wrong" — a bad config, an
+# unopenable interface, a missing rule file — and cannot distinguish "loaded
+# zero rules" from "could not start at all". The operator needs to know which,
+# because the remedies differ. "N rules successfully loaded" answers the
+# question the exit code only gestures at.
 if grep -q 'the count is' "$FRESHEN" || grep -q 'loaded" -eq 0' "$FRESHEN"; then
     pass "T12 zero-rules is a hard failure, not a warning in a success line"
 else

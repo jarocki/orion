@@ -133,6 +133,20 @@ INTERFACES_YAML = Path("/var/lib/suricata/orionx-interfaces.yaml")
 COMMAND_SOCKET = Path("/var/lib/suricata/orionx-command.socket")
 STOCK_COMMAND_SOCKET = Path("/var/run/suricata-command.socket")
 
+# The engine's own log. Needed because of a measured limitation of the unix
+# socket: `iface-list` reports the interfaces the engine was CONFIGURED with,
+# not the ones whose capture socket actually opened. With two interfaces
+# sharing a cluster-id, the engine logs
+#   Error: af-packet: eth0: failed to set fanout mode: Invalid argument
+#   Error: af-packet: eth0: failed to init socket for interface
+# and then sits there answering iface-list with BOTH interfaces and
+# iface-stat with pkts: 0, indefinitely. Trusting iface-list alone would have
+# reported that deck as fully covered. This is RESILIENCE.md rule 3 catching
+# the verifier itself.
+ENGINE_LOG = Path("/var/log/suricata/suricata.log")
+ENGINE_LOG_TAIL = 65536
+ENGINE_BANNER = "This is Suricata version"
+
 SURICATA_BIN = "suricata"
 SURICATASC_BIN = "suricatasc"
 
@@ -341,6 +355,26 @@ class InterfaceHeartbeat:
 
         return tuple(sorted(chosen))
 
+    def warming_up(self, now: float) -> bool:
+        """True while there has not yet been time to measure honestly.
+
+        A delta needs two samples and an interval. Without this, raising the
+        tier on a perfectly healthy deck emitted "no network interface is
+        carrying traffic" in the same second the daemon started, and the real
+        answer arrived five seconds later. A warning that is wrong five
+        seconds later is how an operator learns to ignore warnings
+        (RESILIENCE.md rule 8 cuts both ways: loud, and RIGHT).
+
+        Warm-up ends early the moment anything IS live, so a working deck
+        never waits, and it ends at the window either way, so a deck with no
+        interfaces at all waits 30 seconds and then says so.
+        """
+        if not self.started:
+            return True
+        if self.live(now):
+            return False
+        return (now - self.started) < self.window
+
     def status(self, now: float) -> dict:
         """Evidence for the status file and for --detail on the bus."""
         rates = self.rates(now)
@@ -352,6 +386,7 @@ class InterfaceHeartbeat:
             "window_seconds": self.window,
             "min_packets": self.min_packets,
             "observed_seconds": round(max(0.0, now - self.started), 1),
+            "warming_up": self.warming_up(now),
             "rates": {n: rates[n]["rate"] for n in sorted(rates)},
             "packets": {n: rates[n]["packets"] for n in sorted(rates)},
         }
@@ -581,6 +616,53 @@ def parse_iface_stat(text: str | None) -> dict | None:
         return None
 
 
+def current_run_lines(text: str | None) -> list[str]:
+    """Only the lines the CURRENT engine process wrote.
+
+    suricata.log is appended across restarts, so errors from a previous,
+    already-fixed run would otherwise be reported forever. Every start writes
+    the version banner, so the last banner is the start of the current run.
+    """
+    lines = (text or "").splitlines()
+    last = -1
+    for i, line in enumerate(lines):
+        if ENGINE_BANNER in line:
+            last = i
+    return lines[last:] if last >= 0 else []
+
+
+def socket_errors(text: str | None) -> dict[str, str]:
+    """{interface: error} for capture sockets that failed in this run.
+
+    Measured line shape:
+      [23 - W#01-eth0] ... Error: af-packet: eth0: failed to init socket ...
+    """
+    out: dict[str, str] = {}
+    for line in current_run_lines(text):
+        if "Error:" not in line or "af-packet:" not in line:
+            continue
+        tail = line.split("af-packet:", 1)[1].strip()
+        iface, _, detail = tail.partition(":")
+        iface, detail = iface.strip(), detail.strip()
+        if iface and detail and iface not in out:
+            out[iface] = detail
+    return out
+
+
+def read_engine_log(path: Path = ENGINE_LOG,
+                    max_bytes: int = ENGINE_LOG_TAIL) -> str | None:
+    """Tail of the engine log, bounded. None if it cannot be read."""
+    try:
+        with open(path, "rb") as fh:
+            try:
+                fh.seek(-max_bytes, os.SEEK_END)
+            except OSError:
+                fh.seek(0)
+            return fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return None
+
+
 def command_socket(paths=(COMMAND_SOCKET, STOCK_COMMAND_SOCKET)) -> Path | None:
     """First existing command socket, or None."""
     for path in paths:
@@ -606,22 +688,38 @@ def suricatasc(command: str, socket_path: Path, runner=subprocess.run,
 
 
 def verify_capture(desired, socket_path: Path | None = None,
-                   runner=subprocess.run, binary: str = SURICATASC_BIN) -> dict:
+                   runner=subprocess.run, binary: str = SURICATASC_BIN,
+                   engine_log: Path = ENGINE_LOG) -> dict:
     """Ask the running engine what it is actually capturing on.
 
     This is the whole point of RESILIENCE.md rules 1 and 3 for this
     subsystem. `systemctl start suricata` exiting 0 means systemd forked a
     process; it says nothing about whether a capture socket was opened on the
-    interface we asked for. The engine's own iface-list does.
+    interface we asked for.
 
-    Returns a dict whose `verified` field is tri-state on purpose:
-      True  — the engine confirmed every desired interface is attached.
-      False — the engine answered, and the answer is wrong.
-      None  — we could not ask. NOT success, and never reported as success.
+    THREE separate facts, kept separate because conflating them is how a
+    verifier lies:
+
+      configured — the engine's iface-list names this interface. Measured
+                   limitation: iface-list reports what the engine was
+                   configured with, NOT what bound successfully. An engine
+                   whose socket failed still lists the interface forever.
+      errors     — the engine's own log says a capture socket failed in this
+                   run. This is what closes the gap above, and it is why the
+                   log is read at all.
+      capturing  — a non-zero packet count. The only positive proof, and
+                   absent on a genuinely quiet network, which is why
+                   prolonged silence is judged over CAPTURE_BLIND_SECONDS
+                   rather than instantly.
+
+    `verified` is the conservative conjunction: configured, and no socket
+    errors. Tri-state, and None ("could not ask") is never success.
     """
     want = sorted(set(desired or ()))
-    out = {"verified": None, "method": "unix-socket", "attached": [],
+    out = {"verified": None, "configured": None, "capturing": None,
+           "method": "unix-socket", "attached": [],
            "missing": want, "extra": [], "packets": {}, "total_packets": 0,
+           "socket_errors": {},
            "socket": str(socket_path) if socket_path else None,
            "reason": None}
     if socket_path is None:
@@ -642,14 +740,24 @@ def verify_capture(desired, socket_path: Path | None = None,
     out["attached"] = sorted(attached)
     out["missing"] = [n for n in want if n not in attached]
     out["extra"] = [n for n in attached if n not in want]
+    out["configured"] = not out["missing"] and bool(attached)
     for name in attached:
         stat = parse_iface_stat(
             suricatasc(f"iface-stat {name}", socket_path, runner, binary))
         if stat is not None:
             out["packets"][name] = stat["pkts"]
     out["total_packets"] = sum(out["packets"].values())
-    out["verified"] = not out["missing"] and bool(attached)
-    if out["missing"]:
+    out["capturing"] = out["total_packets"] > 0
+
+    # The engine's own verdict on its capture sockets, which iface-list does
+    # not give us.
+    out["socket_errors"] = socket_errors(read_engine_log(engine_log))
+
+    out["verified"] = bool(out["configured"]) and not out["socket_errors"]
+    if out["socket_errors"]:
+        out["reason"] = "; ".join(f"{k}: {v}"
+                                  for k, v in sorted(out["socket_errors"].items()))
+    elif out["missing"]:
         out["reason"] = ("engine is not attached to "
                          + ", ".join(out["missing"]))
     return out
@@ -793,6 +901,33 @@ def capture_blind_message(verify: dict, seconds: float,
                             "seconds": round(seconds, 1)}
 
 
+def socket_error_message(verify: dict) -> tuple[str, str, dict]:
+    """The engine is up, answering, and its capture socket did not open.
+
+    This failure is invisible to `systemctl is-active` AND to the engine's
+    own iface-list, which keeps listing the interface. Without reading the
+    engine log, the only symptom is a packet counter that never moves, and
+    the deck would read as fully covered for as long as the operator chose
+    to believe it.
+    """
+    errs = verify.get("socket_errors") or {}
+    detail_txt = "; ".join(f"{k}: {v}" for k, v in sorted(errs.items()))
+    msg = (
+        f"Suricata is RUNNING but failed to open a capture socket: "
+        f"{detail_txt}. The engine still lists the interface, so nothing "
+        "else on the deck would notice. Consequence: NO packets are "
+        "inspected on the affected interface(s) — the IDS is up and blind. "
+        + SCANWATCH_NOTE +
+        " Remedy: `sudo systemctl restart suricata`; if it recurs, "
+        f"`sudo grep -i 'af-packet' {ENGINE_LOG} | tail -20` and check "
+        f"{INTERFACES_YAML} for two interfaces sharing a cluster-id, which "
+        "is the usual cause of 'failed to set fanout mode'."
+    )
+    return "critical", msg, {"reason": "capture-socket-error",
+                             "socket_errors": errs,
+                             "attached": verify.get("attached")}
+
+
 def unverified_message(verify: dict, desired) -> tuple[str, str, dict]:
     """Running, but we could not get the engine to confirm anything."""
     want = ", ".join(sorted(desired)) or "nothing"
@@ -863,6 +998,17 @@ class ReconfigureBrake:
                     "retry_in": round(self.cooldown - (now - self.last_apply),
                                       1)}
         return {"act": True, "reason": "changed", "desired": desired}
+
+    def reset(self) -> None:
+        """Forget what was applied, so the next apply is a first apply.
+
+        Called when Suricata is torn down (a drop to Tier 0). Keeping the
+        old set would make the next Tier 1 look like an unchanged plan and
+        skip writing the config for an engine that is not running.
+        """
+        self.applied = None
+        self.deferred = None
+        self.last_apply = 0.0
 
     def note_applied(self, desired: tuple[str, ...], now: float) -> None:
         self.applied = tuple(sorted(desired))
