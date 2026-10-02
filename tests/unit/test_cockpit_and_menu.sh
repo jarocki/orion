@@ -77,6 +77,31 @@ assert abs(L.pressure([{"ts":now,"severity":"critical"}],now)-40)<1e-6
 assert abs(L.pressure([{"ts":now-60,"severity":"critical"}],now)-20)<1e-6
 assert L.pressure([{"ts":now,"severity":"critical"}]*10,now)==100.0
 assert L.pressure_color(10)==L.GREEN and L.pressure_color(40)==L.AMBER and L.pressure_color(80)==L.RED
+# DEC-PHASE12-034 / DEC-PHASE12-039: self-diagnosis is not threat.
+# The shipped defect was THREAT PRESSURE reading "ELEVATED" on an idle deck
+# because orionx-postured's own health warnings were weighted as threat. The
+# fix had no test; this is it, stated as the commit stated the measurement:
+# twelve health warnings contribute 0.0, two real scan warnings contribute 40.
+health=[{"ts":now,"severity":"warning","category":"health"}]*12
+assert L.pressure(health,now)==0.0, L.pressure(health,now)
+scans=[{"ts":now,"severity":"warning","category":"scan"}]*2
+assert abs(L.pressure(scans,now)-40.0)<1e-6, L.pressure(scans,now)
+# Every excluded category, at the heaviest severity, must still be 0.
+for _c in L.SELF_STATUS_CATEGORIES:
+    assert L.pressure([{"ts":now,"severity":"critical","category":_c}],now)==0.0, _c
+# The exclusion must not swallow genuine detections sharing a severity.
+assert abs(L.pressure([{"ts":now,"severity":"critical","category":"ids"}],now)-40.0)<1e-6
+# A missing category must still count — defaulting to "excluded" would make
+# the gauge silently blind to any emitter that forgets the field.
+assert abs(L.pressure([{"ts":now,"severity":"critical"}],now)-40.0)<1e-6
+# Drift invariant against rain_lib, the single authority (DEC-PHASE12-040).
+# Asserting a hardcoded set here would mean editing this test every time the
+# vocabulary grows, which is how a mirror drifts in the first place.
+import importlib.machinery as _im
+_rlmod = _im.SourceFileLoader("rain_lib", "scripts/rain/rain_lib.py").load_module()
+assert set(L.SELF_STATUS_CATEGORIES)==set(_rlmod.STATUS_CATEGORIES), (
+    "cockpit_lib.SELF_STATUS_CATEGORIES has drifted from rain_lib.STATUS_CATEGORIES: "
+    f"{set(L.SELF_STATUS_CATEGORIES) ^ set(_rlmod.STATUS_CATEGORIES)}")
 assert L.parse_event('{"severity":"WARNING","ts":1}')["severity"]=="warning" and L.parse_event("x") is None
 pts=L.sparkline_points([0,50,100],0,0,200,100); assert pts[0]==(0,100) and pts[-1][1]==0
 r=L.RateTracker(5); r.push(0,0,0.0); r.push(2048,1024,2.0); assert (r.rx_rate,r.tx_rate)==(1024.0,512.0)

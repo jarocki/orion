@@ -209,6 +209,52 @@ sys.exit(0 if ok else 1)
 PY
 then pass "cockpit assertions"; else fail "cockpit assertions" "see above"; fi
 
+section "Category vocabulary is a single authority (DEC-PHASE12-040)"
+if python3 - "$REPO_ROOT" <<'PYV'
+import sys, pathlib, time
+from importlib.machinery import SourceFileLoader
+root = pathlib.Path(sys.argv[1]); ok = True
+def ck(c, label):
+    global ok
+    print(("  ok   " if c else "  BAD  ") + label); ok = ok and bool(c)
+rl = SourceFileLoader("rain_lib", str(root/"scripts/rain/rain_lib.py")).load_module()
+cl = SourceFileLoader("cl", str(root/"scripts/cockpit/cockpit_lib.py")).load_module()
+now = time.time()
+
+# The drift invariant. Two copies of this policy in two files is exactly how
+# the gauge and the emitters came to disagree.
+ck(set(cl.SELF_STATUS_CATEGORIES) == set(rl.STATUS_CATEGORIES),
+   "cockpit's exclusion set matches rain_lib's STATUS_CATEGORIES exactly")
+ck(not (set(rl.THREAT_CATEGORIES) & set(rl.STATUS_CATEGORIES)),
+   "no category is both a threat and self-status")
+
+# Every category a shipped emitter uses must be declared; an unlisted one
+# silently counts as a THREAT and moves the gauge.
+for cat in ("heal", "capture", "intel", "health", "posture", "tooling", "ids", "scan"):
+    ck(cat in rl.CATEGORIES, "'" + cat + "' is in the declared vocabulary")
+
+for cat in rl.STATUS_CATEGORIES:
+    p = cl.pressure([{"ts": now, "severity": "critical", "category": cat}], now)
+    ck(p == 0.0, "status category '" + cat + "' contributes 0 to threat pressure")
+for cat in ("ids", "scan"):
+    p = cl.pressure([{"ts": now, "severity": "critical", "category": cat}], now)
+    ck(p > 0, "threat category '" + cat + "' still counts")
+
+# The regression the audit found: the engine narrating its own response must
+# not amplify the intrusion that triggered it.
+alert = [{"ts": now, "severity": "critical", "category": "ids"}]
+narrated = alert + [{"ts": now, "severity": "critical", "category": "heal"}]
+ck(cl.pressure(alert, now) == cl.pressure(narrated, now),
+   "healing narrating its own action does not inflate the intrusion's pressure")
+
+# Fail OPEN on the unknown: losing a detection is worse than an odd label.
+ck(rl.is_threat_category("some-new-detector") is True,
+   "unknown category counts as threat (a new detector is not silently ignored)")
+ck(rl.is_threat_category("health") is False, "a known status category does not")
+sys.exit(0 if ok else 1)
+PYV
+then pass "category vocabulary assertions"; else fail "category vocabulary assertions" "see above"; fi
+
 printf "\n===========================================\n"
 printf "  Results: ${GREEN}%s passed${NC}, ${RED}%s failed${NC}\n" "$PASS" "$FAIL"
 printf "===========================================\n"

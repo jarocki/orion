@@ -195,11 +195,79 @@ assert_contains "sysctl: ptrace_scope = 1" "kernel.yama.ptrace_scope = 1" "$HOOK
 echo ""
 
 # ---------------------------------------------------------------------------
-# 13. Systemd unit hardening — ProtectSystem=strict
+# 13. Systemd unit hardening — asserted on the UNITS, not on this hook's text
+#
+# @decision DEC-PHASE12-039
+# This used to be:
+#     assert_contains "references ProtectSystem=strict" \
+#                     "ProtectSystem=strict" "$HOOK_CONTENT"
+# i.e. "the string ProtectSystem=strict appears somewhere in the hook." It
+# passed for the life of the project while the mesh units ran completely
+# unconfined, because the hook's injection loop globbed
+# /etc/systemd/system/orionx-mesh-*.service and 0615 installs to
+# /lib/systemd/system. The glob matched nothing, every build. Same shape as
+# the AppArmor defect: a test that verified a write, not a state.
+#
+# The injector is now deleted, so the only place a directive can come from is
+# the unit file 0615 copies verbatim. Assert it there.
 # ---------------------------------------------------------------------------
 echo "--- Systemd unit hardening ---"
 
-assert_contains "references ProtectSystem=strict" "ProtectSystem=strict" "$HOOK_CONTENT"
+UNITDIR="$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd"
+
+# The dead authority must not come back.
+if grep -qE '^\s*for unit in /etc/systemd/system/orionx-' "$HOOK_FILE"; then
+    echo "  FAIL: hook re-introduces the dead /etc/systemd/system injection loop"
+    echo "        0615 installs to /lib/systemd/system; that glob matches nothing"
+    (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: no build-time unit injection (units are the single authority)"
+    (( PASS_COUNT++ )) || true
+fi
+
+# Units that ARE hardened must really carry the directives. If someone strips
+# NoNewPrivileges from nebula-mcp.service tomorrow, this goes red.
+for _u in nebula-mcp.service orionx-heald.service orionx-postured.service \
+          orionx-scanwatch.service "orionx-capture@.service"; do
+    _f="$UNITDIR/$_u"
+    if [[ ! -f "$_f" ]]; then
+        echo "  FAIL: $_u not staged at $UNITDIR"
+        (( FAIL_COUNT++ )) || true
+        continue
+    fi
+    _missing=""
+    for _d in NoNewPrivileges ProtectSystem ProtectHome; do
+        grep -qE "^${_d}=" "$_f" || _missing="$_missing $_d"
+    done
+    if [[ -z "$_missing" ]]; then
+        echo "  PASS: $_u carries its hardening directives in the unit file"
+        (( PASS_COUNT++ )) || true
+    else
+        echo "  FAIL: $_u is missing:$_missing"
+        (( FAIL_COUNT++ )) || true
+    fi
+done
+
+# The mesh units are a KNOWN, TRACKED gap (DEC-PHASE12-039). Recording it as an
+# explicit expectation means the day someone hardens them this test tells them
+# to delete this block — rather than the gap sitting unmentioned behind a green
+# assertion, which is how it survived this long.
+_unhardened=""
+for _u in orionx-mesh-discover.service orionx-mesh-health.service \
+          orionx-mesh-beacon.service; do
+    grep -qE '^(ProtectSystem|NoNewPrivileges|ProtectHome)=' "$UNITDIR/$_u" \
+        && _unhardened="$_unhardened $_u"
+done
+if [[ -z "$_unhardened" ]]; then
+    echo "  PASS: mesh units unhardened, as currently documented (tracked gap)"
+    echo "        → hardening them needs ReadWritePaths for /run + a"
+    echo "          CapabilityBoundingSet, validated against a live wg0."
+    (( PASS_COUNT++ )) || true
+else
+    echo "  FAIL: mesh unit(s) now hardened:$_unhardened — good. Update this"
+    echo "        block and the DEC-PHASE12-039 note in the 0620 hook."
+    (( FAIL_COUNT++ )) || true
+fi
 
 echo ""
 

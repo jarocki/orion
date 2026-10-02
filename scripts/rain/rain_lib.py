@@ -54,6 +54,54 @@ EVENT_LOG = Path("/run/orionx/events.jsonl")
 
 # --- Severity model ---------------------------------------------------------
 SEVERITIES = ("info", "notice", "warning", "critical")
+
+# ---------------------------------------------------------------------------
+# Category vocabulary (DEC-PHASE12-040)
+#
+# `category` used to be a free-form string: emit_event() did
+# `str(category)[:64] or "general"` and the CLI had no `choices=`, while
+# `--severity` right beside it was constrained. That one asymmetry is the root
+# cause of a whole class of defect, because a *consumer* then decides what each
+# category means and emitters never see that policy:
+#
+#   - pressure() excludes self-status categories from THREAT PRESSURE.
+#   - scans-count.py counts detection categories.
+#
+# So every new emitter was a coin flip, and the coin kept landing wrong:
+# postured published "my IDS has no rules" as `ids`, which drove the threat
+# gauge to ELEVATED on an idle deck — the louder the deck said it was blind,
+# the more the gauge said it was under attack. orionx-capture publishes
+# `capture`, the healing engine `heal`, logquery `intel`; none is excluded, so
+# a failed capture or a stale feed reads as hostile.
+#
+# THREAT is something happening TO the deck. STATUS is the deck describing
+# ITSELF. The split is declared here, once, where emitters and consumers both
+# see it. Rule 5 of docs/RESILIENCE.md: self-diagnosis is not a threat.
+# ---------------------------------------------------------------------------
+
+# Categories that describe a threat to the deck. These drive THREAT PRESSURE
+# and the panel scan counter.
+THREAT_CATEGORIES = ("ids", "scan", "recon", "probe", "alert", "forensics",
+                     "deception", "malware", "mesh-intrusion")
+
+# Categories describing the deck's own condition. Visible in the stream, still
+# audible via R.A.I.N., deliberately NOT counted as threat.
+STATUS_CATEGORIES = ("health", "posture", "service", "tooling", "heal",
+                     "capture", "intel", "general")
+
+CATEGORIES = THREAT_CATEGORIES + STATUS_CATEGORIES
+
+
+def is_threat_category(category: str) -> bool:
+    """True if this category represents a threat rather than self-status.
+
+    Unknown categories count as threat, deliberately: a detector someone adds
+    without updating this list should be noticed rather than silently ignored.
+    Failing open here loses signal; failing closed would lose detections.
+    """
+    return str(category) not in STATUS_CATEGORIES
+
+
 _RANK = {name: i for i, name in enumerate(SEVERITIES)}
 
 

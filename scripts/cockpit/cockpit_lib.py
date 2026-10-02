@@ -187,7 +187,24 @@ class EventTail:
 # Health events still appear in the stream, still carry their severity, still
 # sound the R.A.I.N. cue. They just do not count as threat, because they are
 # not threat.
-SELF_STATUS_CATEGORIES = frozenset({"health", "posture", "service", "tooling"})
+# MIRROR of rain_lib.STATUS_CATEGORIES — rain_lib is the single authority
+# (DEC-PHASE12-040). A literal rather than an import, deliberately: the
+# Cockpit is launched in several ways and an import with a fallback would let
+# the two sets drift behind a silently successful fallback, which is the exact
+# failure mode this constant exists to prevent. The invariant is enforced by
+# test instead, where drift is loud: tests/unit/test_event_detail.sh asserts
+# this equals rain_lib.STATUS_CATEGORIES exactly.
+#
+# Categories here describe the DECK's own condition rather than a threat to
+# it, and are excluded from threat pressure. Observed before this existed:
+# Suricata failing to start made orionx-postured warn every 30s and the gauge
+# read "5.1 ELEVATED" on an idle machine — the deck frightening itself with
+# its own self-diagnosis. Health events still appear in the stream and still
+# sound the R.A.I.N. cue; they are simply not threat.
+SELF_STATUS_CATEGORIES = frozenset({
+    "health", "posture", "service", "tooling", "heal", "capture",
+    "intel", "general",
+})
 
 
 def pressure(events, now: float, half_life: float = PRESSURE_HALF_LIFE) -> float:

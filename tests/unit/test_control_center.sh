@@ -368,6 +368,75 @@ for w in "${EXPECTED_WIDGETS[@]}"; do
 done
 
 # ===========================================================================
+# e) The panel scan counter counts scans, not the deck's own status
+#    (DEC-PHASE12-039)
+#
+# This is an EFFECT test: it builds a real event-bus file and asserts the
+# number the operator sees in the panel. "The widget contains the string
+# health" would pass on a widget that ignored it.
+# ===========================================================================
+if python3 - "$WIDGETS_DIR" "$REPO_ROOT/scripts/cockpit/cockpit_lib.py" <<'PY'
+import importlib.util, json, sys, tempfile
+from pathlib import Path
+
+widgets, cockpit_lib_path = sys.argv[1], sys.argv[2]
+
+spec = importlib.util.spec_from_file_location("scans_count", Path(widgets) / "scans-count.py")
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+
+# --- the authority invariant: the mirrored set must equal cockpit_lib's ---
+# The authority is rain_lib.STATUS_CATEGORIES (DEC-PHASE12-040). Load it
+# properly rather than exec'ing a single source line — the previous extractor
+# assumed the constant fitted on one line and broke the moment it did not,
+# which is a test failing for a reason unrelated to the behaviour it guards.
+import importlib.machinery as _im
+_rl = _im.SourceFileLoader("rain_lib", "scripts/rain/rain_lib.py").load_module()
+_cl = _im.SourceFileLoader("cockpit_lib", cockpit_lib_path).load_module()
+authority = set(_rl.STATUS_CATEGORIES)
+assert set(_cl.SELF_STATUS_CATEGORIES) == authority, (
+    f"cockpit_lib {set(_cl.SELF_STATUS_CATEGORIES)} != rain_lib {authority}")
+assert authority == set(m._SELF_STATUS_CATEGORIES), (
+    f"widget mirror {m._SELF_STATUS_CATEGORIES} != authority {authority}")
+
+# --- pure predicate ---
+assert m.is_scan_event("ids", "suricata") is True,  "a real IDS alert must count"
+assert m.is_scan_event("scan", "firewall") is True, "a firewall scan must count"
+# Self-status never counts, including from a detector source (the latent hole).
+assert m.is_scan_event("health", "zeek") is False,  "zeek health is not a scan"
+assert m.is_scan_event("tooling", "suricata") is False
+assert m.is_scan_event("posture", "nucleotide") is False
+assert m.is_scan_event("service", "suricata") is False
+assert m.is_scan_event("IDS", "SURICATA") is True,  "matching must be case-insensitive"
+
+# --- effect: the number the panel renders, from a real bus file ---
+bus = Path(tempfile.mkdtemp()) / "events.jsonl"
+rows = [
+    {"ts": 1, "severity": "critical", "source": "suricata", "category": "ids",
+     "message": "ET SCAN nmap"},                                   # counts
+    {"ts": 2, "severity": "warning",  "source": "firewall", "category": "scan",
+     "message": "port sweep"},                                     # counts
+    {"ts": 3, "severity": "critical", "source": "postured", "category": "health",
+     "message": "Suricata will not stay running"},                 # must NOT
+    {"ts": 4, "severity": "warning",  "source": "zeek", "category": "health",
+     "message": "zeek ingest down"},                               # must NOT
+    {"ts": 5, "severity": "warning",  "source": "installer", "category": "tooling",
+     "message": "zeek install failed"},                            # must NOT
+]
+bus.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+n = m.count_scans(bus)
+assert n == 2, f"panel would show {n} scans; only 2 of 5 events are scans"
+
+# A bus that does not exist is 0, not a crash and not a placeholder.
+assert m.count_scans(Path("/nonexistent/events.jsonl")) == 0
+print("ok")
+PY
+then
+    pass "scan counter excludes self-status; mirrors cockpit_lib authority (DEC-PHASE12-039)"
+else
+    fail "scan counter self-status exclusion" "assertion failed — see output above"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

@@ -57,18 +57,37 @@ kernel.yama.ptrace_scope = 1
 EOF
     echo "  Sysctl hardening applied"
 
-# 4. Add security directives to mesh systemd units if they exist
-for unit in /etc/systemd/system/orionx-mesh-*.service; do
-    if [ -f "$unit" ] && ! grep -q "ProtectSystem" "$unit"; then
-        cat >> "$unit" << 'EOF'
+# 4. Systemd unit hardening — REMOVED. It never ran, and could not have.
+#
+# @decision DEC-PHASE12-039
+# @title Unit hardening belongs in the unit file, not in a build-time injector
+# @status accepted
+# @rationale This hook used to append ProtectSystem=strict / NoNewPrivileges /
+#   ProtectHome to `/etc/systemd/system/orionx-mesh-*.service`. That glob has
+#   never matched anything. 0615-install-systemd-units.hook.chroot installs
+#   units to /lib/systemd/system (its TARGET_DIR), and `systemctl enable` only
+#   creates symlinks under /etc/systemd/system/<target>.wants/ — never
+#   /etc/systemd/system/<unit>.service. The loop body was dead on every build
+#   since the hook was written.
+#
+#   Verified: orionx-mesh-discover.service, orionx-mesh-health.service and
+#   orionx-mesh-beacon.service in includes.chroot/usr/share/orionx/systemd/
+#   carry zero ProtectSystem, NoNewPrivileges or ProtectHome lines.
+#   tests/unit/test_service_hardening.sh asserted the string
+#   "ProtectSystem=strict" appeared in THIS FILE's text, so it stayed green for
+#   the life of the project while the mesh units ran entirely unconfined. That
+#   is the AppArmor defect shape exactly (RESILIENCE.md rule 1).
+#
+#   Had it ever fired it would also have been wrong: ProtectSystem=strict
+#   makes the whole hierarchy read-only bar /dev, /proc and /sys, which breaks
+#   mesh-discover.sh's PID file (/var/run/orionx-mesh-discover.pid),
+#   mesh-health.sh's counter under /var/run, and wg-quick. Hardening these
+#   units needs matching ReadWritePaths and a CapabilityBoundingSet, validated
+#   against a live wg0 — not a blind append.
+#
+#   Two authorities decided one fact; this was the broken one. The unit files
+#   are the surviving authority, 0615 copies them verbatim, and the test now
+#   asserts the directives in the units themselves. Mesh unit hardening is
+#   tracked as outstanding work, NOT silently claimed here.
 
-# Security hardening (added by 0620-service-hardening.hook.chroot)
-ProtectSystem=strict
-NoNewPrivileges=true
-ProtectHome=true
-EOF
-        echo "  Hardened: $(basename "$unit")"
-    fi
-done
-
-echo "[*] Service hardening complete"
+echo "[*] Service hardening complete (unit directives live in the unit files)"

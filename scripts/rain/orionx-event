@@ -46,7 +46,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--category", "-c", default="general",
-        help="event category, e.g. ids, service, posture (default: general)",
+        help="event category (default: general). Known values: "
+             + ", ".join(rain_lib.CATEGORIES) + ". "
+             "Categories in STATUS_CATEGORIES are excluded from THREAT "
+             "PRESSURE; anything else counts as a threat.",
     )
     parser.add_argument(
         "--detail", "-d", default=None, metavar="JSON",
@@ -68,6 +71,15 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(detail, dict):
             print("orionx-event: --detail must be a JSON object", file=sys.stderr)
             return 2
+
+    # Not `choices=`: an unknown category must still publish — losing an event
+    # because a vocabulary was stale is worse than an odd label. But it must
+    # not pass unnoticed, because an unlisted category silently counts as a
+    # THREAT and will move the gauge (DEC-PHASE12-040).
+    if args.category not in rain_lib.CATEGORIES:
+        print(f"orionx-event: warning: unknown category {args.category!r} — "
+              f"it will count as a THREAT in the Cockpit gauge. "
+              f"Known: {', '.join(rain_lib.CATEGORIES)}", file=sys.stderr)
 
     ok = rain_lib.emit_event(
         severity=args.severity,

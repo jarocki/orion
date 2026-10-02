@@ -1,0 +1,76 @@
+%YAML 1.1
+---
+# @decision DEC-PHASE12-038
+# @title Orion-X ships a Suricata capture configuration instead of inheriting
+#   Debian's, and the interface list is generated from observed traffic
+# @status accepted
+# @rationale Observed on the operator's deck at Tier 1, repeatedly:
+#
+#     suricata.service: Main process exited, code=exited, status=1/FAILURE
+#     suricata.service: Start request repeated too quickly.
+#
+#   Reproduced and root-caused in a debian:trixie-slim container running the
+#   ISO's own suricata 7.0.10, not guessed from documentation:
+#
+#     Error: af-packet: eth0: failed to find interface: No such device
+#     Error: af-packet: eth0: failed to init socket for interface
+#     Error: threads: thread "W#01-eth0" failed to start: flags 0423
+#     EXIT=1
+#
+#   Debian's /lib/systemd/system/suricata.service hardcodes
+#     ExecStart=/usr/bin/suricata -D --af-packet -c /etc/suricata/suricata.yaml
+#   and Debian's suricata.yaml hardcodes `af-packet: - interface: eth0`.
+#   A deck whose NIC is enp2s0, wlan0 or a USB adapter has no eth0, so the
+#   engine cannot open a capture socket and exits 1 before it ever reads a
+#   packet. Nothing on the image overrode either fact: the image shipped no
+#   /etc/default/suricata of its own and no suricata.yaml of its own.
+#
+#   Measured facts that shaped this file (all from suricata 7.0.10):
+#
+#   1. /etc/default/suricata is NOT read by the systemd unit. It is consumed
+#      only by the sysvinit script. Putting IFACE= there would have changed
+#      nothing, which is why this is a config + drop-in and not a default file.
+#   2. `include:` entries are inlined in document order and a later definition
+#      wins -- the loader says "Configuration node 'af-packet' redefined".
+#      So Orion-X can override one key of a 72 KB packaged config without
+#      forking it, and Debian's suricata.yaml stays the authority for
+#      everything this file does not name (rules especially: rule-files and
+#      default-rule-path are deliberately NOT touched here, because
+#      orionx-freshen-suricata DEC-PHASE12-039 reads them from suricata.yaml
+#      and two files deciding which rules load is two files that drift).
+#   3. An `af-packet:` list that is empty is a FATAL error, not an empty
+#      capture: "E: suricata: No interface found in config for af-packet",
+#      exit 1. There is no such thing as a cleanly running Suricata with
+#      nothing to capture.
+#   4. One bad interface kills the whole engine, not just its own thread.
+#   5. Two interfaces sharing a cluster-id fail with "failed to set fanout
+#      mode: Invalid argument" and take the engine down with them. The
+#      generator therefore allocates a distinct cluster-id per interface.
+#   6. `suricata -T -c <this file>` with no capture argument exits 0, so a
+#      passing -T proves the config PARSES, not that anything is captured.
+#      That is why verification is a runtime question asked of the running
+#      engine over the unix socket, not a build-time one.
+#
+#   Consequence of (3): on a deck with no interface carrying traffic,
+#   orionx-postured does not start Suricata at all and says so on the bus
+#   with a remedy. A detector attached to nothing, reporting nothing, is
+#   indistinguishable from a quiet network -- RESILIENCE.md rule 8.
+
+include:
+  - /etc/suricata/suricata.yaml
+  - /var/lib/suricata/orionx-interfaces.yaml
+
+# The verification channel. orionx-postured asks the RUNNING engine which
+# interfaces it actually attached to (`iface-list`) and how many packets each
+# has taken (`iface-stat`); a zero exit from `systemctl start` proves nothing.
+#
+# The path is deliberately NOT Suricata's default
+# /var/run/suricata-command.socket. orionx-postured.service runs under
+# ProtectSystem=strict with ReadWritePaths=/run/orionx /var/lib/suricata
+# /var/lib/orionx, and connect() on an AF_UNIX socket needs write access to
+# the socket inode -- a socket under a read-only /run would be unreachable to
+# the one process that needs to ask. /var/lib/suricata is already writable for
+# the DEC-PHASE11-008 gate file.
+unix-command:
+  enabled: yes
+  filename: /var/lib/suricata/orionx-command.socket
