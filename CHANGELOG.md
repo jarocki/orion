@@ -7,122 +7,169 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [v2.2.0-beta] — 2026-09-16 ("OrionX Beta", pre-release)
+## [v2.2.0-rc5] — 2026-10-04 (release candidate; internal build, not published)
 
-First public beta of the Debian 13 (Trixie) line. Built from
-`feat/trixie-migration` (`32247dd`), boot-tested on the reference deck
-(Lenovo Bay Trail, UEFI). ISO SHA-256
-`606e6179887ff7f82e9d05ed973333856c153a692d45983e16e35b12a0f0e49f`,
-3,091,660,800 bytes (3.09 GB, published as seven parts ≤1000 MiB — the
-release host's connection to uploads.github.com reset every long stream, so
-the tail was cut finer than the 2 GB cap requires).
+Fifth release candidate after the beta. rc1–rc4 were internal builds, booted on
+the reference deck (Lenovo Bay Trail, UEFI) and in QEMU and never published;
+every hardware finding from them is closed below. rc5 is built from
+`release/2.2.0` (29 commits after `v2.2.0-beta`, plus this slice) with
+`ORIONX_VERSION=v2.2.0-rc5`, so the image reports `ISO_VERSION=v2.2.0-rc5`.
 
-### Changed
-
-- **Base flipped to Debian 13 "trixie"** (DEC-PHASE12-001): kernel 6.12,
-  Python 3.13 (PEP 668 — system `pip` installs use `--break-system-packages`,
-  DEC-PHASE12-003), XFCE 4.20, live mirrors instead of a snapshot pin,
-  `--firmware-chroot false` (our four firmware packages are the authority,
-  DEC-PHASE12-011). Build container is `debian:trixie-slim`.
-- **Image size 6.63 GB → 3.09 GB** — zero-regret trim (DEC-PHASE12-015: ollama
-  CUDA/Vulkan backends, `zeek-core` instead of the `zeek` metapackage,
-  compilers/`-dev` headers, scipy/matplotlib/pyqtgraph Recommends, non-English
-  locales, package docs except copyright files, `mate-polkit` pinned so apt no
-  longer pulls ukui-polkit + OpenCV + GDAL) and **one model copy** on disk
-  (DEC-PHASE12-016: `ollama create` re-serialises the GGUF, so the image had
-  carried two distinct 1.9 GB copies; `scripts/nebula/store.py consolidate`
-  keeps only the manifest-referenced blobs and rebinds `MANIFEST.sha256` to
-  them — the boot integrity gate now hashes the bytes ollama actually loads).
-- Wallpaper and genmon panel widgets fixed for XFCE 4.20 (connector-named
-  backdrops, `genmon-N.rc`, `<txt>` markup, real counts) — DEC-PHASE12-004/005/010.
+_ISO SHA-256 and size: recorded here when the rc5 build completes. Not yet
+boot-tested._
 
 ### Added
 
-- **Orion Cockpit** (`orionx-cockpit`, DEC-PHASE12-007) — live Cairo dashboard
-  on the R.A.I.N. event bus; ◈ COCKPIT button in the Control Center.
-- **"Orion" application menu** grouping every Orion-X tool (DEC-PHASE12-006);
-  Control Center deck theming (DEC-PHASE12-008).
-- **go-roast** (`roast`) + Nebula tools `oast_extract`/`oast_decode`/`oast_analyze`
-  (DEC-PHASE12-002).
-- **nucleotide** (`nucleotide`, `orionx-nucleotide-watch`) with a lookup table
-  prebuilt at ISO-build time; Nebula tools `nucleotide_lookup`/`nucleotide_fingerprint`
-  (DEC-PHASE12-012).
-- **Pivotglass** (`ap`, `pivotglass`; web UI on 127.0.0.1:8765) (DEC-PHASE12-013).
-- **Zeek** on PATH (`/opt/zeek/bin` symlinks); volatility3 on Python 3.13.
-- **User Guide** rewrite with architecture diagrams, rendered with
-  `pymdownx.superfences` (DEC-PHASE12-009).
-- Build-wrapper delegation guards — argument whitelist, repo sanity, busy-volume
-  refusal — after a test run wiped the build volume mid-build (DEC-PHASE12-014).
-- **Guided walkthrough video** (`docs/media/orionx-guided-demo-v2.2.0-beta.mp4`
-  + poster, WebVTT captions, transcript; embedded in the README) built by
-  `tools/guided-demo/` from `scenes.yaml` — recorded from the beta's own desktop
-  and applications in a virtual X session, narrated offline with Piper
-  (DEC-PHASE12-018). Re-cut per release with one command.
-- **Purge safety** (DEC-PHASE12-017): trim purges are simulated, protected
-  packages (apt manual set ∪ desktop-critical list) are never removed, and a
-  missing critical package fails the build. Added after internal build dev8
-  shipped without a window manager (`cpp` is a hard dependency of
-  `x11-xserver-utils` on trixie).
+- **Investigation surface (OSINT)** — `orionx-osint`, Orion menu → *Orion-X
+  Investigation Surface* (DEC-PHASE12-043). A loopback launcher page grouping
+  the deck's own tools with two vendored web tools: **CyberChef v11.5.0** (74
+  files, checksum manifest verified at build time; 23 incident-response
+  recipes) and the **Orion-X Attack Map**, fed from the R.A.I.N. bus. It ships
+  no GeoIP and invents no coordinates — MaxMind's EULA forbids redistribution
+  and DB-IP rots monthly — so unlocatable sources render in a labelled PUBLIC
+  UNLOCATED sector and the page states on every render that bearing and
+  distance are layout, not location; on an IR tool a dot reads as evidence.
+  IPew was not vendored (five CDNs, attacks placed at country centroids).
+  48 MiB raw, 5.71 MiB compressed — measured.
+- **GODSEYE (globe)** (DEC-PHASE12-045) — `VrushankPatel/godseye` (Apache-2.0)
+  pinned at commit `eb4b8db`, vendored as a pre-built static bundle: 402
+  files under `/opt/orionx/osint/godseye/app`, `MANIFEST.sha256` verified by
+  hook 0715 before the ISO is written. The build fails on a checksum mismatch,
+  on a Google Fonts reference (the page would phone Google to render itself),
+  or on an API-key-shaped string (Vite compiles `VITE_*` into the bundle, so a
+  key here is a key published inside the ISO). Built with no `.env`, so every
+  key-gated layer is compiled out and the preflight says so by name. Served by
+  `orionx-osint` under the deck's single posture authority: at a raised
+  posture or with no default route the server answers 503 with a page naming
+  what is off, why it matters, what still works and the remedy; the five
+  upstream Node-backend routes answer 501 by name rather than a 404 that
+  GODSEYE would draw as an empty layer. `HOSTS.txt` lists every host the
+  bundle can contact, generated from the shipped bytes. The menu entry opens
+  the preflight, never the globe. 92 assertions (`tests/unit/test_godseye.sh`).
+- **Orion-X DJ Deck / `orionx-music`** (DEC-PHASE12-044) — a generative music
+  bed (`scripts/music/`; renders to WAV or streams through paplay/aplay).
+  Off by default **by construction**: hook 0702 installs no unit and fails the
+  build if any unit or autostart entry could start it, and imports the engine
+  inside the chroot so a broken engine fails the build instead of shipping a
+  menu entry that opens a traceback. R.A.I.N. writes `/run/orionx/music-duck`
+  *before* a cue plays, so the duck leads the sound; R.A.I.N. takes no import
+  dependency on the music and a failure there costs a second of music, never a
+  tone. 69 assertions.
+- **R.A.I.N. spoken narration** (DEC-PHASE12-046) — opt-in
+  (`orionx-rain --speech on|off`; Control Center → Awareness → *Narrate alerts
+  aloud*). After the tone, a bounded, non-blocking, drop-don't-queue worker
+  speaks one sentence — Nebula-authored when reachable, otherwise a template
+  from the event's own fields (6 s timeout, queue of 2, 20 s minimum gap,
+  24 words). The tone path is unchanged and fires first; a broken narration
+  layer costs only speech. `espeak-ng` is already on the image (zero added
+  bytes); `sudo /opt/orionx/optional/install-piper-voice.sh` adds a natural
+  voice (en_US-lessac-medium, 63,201,294 bytes, SHA-256-pinned — the installer
+  synthesises audio and checks the WAV before declaring success).
+  `orionx-rain --speech-status` reports engine, Nebula reachability and bounds.
+  The Awareness panel no longer drops `rain.json` keys it does not own (it had
+  been discarding `speech`; `rain_lib.py` is the schema authority). 54 assertions.
+- **Pivotglass 1.2.0** — upstream renamed the package `adversary_pursuit` →
+  `pivotglass`; `ap --version` reports `pivotglass 1.2.0`. 33 assertions.
+- **`orionx-logquery`** — forensic log correlation, targeted vs widespread: is
+  this source singling the deck out or spraying the internet? Local NDJSON
+  ingestion, S3 and API sources are new in this port (upstream had neither).
+- **Cockpit drill-down and APPROVE** — events carry a structured `detail`
+  dict (source IP, signature, rule) shown in the Cockpit, and pending
+  defensive actions can be approved from the dashboard. Appends stay below
+  `PIPE_BUF` so the bus remains atomic with many emitters.
+- **Zeek ingest and bounded PCAP capture**; `install-zeek.sh` recovers the
+  chroot Zeek install that had been failing silently — the beta shipped with
+  no `/opt/zeek` while `artifact-analyzer.py` advertised it.
+- **GRUB graphical theme** available again behind `ORIONX_GRUB_THEME=1`; the
+  default menu is plain by design (see *Boot graphics* below).
 
-### Known limitations
+### Fixed
 
-- Plain-text UEFI GRUB menu (graphical theme retired; identity is in Plymouth).
-- Model still inside the ISO → seven-part download. Separate model asset is next.
-- Built from `feat/trixie-migration`, since merged to `develop` and carried on
-  `release/2.2.0`. `release.yml` built in a Bullseye container at the time and
-  was not used for this release (published manually, see
-  `docs/release-process.md` §10); the workflows now build in `debian:trixie-slim`.
+- **Mesh "self-healing" had never done anything** (DEC-PHASE12-041).
+  `mesh-health` called `wg-quick down/up wg0`, which parses
+  `/etc/wireguard/wg0.conf` first — a file that has never existed, since
+  `orionx-mesh join` builds the interface with `ip link add` + `wg set`. Both
+  commands died instantly behind `2>/dev/null || true` and the function
+  reported "aggressive heal triggered" every two minutes for the project's
+  life. The heal now bounces via `ip link set wg0 down/up` (keeps the key,
+  address and every peer — a real `wg-quick down` would have destroyed all
+  peer config to chase one switched-off machine), refuses while any peer has
+  a fresh handshake, and is bounded to 2 heals mesh-wide with the budget in a
+  separate file from the per-peer counters. Measured: 20 firings, two healthy
+  peers and one dead → 0 bounces, 1 event. With `wg-quick` gone the mesh units
+  are confined, capability sets justified per unit; `ProtectKernelModules` is
+  deliberately absent (health restores a missing wg0 via module autoload) and
+  a test fails if it is added.
+- **Nebula runtime absent on rc4 — root cause.** `TimeoutStartSec` was unset,
+  so systemd's 90 s default SIGTERMed the integrity hash (measured at 2 min+)
+  mid-run, marked the unit failed, and `nebula-runtime`'s `Requires=` then
+  refused to start it, permanently — with no status file for the Control
+  Center. Now 900 s; `CHECKING` is written before hashing; a SIGTERM handler
+  fails closed saying plainly "timeout, not evidence of tampering".
+  DEC-PHASE10-009 intact.
+- **Boot graphics, by root cause** (DEC-PHASE12-042). Unpacking rc4's
+  `efi.img` showed the themed menu loading `/boot/grub/fonts/unicode.pf2` — a
+  directory that has never existed in this image. `loadfont` failed silently
+  and gfxterm ran with no font: rc1-79's symptom and the mechanism behind
+  rc1-81's unreadable render. The default now uses GRUB's own menu renderer
+  over a background image — no theme engine, no absolute pixel layout, no font
+  named by string; every degradation step stays readable and the failsafe
+  entry is always selectable. Also fixed in that block: gfxterm was selected
+  *after* the serial directives, which would have dropped the serial console
+  the QEMU gate reads.
+- **Suricata actually captures** (DEC-PHASE12-034). Debian's unit hardcodes
+  `af-packet: eth0`; on a deck with no eth0, suricata 7.0.10 exits 1
+  immediately and `orionx-postured` re-issued `systemctl start` every 30 s,
+  flooding the bus with one warning and inflating THREAT PRESSURE to
+  5.1 ELEVATED on an idle machine. The loop is bounded and Orion-X ships its
+  own capture config (`/etc/suricata/orionx.yaml`, including Debian's and
+  overriding the interface).
+- **AppArmor loaded zero profiles on every live boot.** `aa-status` reported
+  "Failed to get profiles: 2"; every advertised confinement — ollama, synapse,
+  tshark, volatility3, wg — was absent at runtime. Only `nebula-mcp` noticed,
+  by failing closed (DEC-PHASE12-025).
+- **nebula-mcp was killed by its own seccomp filter.** `_grant_socket_access()`
+  called `chgrp` under `SystemCallFilter=~@privileged`; seccomp delivers
+  SIGSYS, not `OSError`, so the "best-effort" `try/except` could never run
+  (status=31/SYS, three restarts in thirty seconds).
+- **Five defects reported from the reference deck on rc4**, none visible in
+  QEMU or to any test — including the Suricata loop above.
+- **Terminal palette** had drifted across three copies, and toggling the theme
+  reverted the DEC-PHASE11-031 readable foreground. Now one data asset;
+  `toggle-theme.sh` rewritten as plan/do/check/report with xfconf writes read
+  back; `set-wallpaper.sh` no longer reports its two abort paths as success.
+- **`.gitignore` excluded `includes.chroot/opt/orionx` as a directory**, so
+  git never descended into it and any new optional installer was silently
+  dropped. Two tests asserted `git diff` was empty — true on any pristine
+  clone however broken the product. Both fixed.
+- **Unsigned releases must fail, not ship quietly** (DEC-PHASE12-026): the GPG
+  import and sign steps in `release.yml` no longer `continue-on-error`.
+- **Beta-audit blockers** (DEC-PHASE12-020/021): `orionx-diag` ships again
+  (moved to `scripts/`, the single authority the build stages — see the
+  dedicated section below); `setup-matrix.sh` prompts for client/server when
+  run bare; AppArmor volatility3 profile attaches to the installed path;
+  `orionx-imager` refuses the root disk; CI builds in `debian:trixie-slim`.
+- **`orionx-imager` downloads split releases** and resolves pre-releases
+  (DEC-PHASE12-019).
+- QEMU boot test finds OVMF on macOS, so UEFI no longer silently skips; the
+  credential-audit test proves it can detect a secret.
 
-### Known issues in v2.2.0-beta
+### Known issues carried from the beta
 
-Found by the pre-release accuracy audit and beta readers (2026-09-20); all are
-fixed on `release/2.2.0` for v2.2.0 unless noted.
+- The first-boot wizard still prints the unusable "SSH admin one-shot"
+  credential (root login is disabled by the SSH hardening drop-in).
+  Documented as ignorable; the code fix is tracked separately.
+- `radare2`, `bulk_extractor` and the Iosevka font are not packaged in trixie
+  and stay out.
+- The model is still inside the ISO, so a published image is a multi-part
+  download. Separate model asset remains next.
+- The guided walkthrough video is the beta's and has not been re-cut for rc5.
+- Decisions DEC-PHASE12-030 … -046 are annotated at their point of
+  implementation only; the MASTER_PLAN Decision Log has no Phase 12 rows.
 
-- **`orionx-diag` is missing from the image.** `scripts/build-iso.sh` rsyncs
-  `scripts/` over `/opt/orionx/scripts/` with `--delete`, and the tool lived
-  only in the chroot overlay, so every build removed it before the 0700 hook
-  could symlink it. Moved to `scripts/orionx-diag`, which the build stages, so
-  the tool ships again. Its stale assertions were corrected at the same time:
-  the radare2 package check and the `files` GRUB-theme-directory check were
-  removed, the socket check now targets `nebula-runtime.service`
-  (DEC-PHASE11-033 removed `nebula-runtime.socket`), and the hostname check now
-  requires only that `hostname` is set and agrees with `/etc/hostname` rather
-  than equalling `orionx` (DEC-PHASE12-021). The `branding` category's
-  `/boot/grub/grub.cfg` theme-directive check was replaced by one asserting
-  `Theme=orionx-phoenix` in `/etc/plymouth/plymouthd.conf`: DEC-PHASE11-044
-  retired the graphical GRUB theme, so the old check SKIPped on every live boot
-  and would have FAILed on any installed-to-disk system. The tool now runs 45
-  assertions across 10 categories.
-- **The image reports `ISO_VERSION=v2.2.0-trixie-dev9`** in `/etc/orionx-version`
-  and the MOTD — it was built with a development label. It is the v2.2.0-beta
-  build (SHA-256 `606e6179…e49f`). v2.2.0 is built with `ORIONX_VERSION=v2.2.0`
-  and the release runbook asserts the baked version equals the tag.
-- **radare2, bulk_extractor and the Iosevka font were listed but are absent.**
-  None is packaged in Debian trixie; they stay out of v2.2.0. Fonts are Hack
-  throughout (greeter Hack 11, terminal Hack 12); `md5deep` is provided by the
-  `hashdeep` package; Ghidra remains available via `install-ghidra.sh`. This
-  included the RE toolkit README baked onto the image at `/opt/orionx/re/`,
-  which listed radare2 as installed and told the operator to run `r2 <binary>`;
-  it now names what actually ships and points at `install-ghidra.sh`.
-- **`sudo setup-matrix.sh` without `--mode` exits 1**, including from the
-  Orion-menu entry. Pass `--mode client` or `--mode server` on the beta; v2.2.0
-  prompts for the mode. Both modes install Element (and server mode Synapse)
-  from the network — now documented.
-- **`yara -r /opt/orionx/yara <dir>` as printed in the beta docs fails**: yara
-  takes a rules file, and no rules ship until `sudo orionx-freshen-yara` runs.
-- **Docs and images baked into the ISO are pre-beta** (`/usr/share/doc/orionx/`
-  carries the Bullseye-era README and placeholder PNGs). The GitHub copies are
-  current; v2.2.0 is built after the doc fixes land and the baked README is
-  checked against the repo.
-- **`orionx-imager --iso-release` could not fetch split releases** (it looked
-  only for a single `.iso` asset, and `latest` skipped pre-releases). Fixed in
-  release/2.2.0 (DEC-PHASE12-019): parts are downloaded, joined and verified
-  against `SHA256SUMS`, and a tag or `--iso-release latest` with pre-releases
-  resolves correctly.
-- **First-boot wizard prints an unusable "SSH admin one-shot" credential** to
-  the console, `/etc/motd.d/` and `/etc/issue.d/` — root login is disabled by
-  the SSH hardening drop-in, so the key cannot be used. Documented as ignorable
-  and removable in the User Guide; the code fix is tracked separately.
+The four sections that follow were written against `release/2.2.0` after the
+beta and are part of rc5.
+
 
 ### W10-3 / W10-5 / W10-6 completed — three surfaces that shipped without engines
 
@@ -293,6 +340,124 @@ file parses and is byte-identical to source), and `26e` "installer does not
 refuse non-root" was an assignment to bash's **read-only `EUID`**, silently
 discarded, so the guard correctly never fired under a root container. The
 installer is correct; the test now drops privileges with `setpriv`/`runuser`.
+
+
+## [v2.2.0-beta] — 2026-09-16 ("OrionX Beta", pre-release)
+
+First public beta of the Debian 13 (Trixie) line. Built from
+`feat/trixie-migration` (`32247dd`), boot-tested on the reference deck
+(Lenovo Bay Trail, UEFI). ISO SHA-256
+`606e6179887ff7f82e9d05ed973333856c153a692d45983e16e35b12a0f0e49f`,
+3,091,660,800 bytes (3.09 GB, published as seven parts ≤1000 MiB — the
+release host's connection to uploads.github.com reset every long stream, so
+the tail was cut finer than the 2 GB cap requires).
+
+### Changed
+
+- **Base flipped to Debian 13 "trixie"** (DEC-PHASE12-001): kernel 6.12,
+  Python 3.13 (PEP 668 — system `pip` installs use `--break-system-packages`,
+  DEC-PHASE12-003), XFCE 4.20, live mirrors instead of a snapshot pin,
+  `--firmware-chroot false` (our four firmware packages are the authority,
+  DEC-PHASE12-011). Build container is `debian:trixie-slim`.
+- **Image size 6.63 GB → 3.09 GB** — zero-regret trim (DEC-PHASE12-015: ollama
+  CUDA/Vulkan backends, `zeek-core` instead of the `zeek` metapackage,
+  compilers/`-dev` headers, scipy/matplotlib/pyqtgraph Recommends, non-English
+  locales, package docs except copyright files, `mate-polkit` pinned so apt no
+  longer pulls ukui-polkit + OpenCV + GDAL) and **one model copy** on disk
+  (DEC-PHASE12-016: `ollama create` re-serialises the GGUF, so the image had
+  carried two distinct 1.9 GB copies; `scripts/nebula/store.py consolidate`
+  keeps only the manifest-referenced blobs and rebinds `MANIFEST.sha256` to
+  them — the boot integrity gate now hashes the bytes ollama actually loads).
+- Wallpaper and genmon panel widgets fixed for XFCE 4.20 (connector-named
+  backdrops, `genmon-N.rc`, `<txt>` markup, real counts) — DEC-PHASE12-004/005/010.
+
+### Added
+
+- **Orion Cockpit** (`orionx-cockpit`, DEC-PHASE12-007) — live Cairo dashboard
+  on the R.A.I.N. event bus; ◈ COCKPIT button in the Control Center.
+- **"Orion" application menu** grouping every Orion-X tool (DEC-PHASE12-006);
+  Control Center deck theming (DEC-PHASE12-008).
+- **go-roast** (`roast`) + Nebula tools `oast_extract`/`oast_decode`/`oast_analyze`
+  (DEC-PHASE12-002).
+- **nucleotide** (`nucleotide`, `orionx-nucleotide-watch`) with a lookup table
+  prebuilt at ISO-build time; Nebula tools `nucleotide_lookup`/`nucleotide_fingerprint`
+  (DEC-PHASE12-012).
+- **Pivotglass** (`ap`, `pivotglass`; web UI on 127.0.0.1:8765) (DEC-PHASE12-013).
+- **Zeek** on PATH (`/opt/zeek/bin` symlinks); volatility3 on Python 3.13.
+- **User Guide** rewrite with architecture diagrams, rendered with
+  `pymdownx.superfences` (DEC-PHASE12-009).
+- Build-wrapper delegation guards — argument whitelist, repo sanity, busy-volume
+  refusal — after a test run wiped the build volume mid-build (DEC-PHASE12-014).
+- **Guided walkthrough video** (`docs/media/orionx-guided-demo-v2.2.0-beta.mp4`
+  + poster, WebVTT captions, transcript; embedded in the README) built by
+  `tools/guided-demo/` from `scenes.yaml` — recorded from the beta's own desktop
+  and applications in a virtual X session, narrated offline with Piper
+  (DEC-PHASE12-018). Re-cut per release with one command.
+- **Purge safety** (DEC-PHASE12-017): trim purges are simulated, protected
+  packages (apt manual set ∪ desktop-critical list) are never removed, and a
+  missing critical package fails the build. Added after internal build dev8
+  shipped without a window manager (`cpp` is a hard dependency of
+  `x11-xserver-utils` on trixie).
+
+### Known limitations
+
+- Plain-text UEFI GRUB menu (graphical theme retired; identity is in Plymouth).
+- Model still inside the ISO → seven-part download. Separate model asset is next.
+- Built from `feat/trixie-migration`, since merged to `develop` and carried on
+  `release/2.2.0`. `release.yml` built in a Bullseye container at the time and
+  was not used for this release (published manually, see
+  `docs/release-process.md` §10); the workflows now build in `debian:trixie-slim`.
+
+### Known issues in v2.2.0-beta
+
+Found by the pre-release accuracy audit and beta readers (2026-09-20); all are
+fixed on `release/2.2.0` for v2.2.0 unless noted.
+
+- **`orionx-diag` is missing from the image.** `scripts/build-iso.sh` rsyncs
+  `scripts/` over `/opt/orionx/scripts/` with `--delete`, and the tool lived
+  only in the chroot overlay, so every build removed it before the 0700 hook
+  could symlink it. Moved to `scripts/orionx-diag`, which the build stages, so
+  the tool ships again. Its stale assertions were corrected at the same time:
+  the radare2 package check and the `files` GRUB-theme-directory check were
+  removed, the socket check now targets `nebula-runtime.service`
+  (DEC-PHASE11-033 removed `nebula-runtime.socket`), and the hostname check now
+  requires only that `hostname` is set and agrees with `/etc/hostname` rather
+  than equalling `orionx` (DEC-PHASE12-021). The `branding` category's
+  `/boot/grub/grub.cfg` theme-directive check was replaced by one asserting
+  `Theme=orionx-phoenix` in `/etc/plymouth/plymouthd.conf`: DEC-PHASE11-044
+  retired the graphical GRUB theme, so the old check SKIPped on every live boot
+  and would have FAILed on any installed-to-disk system. The tool now runs 45
+  assertions across 10 categories.
+- **The image reports `ISO_VERSION=v2.2.0-trixie-dev9`** in `/etc/orionx-version`
+  and the MOTD — it was built with a development label. It is the v2.2.0-beta
+  build (SHA-256 `606e6179…e49f`). v2.2.0 is built with `ORIONX_VERSION=v2.2.0`
+  and the release runbook asserts the baked version equals the tag.
+- **radare2, bulk_extractor and the Iosevka font were listed but are absent.**
+  None is packaged in Debian trixie; they stay out of v2.2.0. Fonts are Hack
+  throughout (greeter Hack 11, terminal Hack 12); `md5deep` is provided by the
+  `hashdeep` package; Ghidra remains available via `install-ghidra.sh`. This
+  included the RE toolkit README baked onto the image at `/opt/orionx/re/`,
+  which listed radare2 as installed and told the operator to run `r2 <binary>`;
+  it now names what actually ships and points at `install-ghidra.sh`.
+- **`sudo setup-matrix.sh` without `--mode` exits 1**, including from the
+  Orion-menu entry. Pass `--mode client` or `--mode server` on the beta; v2.2.0
+  prompts for the mode. Both modes install Element (and server mode Synapse)
+  from the network — now documented.
+- **`yara -r /opt/orionx/yara <dir>` as printed in the beta docs fails**: yara
+  takes a rules file, and no rules ship until `sudo orionx-freshen-yara` runs.
+- **Docs and images baked into the ISO are pre-beta** (`/usr/share/doc/orionx/`
+  carries the Bullseye-era README and placeholder PNGs). The GitHub copies are
+  current; v2.2.0 is built after the doc fixes land and the baked README is
+  checked against the repo.
+- **`orionx-imager --iso-release` could not fetch split releases** (it looked
+  only for a single `.iso` asset, and `latest` skipped pre-releases). Fixed in
+  release/2.2.0 (DEC-PHASE12-019): parts are downloaded, joined and verified
+  against `SHA256SUMS`, and a tag or `--iso-release latest` with pre-releases
+  resolves correctly.
+- **First-boot wizard prints an unusable "SSH admin one-shot" credential** to
+  the console, `/etc/motd.d/` and `/etc/issue.d/` — root login is disabled by
+  the SSH hardening drop-in, so the key cannot be used. Documented as ignorable
+  and removable in the User Guide; the code fix is tracked separately.
 
 ## [v2.1.0-bullseye-rain] — 2026-09-13 (pre-release; final Bullseye build)
 

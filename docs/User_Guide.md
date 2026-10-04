@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition User Guide
 
-Release: **v2.2.0-beta** (v2.2.0 line, Trixie) — Debian 13 "trixie", Python 3.13, Linux 6.12. This guide describes the beta image; where v2.2.0 final differs, the text says so.
+Release: **v2.2.0-rc5** (v2.2.0 line, Trixie; release candidate after v2.2.0-beta) — Debian 13 "trixie", Python 3.13, Linux 6.12. This guide describes the rc5 image; where v2.2.0 final differs, the text says so.
 
 ## Table of Contents
 
@@ -39,6 +39,9 @@ Release: **v2.2.0-beta** (v2.2.0 line, Trixie) — Debian 13 "trixie", Python 3.
    - [R.A.I.N. — Real-time Audible Intrusion Notification](#rain-real-time-audible-intrusion-notification)
    - [The Event Bus](#the-event-bus)
    - [Orion Cockpit](#orion-cockpit)
+   - [Investigation Surface (OSINT)](#investigation-surface-osint)
+   - [GODSEYE (globe)](#godseye-globe)
+   - [DJ Deck (optional music)](#dj-deck-optional-music)
 
 8. [Nebula AI](#8-nebula-ai)
    - [Using Nebula](#using-nebula)
@@ -104,17 +107,17 @@ Release: **v2.2.0-beta** (v2.2.0 line, Trixie) — Debian 13 "trixie", Python 3.
 
 Orion-X Phoenix Edition is a complete Linux system on a USB stick for incident response and digital forensics. You start a computer from the stick instead of from its own disk; Orion-X runs entirely from memory, installs nothing, and leaves no files on that computer. It brings its own tools — network capture, memory and disk forensics, malware triage, encrypted team chat, an on-device AI assistant — and works without any internet connection.
 
-The "Phoenix" name symbolizes the toolkit's ability to help organizations rise from the ashes of security incidents through effective investigation and response. The current release, **v2.2.0-beta** (Trixie line), is built on Debian 13 "trixie" with Python 3.13 and Linux 6.12. It adds an on-device AI assistant (Nebula), audible intrusion alerts (R.A.I.N.), a live visualization dashboard (the Orion Cockpit), a peer-to-peer WireGuard mesh, and a graphical Control Center.
+The "Phoenix" name symbolizes the toolkit's ability to help organizations rise from the ashes of security incidents through effective investigation and response. The current release, **v2.2.0-rc5** (Trixie line), is built on Debian 13 "trixie" with Python 3.13 and Linux 6.12. It adds an on-device AI assistant (Nebula), audible intrusion alerts (R.A.I.N.), a live visualization dashboard (the Orion Cockpit), a peer-to-peer WireGuard mesh, and a graphical Control Center.
 
-**About the beta.** v2.2.0-beta has been boot-tested on one reference laptop (Lenovo, Intel Bay Trail, UEFI) and in QEMU. It is complete enough to use, but expect rough edges, and please report anything confusing or broken (see [Support](SUPPORT.md)). Known limits of this beta:
+**About the beta and rc5.** v2.2.0-beta has been boot-tested on one reference laptop (Lenovo, Intel Bay Trail, UEFI) and in QEMU. It is complete enough to use, but expect rough edges, and please report anything confusing or broken (see [Support](SUPPORT.md)). Known limits of the beta, and what the rc5 release candidate changes:
 
 - x86-64 PCs only (it does not boot Apple-silicon Macs); Secure Boot must be off.
 - Nothing you change survives a reboot unless you set up [persistence](#persistence-options).
-- The beta image identifies itself as `ISO_VERSION=v2.2.0-trixie-dev9` in `/etc/orionx-version` and the terminal welcome text. That is the v2.2.0-beta build (ISO SHA-256 `606e6179…e49f`); v2.2.0 final will report `v2.2.0`.
-- The self-check tool `orionx-diag` is missing from the beta image (it ships in v2.2.0).
+- The beta image identifies itself as `ISO_VERSION=v2.2.0-trixie-dev9` in `/etc/orionx-version` and the terminal welcome text. That is the v2.2.0-beta build (ISO SHA-256 `606e6179…e49f`). rc5 reports `ISO_VERSION=v2.2.0-rc5`; v2.2.0 final will report `v2.2.0`.
+- The self-check tool `orionx-diag` is missing from the beta image; it ships again from rc5 (DEC-PHASE12-021).
 - `radare2` and `bulk_extractor` are not on the image, although earlier release text listed them; Ghidra is available as an optional installer (§15).
-- The bare `sudo setup-matrix.sh` command exits with "`--mode` is required" on the beta; pass `--mode client` or `--mode server` (§6). v2.2.0 prompts for the mode instead.
-- The copy of this guide and the README baked into the image at `/usr/share/doc/orionx/` predates the beta; the versions on GitHub are current.
+- The bare `sudo setup-matrix.sh` command exits with "`--mode` is required" on the beta; pass `--mode client` or `--mode server` (§6). rc5 and later prompt for the mode instead.
+- The copy of this guide and the README baked into the image at `/usr/share/doc/orionx/` predates the beta; the versions on GitHub are current. rc5 bakes the guide current at build time, and the release check compares the baked copy against the repository before anything is published.
 
 #### Words this guide uses
 
@@ -395,6 +398,11 @@ Applications → **Orion** (Phoenix icon) groups the Orion-X tools:
 - **Orion-X Artifact Analyzer**
 - **Orion-X Storyboard Generator**
 - **Pivotglass**
+- **Orion-X Investigation Surface** — OSINT launcher page (§7)
+- **CyberChef (local)**
+- **Orion-X Attack Map**
+- **GODSEYE (globe)** — opens the network preflight, not the globe (§7)
+- **Orion-X DJ Deck** — optional music, off by default (§7)
 
 ### Top Panel Widgets
 
@@ -631,6 +639,10 @@ orionx-rain --test warning   # play a sample cue for the given severity
 orionx-rain --oneshot        # play the most urgent pending event once, then exit
 ```
 
+#### Spoken narration (off by default)
+
+R.A.I.N. can speak a one-sentence description *after* the alert tone — for example "critical: port scan from 192.168.4.77, 900 ports in 11 seconds". It is off by default because speech is intelligible to everyone within earshot and a tone is not. Turn it on in Control Center → **Awareness** → **Narrate alerts aloud**, or with `orionx-rain --speech on`. Narration is bounded (6 s timeout, a queue of two, 20 s minimum gap, 24 words) and never delays the tone; when Nebula is reachable it writes the sentence, otherwise a template built from the event's own fields is spoken. `espeak-ng` ships on the image. For a natural voice run `sudo /opt/orionx/optional/install-piper-voice.sh` (§15) — it is discovered automatically, nothing else changes. `orionx-rain --speech-status` reports the engine, Nebula reachability and the bounds; `orionx-rain --speech-test` narrates one synthetic alert end to end.
+
 ### The Event Bus
 
 The bus is an append-only JSON Lines file at `/run/orionx/events.jsonl`. Each line has the fields `ts`, `iso`, `severity`, `source`, `category`, `message`.
@@ -659,6 +671,18 @@ Keys: **F11** toggles fullscreen; **Esc** or **q** quits. Flags: `--fullscreen` 
 ![Orion Cockpit layout](images/orionx-cockpit-layout.svg)
 
 *Figure: Orion Cockpit layout.*
+
+### Investigation Surface (OSINT)
+
+Applications → **Orion** → **Orion-X Investigation Surface** (or `orionx-osint`) serves a launcher page on 127.0.0.1 (port 8787, walking forward if busy) that groups the deck's own tools with two vendored web tools: **CyberChef 11.5.0** (local; its 74 files are checksum-verified when the image is built; 23 incident-response recipes) and the **Orion-X Attack Map**, which draws what *this* deck has seen on the event bus. No GeoIP database ships, so sources that cannot be located are drawn in a labelled PUBLIC UNLOCATED sector, and the page says on every render that bearing and distance are layout, not location. The page also links `orionx-logquery`, Pivotglass, nucleotide, the analyzers, `orionx-capture`, the Cockpit, `storyboard-gen.py`, `orionx-diag`, `orionx-freshen-intel` and GODSEYE. Everything under *ON THIS DECK* works with no network. `orionx-osint --check` reports what is present.
+
+### GODSEYE (globe)
+
+GODSEYE (Apache-2.0, vendored at a pinned upstream commit under `/opt/orionx/osint/godseye/`) is a 3-D globe of live public feeds — aircraft, satellites, seismic events, weather, hazards. **It needs the internet.** It caches nothing, every layer is a live third-party request, and roughly fifteen of its feeds pass through public relays that see this deck's address and the exact question asked. So the menu entry opens a **preflight** page, not the globe: it names every layer that is dead in this build and every host the globe would contact (the full inventory is `/opt/orionx/osint/godseye/HOSTS.txt`). `orionx-osint` refuses to serve the globe at all — HTTP 503 with a page saying what is off, why it matters, what still works and the remedy — at a raised threat posture or when the deck has no default route. Layers that need upstream's Node backend or an API key are compiled out and say so; no credential ships in the image. If reaching out is appropriate, lower the posture in Control Center → **Awareness** → **Threat posture**.
+
+### DJ Deck (optional music)
+
+**Orion-X DJ Deck** (`orionx-dj`, or `orionx-music` from a terminal) is a generative music bed for long shifts. It is **off by default by construction**: no service and no autostart entry exist, so it plays only when you open the DJ Deck or run `orionx-music play`. R.A.I.N. mutes it *before* every alert cue, so a tone is never covered, and a music failure can never affect the tone. `orionx-music status` reports what the audio path can do, `orionx-music render out.wav` works with no sound device, and settings live in `~/.config/orionx/music.json`.
 
 ## 8. Nebula AI
 
@@ -1554,6 +1578,7 @@ as post-boot installers under `/opt/orionx/optional/`:
 | `install-floss.sh` | Mandiant FLOSS | ~50 MB |
 | `install-trid.sh` | File type identification | ~5 MB |
 | `install-gomuks.sh` | Matrix TUI client | ~20 MB |
+| `install-piper-voice.sh` | Piper natural voice for R.A.I.N. narration (en_US-lessac-medium, SHA-256-pinned; installer synthesises audio to prove it works) | ~63 MB model, >150 MB installed with onnxruntime |
 
 ### Usage
 
@@ -1799,6 +1824,8 @@ For problems with Matrix communication:
      sudo tail /var/log/orionx/nebula-mcp.log
      ```
 
+**No spoken narration (the tone plays, nothing is said).** Run `orionx-rain --speech-status`; it names each gap and its remedy. Narration is off by default (`orionx-rain --speech on`); with no TTS engine the deck is tone-only (`sudo apt-get install -y espeak-ng`); if Nebula is not answering, a built-in phrasing is spoken anyway.
+
 ### Tool Execution Problems
 
 When experiencing issues with specific tools:
@@ -1885,6 +1912,10 @@ sudo orionx-wizard             # Re-run the first-boot wizard
 orionx-event -s SEV --source NAME -c CAT "msg"   # Publish an event
 orionx-rain --test warning     # Play a sample alert cue
 orionx-rain --oneshot          # Play the most urgent pending event once
+orionx-rain --speech on|off    # Spoken narration after the cue (off by default)
+orionx-rain --speech-status    # Narration engine, Nebula reachability, bounds
+orionx-osint [--page godseye]  # Investigation surface / GODSEYE preflight
+orionx-music status|play|render out.wav   # Optional music bed (off by default)
 tail -f /run/orionx/events.jsonl   # Watch the event bus
 
 # Nebula AI

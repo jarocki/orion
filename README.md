@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition — Cyberdeck for the Good Guys
 
-**Version:** v2.2.0-beta — "OrionX Beta" ([download](https://github.com/jarocki/orion/releases/tag/v2.2.0-beta), pre-release)
+**Version:** v2.2.0-rc5 — release candidate (internal build). Latest published: [v2.2.0-beta](https://github.com/jarocki/orion/releases/tag/v2.2.0-beta) ("OrionX Beta", pre-release)
 **Base:** Debian 13 "trixie" live (kernel 6.12, Python 3.13, XFCE 4.20) | **Runtime:** Qwen2.5-3B-Instruct (Apache-2.0)
 **Previous line:** v2.1.0-bullseye-rain (final Debian 11 build, kept as a known-good fallback)
 
@@ -128,8 +128,8 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 - `orionx-diag --json` for machine-readable output
 - `orionx-diag --category <name>` for targeted probes
 - See `docs/orionx-diag.md` for full reference.
-- **Not in v2.2.0-beta:** the tool was deleted by a build-staging bug and ships
-  again from the next build (DEC-PHASE12-021).
+- **Not in v2.2.0-beta:** the tool was deleted by a build-staging bug; it ships
+  again from v2.2.0-rc5 (DEC-PHASE12-021).
 
 ### Cyberdeck Visual Identity
 
@@ -317,6 +317,11 @@ particular), "What's on the ISO" above is authoritative.
 **Phase 12 (Trixie line, v2.2.0-beta):** base flip to Debian 13, Orion Cockpit,
 Orion menu, R.A.I.N., go-roast, nucleotide, Pivotglass, User Guide rewrite,
 image trim 6.63 GB → 3.09 GB (DEC-PHASE12-001 … -017).
+**v2.2.0-rc5:** investigation surface (CyberChef, attack map, GODSEYE globe),
+DJ Deck, R.A.I.N. spoken narration, `orionx-logquery`, Cockpit drill-down and
+APPROVE, Zeek ingest; root-cause fixes to mesh self-heal, Nebula start-up
+timeout, boot graphics, Suricata capture, AppArmor and nebula-mcp
+(DEC-PHASE12-018 … -046).
 
 **Next:** move the language model out of the ISO into its own release asset so
 the ISO itself fits GitHub's 2 GB single-asset limit (~1.2 GB projected);
