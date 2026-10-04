@@ -20,7 +20,17 @@
 #
 # Usage: set-wallpaper.sh [wallpaper-path]
 
-WP="${1:-/opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png}"
+# The default asset. set-wallpaper.sh is the authority for WHICH wallpaper the
+# deck uses (DEC-PHASE12-004), so resolving the asset is its job and not its
+# caller's -- toggle-theme.sh deliberately invokes this with no argument.
+# Installed path wins; the repo-relative path is the development fallback so
+# the script is runnable, and testable, from a checkout.
+_WP_DEFAULT="/opt/orionx/theme/wallpapers/orionx-phoenix-wallpaper.png"
+if [ ! -f "$_WP_DEFAULT" ]; then
+    _WP_DEV="$(dirname "$0")/../theme/wallpapers/orionx-phoenix-wallpaper.png"
+    [ -f "$_WP_DEV" ] && _WP_DEFAULT="$_WP_DEV"
+fi
+WP="${1:-$_WP_DEFAULT}"
 CH="xfce4-desktop"
 LOG="${XDG_CACHE_HOME:-$HOME/.cache}/orionx/set-wallpaper.log"
 mkdir -p "$(dirname "$LOG")" 2>/dev/null
@@ -28,8 +38,27 @@ mkdir -p "$(dirname "$LOG")" 2>/dev/null
 log() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*" >> "$LOG" 2>/dev/null; }
 
 log "start WP=$WP DISPLAY=${DISPLAY:-unset}"
-[ -f "$WP" ] || { log "ABORT: wallpaper file missing"; exit 0; }
-command -v xfconf-query >/dev/null 2>&1 || { log "ABORT: xfconf-query not found"; exit 0; }
+
+# @decision DEC-PHASE12-042 (amends DEC-PHASE12-004)
+# These two aborts used to `exit 0`. That made the script indistinguishable, to
+# any caller, from a successful run -- and it has a caller: toggle-theme.sh
+# reports "wallpaper applied" on a zero exit. A missing PNG therefore produced
+# a cheerful success message and no wallpaper, which is RESILIENCE rule 3 in
+# the same script the rule was written about. They exit 1 now and name the
+# remedy. The XDG autostart that also calls this ignores exit status, so
+# nothing regresses there; the difference is only that failure is now legible.
+if [ ! -f "$WP" ]; then
+    log "ABORT: wallpaper file missing: $WP"
+    echo "set-wallpaper: $WP not found." >&2
+    echo "  fix: reinstall /opt/orionx/theme/wallpapers/ (staged from theme/wallpapers/)." >&2
+    exit 1
+fi
+if ! command -v xfconf-query >/dev/null 2>&1; then
+    log "ABORT: xfconf-query not found"
+    echo "set-wallpaper: xfconf-query not installed." >&2
+    echo "  fix: apt-get install xfconf (see iso/config/package-lists/orionx.list.chroot)." >&2
+    exit 1
+fi
 
 # Every backdrop image property xfdesktop has registered (any connector name,
 # with or without the workspaceN level).
@@ -82,5 +111,31 @@ for _p in $(_props); do
     _cur=$(xfconf-query -c "$CH" -p "$_p" 2>/dev/null)
     [ "$_cur" = "$WP" ] || { log "second-pass fix $_p (was: $_cur)"; _set_one "$_p"; }
 done
-log "done"
+
+# 4) CHECK (DEC-PHASE12-042). Everything above is "Do". This is the only part
+#    that establishes whether the wallpaper is actually set: count the backdrop
+#    properties that now READ BACK as our PNG. Zero means the run failed, no
+#    matter how many xfconf-query calls returned 0 along the way -- a write to
+#    a property xfdesktop has not registered succeeds and then evaporates.
+_ok=0
+_bad=0
+for _p in $(_props); do
+    if [ "$(xfconf-query -c "$CH" -p "$_p" 2>/dev/null)" = "$WP" ]; then
+        _ok=$((_ok + 1))
+    else
+        _bad=$((_bad + 1))
+        log "VERIFY FAIL $_p"
+    fi
+done
+log "verified: $_ok backdrop(s) set, $_bad not"
+if [ "$_ok" -eq 0 ]; then
+    log "done: FAILED (no backdrop property reads back as $WP)"
+    echo "set-wallpaper: no XFCE backdrop accepted the wallpaper." >&2
+    echo "  what still works: the compiled-in default backdrop is already the" >&2
+    echo "  Phoenix image (0800-orionx-branding replaces xfce-x.svg), so the" >&2
+    echo "  desktop is branded even when this fails." >&2
+    echo "  diagnose: xfconf-query -c $CH -l | grep backdrop ; cat $LOG" >&2
+    exit 1
+fi
+log "done: OK ($_ok backdrop(s))"
 exit 0

@@ -390,3 +390,17 @@ suricata
 # Custom packages (will be installed from config/packages.chroot/)
 # orionx-custom-tools
 # orionx-theme
+
+# DEC-PHASE12-043: MaxMind-format database reader for the attack map's
+# optional geolocation labels. The READER ships; the DATABASE does not.
+#
+# Splitting them this way is deliberate. GeoLite2 cannot be redistributed in
+# an image at all, and DB-IP Lite (CC BY 4.0) can but is republished monthly,
+# so a baked-in copy would rot silently inside an ISO built once and run for
+# months (/opt/orionx/osint/GEOIP.txt). The database therefore arrives via
+# /opt/orionx/optional/install-geoip.sh — or on a USB stick from another
+# machine, which only works if the reader is already here. ~150 KB.
+#
+# With neither reader nor database the map still works and still shows every
+# source; public sources are labelled UNLOCATED and never given a position.
+python3-maxminddb

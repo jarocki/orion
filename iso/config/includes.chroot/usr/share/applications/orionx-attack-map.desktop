@@ -1,0 +1,12 @@
+[Desktop Entry]
+# Orion-X attack map (DEC-PHASE12-043). Fed from /run/orionx/events.jsonl.
+# No demo feed, no GeoIP on the base image, and no invented coordinates.
+Type=Application
+Name=Orion-X Attack Map
+GenericName=Live detection map
+Comment=Live tracers from this deck's own event bus; unlocatable sources are labelled, never placed
+Exec=/usr/bin/orionx-osint --page pewpew
+Icon=/usr/share/pixmaps/orionx.png
+Terminal=true
+Categories=X-Orion;
+Keywords=attack;map;pewpew;scan;IDS;visualisation;

@@ -932,11 +932,11 @@ ISOLINUX_EOF
     log "  Generated: $isolinux_cfg"
 
     # -----------------------------------------------------------------------
-    # Generate grub.cfg (UEFI bootloader) — PLAIN, READABLE text menu.
+    # Generate grub.cfg (UEFI bootloader) — graphical, ALWAYS READABLE menu.
     #
-    # @decision DEC-PHASE11-044
-    # @title Retire the GRUB gfxmenu theme; GRUB is a plain readable menu now
-    # @status accepted
+    # @decision DEC-PHASE11-044 (amended by DEC-PHASE12-042)
+    # @title Retire the GRUB gfxmenu THEME; the menu itself is graphical again
+    # @status accepted — amended
     # @rationale The GRUB gfxmenu theme (DEC-PHASE11-013/040/041) failed on real
     #   UEFI hardware twice: rc1-79 fell back to the text menu (no font loaded),
     #   and rc1-81 — even with the loadfont fix — errored out and rendered an
@@ -944,58 +944,176 @@ ISOLINUX_EOF
     #   across firmware/panel combos. Per operator directive, the Phoenix boot
     #   identity moves to the Plymouth splash (DEC-PHASE11-044), which paints
     #   AFTER the kernel's i915 KMS comes up — far more reliable than GRUB
-    #   graphics. So GRUB drops gfxterm/gfxmenu/gfxmode/loadfont/`set theme`
-    #   entirely and uses its native text console: always readable, never errors,
-    #   no font dependency. The themed BIOS isolinux vesamenu menu stays
-    #   (DEC-PHASE11-042). The theme.txt/background.png assets under
-    #   includes.binary/boot/grub/themes/orionx/ are LEFT in place but unreferenced
-    #   (optionality: the menu-theme decision has oscillated; keep the assets so a
-    #   future revival needs only the generator lines back).
+    #   graphics. So GRUB dropped gfxterm/gfxmenu/gfxmode/loadfont/`set theme`
+    #   entirely and used its native text console.
+    #
+    #   AMENDED by DEC-PHASE12-042 (see the block below for the evidence):
+    #   `set theme` and the gfxmenu ENGINE stay retired by default — that is the
+    #   part that failed. gfxterm, a loaded font and a background_image come
+    #   back, gated on `if loadfont`, drawing GRUB's own menu. The distinction
+    #   is the whole decision: the theme engine is what rendered unreadably; a
+    #   picture behind GRUB's native menu cannot. The themed BIOS isolinux
+    #   vesamenu menu stays (DEC-PHASE11-042). theme.txt is still referenced
+    #   only under ORIONX_GRUB_THEME=1; background.png is now used by default.
     #   Single authority preserved (DEC-PHASE11-012): generated every build.
     # -----------------------------------------------------------------------
     # ---------------------------------------------------------------------
-    # Optional GRUB gfxmenu revival — OFF unless ORIONX_GRUB_THEME=1.
+    # Phoenix UEFI graphics — ON by default (ORIONX_GRUB_GRAPHICS, default 1).
     #
-    # @decision DEC-PHASE12-030
-    # @title GRUB theme revivable behind a build flag, never the default
+    # @decision DEC-PHASE12-042
+    # @title Graphical UEFI boot menu via gfxterm + background_image, NOT gfxmenu
     # @status accepted
-    # @rationale DEC-PHASE11-044 retired the gfxmenu theme after it failed on
-    #   real UEFI hardware twice — rc1-79 loaded no font, rc1-81 errored and
-    #   rendered an UNREADABLE menu (operator report 2026-09-12). An unreadable
-    #   boot menu is worse than a plain one: the operator cannot pick the
-    #   failsafe entry, which is the entry that exists for when things are
-    #   already wrong. The assets were deliberately kept for a future revival,
-    #   so reviving should cost one flag, not a re-derivation.
+    # @rationale The operator asked for graphics at boot. UEFI was the one boot
+    #   surface still rendering plain text, because DEC-PHASE11-044 retired the
+    #   GRUB gfxmenu THEME after it failed on real hardware twice: rc1-79 loaded
+    #   no font and fell back, and rc1-81 -- "even with the loadfont fix" --
+    #   errored and rendered an unreadable menu. Both failures cost the operator
+    #   the failsafe entry, which exists for when things are already wrong.
     #
-    #   It stays opt-in because the evidence against it is hardware evidence
-    #   and nothing has changed about that hardware. ORIONX_GRUB_THEME=1
-    #   produces a testable image; if it renders correctly on the reference
-    #   deck across a couple of firmware/panel combos, flipping the default is
-    #   a one-line change with a decision record behind it. Until then the
-    #   Phoenix boot identity remains the Plymouth splash, which paints after
-    #   i915 KMS and does not depend on GRUB's font stack at all.
+    #   Inspecting the shipped rc4 ISO explains the first failure outright. The
+    #   boot chain is:
+    #     efi.img:/EFI/boot/bootx64.efi
+    #       -> efi.img:/boot/grub/grub.cfg
+    #            search --set=root --file /.disk/info
+    #            set prefix=($root)/boot/grub
+    #            configfile ($root)/boot/grub/grub.cfg      <-- THIS generator
+    #   and the ISO's /boot/grub contains:
+    #     unicode.pf2, config.cfg, theme.cfg, splash.png, themes/orionx/,
+    #     live-theme/, x86_64-efi/*.mod
+    #   There is NO /boot/grub/fonts/ directory on the ISO. DEC-PHASE12-030's
+    #   revival block does `loadfont /boot/grub/fonts/unicode.pf2` -- a path
+    #   that has never existed in this image. loadfont therefore failed, and
+    #   `terminal_output gfxterm` ran with no font loaded. That IS the rc1-79
+    #   symptom, and it is also why rc1-81's gfxmenu theme rendered unreadably:
+    #   theme.txt asks for "DejaVu Sans Bold 16"/"Bold 14", GRUB resolves an
+    #   unavailable font name to whatever is loaded, and nothing was.
+    #   (Verified 2026-10-03 against output/orionx-phoenix-edition-v2.2.0-rc4.iso
+    #   and its efi.img; live-build's own /boot/grub/config.cfg resolves the font
+    #   as `unicode` or `$prefix/unicode.pf2` -- never under fonts/.)
+    #
+    #   So the default changes, but NOT to the thing that failed. This block:
+    #     - resolves the font exactly the way live-build's own config.cfg does,
+    #       which is the most field-tested resolution available for this image;
+    #     - GATES everything behind `if loadfont`, so the rc1-79 state (gfxterm
+    #       with no font) is now unreachable rather than merely unlikely;
+    #     - draws the menu with GRUB's NATIVE menu renderer over a
+    #       background_image, with explicit menu_color_* -- there is no theme
+    #       engine, no theme.txt, no absolute pixel layout, and no font named by
+    #       string. The rc1-81 failure mode has no code path left to occur in;
+    #     - falls back to solid-colour gfxterm if background_image fails, so a
+    #       missing or corrupt PNG costs the picture, never the menu;
+    #     - offers gfxmode candidates smallest-known-good first rather than
+    #       `auto`, keeping the text legible instead of 12px on a 4K panel.
+    #
+    #   Worst case at each step is "less pretty", and the menu entries stay
+    #   readable and selectable. That is the property DEC-PHASE11-044 was
+    #   protecting, and it is preserved here by construction rather than by
+    #   avoidance. ORIONX_GRUB_GRAPHICS=0 restores the bare text menu in one
+    #   env var if hardware still disagrees.
+    #
+    #   NOT set here: gfxpayload. Leaving it unset keeps GRUB's own default
+    #   handoff to the kernel. The Plymouth splash is the one boot surface that
+    #   is verified working on this hardware and it depends on that handoff;
+    #   pinning a payload mode would put an unverified variable in front of a
+    #   verified result.
+    #
+    #   ORDER MATTERS, twice over. The font must load before gfxterm is
+    #   selected (that ordering was never the bug, but it is still required),
+    #   and this block must come BEFORE the serial block: `terminal_output
+    #   gfxterm` REPLACES the output list, so a serial append has to follow it.
+    #   DEC-PHASE12-030's block sat after the serial lines and silently dropped
+    #   GRUB's serial console -- the console the QEMU CI gate reads.
+    # ---------------------------------------------------------------------
+    local grub_graphics_block=""
+    if [[ "${ORIONX_GRUB_GRAPHICS:-1}" == "1" ]]; then
+        log "  GRUB UEFI graphics ENABLED (default; ORIONX_GRUB_GRAPHICS=0 to disable) — DEC-PHASE12-042"
+        # shellcheck disable=SC2016  # literal grub.cfg text; $ belongs to GRUB.
+        grub_graphics_block='# --- Phoenix UEFI graphics (DEC-PHASE12-042) -------------------------------
+# Font resolution copied from live-build'"'"'s own /boot/grub/config.cfg. There is
+# no /boot/grub/fonts/ on this ISO; unicode.pf2 sits at the root of $prefix.
+if [ x$feature_default_font_path = xy ] ; then
+    set orionx_font=unicode
+else
+    set orionx_font=$prefix/unicode.pf2
+fi
+
+# Everything graphical is gated on the font actually loading. If it does not,
+# GRUB stays on its text console and the menu below is still readable.
+if loadfont $orionx_font ; then
+    insmod all_video
+    insmod gfxterm
+    insmod gfxterm_background
+    insmod png
+    set gfxmode=1024x768,800x600,auto
+    terminal_output gfxterm
+
+    # Phoenix background behind GRUB'"'"'s OWN menu renderer (no gfxmenu theme).
+    # In gfxterm a "black" background colour is drawn transparent, so the image
+    # shows through the menu text.
+    if background_image -m stretch $prefix/themes/orionx/background.png ; then
+        set color_normal=white/black
+        set color_highlight=black/red
+        set menu_color_normal=white/black
+        set menu_color_highlight=black/red
+    else
+        set color_normal=light-gray/black
+        set color_highlight=black/light-gray
+        set menu_color_normal=light-gray/black
+        set menu_color_highlight=black/light-gray
+    fi
+fi
+# --- end Phoenix UEFI graphics ---------------------------------------------
+'
+    else
+        log "  GRUB UEFI graphics DISABLED (ORIONX_GRUB_GRAPHICS=0) — plain text menu"
+    fi
+
+    # ---------------------------------------------------------------------
+    # Optional GRUB gfxmenu THEME revival — still OFF unless ORIONX_GRUB_THEME=1.
+    #
+    # @decision DEC-PHASE12-030 (amended by DEC-PHASE12-042)
+    # @title GRUB gfxmenu theme stays opt-in; its dead font path is fixed
+    # @status accepted
+    # @rationale DEC-PHASE11-044 retired the gfxmenu theme after two hardware
+    #   failures. DEC-PHASE12-042 explains the mechanism (loadfont pointed at
+    #   /boot/grub/fonts/unicode.pf2, which does not exist on the ISO) and
+    #   delivers the graphics the operator asked for without the theme engine.
+    #
+    #   This flag is NOT promoted to default. Fixing the font path makes the
+    #   gfxmenu path testable for the first time, but it does not make it
+    #   verified: theme.txt still lays the menu out in absolute pixels against a
+    #   gfxmode this code cannot predict, and still names DejaVu faces that are
+    #   not shipped as .pf2 in this image, so GRUB will substitute. "Probably
+    #   fine now" is not evidence, and the cost of being wrong is an unreadable
+    #   menu with no failsafe entry. It flips when someone boots an
+    #   ORIONX_GRUB_THEME=1 ISO on the reference deck and reports a readable
+    #   menu -- and then it is a one-line change with a hardware result behind it.
+    #
+    #   When enabled, this REPLACES the native-menu colours above with the
+    #   theme engine; the font load and gfxterm selection from the graphics
+    #   block are reused, so this block must stay after it.
     # ---------------------------------------------------------------------
     local grub_theme_block=""
     if [[ "${ORIONX_GRUB_THEME:-0}" == "1" ]]; then
-        log "  GRUB gfxmenu theme ENABLED (ORIONX_GRUB_THEME=1) — see DEC-PHASE12-030"
+        log "  GRUB gfxmenu THEME ENABLED (ORIONX_GRUB_THEME=1) — see DEC-PHASE12-030/042"
         log "  NOTE: this path failed on UEFI hardware twice (DEC-PHASE11-044)."
-        log "        Verify the menu is READABLE on the reference deck before shipping."
-        # shellcheck disable=SC2016  # single quotes are deliberate: this is
-        # literal grub.cfg text. Any $ in it belongs to GRUB's own parser, not
-        # the shell, and expanding it here would corrupt the generated config.
-        grub_theme_block='
-# Graphical menu (ORIONX_GRUB_THEME=1, DEC-PHASE12-030). Order matters:
-# gfxmode and the font must be in place before gfxterm is selected, or GRUB
-# falls back with no font loaded — the rc1-79 failure. `|| true` semantics do
-# not exist in grub.cfg, so each step is attempted and GRUB degrades to its
-# text console on failure rather than aborting.
-insmod all_video
-insmod gfxterm
-insmod png
-set gfxmode=auto
-loadfont /boot/grub/fonts/unicode.pf2
-terminal_output gfxterm
-set theme=/boot/grub/themes/orionx/theme.txt
+        log "        The dead font path (DEC-PHASE12-042) is fixed, but the theme is"
+        log "        still UNVERIFIED on hardware. Confirm the menu is READABLE"
+        log "        on the reference deck before shipping an image built this way."
+        if [[ "${ORIONX_GRUB_GRAPHICS:-1}" != "1" ]]; then
+            log "ERROR: ORIONX_GRUB_THEME=1 requires ORIONX_GRUB_GRAPHICS=1."
+            log "       The theme needs the font load and gfxterm selection that"
+            log "       the graphics block performs. Re-run without ORIONX_GRUB_GRAPHICS=0."
+            exit 1
+        fi
+        # shellcheck disable=SC2016  # literal grub.cfg text; $ belongs to GRUB.
+        grub_theme_block='# gfxmenu theme (ORIONX_GRUB_THEME=1, DEC-PHASE12-030). Applies only if the
+# graphics block above actually reached gfxterm — $orionx_font is set either
+# way, so re-test loadfont rather than assuming.
+if loadfont $orionx_font ; then
+    insmod gfxmenu
+    set theme=$prefix/themes/orionx/theme.txt
+fi
 '
     fi
 
@@ -1011,14 +1129,17 @@ set theme=/boot/grub/themes/orionx/theme.txt
 #   this file was hand-edited without effect on /proc/cmdline) is retired.
 #   References: DEC-PHASE11-012, DEC-PHASE10-018 (superseded), issue #64, issue #65.
 #
-# @decision DEC-PHASE11-044
-# @title Plain readable GRUB text menu (gfxmenu theme retired)
+# @decision DEC-PHASE11-044, amended by DEC-PHASE12-042
+# @title Graphical GRUB menu without the gfxmenu theme engine
 # @status accepted
-# @rationale The GRUB gfxmenu theme errored + rendered an unreadable font on
-#   real UEFI hardware (rc1-79/rc1-81). GRUB now uses its native text console —
-#   always readable, no font/gfx dependency. The Phoenix boot identity is the
-#   Plymouth splash (paints after i915 KMS), not the GRUB menu. No gfxterm,
-#   gfxmenu, gfxmode, loadfont, or 'set theme' here by design.
+# @rationale The GRUB gfxmenu THEME errored + rendered an unreadable font on
+#   real UEFI hardware (rc1-79/rc1-81); its loadfont pointed at
+#   /boot/grub/fonts/unicode.pf2, a path this ISO does not have. 'set theme'
+#   remains opt-in (ORIONX_GRUB_THEME=1). What is enabled by default is
+#   gfxterm + background_image behind GRUB's OWN menu renderer, gated on the
+#   font actually loading, so the worst case is a plain readable menu rather
+#   than an unreadable one. The Plymouth splash remains the primary Phoenix
+#   boot identity. ORIONX_GRUB_GRAPHICS=0 reverts to bare text.
 #
 # Generated from: iso/auto/config::--bootappend-live
 # Active cmdline (Orion-X Live menuentry):
@@ -1027,10 +1148,11 @@ set theme=/boot/grub/themes/orionx/theme.txt
 # set timeout=5: show the menu 5s (lets the operator pick failsafe), then
 #   auto-boot the default. set default=0: boot the first menuentry.
 
+${grub_graphics_block}${grub_theme_block}
 serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
 terminal_input --append serial
 terminal_output --append serial
-${grub_theme_block}
+
 set timeout=5
 set default=0
 

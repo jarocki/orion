@@ -179,15 +179,51 @@ fi
 # xfwm4 always needs the pixmap set; seed it from the stock Default theme while
 # keeping the custom themerc. (DEC-PHASE11-026)
 # ---------------------------------------------------------------------------
-_XFWM_THEME="/usr/share/themes/Orion-X-Cyberdeck/xfwm4"
-if [ -f "${_XFWM_THEME}/themerc" ] && [ "$(ls "${_XFWM_THEME}"/*.xpm 2>/dev/null | wc -l)" -eq 0 ]; then
-    if [ -d /usr/share/themes/Default/xfwm4 ]; then
-        cp -n /usr/share/themes/Default/xfwm4/*.xpm "${_XFWM_THEME}/" 2>/dev/null || true
-        echo "${LOG_PREFIX} xfwm4 theme assets seeded: $(ls "${_XFWM_THEME}"/*.xpm 2>/dev/null | wc -l) pixmaps (DEC-PHASE11-026)"
-    else
-        echo "${LOG_PREFIX} WARNING: Default xfwm4 theme absent; Orion-X-Cyberdeck decorations will be missing" >&2
+#
+# DEC-PHASE12-042 widens this from the single Orion-X-Cyberdeck directory to
+# EVERY /usr/share/themes/Orion-X-*/xfwm4 that carries a themerc. The green
+# decoration variant (Orion-X-Cyberdeck-Green) that scripts/toggle-theme.sh
+# switches to needs exactly the same pixmap set, and hardcoding one theme name
+# here is how the second theme would have shipped borderless -- the same defect
+# this block exists to fix, one theme later.
+#
+# This also stops being silent. The original emitted nothing when the pixmaps
+# were already present AND nothing when no Orion-X theme existed; a build with
+# zero themed directories looked identical in the log to a correct one.
+# ---------------------------------------------------------------------------
+_XFWM_SEEDED=0
+_XFWM_CANDIDATES=0
+for _XFWM_THEME in /usr/share/themes/Orion-X-*/xfwm4; do
+    [ -f "${_XFWM_THEME}/themerc" ] || continue
+    _XFWM_CANDIDATES=$((_XFWM_CANDIDATES + 1))
+    if [ "$(ls "${_XFWM_THEME}"/*.xpm 2>/dev/null | wc -l)" -eq 0 ]; then
+        if [ -d /usr/share/themes/Default/xfwm4 ]; then
+            cp -n /usr/share/themes/Default/xfwm4/*.xpm "${_XFWM_THEME}/" 2>/dev/null || true
+        else
+            echo "${LOG_PREFIX} WARNING: Default xfwm4 theme absent; ${_XFWM_THEME} decorations will be missing" >&2
+            continue
+        fi
     fi
+    # Check, do not trust (rule 3): count what is actually on disk now. A theme
+    # with no pixmaps renders NO window decorations at all (hardware 2026-09-09).
+    _XFWM_N="$(ls "${_XFWM_THEME}"/*.xpm 2>/dev/null | wc -l)"
+    if [ "${_XFWM_N}" -gt 0 ]; then
+        _XFWM_SEEDED=$((_XFWM_SEEDED + 1))
+        echo "${LOG_PREFIX} xfwm4 decorations present: ${_XFWM_THEME} (${_XFWM_N} pixmaps, DEC-PHASE11-026/12-042)"
+    else
+        echo "${LOG_PREFIX} ERROR: ${_XFWM_THEME} still has 0 pixmaps after seeding" >&2
+        echo "${LOG_PREFIX}   Consequence: windows under that theme have no titlebar or border." >&2
+        echo "${LOG_PREFIX}   Fix: install a stock xfwm4 theme (xfwm4 package) in the chroot." >&2
+        exit 1
+    fi
+done
+if [ "${_XFWM_CANDIDATES}" -eq 0 ]; then
+    echo "${LOG_PREFIX} ERROR: no /usr/share/themes/Orion-X-*/xfwm4/themerc found" >&2
+    echo "${LOG_PREFIX}   Consequence: the window decorations are stock XFCE, not Orion-X." >&2
+    echo "${LOG_PREFIX}   Fix: check includes.chroot staging of usr/share/themes/Orion-X-*." >&2
+    exit 1
 fi
+echo "${LOG_PREFIX} xfwm4 themes with decorations: ${_XFWM_SEEDED}/${_XFWM_CANDIDATES}"
 
 # ---------------------------------------------------------------------------
 # DEC-PHASE12-004: make XFCE 4.20's compiled-in DEFAULT backdrop the Phoenix

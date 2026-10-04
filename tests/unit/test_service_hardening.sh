@@ -248,24 +248,86 @@ for _u in nebula-mcp.service orionx-heald.service orionx-postured.service \
     fi
 done
 
-# The mesh units are a KNOWN, TRACKED gap (DEC-PHASE12-039). Recording it as an
-# explicit expectation means the day someone hardens them this test tells them
-# to delete this block — rather than the gap sitting unmentioned behind a green
-# assertion, which is how it survived this long.
-_unhardened=""
+# The DEC-PHASE12-039 tracked gap is CLOSED (DEC-PHASE12-041). The mesh units
+# now carry their own confinement, which was only scopeable once the wg-quick
+# calls came out of mesh-health.sh — wg-quick runs sysctl, iptables and
+# resolvconf, and none of that can be bounded off-box.
+#
+# This block replaces the old "assert they are still unhardened" expectation.
+# If someone strips these directives, this goes red.
 for _u in orionx-mesh-discover.service orionx-mesh-health.service \
           orionx-mesh-beacon.service; do
-    grep -qE '^(ProtectSystem|NoNewPrivileges|ProtectHome)=' "$UNITDIR/$_u" \
-        && _unhardened="$_unhardened $_u"
+    _f="$UNITDIR/$_u"
+    if [[ ! -f "$_f" ]]; then
+        echo "  FAIL: $_u not staged at $UNITDIR"
+        (( FAIL_COUNT++ )) || true
+        continue
+    fi
+    _missing=""
+    for _d in NoNewPrivileges ProtectSystem ProtectHome CapabilityBoundingSet \
+              RestrictAddressFamilies LockPersonality RestrictSUIDSGID; do
+        grep -qE "^${_d}=" "$_f" || _missing="$_missing $_d"
+    done
+    if [[ -z "$_missing" ]]; then
+        echo "  PASS: $_u carries its hardening directives in the unit file"
+        (( PASS_COUNT++ )) || true
+    else
+        echo "  FAIL: $_u is missing:$_missing"
+        (( FAIL_COUNT++ )) || true
+    fi
 done
-if [[ -z "$_unhardened" ]]; then
-    echo "  PASS: mesh units unhardened, as currently documented (tracked gap)"
-    echo "        → hardening them needs ReadWritePaths for /run + a"
-    echo "          CapabilityBoundingSet, validated against a live wg0."
+
+# Each bounding set must be the MINIMUM the script needs, not a copy-paste of
+# the next unit's. The beacon only reads interface addresses and sends a UDP
+# datagram; granting it CAP_NET_ADMIN would be unjustified, so assert the
+# difference rather than the presence.
+if grep -qE '^CapabilityBoundingSet=.*CAP_NET_ADMIN' "$UNITDIR/orionx-mesh-beacon.service"; then
+    echo "  FAIL: orionx-mesh-beacon.service has CAP_NET_ADMIN — the send path"
+    echo "        only READS addresses and sends a datagram; it configures nothing."
+    (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: beacon bounding set excludes CAP_NET_ADMIN (it administers nothing)"
+    (( PASS_COUNT++ )) || true
+fi
+
+# CAP_NET_RAW is for `ping`, which only mesh-health.sh runs.
+if grep -qE '^CapabilityBoundingSet=.*CAP_NET_RAW' "$UNITDIR/orionx-mesh-health.service"; then
+    echo "  PASS: health bounding set includes CAP_NET_RAW (it pings peers)"
     (( PASS_COUNT++ )) || true
 else
-    echo "  FAIL: mesh unit(s) now hardened:$_unhardened — good. Update this"
-    echo "        block and the DEC-PHASE12-039 note in the 0620 hook."
+    echo "  FAIL: orionx-mesh-health.service needs CAP_NET_RAW for its ping check"
+    (( FAIL_COUNT++ )) || true
+fi
+for _u in orionx-mesh-discover.service orionx-mesh-beacon.service; do
+    if grep -qE '^CapabilityBoundingSet=.*CAP_NET_RAW' "$UNITDIR/$_u"; then
+        echo "  FAIL: $_u has CAP_NET_RAW but never opens a raw socket"
+        (( FAIL_COUNT++ )) || true
+    else
+        echo "  PASS: $_u excludes CAP_NET_RAW (no raw socket in its path)"
+        (( PASS_COUNT++ )) || true
+    fi
+done
+
+# The one directive that MUST NOT appear: health_check_interface restores a
+# missing wg0 with `ip link add type wireguard`, which needs module autoload.
+if grep -qE '^ProtectKernelModules=yes' "$UNITDIR/orionx-mesh-health.service"; then
+    echo "  FAIL: ProtectKernelModules=yes blocks the wireguard module autoload"
+    echo "        that interface restore depends on — a recoverable outage"
+    echo "        would become a permanent one."
+    (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: ProtectKernelModules absent (wg0 restore can autoload the module)"
+    (( PASS_COUNT++ )) || true
+fi
+
+# The heal budget lives in the RuntimeDirectory. Without Preserve=yes systemd
+# deletes it when the oneshot exits and the bound silently stops bounding.
+if grep -qE '^RuntimeDirectoryPreserve=yes' "$UNITDIR/orionx-mesh-health.service"; then
+    echo "  PASS: heal-budget RuntimeDirectory survives the oneshot exit"
+    (( PASS_COUNT++ )) || true
+else
+    echo "  FAIL: orionx-mesh-health.service needs RuntimeDirectoryPreserve=yes,"
+    echo "        or the DEC-PHASE12-041 heal budget resets every 60 seconds"
     (( FAIL_COUNT++ )) || true
 fi
 

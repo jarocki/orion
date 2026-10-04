@@ -1,3 +1,55 @@
+# Orion-X Mesh Health Check — confined (DEC-PHASE12-041)
+#
+# @decision DEC-PHASE12-041
+# @title The mesh units carry their own confinement; every directive is
+#   justified by a line in the script it confines
+# @status accepted
+# @rationale 0620-service-hardening.hook.chroot used to append hardening to
+#   /etc/systemd/system/orionx-mesh-*.service. 0615 installs to
+#   /lib/systemd/system, so that glob matched nothing on every build the
+#   project has ever done (DEC-PHASE12-039). The injector is deleted; the
+#   unit file is now the single authority, and this is it.
+#
+#   Scoping this was only possible after the wg-quick calls were removed
+#   from mesh-health.sh. wg-quick is a shell script that runs sysctl,
+#   iptables/nft and resolvconf, and confining THAT on the comms path
+#   without a live wg0 to test against is the gamble the previous agent
+#   correctly refused. What is left is a short list of exec'd binaries with
+#   requirements that can be read straight off the source:
+#
+#     ip link show/set/add, ip addr add   -> CAP_NET_ADMIN
+#     wg show, wg set                     -> CAP_NET_ADMIN (genetlink)
+#     ping -c 3 -W 2 <peer>               -> CAP_NET_RAW
+#     read /etc/wireguard/mesh-private.key (0600), append to a log dir that
+#       logrotate may re-own          -> CAP_DAC_OVERRIDE
+#     counters + escalation markers       -> RuntimeDirectory /run/orionx-mesh
+#     orionx-event -> /run/orionx/events.jsonl -> ReadWritePaths=/run/orionx
+#     mesh.log                            -> LogsDirectory=orionx
+#
+#   Nothing else. No /home (ProtectHome=yes), no writes outside those two
+#   runtime paths and the log (ProtectSystem=strict), no privilege gain
+#   (NoNewPrivileges — every binary above is a plain root exec; ping's file
+#   capability is irrelevant to uid 0, whose caps come from the bounding
+#   set), and no address family beyond netlink, AF_UNIX and IP.
+#
+#   DELIBERATELY ABSENT, with reasons:
+#     ProtectKernelModules=yes — health_check_interface restores a missing
+#       wg0 via `ip link add type wireguard`, which needs the kernel to
+#       autoload the module. Denying that would turn a recoverable outage
+#       into a permanent one.
+#     ProtectKernelTunables=yes — not needed now, but it is the directive
+#       that would break the moment anyone reintroduces a wg-quick path,
+#       and it buys little here.
+#     User= — the script configures a network interface; it is root by
+#       necessity. The capability bounding set is the boundary, not the uid.
+#
+#   Precedent: orionx-heald.service already runs as root with exactly this
+#   shape (ProtectSystem=strict + ReadWritePaths + a CAP_NET_ADMIN/NET_RAW
+#   bounding set) and re-keys WireGuard while doing it.
+#
+#   References: DEC-PHASE12-039 (why the injector died), DEC-MESH-002,
+#   DEC-MESH-005, tests/unit/test_service_hardening.sh.
+
 [Unit]
 Description=Orion-X Mesh Health Check (oneshot)
 # W11-14f offline-safe: order after basic net; skip cleanly when no mesh
@@ -10,3 +62,26 @@ Type=oneshot
 ExecStart=/opt/orionx/scripts/mesh/mesh-health.sh
 StandardOutput=journal
 StandardError=journal
+
+# --- state: counters, heal budget and escalation markers --------------------
+# Preserve=yes is load-bearing. Without it systemd removes the directory when
+# this oneshot exits, and the heal budget — the whole point of
+# DEC-PHASE12-041 — would reset every 60 seconds.
+RuntimeDirectory=orionx-mesh
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+Environment=MESH_HEALTH_COUNTER_DIR=/run/orionx-mesh
+
+# --- filesystem: read-only except the three paths it actually writes --------
+ProtectSystem=strict
+ProtectHome=yes
+LogsDirectory=orionx
+ReadWritePaths=/run/orionx
+
+# --- privilege --------------------------------------------------------------
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_OVERRIDE
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK

@@ -1,0 +1,29 @@
+#!/usr/bin/python3
+"""orionx-osint — entrypoint for the Orion-X investigation surface.
+
+@decision DEC-PHASE12-043
+@title A real executable at /usr/bin/orionx-osint, not a 0700 PATH symlink
+@status accepted
+@rationale 0700-orionx-setup.hook.chroot is the single authority for Orion-X
+  PATH symlinks and this slice does not edit it. Rather than stand up a second
+  symlink authority in a new hook — the dual-authority bug docs/RESILIENCE.md
+  rule 7 is about — the entrypoint ships directly via includes.chroot, exactly
+  as /usr/bin/nebula-mcp does (DEC-PHASE12-025).
+
+  All logic lives in /opt/orionx/scripts/osint/osint_server.py. This file is
+  three lines of plumbing so that there is still only one place the server is
+  defined.
+
+Interpreter is /usr/bin/python3 rather than /usr/bin/env python3: nothing good
+comes of letting PATH choose the interpreter for a tool that binds a socket.
+"""
+from __future__ import annotations
+
+import sys
+
+sys.path.insert(0, "/opt/orionx/scripts/osint")
+
+from osint_server import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

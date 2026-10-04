@@ -1,0 +1,117 @@
+#!/bin/bash
+# shellcheck shell=bash
+set -euo pipefail
+#
+# Orion-X Phoenix Edition — OSINT / investigation surface: verify + desktop.
+#
+# @decision DEC-PHASE12-043
+# @title Local OSINT surface: launcher page, vendored CyberChef, local pew-pew map
+# @status accepted
+# @rationale This hook deliberately does almost nothing, and what it does is
+#   mostly CHECK.
+#
+#   It creates no /usr/bin symlink: 0700-orionx-setup is the single authority
+#   for those and this slice does not edit it, so /usr/bin/orionx-osint ships
+#   as a real entrypoint via includes.chroot (the /usr/bin/nebula-mcp
+#   precedent, DEC-PHASE12-025).
+#
+#   It writes no .desktop entry from scratch either: the three entries are
+#   static files in includes.chroot/usr/share/applications/, alongside the
+#   static orionx-control-center.desktop that was already there. What it does
+#   derive is the desktop-icon copy in /etc/skel/Desktop/, from the menu entry
+#   — one source in git, one derived surface, generated rather than duplicated
+#   (docs/RESILIENCE.md rule 7).
+#
+#   The rest is the Check stage, and it is allowed to fail the build.
+#   DEC-PHASE11-018: never ship a green build with a dead feature. A deck
+#   whose menu offers "CyberChef (local)" and whose CyberChef did not arrive
+#   is precisely the advertised-and-absent failure this project keeps paying
+#   for. If the vendored tree is missing or does not match the checksums
+#   recorded beside it, this hook stops the build and says which file.
+#
+# Position: 0710 — after 0700 wires the application layer, before 0800 branding.
+#
+# Verify on a running deck with:
+#   orionx-osint --check
+
+ROOT="/opt/orionx/osint"
+APPS="/usr/share/applications"
+SKEL="/etc/skel/Desktop"
+
+echo "[osint-surface] Verifying the investigation surface..."
+
+fail=0
+need() {
+    if [[ -e "$1" ]]; then
+        echo "  [osint-surface] ok: $1"
+    else
+        echo "  [osint-surface] MISSING: $1 — $2"
+        fail=$((fail + 1))
+    fi
+}
+
+need "$ROOT/index.html"            "the launcher page itself"
+need "$ROOT/app.js"                "the launcher renders nothing without it"
+need "$ROOT/links.json"            "the resource catalogue"
+need "$ROOT/recipes.json"          "the CyberChef IR recipes"
+need "$ROOT/GEOIP.txt"             "the geolocation explanation the map points at"
+need "$ROOT/cyberchef/index.html"  "the vendored CyberChef build"
+need "$ROOT/cyberchef/LICENSE"     "Apache-2.0 text for the vendored build"
+need "$ROOT/cyberchef/PROVENANCE.txt" "upstream pin + SHA-256 of the release zip"
+need "$ROOT/cyberchef/MANIFEST.sha256" "per-file checksums of the vendored tree"
+need "$ROOT/pewpew/index.html"     "the attack map"
+need "$ROOT/pewpew/map.js"         "the map renderer"
+need "$ROOT/pewpew/LICENSE.ipew"   "CC BY-SA 4.0 attribution for the vendored sound"
+need "/usr/bin/orionx-osint"       "the server entrypoint"
+need "/opt/orionx/scripts/osint/osint_server.py" "the server itself"
+need "/opt/orionx/scripts/osint/pewpew_feed.py"  "the map's data adapter"
+need "/opt/orionx/optional/install-geoip.sh"     "the optional GeoIP installer"
+
+for d in orionx-osint orionx-cyberchef orionx-attack-map; do
+    need "$APPS/$d.desktop" "menu entry"
+done
+
+# ---------------------------------------------------------------------------
+# Integrity of the vendored CyberChef. The release zip's SHA-256 is recorded
+# in PROVENANCE.txt; what reaches the chroot is the extracted tree, so the
+# tree is what gets verified, against the manifest generated when it was
+# vendored. Build-time success elsewhere is not evidence about these bytes.
+# ---------------------------------------------------------------------------
+if [[ -f "$ROOT/cyberchef/MANIFEST.sha256" ]]; then
+    echo "[osint-surface] Verifying the vendored CyberChef tree..."
+    if (cd "$ROOT/cyberchef" && sha256sum -c --quiet MANIFEST.sha256); then
+        echo "  [osint-surface] ok: $(wc -l < "$ROOT/cyberchef/MANIFEST.sha256") files match MANIFEST.sha256"
+    else
+        echo "  [osint-surface] CHECKSUM MISMATCH in $ROOT/cyberchef"
+        echo "  [osint-surface] The vendored build is not the one that was pinned."
+        echo "  [osint-surface] Re-vendor it per $ROOT/cyberchef/PROVENANCE.txt."
+        fail=$((fail + 1))
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Derived surface: the desktop icon is generated from the menu entry, so the
+# two can never drift. Icons on the XFCE desktop must be executable or
+# xfdesktop shows them as plain files.
+# ---------------------------------------------------------------------------
+if [[ -f "$APPS/orionx-osint.desktop" ]]; then
+    mkdir -p "$SKEL"
+    cp "$APPS/orionx-osint.desktop" "$SKEL/orionx-osint.desktop"
+    chmod 0755 "$SKEL/orionx-osint.desktop"
+    echo "[osint-surface] Desktop launcher derived into $SKEL/"
+fi
+
+# Web content is data, not programs. The two Python files are already +x'd by
+# 0700's blanket chmod over /opt/orionx/scripts; the entrypoint ships +x.
+find "$ROOT" -type f -exec chmod 0644 {} + 2>/dev/null || true
+find "$ROOT" -type d -exec chmod 0755 {} + 2>/dev/null || true
+chmod 0755 /usr/bin/orionx-osint 2>/dev/null || true
+
+if [[ "$fail" -gt 0 ]]; then
+    echo "[osint-surface] FAILED: $fail component(s) missing or corrupt."
+    echo "[osint-surface] The menu would offer tools that are not there."
+    echo "[osint-surface] Refusing to produce an image that lies (DEC-PHASE11-018)."
+    exit 1
+fi
+
+echo "[osint-surface] investigation surface verified"

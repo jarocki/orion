@@ -40,8 +40,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=mesh-lib.sh disable=SC1091
 source "$SCRIPT_DIR/mesh-lib.sh"
 
-# PID file for the listener process (overridable for testing)
-MESH_DISCOVER_PID_FILE="${MESH_DISCOVER_PID_FILE:-/var/run/orionx-mesh-discover.pid}"
+# PID file for the listener process. The default lives in mesh-lib.sh, which
+# is the single authority for the path (mesh-health.sh reads the same file to
+# verify the listener is alive). Still overridable for testing.
 
 # =========================================================================
 # JSON helpers — use jq if available, fall back to sed/grep

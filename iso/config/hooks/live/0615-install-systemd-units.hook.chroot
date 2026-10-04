@@ -76,6 +76,13 @@ UNIT_FILES=(
     # DEC-PHASE12-031: loads /etc/apparmor.d on a live boot, where Debian's
     # own apparmor.service refuses (ConditionPathExists=!/run/live/overlay/work).
     "orionx-apparmor-load.service"
+    # DEC-PHASE12-041: the outbound half of mesh peer discovery. It was never
+    # installed, while orionx-mesh-discover.timer (which IS installed and
+    # enabled) names it in Unit= — so every boot a live timer fired at a unit
+    # that did not exist, and because the timer names the beacon explicitly,
+    # orionx-mesh-discover.service was never triggered either. Both halves of
+    # discovery were dead.
+    "orionx-mesh-beacon.service"
 )
 
 # ---------------------------------------------------------------------------
@@ -114,6 +121,12 @@ AUTOSTART_UNITS=(
     # Must autostart: without it the deck runs with zero profiles loaded and
     # every advertised confinement is fiction (observed on rc3).
     "orionx-apparmor-load.service"
+    # DEC-PHASE12-041: the inbound listener. It is installed and carries
+    # [Install] WantedBy=multi-user.target, but only the .timer was enabled —
+    # and the timer names the beacon, so nothing ever started this. Safe to
+    # autostart: ConditionPathExists=/sys/class/net/wg0 makes it a clean no-op
+    # on a deck that has not joined a mesh.
+    "orionx-mesh-discover.service"
 )
 
 echo "[install-systemd-units] Installing Orion-X systemd units from $SOURCE_DIR to $TARGET_DIR"

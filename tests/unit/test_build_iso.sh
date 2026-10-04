@@ -1068,38 +1068,219 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "[T36] Bootloader menus: plain GRUB text menu + BIOS vesamenu (DEC-PHASE11-044)"
 
-# T36.a/b: the invariant is that a DEFAULT build emits a plain GRUB menu — not
-# that the theme strings are absent from the generator. DEC-PHASE12-030 revives
-# the gfxmenu behind ORIONX_GRUB_THEME=1 precisely so the assets and the
-# generator lines survive for hardware testing, and asserting on their mere
-# presence would forbid that. What must never regress is the default: the
-# hardware evidence (rc1-79 no font, rc1-81 unreadable menu) has not changed,
-# and an unreadable boot menu costs the operator the failsafe entry.
+# T36.a-b: these used to grep the GENERATOR SOURCE for strings. That is an
+# implementation test (RESILIENCE rule 1): it would pass unchanged if the
+# generator emitted the strings into the wrong file, in the wrong order, or
+# inside an `if` that is never taken. They now RUN generate_bootloader_configs()
+# in a sandbox and assert on the grub.cfg it actually produces.
 #
-# So: the directives may appear ONLY inside the ORIONX_GRUB_THEME guard.
-_grub_guard="$(awk '/ORIONX_GRUB_THEME:-0/{g=1} g&&/^    fi$/{g=0;next} g' "$BUILD_SCRIPT")"
-_grub_outside="$(grep -vFx -f <(printf '%s\n' "$_grub_guard") "$BUILD_SCRIPT" 2>/dev/null || cat "$BUILD_SCRIPT")"
+# DELIBERATE CHANGE OF INVARIANT (DEC-PHASE12-042). T36.b previously asserted
+# that NO graphics directive (insmod gfxterm / set gfxmode / loadfont) appears
+# outside the ORIONX_GRUB_THEME guard — i.e. that the default UEFI menu is
+# plain text. That invariant is retired, and this is what replaces it.
+#
+# What it was protecting: an unreadable boot menu costs the operator the
+# failsafe entry. The two hardware failures behind DEC-PHASE11-044 were rc1-79
+# (gfxterm with no font loaded) and rc1-81 (gfxmenu theme rendering illegibly).
+#
+# Why it no longer fits: inspection of the shipped rc4 ISO shows the gfxmenu
+# revival's `loadfont /boot/grub/fonts/unicode.pf2` names a directory the image
+# does not contain — the font is at /boot/grub/unicode.pf2. The default path
+# now (i) resolves the font the way live-build's own config.cfg does, (ii)
+# gates every graphics step behind `if loadfont`, so "gfxterm with no font" is
+# unreachable, and (iii) draws GRUB's NATIVE menu over a background_image with
+# explicit colours, so there is no theme engine to render illegibly.
+#
+# The protected property is unchanged and is asserted directly below instead of
+# by proxy: in EVERY mode, the menu lists both entries, keeps a visible timeout,
+# and never reaches the theme engine unless ORIONX_GRUB_THEME=1.
+_t36_tmp="$REPO_ROOT/tmp/test_build_iso_grub_$$"
+_t36_fail=0
+mkdir -p "$_t36_tmp"
 
-if ! printf '%s' "$_grub_outside" | grep -qF "set theme=/boot/grub/themes/orionx/theme.txt"; then
-    pass "T36.a: 'set theme=' appears only under ORIONX_GRUB_THEME (default plain — DEC-PHASE11-044/12-030)"
+# Extract the generator and run it against a throwaway ISO tree.
+sed -n '/^generate_bootloader_configs() {/,/^    log "Bootloader configs generated from single/p' \
+    "$BUILD_SCRIPT" > "$_t36_tmp/fn.sh"
+printf '}\n' >> "$_t36_tmp/fn.sh"
+
+_t36_gen() {  # $1=dest dir; remaining args are VAR=VAL overrides
+    local dest="$1"; shift
+    mkdir -p "$dest/auto" "$dest/config/includes.chroot/usr/share/grub/themes/orionx"
+    grep -- '--bootappend-live' "$REPO_ROOT/iso/auto/config" | grep -v '^[[:space:]]*#' | head -1 \
+        > "$dest/auto/config"
+    cp "$REPO_ROOT/iso/config/includes.chroot/usr/share/grub/themes/orionx/theme.txt" \
+       "$dest/config/includes.chroot/usr/share/grub/themes/orionx/" 2>/dev/null
+    env "$@" bash -c '
+        set -uo pipefail
+        ISO_DIR="$1"
+        log() { :; }
+        . "$2"
+        generate_bootloader_configs
+    ' _ "$dest" "$_t36_tmp/fn.sh" >/dev/null 2>&1
+}
+
+if _t36_gen "$_t36_tmp/default"; then
+    _T36_GRUB="$_t36_tmp/default/config/includes.binary/boot/grub/grub.cfg"
 else
-    fail "T36.a: 'set theme=' emitted unconditionally — default GRUB menu is not plain"
+    _T36_GRUB=/dev/null
+    fail "T36.gen: generator failed to run in the default configuration" "cannot assert T36.a-b"
 fi
 
-if ! printf '%s' "$_grub_outside" | grep -qE "insmod gfxmenu|insmod gfxterm|set gfxmode|^\s*loadfont "; then
-    pass "T36.b: GRUB graphics directives are opt-in only (default plain text — DEC-PHASE11-044/12-030)"
+# T36.a: the gfxmenu THEME ENGINE — the thing that rendered unreadably — must
+# not be in a default build.
+if ! grep -qE '^\s*(set theme=|insmod gfxmenu)' "$_T36_GRUB"; then
+    pass "T36.a: default grub.cfg does NOT load the gfxmenu theme engine (DEC-PHASE11-044 preserved)"
 else
-    fail "T36.b: GRUB graphics directives emitted unconditionally — menu can error/unreadable"
+    fail "T36.a: default grub.cfg references 'set theme='/'insmod gfxmenu'" \
+         "the theme engine is the component that failed on hardware; it stays behind ORIONX_GRUB_THEME=1"
 fi
 
-# T36.b2: the flag must default OFF. A revival that ships by accident is the
-# regression this whole guard exists to prevent.
+# T36.b: the default menu IS graphical (the operator asked for graphics).
+# Strip comments first: the generated file's own @rationale header NAMES these
+# directives, so grepping the whole file would pass on a config that only talks
+# about graphics. (Caught by mutation G3 — removing background_image left the
+# word in the comment and the assertion stayed green.)
+_t36_code="$(grep -v '^[[:space:]]*#' "$_T36_GRUB" 2>/dev/null || true)"
+_t36_missing=""
+for _d in 'if loadfont $orionx_font ; then' 'insmod gfxterm' 'set gfxmode=' \
+          'terminal_output gfxterm' 'background_image ' 'set menu_color_highlight='; do
+    printf '%s' "$_t36_code" | grep -qF "$_d" || _t36_missing="$_t36_missing [$_d]"
+done
+if [[ -z "$_t36_missing" ]]; then
+    pass "T36.b: default grub.cfg is graphical — font-gated gfxterm + background_image + explicit menu colours (DEC-PHASE12-042)"
+else
+    fail "T36.b: default grub.cfg is missing graphics directives:$_t36_missing" \
+         "UEFI boot would show a plain text menu — see generate_bootloader_configs()"
+fi
+
+# NOTE: the three line-number lookups below end in `|| true`. Under the
+# suite's `set -euo pipefail` a grep that finds nothing aborts the whole
+# run, which would silently SKIP these assertions instead of failing them —
+# the test would then pass on broken code by never executing.
+# T36.b1: the SAFETY property. Everything graphical must sit after `if loadfont`,
+# because gfxterm with no font loaded is literally the rc1-79 failure.
+_t36_lf="$(printf '%s\n' "$_t36_code" | grep -n 'if loadfont' | head -1 | cut -d: -f1 || true)"
+_t36_gt="$(printf '%s\n' "$_t36_code" | grep -n 'terminal_output gfxterm' | head -1 | cut -d: -f1 || true)"
+if [[ -n "$_t36_lf" && -n "$_t36_gt" && "$_t36_gt" -gt "$_t36_lf" ]]; then
+    pass "T36.b1: gfxterm is selected only inside the 'if loadfont' gate (rc1-79 failure mode unreachable)"
+else
+    fail "T36.b1: 'terminal_output gfxterm' is not gated behind 'if loadfont'" \
+         "loadfont line=$_t36_lf gfxterm line=$_t36_gt — gfxterm with no font is the rc1-79 unreadable-menu bug"
+fi
+
+# T36.b2: the font path must never be /boot/grub/fonts/ — that directory does
+# not exist on the ISO (verified against output/*rc4.iso, 2026-10-03). This is
+# the regression that made the gfxmenu revival untestable.
+# Comments in both files DISCUSS the dead path on purpose, so strip them first:
+# what must not contain it is executable grub.cfg script and executable shell.
+_t36_live_grub="$(grep -v '^[[:space:]]*#' "$_T36_GRUB" 2>/dev/null || true)"
+_t36_live_gen="$(grep -v '^[[:space:]]*#' "$BUILD_SCRIPT" 2>/dev/null || true)"
+if ! printf '%s' "$_t36_live_grub" | grep -q '/boot/grub/fonts/' \
+   && ! printf '%s' "$_t36_live_gen" | grep -q '/boot/grub/fonts/'; then
+    pass "T36.b2: no reference to the non-existent /boot/grub/fonts/ path (DEC-PHASE12-042)"
+else
+    fail "T36.b2: /boot/grub/fonts/ referenced — loadfont will silently fail" \
+         "the ISO keeps unicode.pf2 at \$prefix/unicode.pf2; see live-build's own /boot/grub/config.cfg"
+fi
+
+# T36.b3: terminal_output gfxterm REPLACES the output list, so the serial
+# console must be re-appended after it or GRUB's output vanishes from the QEMU
+# CI capture. DEC-PHASE12-030's block sat after the serial lines and dropped it.
+# Compare the LAST of each: one gfxterm selection before the serial append is
+# fine, but ANY gfxterm selection after it drops serial from the output list.
+# (Mutation G6 added a second, later one and the first-occurrence form missed it.)
+_t36_ser="$(printf '%s\n' "$_t36_code" | grep -n 'terminal_output --append serial' | tail -1 | cut -d: -f1 || true)"
+_t36_gt_last="$(printf '%s\n' "$_t36_code" | grep -n 'terminal_output gfxterm' | tail -1 | cut -d: -f1 || true)"
+if [[ -n "$_t36_ser" && -n "$_t36_gt_last" && "$_t36_ser" -gt "$_t36_gt_last" ]]; then
+    pass "T36.b3: 'terminal_output --append serial' comes AFTER 'terminal_output gfxterm' (serial console survives)"
+else
+    fail "T36.b3: serial output is appended before gfxterm replaces the terminal list" \
+         "last gfxterm line=$_t36_gt_last serial line=$_t36_ser — GRUB serial output would be lost"
+fi
+
+# T36.b4: the kill switch works and yields the old plain menu.
+if _t36_gen "$_t36_tmp/plain" ORIONX_GRUB_GRAPHICS=0; then
+    _T36_PLAIN="$_t36_tmp/plain/config/includes.binary/boot/grub/grub.cfg"
+    _t36_plain_live="$(grep -v '^[[:space:]]*#' "$_T36_PLAIN" 2>/dev/null || true)"
+    if ! printf '%s' "$_t36_plain_live" | grep -qE 'gfxterm|loadfont|background_image|set gfxmode' \
+       && grep -qF 'menuentry "Orion-X Live (failsafe)"' "$_T36_PLAIN"; then
+        pass "T36.b4: ORIONX_GRUB_GRAPHICS=0 restores the bare text menu, failsafe entry intact"
+    else
+        fail "T36.b4: ORIONX_GRUB_GRAPHICS=0 did not produce a plain menu" \
+             "the one-env-var revert is the escape hatch if hardware rejects the graphics"
+    fi
+else
+    fail "T36.b4: generator failed with ORIONX_GRUB_GRAPHICS=0" "kill switch is broken"
+fi
+
+# T36.b5: the theme engine still defaults OFF and still turns ON with the flag.
+if _t36_gen "$_t36_tmp/themed" ORIONX_GRUB_THEME=1; then
+    _T36_THEMED="$_t36_tmp/themed/config/includes.binary/boot/grub/grub.cfg"
+    if grep -qF 'set theme=' "$_T36_THEMED" && grep -qF 'insmod gfxmenu' "$_T36_THEMED"; then
+        pass "T36.b5: ORIONX_GRUB_THEME=1 still revives the gfxmenu theme (opt-in preserved, DEC-PHASE12-030)"
+    else
+        fail "T36.b5: ORIONX_GRUB_THEME=1 did not emit the gfxmenu theme" \
+             "the revival path must stay testable on hardware"
+    fi
+else
+    fail "T36.b5: generator failed with ORIONX_GRUB_THEME=1" "opt-in theme path is broken"
+fi
 if grep -qF 'ORIONX_GRUB_THEME:-0' "$BUILD_SCRIPT"; then
-    pass "T36.b2: GRUB theme flag defaults to off"
+    pass "T36.b6: GRUB gfxmenu theme flag defaults to off"
 else
-    fail "T36.b2: GRUB theme flag does not default to off" \
-         "ORIONX_GRUB_THEME must default to 0 — see DEC-PHASE12-030"
+    fail "T36.b6: ORIONX_GRUB_THEME must default to 0 — see DEC-PHASE12-030/042"
 fi
+
+# T36.b7: the gfxmenu theme needs the graphics block's font+gfxterm, so the
+# combination that would emit `set theme` with no font must be refused loudly
+# rather than producing an unreadable image.
+if ! _t36_gen "$_t36_tmp/conflict" ORIONX_GRUB_THEME=1 ORIONX_GRUB_GRAPHICS=0; then
+    pass "T36.b7: ORIONX_GRUB_THEME=1 with ORIONX_GRUB_GRAPHICS=0 is refused (would emit a theme with no font)"
+else
+    fail "T36.b7: the conflicting flag combination built an ISO config" \
+         "set theme= without a loaded font is exactly the rc1-81 unreadable menu"
+fi
+
+# T36.b8: the invariant DEC-PHASE11-044 actually protects — the operator can
+# always reach the failsafe entry — must hold in EVERY mode.
+_t36_modes_ok=1
+for _m in default plain themed; do
+    _f="$_t36_tmp/$_m/config/includes.binary/boot/grub/grub.cfg"
+    [[ -f "$_f" ]] || { _t36_modes_ok=0; continue; }
+    grep -qF 'menuentry "Orion-X Live (failsafe)"' "$_f" || _t36_modes_ok=0
+    grep -qF 'set timeout=5' "$_f" || _t36_modes_ok=0
+done
+if [[ "$_t36_modes_ok" -eq 1 ]]; then
+    pass "T36.b8: failsafe entry + 5s timeout present in default, plain and themed modes"
+else
+    fail "T36.b8: a GRUB mode lost the failsafe entry or the visible timeout" \
+         "that entry exists for when things are already wrong — it is not optional in any mode"
+fi
+
+# T36.b9: the COMMITTED generated artifacts must match what the generator emits
+# today. iso/config/includes.binary/*.cfg are derived surfaces; a stale copy in
+# git is a second, wrong authority that readers trust. (Both files were in fact
+# stale before DEC-PHASE12-042: they carried a pre-DEC-PHASE11-042 isolinux menu
+# and a cmdline missing apparmor=1 security=apparmor.)
+_t36_drift=""
+for _pair in "boot/grub/grub.cfg" "isolinux/isolinux.cfg"; do
+    _gen="$_t36_tmp/default/config/includes.binary/$_pair"
+    _com="$REPO_ROOT/iso/config/includes.binary/$_pair"
+    if [[ -f "$_gen" && -f "$_com" ]]; then
+        cmp -s "$_gen" "$_com" || _t36_drift="$_t36_drift $_pair"
+    else
+        _t36_drift="$_t36_drift $_pair(missing)"
+    fi
+done
+if [[ -z "$_t36_drift" ]]; then
+    pass "T36.b9: committed includes.binary bootloader cfgs match a fresh generator run (no derived-surface drift)"
+else
+    fail "T36.b9: committed bootloader cfg drifted from the generator:$_t36_drift" \
+         "regenerate them: they are GENERATED files (DEC-PHASE11-012), not hand-edited ones"
+fi
+
+rm -rf "$_t36_tmp"
+unset _t36_fail
 
 # T36.c: the readable GRUB menu still offers both entries + a visible timeout.
 if grep -qF 'menuentry "Orion-X Live"' "$BUILD_SCRIPT" && \

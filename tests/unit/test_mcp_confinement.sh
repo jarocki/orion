@@ -618,6 +618,76 @@ if command -v ruff >/dev/null 2>&1; then
 else
     printf "  SKIP: ruff not installed\n"
 fi
+section "Seccomp survivability (DEC-PHASE12-041 re-verification of b2fb840)"
+# b2fb840 moved the privileged chgrp out of the sandbox. That commit is
+# logically sound but was never observed working — rc4 had the service in an
+# activating restart loop with status=31/SYS. These assertions are what CAN be
+# proven off-box; the SIGSYS itself needs a booted image with seccomp.
+
+# 1. The sandbox must contain NO syscall that ~@privileged kills. chown was
+#    the one that fired; assert the whole family is absent, not just chown.
+if grep -qE '(os|shutil)\.(chown|setuid|setgid|setgroups|setreuid|setregid|chroot)\(' "$MCP"; then
+    fail "server makes no privileged syscall" \
+         "$(grep -nE '(os|shutil)\.(chown|setuid|setgid|setgroups|setreuid|setregid|chroot)\(' "$MCP" | head -3)"
+else
+    pass "server makes no privileged syscall (chown/setuid/setgid/chroot family absent)"
+fi
+
+# 2. The ONLY privileged work is the ExecStartPre, and it must carry '+'.
+#    Without the prefix it inherits SystemCallFilter and dies the same way.
+PRIV_LINES="$(grep -cE '^ExecStart(Pre|Post)=\+' "$UNIT" || true)"
+if [[ "$PRIV_LINES" == "1" ]]; then
+    pass "exactly one privileged (+) exec line in the unit"
+else
+    fail "exactly one privileged (+) exec line in the unit" "found $PRIV_LINES"
+fi
+if grep -qE '^ExecStart=\+' "$UNIT"; then
+    fail "the long-running server must NOT run privileged" \
+         "ExecStart carries a + prefix; the whole point is that only the" \
+         "one-shot directory setup escapes the sandbox."
+else
+    pass "ExecStart itself stays inside the sandbox (no + prefix)"
+fi
+
+# 3. The directory setup must end at 0770, not wider. A 0777 runtime
+#    directory would make the group gate decorative.
+if grep -qE "^ExecStartPre=\+.*chmod 0770 /run/nebula-mcp" "$UNIT"; then
+    pass "runtime directory is set to 0770 (group-gated, not world-traversable)"
+else
+    fail "runtime directory is set to 0770" \
+         "$(grep -E '^ExecStartPre=' "$UNIT" || echo '(no ExecStartPre at all)')"
+fi
+if grep -qE '^RuntimeDirectory=nebula-mcp' "$UNIT"; then
+    pass "systemd owns the runtime directory lifecycle (RuntimeDirectory=)"
+else
+    fail "RuntimeDirectory=nebula-mcp missing" \
+         "ExecStartPre would then chgrp a directory that may not exist."
+fi
+
+# 4. The SECOND half of the rc4 root cause: even unblocked, the in-process
+#    chgrp was EPERM because the service holds no supplementary groups. If
+#    anyone 'fixes' it by granting the sudo group, the uid boundary is gone.
+if grep -qE '^SupplementaryGroups=$' "$UNIT"; then
+    pass "SupplementaryGroups is empty (the server is in no privileged group)"
+else
+    fail "SupplementaryGroups must stay empty" \
+         "$(grep -E '^SupplementaryGroups=' "$UNIT" || echo '(directive removed)')"
+fi
+if grep -qE '^SupplementaryGroups=.*sudo' "$UNIT"; then
+    fail "the service was granted the sudo group" \
+         "That is not a fix for the socket permissions; it is a privilege grant."
+else
+    pass "the service is not a member of sudo"
+fi
+
+# 5. Restarts are bounded. rc4 showed 'activating' with repeated restarts;
+#    a bound is what turns that into a visible failure instead of a loop.
+if grep -qE '^StartLimitBurst=[0-9]+' "$UNIT" && grep -qE '^StartLimitIntervalSec=[0-9]+' "$UNIT"; then
+    pass "restarts are bounded (StartLimitIntervalSec + StartLimitBurst)"
+else
+    fail "restarts are bounded" "an unbounded Restart=on-failure is DEC-PHASE12-034"
+fi
+
 printf "\n===========================================\n"
 printf "  Results: ${GREEN}%s passed${NC}, ${RED}%s failed${NC}\n" "$PASS" "$FAIL"
 printf "===========================================\n"

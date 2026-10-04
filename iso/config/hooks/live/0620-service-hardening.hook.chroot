@@ -70,9 +70,6 @@ EOF
 #   /etc/systemd/system/<unit>.service. The loop body was dead on every build
 #   since the hook was written.
 #
-#   Verified: orionx-mesh-discover.service, orionx-mesh-health.service and
-#   orionx-mesh-beacon.service in includes.chroot/usr/share/orionx/systemd/
-#   carry zero ProtectSystem, NoNewPrivileges or ProtectHome lines.
 #   tests/unit/test_service_hardening.sh asserted the string
 #   "ProtectSystem=strict" appeared in THIS FILE's text, so it stayed green for
 #   the life of the project while the mesh units ran entirely unconfined. That
@@ -80,14 +77,30 @@ EOF
 #
 #   Had it ever fired it would also have been wrong: ProtectSystem=strict
 #   makes the whole hierarchy read-only bar /dev, /proc and /sys, which breaks
-#   mesh-discover.sh's PID file (/var/run/orionx-mesh-discover.pid),
-#   mesh-health.sh's counter under /var/run, and wg-quick. Hardening these
-#   units needs matching ReadWritePaths and a CapabilityBoundingSet, validated
-#   against a live wg0 — not a blind append.
+#   mesh-discover.sh's PID file, mesh-health.sh's counters, and wg-quick.
+#   A blind append could not have known that.
 #
 #   Two authorities decided one fact; this was the broken one. The unit files
-#   are the surviving authority, 0615 copies them verbatim, and the test now
-#   asserts the directives in the units themselves. Mesh unit hardening is
-#   tracked as outstanding work, NOT silently claimed here.
+#   are the surviving authority, 0615 copies them verbatim, and the test
+#   asserts the directives in the units themselves.
+#
+# @decision DEC-PHASE12-041
+# @title The mesh-unit hardening gap recorded above is now CLOSED
+# @status accepted
+# @rationale orionx-mesh-health.service, orionx-mesh-discover.service and
+#   orionx-mesh-beacon.service now each carry a confinement block justified
+#   line by line against the script it confines (ProtectSystem=strict with a
+#   RuntimeDirectory and LogsDirectory for exactly what they write, and a
+#   CapabilityBoundingSet that differs per unit: CAP_NET_ADMIN+CAP_NET_RAW for
+#   health, CAP_NET_ADMIN for the listener, neither for the beacon, which only
+#   reads addresses and sends a datagram).
+#
+#   What made that possible was removing wg-quick from mesh-health.sh. wg-quick
+#   runs sysctl, iptables/nft and resolvconf, which is not boundable without a
+#   live wg0; `ip link set wg0 down/up` is, and it preserves the peers.
+#   ProtectKernelModules is deliberately NOT set, because interface restore
+#   relies on the kernel autoloading the wireguard module.
+#
+#   Still nothing is injected from here. The units remain the single authority.
 
 echo "[*] Service hardening complete (unit directives live in the unit files)"

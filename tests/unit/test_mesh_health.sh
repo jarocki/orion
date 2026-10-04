@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
-# shellcheck disable=SC1091,SC2329
+# shellcheck disable=SC1091,SC2329,SC2034
 #
 # Orion-X Phoenix Edition — Unit Tests for mesh-health.sh
 #
@@ -95,7 +95,7 @@ assert_file_not_exists() {
 
 assert_file_contains() {
     local description="$1" filepath="$2" pattern="$3"
-    if [[ -f "$filepath" ]] && grep -q "$pattern" "$filepath"; then
+    if [[ -f "$filepath" ]] && grep -q -- "$pattern" "$filepath"; then
         echo "  PASS: $description"
         (( PASS_COUNT++ )) || true
     else
@@ -180,6 +180,46 @@ setup() {
         echo "ping $*" >> "$MOCK_CALLS_FILE"
         return "$_mock_ping_rc"
     }
+
+    # sleep: recorded, never actually slept. health_verify_handshake polls
+    # MESH_HEAL_VERIFY_TRIES times; a real sleep would add 15s per heal.
+    sleep() {
+        echo "sleep $*" >> "$MOCK_CALLS_FILE"
+        return 0
+    }
+
+    # orionx-event stub: records every published event so tests can assert
+    # the BUS, not the journal. mesh_emit resolves MESH_EVENT_CLI at call
+    # time, so assigning it here (after sourcing) is enough.
+    EVENTS_FILE="$TMPDIR_TEST/events.log"
+    true > "$EVENTS_FILE"
+    MESH_EVENT_CLI="$TMPDIR_TEST/orionx-event"
+    cat > "$MESH_EVENT_CLI" <<'STUBEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${EVENTS_FILE:?}"
+exit "${EVENT_CLI_RC:-0}"
+STUBEOF
+    chmod +x "$MESH_EVENT_CLI"
+    export EVENTS_FILE
+    export EVENT_CLI_RC=0
+
+    # Discovery listener PID file. By default it points at THIS shell, which
+    # is alive, so the default fixture is a fully-wired mesh.
+    MESH_DISCOVER_PID_FILE="$TMPDIR_TEST/orionx-mesh-discover.pid"
+    echo "$$" > "$MESH_DISCOVER_PID_FILE"
+
+    # Pretend unit directory: by default FULLY wired (beacon installed).
+    MESH_UNIT_DIR="$TMPDIR_TEST/units"
+    mkdir -p "$MESH_UNIT_DIR"
+    : > "$MESH_UNIT_DIR/orionx-mesh-beacon.service"
+
+    # Reset tunables every test so one test cannot leak into the next.
+    MESH_HANDSHAKE_STALE_SECS=180
+    MESH_AGGRESSIVE_THRESHOLD=2
+    MESH_MAX_AGGRESSIVE_HEALS=2
+    MESH_HEAL_VERIFY_TRIES=3
+    MESH_HEAL_VERIFY_WAIT=5
+    HEALTH_LAST_HEAL_VERIFIED="unverified"
 
     # date: return a known epoch for deterministic tests
     _mock_current_epoch=""
@@ -323,15 +363,30 @@ echo ""
 echo "--- Interface Check: Failure Triggers Restore ---"
 setup
 
+# DEC-PHASE12-041: restore goes through mesh_interface_up (ip link add /
+# wg set) — the SAME authority that created the interface in `orionx-mesh
+# join`. It used to call `wg-quick up wg0`, which could never succeed:
+# nothing in Orion-X ever writes /etc/wireguard/wg0.conf, and wg-quick
+# parses that file before it does anything.
 _mock_ip_link_show_rc=1
+mesh_state_write "wg0" "10.0.99.7" "join" "SomePubKey=="
 
-# wg-quick up should be called for restore
 rc=0
 health_check_interface 2>/dev/null || rc=$?
 
-# When interface is missing and wg-quick up is attempted,
-# we need the mock to succeed for restore
-assert_file_contains "wg-quick up called for restore" "$MOCK_CALLS_FILE" "wg-quick up"
+assert_file_contains "restore creates the wireguard interface itself" \
+    "$MOCK_CALLS_FILE" "ip link add dev wg0 type wireguard"
+assert_file_contains "restore re-applies the stored VPN address" \
+    "$MOCK_CALLS_FILE" "ip addr add 10.0.99.7/24"
+
+# The dead authority must not come back.
+if grep -q "wg-quick" "$MOCK_CALLS_FILE"; then
+    echo "  FAIL: restore still calls wg-quick (no wg0.conf exists; it cannot work)"
+    (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: restore does not call wg-quick (dead authority removed)"
+    (( PASS_COUNT++ )) || true
+fi
 
 # Verify log mentions missing interface
 assert_file_contains "log mentions missing interface" "$MESH_LOG_FILE" "missing"
@@ -345,13 +400,22 @@ echo ""
 echo "--- Interface Check: Restore Failure ---"
 setup
 
+# No mesh state => no VPN address to rebuild with. The old code answered
+# this by shelling out to wg-quick and logging an ERROR nobody reads; it
+# must now fail AND tell the operator, on the bus, what to run.
 _mock_ip_link_show_rc=1
-_mock_wg_quick_rc=1
+# (no mesh_state_write: this deck has not joined a mesh)
 
 rc=0
 health_check_interface 2>/dev/null || rc=$?
 
-assert_eq "interface check returns 1 when restore fails" "1" "$rc"
+assert_eq "interface check returns 1 when it cannot restore" "1" "$rc"
+assert_file_contains "unrestorable interface reaches the R.A.I.N. bus" \
+    "$EVENTS_FILE" "--severity critical"
+assert_file_contains "escalation names the remedy" \
+    "$EVENTS_FILE" "orionx-mesh join"
+assert_file_contains "escalation uses a STATUS category, not a threat one" \
+    "$EVENTS_FILE" "--category health"
 
 teardown
 echo ""
@@ -542,9 +606,28 @@ health_increment_counter "Peer2"
 SHORT_KEY="BadPeer"
 health_aggressive_heal "$SHORT_KEY" 2>/dev/null
 
-# Verify wg-quick down/up sequence
-assert_file_contains "wg-quick down called" "$MOCK_CALLS_FILE" "wg-quick down"
-assert_file_contains "wg-quick up called" "$MOCK_CALLS_FILE" "wg-quick up"
+# DEC-PHASE12-041: the heal bounces the LINK. `ip link set wg0 down/up`
+# drops and rebinds the socket and forces new handshakes while preserving
+# the private key, the address and every peer. `wg-quick down && up` would
+# have destroyed all of it — and in practice did nothing at all.
+assert_file_contains "link bounced down" "$MOCK_CALLS_FILE" "ip link set wg0 down"
+assert_file_contains "link bounced up" "$MOCK_CALLS_FILE" "ip link set wg0 up"
+
+if grep -q "wg-quick" "$MOCK_CALLS_FILE"; then
+    echo "  FAIL: aggressive heal still calls wg-quick"
+    (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: aggressive heal does not call wg-quick"
+    (( PASS_COUNT++ )) || true
+fi
+
+if grep -q "ip link delete" "$MOCK_CALLS_FILE"; then
+    echo "  FAIL: aggressive heal destroys the interface (peers would be lost)"
+    (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: aggressive heal preserves peers (no interface delete)"
+    (( PASS_COUNT++ )) || true
+fi
 
 # Verify ALL counters were cleared (interface restart affects all peers)
 C1=$(health_read_counter "Peer1")
@@ -744,9 +827,12 @@ if health_should_aggressive_heal "$SHORT_KEY" 2>/dev/null; then
     echo "  INFO: aggressive threshold was reached"
 fi
 
-# Verify aggressive heal was triggered (wg-quick down/up in the calls)
-assert_file_contains "aggressive heal wg-quick down" "$MOCK_CALLS_FILE" "wg-quick down"
-assert_file_contains "aggressive heal wg-quick up" "$MOCK_CALLS_FILE" "wg-quick up"
+# Verify the aggressive heal actually bounced the link
+assert_file_contains "aggressive heal bounced link down" "$MOCK_CALLS_FILE" "ip link set wg0 down"
+assert_file_contains "aggressive heal bounced link up" "$MOCK_CALLS_FILE" "ip link set wg0 up"
+assert_eq "the heal is reported as UNVERIFIED (no handshake followed)" \
+    "no" "$HEALTH_LAST_HEAL_VERIFIED"
+assert_eq "the mesh-wide heal budget was spent" "1" "$(health_read_budget)"
 
 teardown
 echo ""
@@ -833,6 +919,375 @@ if [[ -f "$TIMER_FILE" ]]; then
     assert_file_contains "timer has Install section" "$TIMER_FILE" "WantedBy=timers.target"
 fi
 
+echo ""
+
+# ---------------------------------------------------------------------------
+# 28. PLAN — health_plan_action is pure and covers the whole decision table
+#
+# @decision DEC-PHASE12-041
+# RESILIENCE "Plan": desired behaviour as data, separate from the code that
+# applies it. If this table is wrong, every test below is wrong too — so it
+# is asserted directly, with no mocks and no filesystem.
+# ---------------------------------------------------------------------------
+echo "--- Plan: decision table ---"
+setup
+
+#                      staleness ping  fails others budget escalated
+assert_eq "fresh handshake needs no action" "none" \
+    "$(health_plan_action fresh fail 9 0 9 0)"
+assert_eq "already escalated holds silent" "hold" \
+    "$(health_plan_action stale fail 9 0 9 1)"
+assert_eq "stale but pingable is a soft heal only" "soft" \
+    "$(health_plan_action stale ok 9 0 0 0)"
+assert_eq "below the failure threshold is a soft heal" "soft" \
+    "$(health_plan_action stale fail 1 0 0 0)"
+assert_eq "at threshold with healthy peers reports the PEER, never bounces" "escalate-peer" \
+    "$(health_plan_action stale fail 2 1 0 0)"
+assert_eq "at threshold with no healthy peers bounces the interface" "aggressive" \
+    "$(health_plan_action stale fail 2 0 0 0)"
+assert_eq "second bounce is still inside the budget" "aggressive" \
+    "$(health_plan_action stale fail 5 0 1 0)"
+assert_eq "budget exhausted escalates and stops" "escalate-mesh" \
+    "$(health_plan_action stale fail 5 0 2 0)"
+assert_eq "over-spent budget still escalates (never wraps back to healing)" "escalate-mesh" \
+    "$(health_plan_action stale fail 99 0 99 0)"
+
+teardown
+echo ""
+
+# ---------------------------------------------------------------------------
+# 29. The original defect: ONE powered-off peer must not bounce the interface
+#     for the healthy ones, and must not do it forever.
+#
+# Measured on rc4: timer every 60s, threshold 2, stale after 180s ->
+# `wg-quick down wg0 && wg-quick up wg0` every ~2 minutes, indefinitely,
+# because health_clear_all_counters() reset the budget after every heal.
+# ---------------------------------------------------------------------------
+echo "--- Regression: one dead peer, two healthy ones, 20 timer firings ---"
+setup
+
+NOW="$(date +%s)"
+RECENT=$((NOW - 30))
+OLD=$((NOW - 600))
+
+_mock_wg_dump_output="GoodPeer1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX==	(none)	192.168.1.10:51820	10.0.99.10/32	${RECENT}	1	1	off
+GoodPeer2XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX==	(none)	192.168.1.11:51820	10.0.99.11/32	${RECENT}	1	1	off
+DeadPeer3XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX==	(none)	192.168.1.12:51820	10.0.99.12/32	${OLD}	1	1	off"
+_mock_ping_rc=1
+
+for _i in $(seq 1 20); do
+    health_check_all_peers 2>/dev/null
+done
+
+BOUNCES="$(grep -c "ip link set wg0 down" "$MOCK_CALLS_FILE" || true)"
+assert_eq "20 timer firings produced ZERO interface bounces" "0" "$BOUNCES"
+
+if grep -q "wg-quick" "$MOCK_CALLS_FILE"; then
+    echo "  FAIL: wg-quick is still being invoked"
+    (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: wg-quick never invoked"
+    (( PASS_COUNT++ )) || true
+fi
+
+CRITS="$(grep -c "severity warning" "$EVENTS_FILE" || true)"
+assert_eq "the dead peer is reported exactly ONCE, not 20 times" "1" "$CRITS"
+assert_file_contains "the report names the peer" "$EVENTS_FILE" "DeadPeer"
+assert_file_contains "the report says the mesh is still working" "$EVENTS_FILE" "other peer"
+assert_file_contains "the report names a diagnosis command" "$EVENTS_FILE" "latest-handshakes"
+
+teardown
+echo ""
+
+# ---------------------------------------------------------------------------
+# 30. Bounded repair: when EVERY peer is stale the interface is bounced,
+#     but only MESH_MAX_AGGRESSIVE_HEALS times — then it escalates and stops.
+# ---------------------------------------------------------------------------
+echo "--- Repair is bounded: whole mesh down, 20 timer firings ---"
+setup
+
+MESH_MAX_AGGRESSIVE_HEALS=2
+NOW="$(date +%s)"
+OLD=$((NOW - 600))
+
+_mock_wg_dump_output="LonePeerXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX==	(none)	192.168.1.20:51820	10.0.99.20/32	${OLD}	1	1	off"
+_mock_ping_rc=1
+
+for _i in $(seq 1 20); do
+    health_check_all_peers 2>/dev/null
+done
+
+BOUNCES="$(grep -c "ip link set wg0 down" "$MOCK_CALLS_FILE" || true)"
+assert_eq "interface bounced exactly MESH_MAX_AGGRESSIVE_HEALS times" "2" "$BOUNCES"
+assert_eq "budget records both bounces and is not reset by them" "2" "$(health_read_budget)"
+
+CRITS="$(grep -c "severity critical" "$EVENTS_FILE" || true)"
+assert_eq "gave up with exactly one critical event" "1" "$CRITS"
+assert_file_contains "critical says it is not retrying" "$EVENTS_FILE" "Not retrying"
+assert_file_contains "critical names what still works" "$EVENTS_FILE" "unaffected"
+assert_file_contains "critical is self-status, not a threat" "$EVENTS_FILE" "category health"
+
+teardown
+echo ""
+
+# ---------------------------------------------------------------------------
+# 31. LOOP: only a real handshake resets the budget.
+# ---------------------------------------------------------------------------
+echo "--- Loop: a confirmed handshake resets the budget ---"
+setup
+
+PUBKEY="BudgetPeerXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX=="
+SHORT_KEY="${PUBKEY:0:8}"
+NOW="$(date +%s)"
+RECENT=$((NOW - 10))
+
+health_consume_budget
+health_consume_budget
+health_mark_escalated "$SHORT_KEY"
+assert_eq "budget is spent before the handshake" "2" "$(health_read_budget)"
+
+health_check_peer "$PUBKEY" "1.2.3.4:51820" "10.0.99.30/32" "$RECENT" "$NOW" 0 2>/dev/null
+
+assert_eq "a fresh handshake clears the heal budget" "0" "$(health_read_budget)"
+if health_has_escalated "$SHORT_KEY"; then
+    echo "  FAIL: escalation marker survived a confirmed handshake"
+    (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: escalation marker cleared by a confirmed handshake"
+    (( PASS_COUNT++ )) || true
+fi
+assert_file_contains "recovery is announced on the bus" "$EVENTS_FILE" "is back"
+
+teardown
+echo ""
+
+# ---------------------------------------------------------------------------
+# 32. Silence after escalation — no soft heal, no event, no work.
+# ---------------------------------------------------------------------------
+echo "--- Silence after escalation ---"
+setup
+
+PUBKEY="QuietPeerXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX=="
+SHORT_KEY="${PUBKEY:0:8}"
+NOW="$(date +%s)"
+OLD=$((NOW - 600))
+health_mark_escalated "$SHORT_KEY"
+_mock_ping_rc=1
+
+rc=0
+health_check_peer "$PUBKEY" "1.2.3.4:51820" "10.0.99.40/32" "$OLD" "$NOW" 0 2>/dev/null || rc=$?
+
+assert_eq "an escalated peer returns the terminal code" "3" "$rc"
+if grep -q "wg set" "$MOCK_CALLS_FILE"; then
+    echo "  FAIL: escalated peer was still soft-healed"
+    (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: escalated peer is left alone (no soft heal)"
+    (( PASS_COUNT++ )) || true
+fi
+assert_eq "no further events published" "0" "$(wc -l < "$EVENTS_FILE" | tr -d ' ')"
+
+teardown
+echo ""
+# ---------------------------------------------------------------------------
+# 33. CHECK — a heal reports what actually happened, not what it attempted
+#
+# RESILIENCE rule 3. The old health_aggressive_heal ran two commands that
+# could not work and returned "aggressive heal triggered" regardless.
+# ---------------------------------------------------------------------------
+echo "--- Check: heal verification reads reality back ---"
+setup
+
+PUBKEY="VerifyPeerXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX=="
+SHORT_KEY="${PUBKEY:0:8}"
+NOW="$(date +%s)"
+FRESH=$((NOW - 5))
+
+# After the bounce, the kernel reports a fresh handshake for this peer.
+_mock_wg_dump_output="${PUBKEY}	(none)	192.168.1.50:51820	10.0.99.50/32	${FRESH}	1	1	off"
+health_increment_counter "$SHORT_KEY"
+health_consume_budget
+
+health_aggressive_heal "$SHORT_KEY" "$PUBKEY" 2>/dev/null
+
+assert_eq "a heal followed by a real handshake is reported verified" \
+    "yes" "$HEALTH_LAST_HEAL_VERIFIED"
+assert_eq "a verified heal resets the budget" "0" "$(health_read_budget)"
+
+teardown
+echo ""
+
+echo "--- Check: an ineffective heal is NOT reported as success ---"
+setup
+
+PUBKEY="StillDeadXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX=="
+SHORT_KEY="${PUBKEY:0:8}"
+NOW="$(date +%s)"
+OLD=$((NOW - 600))
+
+_mock_wg_dump_output="${PUBKEY}	(none)	192.168.1.51:51820	10.0.99.51/32	${OLD}	1	1	off"
+health_consume_budget
+
+health_aggressive_heal "$SHORT_KEY" "$PUBKEY" 2>/dev/null
+
+assert_eq "no handshake means the heal is reported as failed" \
+    "no" "$HEALTH_LAST_HEAL_VERIFIED"
+assert_eq "an unverified heal does NOT refund the budget" "1" "$(health_read_budget)"
+assert_file_contains "verification is bounded, not a loop" "$MOCK_CALLS_FILE" "sleep 5"
+SLEEPS="$(grep -c "^sleep " "$MOCK_CALLS_FILE" || true)"
+assert_eq "verification polls exactly MESH_HEAL_VERIFY_TRIES times" "3" "$SLEEPS"
+
+teardown
+echo ""
+
+# ---------------------------------------------------------------------------
+# 34. The bus: mesh self-healing may never be published as a THREAT
+#
+# DEC-PHASE12-040 / RESILIENCE rule 5. A powered-off peer moving THREAT
+# PRESSURE is the orionx-postured gauge defect all over again.
+# ---------------------------------------------------------------------------
+echo "--- Bus: category vocabulary is enforced, not documented ---"
+setup
+
+rc=0
+mesh_emit warning health "a status message" 2>/dev/null || rc=$?
+assert_eq "'health' is accepted" "0" "$rc"
+
+rc=0
+mesh_emit warning service "a status message" 2>/dev/null || rc=$?
+assert_eq "'service' is accepted" "0" "$rc"
+
+for _bad in ids intrusion scan malware general; do
+    rc=0
+    mesh_emit warning "$_bad" "should never be published" 2>/dev/null || rc=$?
+    assert_eq "'$_bad' is refused (would count as a threat)" "2" "$rc"
+done
+
+EMITTED="$(grep -c "should never be published" "$EVENTS_FILE" || true)"
+assert_eq "refused categories reach the bus zero times" "0" "$EMITTED"
+
+teardown
+echo ""
+
+echo "--- Bus: an unpublished event is never reported as published ---"
+setup
+
+MESH_EVENT_CLI="$TMPDIR_TEST/definitely-not-installed"
+rc=0
+mesh_emit critical health "nobody will hear this" 2>/dev/null || rc=$?
+assert_eq "a missing orionx-event is reported as a failure" "1" "$rc"
+assert_file_contains "and says so in the log" "$MESH_LOG_FILE" "NOT published"
+
+setup
+export EVENT_CLI_RC=7
+rc=0
+mesh_emit critical health "the CLI will reject this" 2>/dev/null || rc=$?
+assert_eq "a non-zero orionx-event exit is reported as a failure" "1" "$rc"
+assert_file_contains "and says so in the log" "$MESH_LOG_FILE" "NOT published"
+export EVENT_CLI_RC=0
+
+teardown
+echo ""
+
+# ---------------------------------------------------------------------------
+# 35. Discovery wiring — degrade loudly about the 0615 gap (defect 3)
+#
+# orionx-mesh-discover.timer has Unit=orionx-mesh-beacon.service, but that
+# unit is absent from UNIT_FILES in 0615, so the timer fires at nothing and
+# the listener is never triggered either. mesh-health cannot repair a build
+# hook; it can refuse to let the operator find out by accident.
+# ---------------------------------------------------------------------------
+echo "--- Discovery wiring: silent when wired, loud once when not ---"
+setup
+
+rc=0
+health_check_discovery 2>/dev/null || rc=$?
+assert_eq "fully wired discovery produces no complaint" "0" "$rc"
+assert_eq "and publishes nothing" "0" "$(wc -l < "$EVENTS_FILE" | tr -d ' ')"
+
+teardown
+setup
+
+# The shipped state: beacon unit was never installed.
+rm -f "$MESH_UNIT_DIR/orionx-mesh-beacon.service"
+
+rc=0
+health_check_discovery 2>/dev/null || rc=$?
+assert_eq "a dangling timer target is reported" "1" "$rc"
+assert_file_contains "names the missing unit" "$EVENTS_FILE" "orionx-mesh-beacon.service"
+assert_file_contains "names the consequence" "$EVENTS_FILE" "no NEW peer"
+assert_file_contains "names what still works" "$EVENTS_FILE" "still work"
+assert_file_contains "names the exact remedy" "$EVENTS_FILE" "UNIT_FILES"
+assert_file_contains "is self-status, not a threat" "$EVENTS_FILE" "category health"
+
+# Bounded: 60 further timer firings must not add 60 more events.
+for _i in $(seq 1 60); do
+    health_check_discovery 2>/dev/null || true
+done
+ANNOUNCE="$(grep -c "orionx-mesh-beacon.service" "$EVENTS_FILE" || true)"
+assert_eq "announced exactly once per boot, not once per minute" "1" "$ANNOUNCE"
+
+teardown
+echo ""
+
+echo "--- Discovery wiring: a stopped listener is reported too ---"
+setup
+
+# A PID file left behind by a listener that died (the live-overlay /run is a
+# tmpfs, so a stale PID file is exactly what a crashed listener leaves).
+echo "999999" > "$MESH_DISCOVER_PID_FILE"
+rc=0
+health_check_discovery 2>/dev/null || rc=$?
+assert_eq "a dead listener behind a stale PID file is reported" "1" "$rc"
+assert_file_contains "names the missing listener" "$EVENTS_FILE" "discovery listener"
+
+teardown
+echo ""
+
+echo "--- Discovery wiring: a missing PID file is reported ---"
+setup
+rm -f "$MESH_DISCOVER_PID_FILE"
+rc=0
+health_check_discovery 2>/dev/null || rc=$?
+assert_eq "no PID file at all is reported" "1" "$rc"
+assert_file_contains "names the path the operator should look at" \
+    "$EVENTS_FILE" "orionx-mesh-discover.pid"
+
+teardown
+echo ""
+
+# ---------------------------------------------------------------------------
+# 36. The dead wg-quick authority must not come back (rule 7)
+# ---------------------------------------------------------------------------
+echo "--- Dead authority: wg-quick is gone from the healing path ---"
+
+# Any line that is not a comment and mentions wg-quick is a regression.
+WGQ_CODE="$(grep -n 'wg-quick' "$HEALTH_SCRIPT" | grep -vE ':[[:space:]]*#' || true)"
+if [[ -n "$WGQ_CODE" ]]; then
+    echo "  FAIL: mesh-health.sh has executable wg-quick references again:"
+    echo "$WGQ_CODE"
+    (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: no executable wg-quick reference in mesh-health.sh"
+    (( PASS_COUNT++ )) || true
+fi
+
+# And the restore path must use the interface authority instead.
+if grep -q 'mesh_interface_up' "$HEALTH_SCRIPT"; then
+    echo "  PASS: interface restore uses mesh_interface_up (single authority)"
+    (( PASS_COUNT++ )) || true
+else
+    echo "  FAIL: interface restore no longer uses mesh_interface_up"
+    (( FAIL_COUNT++ )) || true
+fi
+
+if grep -q 'DEC-PHASE12-041' "$HEALTH_SCRIPT"; then
+    echo "  PASS: has @decision DEC-PHASE12-041 annotation"
+    (( PASS_COUNT++ )) || true
+else
+    echo "  FAIL: missing @decision DEC-PHASE12-041 annotation"
+    (( FAIL_COUNT++ )) || true
+fi
 echo ""
 
 # ---------------------------------------------------------------------------

@@ -36,6 +36,13 @@ MESH_VPN_PREFIX="${MESH_VPN_PREFIX:-10.0.99}"
 MESH_WG_PORT="${MESH_WG_PORT:-51820}"
 MESH_DISCOVER_PORT="${MESH_DISCOVER_PORT:-55555}"
 MESH_STATE_FILE="${MESH_STATE_FILE:-/var/run/orionx-mesh.state}"
+# PID file for the discovery listener. Defined HERE and nowhere else: both
+# mesh-discover.sh (which writes it) and mesh-health.sh (which reads it to
+# find out whether the listener is actually alive) need the same answer.
+# /run/orionx-mesh is the mesh units' RuntimeDirectory (DEC-PHASE12-041), so
+# the confined units can write here under ProtectSystem=strict without being
+# handed all of /run.
+MESH_DISCOVER_PID_FILE="${MESH_DISCOVER_PID_FILE:-/run/orionx-mesh/orionx-mesh-discover.pid}"
 MESH_PRIVATE_KEY="${MESH_PRIVATE_KEY:-/etc/wireguard/mesh-private.key}"
 MESH_PSK_FILE="${MESH_PSK_FILE:-/etc/wireguard/mesh-psk}"
 MESH_LOG_FILE="${MESH_LOG_FILE:-/var/log/orionx/mesh.log}"
@@ -435,4 +442,74 @@ mesh_format_handshake() {
     else
         echo "$(mesh_format_duration "$diff") ago"
     fi
+}
+
+# =========================================================================
+# R.A.I.N. event bus
+# =========================================================================
+#
+# @decision DEC-PHASE12-041
+# @title Mesh self-healing publishes to the R.A.I.N. bus as self-STATUS, never
+#   as a threat, and never claims a publication it did not confirm
+# @status accepted
+# @rationale Before this, every mesh healing decision went only to
+#   mesh_log WARN -> the journal. The operator learned nothing: the deck could
+#   retry an interface heal every two minutes for hours and the only surface
+#   that said so was `journalctl -u orionx-mesh-health`. RESILIENCE rule 8
+#   (degrade loudly, name the remedy) requires the bus.
+#
+#   The category is constrained on purpose. rain_lib.STATUS_CATEGORIES are
+#   excluded from THREAT PRESSURE; everything else counts as a threat
+#   (DEC-PHASE12-040, and rule 5: "self-diagnosis is not a threat"). A mesh
+#   peer that is switched off is self-status, so this helper REFUSES any
+#   category outside the self-status set rather than letting a future edit
+#   drive the gauge with the deck's own health. That is the orionx-postured
+#   suricata-loop defect (DEC-PHASE12-034) encoded as a guard instead of a
+#   comment.
+#
+#   Publication is confirmed, not assumed (rule 3): if orionx-event is absent
+#   or exits non-zero, this returns non-zero and says so. A caller that logs
+#   "published" on the strength of having called this is reintroducing the
+#   toggle-theme.sh bug.
+
+# The CLI that publishes onto the bus. Overridable for tests.
+MESH_EVENT_CLI="${MESH_EVENT_CLI:-orionx-event}"
+
+# Categories this subsystem is allowed to emit. Both are in
+# rain_lib.STATUS_CATEGORIES, so neither moves THREAT PRESSURE.
+MESH_EVENT_CATEGORIES="${MESH_EVENT_CATEGORIES:-health service}"
+
+# Publish one event. Args: severity category message [detail-json]
+# Returns 0 only when the event was actually written to the bus.
+mesh_emit() {
+    local severity="$1"
+    local category="$2"
+    local message="$3"
+    local detail="${4:-}"
+
+    local allowed=1 known
+    for known in $MESH_EVENT_CATEGORIES; do
+        [[ "$category" == "$known" ]] && allowed=0 && break
+    done
+    if (( allowed != 0 )); then
+        mesh_log ERROR "mesh_emit refused category '$category' — mesh self-healing is self-status; use one of: $MESH_EVENT_CATEGORIES (DEC-PHASE12-040)"
+        return 2
+    fi
+
+    if ! command -v "$MESH_EVENT_CLI" >/dev/null 2>&1; then
+        mesh_log WARN "orionx-event not found — event NOT published to the R.A.I.N. bus: [$severity/$category] $message"
+        return 1
+    fi
+
+    local -a cmd=("$MESH_EVENT_CLI" --severity "$severity" --source mesh --category "$category")
+    [[ -n "$detail" ]] && cmd+=(--detail "$detail")
+    cmd+=("$message")
+
+    if "${cmd[@]}" >/dev/null 2>&1; then
+        mesh_log INFO "published [$severity/$category] $message"
+        return 0
+    fi
+
+    mesh_log ERROR "orionx-event exited non-zero — event NOT published: [$severity/$category] $message"
+    return 1
 }

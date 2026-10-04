@@ -1,0 +1,13 @@
+[Desktop Entry]
+# CyberChef 11.5.0, Apache-2.0, vendored and served from this deck
+# (DEC-PHASE12-043). Served over loopback HTTP, never file:// — CyberChef uses
+# Web Workers, which browsers refuse to construct from a file:// origin.
+Type=Application
+Name=CyberChef (local)
+GenericName=Data transformation
+Comment=The cyber swiss-army knife, served locally — no upload, no network
+Exec=/usr/bin/orionx-osint --page cyberchef
+Icon=/usr/share/pixmaps/orionx.png
+Terminal=true
+Categories=X-Orion;
+Keywords=CyberChef;base64;decode;defang;hex;IOC;

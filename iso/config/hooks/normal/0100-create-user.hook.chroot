@@ -247,42 +247,41 @@ EOF
 # readable light grey; Phoenix orange is retained as the CURSOR accent and in
 # the PS1 prompt. Community-developed fonts only per DEC-PHASE11-013 (Hack is
 # Apache-2.0). /etc/skel/ is the single authority (R6 fix).
+#
+# DEC-PHASE12-042: the palette is no longer inlined here. It is a data asset at
+#   theme/terminal/dark.terminalrc (staged to /opt/orionx/theme/terminal/ by
+#   stage_application_content), and scripts/toggle-theme.sh copies the same
+#   assets at runtime. Before this change the palette existed three times --
+#   here, and twice in toggle-theme.sh -- and the copies had already diverged:
+#   toggle-theme.sh wrote an 11-key file that dropped 26 of this file's keys and
+#   reverted the DEC-PHASE11-031 readable foreground. Toggling the theme made
+#   the terminal worse. That is RESILIENCE rule 7 with a visible consequence.
+#   /etc/skel/ remains the authority for the SEEDED home dir; the asset is the
+#   authority for the PALETTE. Those are different facts.
 # ---------------------------------------------------------------------------
 mkdir -p /etc/skel/.config/xfce4/terminal
-cat > /etc/skel/.config/xfce4/terminal/terminalrc << EOF
-[Configuration]
-FontName=Hack 12
-MiscAlwaysShowTabs=FALSE
-MiscBell=FALSE
-MiscBellUrgent=FALSE
-MiscBordersDefault=TRUE
-MiscCursorBlinks=TRUE
-MiscCursorShape=TERMINAL_CURSOR_SHAPE_BLOCK
-MiscDefaultGeometry=80x24
-MiscInheritGeometry=FALSE
-MiscMenubarDefault=FALSE
-MiscMouseAutohide=FALSE
-MiscMouseWheelZoom=TRUE
-MiscToolbarDefault=FALSE
-MiscConfirmClose=TRUE
-MiscCycleTabs=TRUE
-MiscTabCloseButtons=TRUE
-MiscTabCloseMiddleClick=TRUE
-MiscTabPosition=GTK_POS_TOP
-MiscHighlightUrls=TRUE
-MiscMiddleClickOpensUri=FALSE
-MiscCopyOnSelect=FALSE
-MiscShowRelaunchDialog=TRUE
-MiscRewrapOnResize=TRUE
-MiscUseShiftArrowsToScroll=FALSE
-MiscSlimTabs=FALSE
-MiscNewTabAdjacent=FALSE
-ColorForeground=#E6E6E6
-ColorBackground=#161616
-ColorCursor=#FF6A13
-ColorBold=#FFFFFF
-ColorPalette=#2e3436;#ef5350;#8ae234;#ffb300;#5c9ce6;#c792ea;#26c6da;#d3d7cf;#6c7079;#ff6a4a;#b9f27c;#ffd54f;#82b7ff;#e1bee7;#5ff0f0;#ffffff
-EOF
+_ORIONX_TERM_SRC=/opt/orionx/theme/terminal/dark.terminalrc
+if [ ! -f "$_ORIONX_TERM_SRC" ]; then
+    echo "[0100-create-user] ERROR: $_ORIONX_TERM_SRC missing." >&2
+    echo "[0100-create-user]   What breaks: the operator's terminal comes up as stock" >&2
+    echo "[0100-create-user]   white-on-black with no transparency and no Phoenix palette." >&2
+    echo "[0100-create-user]   Fix: ensure theme/terminal/dark.terminalrc is present in the" >&2
+    echo "[0100-create-user]        repo and that stage_application_content() ran before lb build." >&2
+    exit 1
+fi
+cp "$_ORIONX_TERM_SRC" /etc/skel/.config/xfce4/terminal/terminalrc
+
+# Check, do not trust (RESILIENCE rule 3). FontName=Hack 12 is pinned by
+# DEC-PHASE11-031 and by test-iso-content-presence 23b-j; BackgroundMode is what
+# makes the terminal a cyberdeck surface rather than a grey box.
+for _k in 'FontName=Hack 12' 'BackgroundMode=TERMINAL_BACKGROUND_TRANSPARENT'; do
+    if ! grep -qxF "$_k" /etc/skel/.config/xfce4/terminal/terminalrc; then
+        echo "[0100-create-user] ERROR: seeded terminalrc lacks '$_k'" >&2
+        echo "[0100-create-user]   Fix: restore the key in theme/terminal/dark.terminalrc." >&2
+        exit 1
+    fi
+done
+echo "[0100-create-user] terminalrc seeded from $_ORIONX_TERM_SRC (keys verified)"
 
 # ---
 # xfwm4.xml — window decoration theme (Fix 2, W11-9b iter-2).
@@ -293,12 +292,33 @@ EOF
 # Without this XML, xfwm4 falls back to the XFCE default (Adwaita/Default) even
 # when xsettings.xml correctly sets GTK ThemeName=Orion-X-Cyberdeck.
 # ---
+#
+# DEC-PHASE12-042 adds the COMPOSITOR block. xfce4-terminal's
+# BackgroundMode=TERMINAL_BACKGROUND_TRANSPARENT (theme/terminal/*.terminalrc)
+# is inert without a running compositor -- VTE simply paints ColorBackground
+# opaque. xfwm4 has a built-in compositor and /general/use_compositing is the
+# single switch for it, so the transparency the terminal asks for and the
+# compositor that grants it are wired together here rather than left to the
+# operator to discover. frame_opacity/inactive_opacity give the window frames
+# themselves the same glassy treatment.
+#   If the GPU/driver cannot composite, xfwm4 logs and runs uncomposited: the
+#   terminal is then opaque and everything still works (degrade loudly, not
+#   fatally -- rule 8).
+# ---
 cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <channel name="xfwm4" version="1.0">
   <property name="general" type="empty">
     <property name="theme" type="string" value="Orion-X-Cyberdeck"/>
     <property name="title_font" type="string" value="Sans Bold 10"/>
+    <property name="use_compositing" type="bool" value="true"/>
+    <property name="frame_opacity" type="int" value="88"/>
+    <property name="inactive_opacity" type="int" value="92"/>
+    <property name="popup_opacity" type="int" value="95"/>
+    <property name="show_frame_shadow" type="bool" value="true"/>
+    <property name="show_popup_shadow" type="bool" value="true"/>
+    <property name="show_dock_shadow" type="bool" value="true"/>
+    <property name="title_shadow_active" type="string" value="true"/>
   </property>
 </channel>
 EOF

@@ -1,0 +1,54 @@
+# Orion-X-Cyberdeck-Green XFWM4 window manager theme
+#
+# @decision DEC-PHASE12-042
+# @title Phosphor-green decoration variant — the visible half of the theme toggle
+# @status accepted
+# @rationale Mirrors Orion-X-Cyberdeck/xfwm4/themerc key-for-key, swapping the
+#   Phoenix red-orange accent (#FF5722/#E64A19) for phosphor green
+#   (#0CFA54/#06B23B) and the focused title colour to match. Keeping the key
+#   set identical means a diff between the two files shows exactly what the
+#   toggle changes and nothing else.
+#   License: original work (Orion-X project).
+
+# Active (focused) window titlebar
+active_color_1=#0f2419
+active_color_2=#163424
+active_hilight_1=#0CFA54
+active_hilight_2=#06B23B
+active_shadow_1=#081510
+active_shadow_2=#0b1d15
+active_mid_1=#0f2419
+active_mid_2=#0f2419
+active_text_color=#0CFA54
+active_border_color=#0CFA54
+
+# Inactive (unfocused) window titlebar
+inactive_color_1=#121c17
+inactive_color_2=#17231c
+inactive_hilight_1=#243a2e
+inactive_hilight_2=#243a2e
+inactive_shadow_1=#0d1512
+inactive_shadow_2=#0d1512
+inactive_mid_1=#121c17
+inactive_mid_2=#121c17
+inactive_text_color=#6f8a7a
+inactive_border_color=#243a2e
+
+# Button rendering (pixmaps seeded from Default by the 0800 branding hook)
+button_offset=2
+button_spacing=2
+
+# Font (inherits from xsettings; Sans is always present — DEC-PHASE11-031)
+title_font=Sans Bold 9
+
+# Title alignment
+title_horizontal_offset=0
+title_shadow_active=true
+title_shadow_inactive=false
+
+# Shadow
+shadow_delta_height=-1
+shadow_delta_width=-1
+shadow_delta_x=1
+shadow_delta_y=1
+shadow_opacity=50

@@ -117,6 +117,286 @@ else
     pass "widgets use panel-font-safe glyphs (no emoji tofu)"
 fi
 
+# ===========================================================================
+# Cyberdeck theming (DEC-PHASE12-042)
+#
+# Operator directive: "Make sure the theme changes... well, change the themes
+# (terminals, transparency, background image, etc.)."
+#
+# These assert EFFECTS, not strings in a file: the scripts are RUN against a
+# scratch HOME with a stub xfconf-query, and the assertion is on what they did
+# and what they reported. The specific regression being locked is the one named
+# in docs/RESILIENCE.md rule 3 — toggle-theme.sh claiming success it had not
+# confirmed — so the headline test is that a write which does NOT stick is
+# reported as a failure and turns the exit code non-zero.
+# ===========================================================================
+TOGGLE="$REPO_ROOT/scripts/toggle-theme.sh"
+TERM_DIR="$REPO_ROOT/theme/terminal"
+HOOK0800="$REPO_ROOT/iso/config/hooks/live/0800-orionx-branding.hook.chroot"
+THEMES="$REPO_ROOT/iso/config/includes.chroot/usr/share/themes"
+SCRATCH="$REPO_ROOT/tmp/test_desktop_wiring_$$"
+mkdir -p "$SCRATCH/bin"
+
+# A stub xfconf-query with a real backing store, so "did the write stick?" is a
+# question the test can actually answer. STUB_REFUSE names one property whose
+# writes are silently dropped — the exact shape of the xfconf registration race.
+cat > "$SCRATCH/bin/xfconf-query" <<'STUB'
+#!/bin/bash
+# Backing store is "channel<prop>|value" lines, one per property. '|' is the
+# separator because a literal tab is not portable through BSD vs GNU sed.
+db="${STUB_DB:-/dev/null}"
+ch=""; prop=""; val=""; list=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -c) ch="$2"; shift 2;; -p) prop="$2"; shift 2;; -s) val="$2"; shift 2;;
+    -l) list=1; shift;; -n) shift;; -t) shift 2;; *) shift;;
+  esac
+done
+if [ "$list" = 1 ] && [ -z "$prop" ]; then
+  awk -F'|' -v c="$ch" 'index($1,c)==1 {print substr($1, length(c)+1)}' "$db" 2>/dev/null
+  exit 0
+fi
+key="$ch$prop"
+if [ -n "$val" ]; then
+  [ "$prop" = "${STUB_REFUSE:-}" ] && exit 0
+  grep -v "^$key|" "$db" > "$db.tmp" 2>/dev/null; mv "$db.tmp" "$db" 2>/dev/null
+  printf '%s|%s\n' "$key" "$val" >> "$db"
+  exit 0
+fi
+line=$(grep "^$key|" "$db" 2>/dev/null | head -1)
+[ -n "$line" ] || exit 1
+printf '%s\n' "${line#*|}"
+STUB
+chmod +x "$SCRATCH/bin/xfconf-query"
+cat > "$SCRATCH/bin/xfdesktop" <<'STUB'
+#!/bin/sh
+exit 0
+STUB
+chmod +x "$SCRATCH/bin/xfdesktop"
+
+_toggle() {  # $1 = scratch home subdir, rest = args; env via caller
+    HOME="$SCRATCH/$1" PATH="$SCRATCH/bin:$PATH" bash "$TOGGLE" "${@:2}"
+}
+
+section "Terminal palette is one data asset (DEC-PHASE12-042)"
+if [[ -f "$TERM_DIR/dark.terminalrc" && -f "$TERM_DIR/green.terminalrc" ]]; then
+    pass "theme/terminal/{dark,green}.terminalrc present"
+else
+    fail "theme/terminal profiles present" "the single palette authority is missing"
+fi
+# FontName=Hack 12 is pinned by DEC-PHASE11-031 AND by test-iso-content-presence
+# 23b-j, which reads the /etc/skel copy of the dark profile.
+for v in dark green; do
+    if grep -qxF 'FontName=Hack 12' "$TERM_DIR/$v.terminalrc" 2>/dev/null; then
+        pass "$v.terminalrc pins FontName=Hack 12 (DEC-PHASE11-031)"
+    else
+        fail "$v.terminalrc pins FontName=Hack 12" "Iosevka regression / 23b-j would break"
+    fi
+    if grep -qxF 'BackgroundMode=TERMINAL_BACKGROUND_TRANSPARENT' "$TERM_DIR/$v.terminalrc" 2>/dev/null; then
+        pass "$v.terminalrc enables terminal transparency"
+    else
+        fail "$v.terminalrc enables transparency" "BackgroundMode key missing — terminal is an opaque box"
+    fi
+done
+# The two profiles must actually differ, or the toggle is cosmetic noise.
+if ! cmp -s "$TERM_DIR/dark.terminalrc" "$TERM_DIR/green.terminalrc" \
+   && [[ "$(grep '^ColorBackground=' "$TERM_DIR/dark.terminalrc")" != "$(grep '^ColorBackground=' "$TERM_DIR/green.terminalrc")" ]]; then
+    pass "dark and green terminal profiles differ (different ColorBackground)"
+else
+    fail "terminal profiles differ" "both variants are the same file — the toggle would be invisible"
+fi
+# The palette must exist in ONE place. 0100 used to inline it and toggle-theme
+# used to inline two more copies; the copies had drifted (RESILIENCE rule 7).
+if ! grep -q '^ColorPalette=' "$HOOK" && grep -q 'theme/terminal/dark.terminalrc' "$HOOK"; then
+    pass "0100 hook copies the terminal asset instead of inlining a palette (rule 7)"
+else
+    fail "0100 hook still inlines a terminal palette" "two authorities for the terminal colours"
+fi
+if ! grep -q 'ColorPalette=' "$TOGGLE"; then
+    pass "toggle-theme.sh carries no inline palette (rule 7)"
+else
+    fail "toggle-theme.sh still inlines a palette" "it drifted from the /etc/skel seed last time"
+fi
+# 0100 must verify its own write, not assume it (rule 3). This one is a
+# STRUCTURAL assertion and says so: the hook writes to absolute /etc/skel paths
+# inside a chroot, so there is no honest way to run its verification block here.
+# What it pins is the thing a careless edit would lose — the non-empty key list
+# and the fail-loud exit. An earlier version grepped only for the comparison
+# expression and stayed green when the key list was emptied (mutation D9).
+if grep -qF "for _k in 'FontName=Hack 12' 'BackgroundMode=TERMINAL_BACKGROUND_TRANSPARENT'; do" "$HOOK" \
+   && grep -qF 'ERROR: seeded terminalrc lacks' "$HOOK"; then
+    pass "0100 hook verifies both seeded terminalrc keys and exits 1 if either is missing"
+else
+    fail "0100 hook verifies seeded terminalrc" \
+         "the key list or the fail-loud exit is gone — a failed copy would ship silently"
+fi
+
+section "Compositor + window decorations"
+if grep -q '"use_compositing" type="bool" value="true"' "$HOOK"; then
+    pass "0100 seeds xfwm4 use_compositing=true (terminal transparency needs a compositor)"
+else
+    fail "0100 seeds use_compositing" "BackgroundMode=TRANSPARENT is inert with no compositor"
+fi
+if grep -q '"frame_opacity"' "$HOOK"; then
+    pass "0100 seeds xfwm4 frame_opacity (window frames are translucent)"
+else
+    fail "0100 seeds frame_opacity" "no window transparency"
+fi
+if [[ -f "$THEMES/Orion-X-Cyberdeck-Green/xfwm4/themerc" ]]; then
+    pass "Orion-X-Cyberdeck-Green xfwm4 theme staged (the visible half of the toggle)"
+else
+    fail "Orion-X-Cyberdeck-Green staged" "the green theme has no window decorations to switch to"
+fi
+# Both themerc files must define the same keys; a missing key silently falls
+# back to xfwm4 defaults and the two themes stop being comparable.
+_k1="$(grep -oE '^[a-z_]+=' "$THEMES/Orion-X-Cyberdeck/xfwm4/themerc" 2>/dev/null | sort)"
+_k2="$(grep -oE '^[a-z_]+=' "$THEMES/Orion-X-Cyberdeck-Green/xfwm4/themerc" 2>/dev/null | sort)"
+if [[ -n "$_k1" && "$_k1" == "$_k2" ]]; then
+    pass "both xfwm4 themercs define an identical key set"
+else
+    fail "xfwm4 themerc key sets match" "one theme omits keys the other sets"
+fi
+# The 0800 pixmap seeding must cover EVERY Orion-X theme, not one hardcoded name
+# — a theme with no .xpm renders no titlebar at all (hardware 2026-09-09).
+if grep -q 'for _XFWM_THEME in /usr/share/themes/Orion-X-\*/xfwm4' "$HOOK0800"; then
+    pass "0800 seeds xfwm4 pixmaps for every Orion-X-* theme (not just Cyberdeck)"
+else
+    fail "0800 seeds pixmaps for all Orion-X themes" "the green variant would ship borderless"
+fi
+
+section "toggle-theme.sh: plan / do / check / report (RESILIENCE rules 1,3,4)"
+# PLAN is pure: it must change nothing, including $HOME.
+mkdir -p "$SCRATCH/pure"
+_plan_dark="$(_toggle pure --plan dark 2>/dev/null)"
+_plan_green="$(_toggle pure --plan green 2>/dev/null)"
+if [[ -z "$(ls -A "$SCRATCH/pure" 2>/dev/null)" ]]; then
+    pass "--plan writes nothing (pure function of the theme name)"
+else
+    fail "--plan is pure" "it created files in HOME: $(ls -A "$SCRATCH/pure" | tr '\n' ' ')"
+fi
+if [[ -n "$_plan_dark" && -n "$_plan_green" && "$_plan_dark" != "$_plan_green" ]]; then
+    pass "--plan dark and --plan green describe different desired states"
+else
+    fail "--plan differs per theme" "the plan is identical, so the toggle cannot change anything"
+fi
+# The difference must be the window theme and the opacities — not everything.
+_plan_diff="$(diff <(printf '%s\n' "$_plan_dark") <(printf '%s\n' "$_plan_green") | grep -c '^[<>]')"
+if [[ "$_plan_diff" -eq 6 ]]; then
+    pass "--plan differs on exactly 3 rows (xfwm4 theme + 2 opacities); GTK theme stays single-authority"
+else
+    fail "--plan diff is $_plan_diff changed lines, expected 6" \
+         "the GTK ThemeName must NOT differ between themes — Orion-X-Cyberdeck is the single GTK theme"
+fi
+
+# DO + CHECK, everything succeeding.
+mkdir -p "$SCRATCH/ok"; : > "$SCRATCH/ok/db"; touch "$SCRATCH/ok/.bashrc"
+_out_ok="$(STUB_DB="$SCRATCH/ok/db" DISPLAY=:99 _toggle ok --set green 2>&1)"; _rc_ok=$?
+if [[ "$_rc_ok" -eq 0 ]] && printf '%s' "$_out_ok" | grep -q '0 failed'; then
+    pass "toggle --set green exits 0 and reports 0 failed when every write sticks"
+else
+    fail "toggle --set green succeeds cleanly" "rc=$_rc_ok; output: $(printf '%s' "$_out_ok" | tail -3 | tr '\n' ' ')"
+fi
+# Effect, not claim: the window-manager theme really changed in the store.
+if [[ "$(grep '^xfwm4/general/theme|' "$SCRATCH/ok/db" | cut -d'|' -f2)" == "Orion-X-Cyberdeck-Green" ]]; then
+    pass "xfwm4 /general/theme actually holds Orion-X-Cyberdeck-Green after the toggle"
+else
+    fail "xfwm4 theme changed" "store holds: $(grep '^xfwm4/general/theme|' "$SCRATCH/ok/db" || echo '<nothing>')"
+fi
+if [[ "$(grep '^xfwm4/general/use_compositing|' "$SCRATCH/ok/db" | cut -d'|' -f2)" == "true" ]]; then
+    pass "compositing is turned on by the toggle (terminal transparency needs it)"
+else
+    fail "toggle enables compositing" "use_compositing not true in the store"
+fi
+if cmp -s "$TERM_DIR/green.terminalrc" "$SCRATCH/ok/.config/xfce4/terminal/terminalrc"; then
+    pass "terminal profile on disk is byte-identical to the green asset"
+else
+    fail "terminal profile applied" "\$HOME/.config/xfce4/terminal/terminalrc does not match the asset"
+fi
+# Toggling again must flip back — a toggle that only goes one way is a setter.
+_out_back="$(STUB_DB="$SCRATCH/ok/db" DISPLAY=:99 _toggle ok 2>&1)"
+if [[ "$(cat "$SCRATCH/ok/.orionx_theme")" == "dark" ]] \
+   && [[ "$(grep '^xfwm4/general/theme|' "$SCRATCH/ok/db" | cut -d'|' -f2)" == "Orion-X-Cyberdeck" ]]; then
+    pass "a second toggle flips back to dark, in the store as well as the state file"
+else
+    fail "toggle flips back" "state=$(cat "$SCRATCH/ok/.orionx_theme" 2>/dev/null) theme=$(grep '^xfwm4/general/theme|' "$SCRATCH/ok/db" | cut -d'|' -f2)"
+fi
+
+# THE RULE-3 REGRESSION. A write that does not stick must be reported as a
+# failure and must make the exit code non-zero. The old script logged
+# "XFCE wallpaper updated" on the line after its own failure branch.
+mkdir -p "$SCRATCH/refuse"; : > "$SCRATCH/refuse/db"; touch "$SCRATCH/refuse/.bashrc"
+_out_bad="$(STUB_DB="$SCRATCH/refuse/db" STUB_REFUSE=/general/theme DISPLAY=:99 \
+            ORIONX_XFCONF_TRIES=2 _toggle refuse --set green 2>&1)"; _rc_bad=$?
+if [[ "$_rc_bad" -ne 0 ]]; then
+    pass "toggle exits NON-ZERO when an xfconf write does not take effect (rule 3)"
+else
+    fail "toggle exits non-zero on unapplied write" "it exited 0 — this is the exact bug RESILIENCE rule 3 names"
+fi
+if printf '%s' "$_out_bad" | grep -q 'FAILED  xfwm4 /general/theme'; then
+    pass "toggle names the property that did not take effect"
+else
+    fail "toggle names the failed property" "output did not identify /general/theme"
+fi
+if printf '%s' "$_out_bad" | grep -q 'fix: '; then
+    pass "toggle prints a remedy for the failure (rule 8)"
+else
+    fail "toggle prints a remedy" "a degraded state with no named fix"
+fi
+# Bounded retries (rule 4): the default budget is 3, and it must be a bounded
+# loop, not a forever-retry like orionx-postured's suricata loop.
+if grep -q 'ORIONX_XFCONF_TRIES:-3' "$TOGGLE" && grep -q 'while \[ "\$i" -lt "\$XFCONF_TRIES" \]' "$TOGGLE"; then
+    pass "xfconf retries are bounded at 3 by default (rule 4)"
+else
+    fail "xfconf retries are bounded" "unbounded retry is how the event bus got flooded"
+fi
+# --status re-reads reality and must disagree with a store that was tampered with.
+printf 'xfwm4/general/theme|Something-Else\n' > "$SCRATCH/ok/db"
+_out_st="$(STUB_DB="$SCRATCH/ok/db" DISPLAY=:99 _toggle ok --status 2>&1)"; _rc_st=$?
+if [[ "$_rc_st" -ne 0 ]] && printf '%s' "$_out_st" | grep -q "wanted 'Orion-X-Cyberdeck'"; then
+    pass "--status re-reads reality and reports drift instead of the recorded intent"
+else
+    fail "--status detects drift" "rc=$_rc_st — status trusted the state file instead of the session"
+fi
+# No second wallpaper authority (rule 7): the backdrop belongs to set-wallpaper.sh.
+# Comments in toggle-theme.sh explain WHY it must not; code must not.
+if ! grep -v '^[[:space:]]*#' "$TOGGLE" | grep -q 'backdrop'; then
+    pass "toggle-theme.sh never touches a backdrop property (set-wallpaper.sh is the authority)"
+else
+    fail "toggle-theme.sh touches backdrop properties" "that is the DEC-PHASE12-035 dual authority coming back"
+fi
+
+section "set-wallpaper.sh reports what actually happened (DEC-PHASE12-042)"
+# It used to `exit 0` on a missing PNG, which made toggle-theme print
+# "wallpaper applied" for a wallpaper it had not applied.
+if ! HOME="$SCRATCH/ok" PATH="$SCRATCH/bin:$PATH" bash "$WP" "$SCRATCH/definitely-not-here.png" >/dev/null 2>&1; then
+    pass "set-wallpaper.sh exits non-zero when the wallpaper file is missing"
+else
+    fail "set-wallpaper.sh fails loudly on a missing PNG" "exit 0 made the caller report success"
+fi
+# And it must verify the backdrop READS BACK as the wallpaper, not merely that
+# xfconf-query returned 0 — a write to an unregistered property does both.
+mkdir -p "$SCRATCH/wp"
+_WPPNG="$REPO_ROOT/theme/wallpapers/orionx-phoenix-wallpaper.png"
+printf 'xfce4-desktop/backdrop/screen0/monitoreDP-1/workspace0/last-image|/old.png\n' > "$SCRATCH/wp/db"
+if HOME="$SCRATCH/wp" PATH="$SCRATCH/bin:$PATH" STUB_DB="$SCRATCH/wp/db" \
+   bash "$WP" "$_WPPNG" >/dev/null 2>&1 \
+   && grep -q "last-image|$_WPPNG" "$SCRATCH/wp/db"; then
+    pass "set-wallpaper.sh sets the real connector-named backdrop and exits 0"
+else
+    fail "set-wallpaper.sh applies to the real backdrop" "db: $(cat "$SCRATCH/wp/db" 2>/dev/null)"
+fi
+printf 'xfce4-desktop/backdrop/screen0/monitoreDP-1/workspace0/last-image|/old.png\n' > "$SCRATCH/wp/db"
+if ! HOME="$SCRATCH/wp" PATH="$SCRATCH/bin:$PATH" STUB_DB="$SCRATCH/wp/db" \
+     STUB_REFUSE=/backdrop/screen0/monitoreDP-1/workspace0/last-image \
+     bash "$WP" "$_WPPNG" >/dev/null 2>&1; then
+    pass "set-wallpaper.sh exits non-zero when no backdrop reads back as the wallpaper (rule 3)"
+else
+    fail "set-wallpaper.sh verifies the backdrop readback" \
+         "writes that evaporate were being reported as success"
+fi
+
+rm -rf "$SCRATCH"
+
 printf "\n===========================================\n"
 printf "  Results: ${GREEN}%d passed${NC}, ${RED}%d failed${NC}\n" "$PASS" "$FAIL"
 printf "===========================================\n"

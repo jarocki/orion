@@ -323,16 +323,13 @@ fi
 echo ""
 echo "=== Test Group 6: Existing Files Untouched ==="
 
-# Verify mesh scripts were not modified
+# @decision DEC-PHASE12-041
+# The "scripts/mesh/ is unmodified" assertion that used to live here was a
+# working-tree check, not a product property: green on a clean checkout
+# however broken the mesh was, red for anyone who legitimately edited it.
+# The Matrix harness has no stake in the mesh scripts' content; what it
+# actually must not do is fork the mesh Docker files, which is asserted below.
 if command -v git >/dev/null 2>&1; then
-    local_changes="$(git -C "$PROJECT_ROOT" diff --name-only -- scripts/mesh/ 2>/dev/null || echo "")"
-    if [[ -z "$local_changes" ]]; then
-        pass "No modifications to scripts/mesh/"
-    else
-        fail "No modifications to scripts/mesh/" \
-            "Modified files: $local_changes"
-    fi
-
     # Verify existing Docker files not modified
     mesh_docker_changes="$(git -C "$PROJECT_ROOT" diff --name-only -- docker/Dockerfile.mesh-node docker/mesh-entrypoint.sh docker/docker-compose.mesh-test.yml 2>/dev/null || echo "")"
     if [[ -z "$mesh_docker_changes" ]]; then

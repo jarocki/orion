@@ -1,0 +1,56 @@
+IPew (pewpew) — derivation and vendored asset
+=============================================
+DEC-PHASE12-043 · Orion-X OSINT & investigation surface
+
+Upstream:  https://github.com/hrbrmstr/pewpew  ("IPew Attack Map",
+           a collaboration by @alexcpsec and @hrbrmstr)
+Commit:    76606906acf346b81b8d1671f70ad97c1b443172  (2025-08-28)
+License:   Creative Commons Attribution-ShareAlike 4.0 International
+           (CC BY-SA 4.0). There is no LICENSE file in the repository; the
+           licence is declared in two places and both were read at the pinned
+           commit:
+             index.html:418  <a rel="license"
+                 href="http://creativecommons.org/licenses/by-sa/4.0/">
+             README.md:64    "we've released IPew under a liberal Creative
+                 Commons license"
+           ./LICENSE.ipew records the CC BY-SA 4.0 deed and this attribution.
+
+Vendored verbatim
+-----------------
+  pew.mp3   7,551 bytes
+            sha256 a345d39c8cd8e57ba36706fefaa4dd18d0a25c1b88088821943a46fc64a2be7c
+            The "pew" tracer sound. Default OFF in orionx-pewpew: R.A.I.N. is
+            this deck's audible alert channel (DEC-PHASE11-045) and a second
+            uninvited noise source would compete with it. The map's sound is
+            an affordance of a page the operator deliberately opened, and it
+            says so in the UI.
+
+Why the upstream code is NOT vendored
+-------------------------------------
+Two reasons, both disqualifying for this product:
+
+  1. It cannot run offline. At the pinned commit index.html loads d3 v3,
+     d3.geo.projection, topojson v1 and datamaps from three different CDNs,
+     jQuery from code.jquery.com, Font Awesome from cdnjs, and two Google
+     Fonts families. On a disconnected deck the page renders an empty black
+     rectangle. Vendoring the dependency set would mean adding d3 v3 (2015)
+     and Datamaps 0.5.9 (2016) — two abandoned libraries — to an
+     incident-response image.
+
+  2. Its data model is the thing this map must not do. Upstream *invents*
+     attacks: `random_mode`, `china_mode`, `dprk_mode`, `bad_day`, and by
+     default a statistical model that picks source countries and places them
+     at country centroids. That is a demo. On a tool an operator uses to
+     decide where an intrusion came from, invented coordinates are a defect,
+     not a flourish (docs/RESILIENCE.md, rule 8 and the paragraph above it).
+
+So orionx-pewpew is an independent implementation of the *idea* — tracers
+converging on the deck, with sound — written against Orion-X's own event bus,
+with no third-party JavaScript at all and no position it cannot source. The
+debt owed upstream is the concept and the sound, and it is acknowledged in
+the page footer, in the About panel, and here.
+
+Geolocation
+-----------
+No GeoIP database ships on the ISO. See ../GEOIP.txt for why, what the map
+shows without one, and the exact command that adds country/ASN labels.
