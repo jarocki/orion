@@ -15,8 +15,14 @@ every hardware finding from them is closed below. rc5 is built from
 `release/2.2.0` (29 commits after `v2.2.0-beta`, plus this slice) with
 `ORIONX_VERSION=v2.2.0-rc5`, so the image reports `ISO_VERSION=v2.2.0-rc5`.
 
-_ISO SHA-256 and size: recorded here when the rc5 build completes. Not yet
-boot-tested._
+ISO SHA-256 `3b32034ab5d6a30603484a42c4966c404f07189ef719c77dc4d8770b54ee7a26`,
+3,134,275,584 bytes (3.13 GB), built 2026-10-04T05:05:04Z from `b73d37e` in
+39 min with a warm package cache and a clean chroot (`lb clean` ran; the only
+`already done` skip was the bootstrap cache). Baked `/etc/orionx-version`
+reports `ISO_VERSION=v2.2.0-rc5` and `GIT_HEAD_SHA=b73d37ebd97d`; the baked
+README is byte-identical to the repository (release runbook §4.3). Boots to
+the login marker in QEMU: BIOS 130 s, UEFI 125 s. `test-iso-hooks-applied`
+20/20 against the build log. Not yet booted on the reference deck.
 
 ### Added
 
@@ -153,6 +159,15 @@ boot-tested._
   (DEC-PHASE12-019).
 - QEMU boot test finds OVMF on macOS, so UEFI no longer silently skips; the
   credential-audit test proves it can detect a secret.
+- **Two content-presence assertions were failing on a correct image.** `18d`
+  still asserted DEC-PHASE11-044 (no GRUB graphics directives at all) after
+  DEC-PHASE12-042 made the default menu graphical behind a `loadfont` gate;
+  it now asserts the gate itself (gfxterm only inside `if loadfont`, no dead
+  `/boot/grub/fonts/` path, serial appended after gfxterm), mirroring unit
+  T36. `26a` tested `-x` on the bind-mounted source path, which a root
+  container under Docker Desktop answers true for a `-rw-r--r--` file (the
+  same root-container false result as `26e`); it now reads the squashfs
+  copy's mode with `stat`.
 
 ### Known issues carried from the beta
 

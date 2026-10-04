@@ -138,6 +138,7 @@ echo "  Extracting bootloader cfgs + menu assets from the ISO binary tree..."
 # -abort_on NEVER: one missing file must not stop the remaining extractions.
 xorriso -abort_on NEVER -osirrox on -indev "$ISO_PATH" \
     -extract /boot/grub/grub.cfg "$ISO_BOOT/boot/grub/grub.cfg" \
+    -extract /boot/grub/unicode.pf2 "$ISO_BOOT/boot/grub/unicode.pf2" \
     -extract /isolinux/isolinux.cfg "$ISO_BOOT/isolinux/isolinux.cfg" \
     -extract /boot/grub/themes/orionx/theme.txt "$ISO_BOOT/boot/grub/themes/orionx/theme.txt" \
     -extract /boot/grub/themes/orionx/background.png "$ISO_BOOT/boot/grub/themes/orionx/background.png" \
@@ -1342,13 +1343,48 @@ if [[ -f "$ISO_GRUB_CFG" ]]; then
              "'set theme=' present — gfxmenu theming regressed; it errored on real UEFI hardware (DEC-PHASE11-044)"
     fi
 
-    # (d) NO graphics-mode directives at all (insmod png / gfxmode / gfxterm / loadfont)
-    GFX_HITS="$(grep -nE '^[[:space:]]*(insmod (png|gfxterm|gfxmenu)|set gfxmode|loadfont|terminal_output gfxterm)' "$ISO_GRUB_CFG" || true)"
-    if [[ -z "$GFX_HITS" ]]; then
-        pass "18d: grub.cfg has no insmod png / gfxmode / gfxterm / loadfont (native text console — DEC-PHASE11-044)"
+    # (d) Graphics are allowed again (DEC-PHASE12-042) but ONLY behind the
+    #     'if loadfont' gate, so the rc1-79 failure mode — gfxterm with no font,
+    #     an unreadable menu — is unreachable. Mirrors tests/unit T36.b1/b2
+    #     against the cfg EXTRACTED FROM THE ISO. The former 18d (no graphics
+    #     directives at all, DEC-PHASE11-044) tested the implementation, not the
+    #     invariant; rc5 was the first image it failed on for the right reason.
+    GRUB_CODE="$(grep -v '^[[:space:]]*#' "$ISO_GRUB_CFG" || true)"
+    LF_LINE="$(printf '%s\n' "$GRUB_CODE" | grep -n 'if loadfont' | head -1 | cut -d: -f1 || true)"
+    GT_LINE="$(printf '%s\n' "$GRUB_CODE" | grep -n 'terminal_output gfxterm' | head -1 | cut -d: -f1 || true)"
+    if [[ -z "$GT_LINE" ]]; then
+        fail "18d: gfxterm is selected only inside the 'if loadfont' gate" \
+             "no 'terminal_output gfxterm' at all — the default menu is meant to be graphical (DEC-PHASE12-042); see generate_bootloader_configs()"
+    elif [[ -n "$LF_LINE" && "$GT_LINE" -gt "$LF_LINE" ]]; then
+        pass "18d: gfxterm is selected only inside the 'if loadfont' gate (rc1-79 unreadable-menu mode unreachable — DEC-PHASE12-042)"
     else
-        fail "18d: grub.cfg has no insmod png / gfxmode / gfxterm / loadfont" \
-             "Found: $(echo "$GFX_HITS" | tr '\n' ' ') — DEC-PHASE11-044 drops all GRUB graphics directives"
+        fail "18d: gfxterm is selected only inside the 'if loadfont' gate" \
+             "loadfont line=${LF_LINE:-none} gfxterm line=$GT_LINE — gfxterm with no font is the rc1-79 unreadable-menu bug"
+    fi
+
+    # (d2) No font may be named by a path that does not ship. /boot/grub/fonts/
+    #      never existed in this image and was the silent loadfont failure
+    #      behind rc1-79/rc1-81. If the cfg falls back to $prefix/unicode.pf2,
+    #      that file must be in the ISO, or the fallback is dead code.
+    if printf '%s' "$GRUB_CODE" | grep -q '/boot/grub/fonts/'; then
+        fail "18d2: grub.cfg names no font path that does not ship" \
+             "/boot/grub/fonts/ referenced — loadfont will fail silently (DEC-PHASE12-042)"
+    elif printf '%s' "$GRUB_CODE" | grep -q 'unicode\.pf2' && [[ ! -f "$ISO_BOOT/boot/grub/unicode.pf2" ]]; then
+        fail "18d2: grub.cfg names no font path that does not ship" \
+             "cfg falls back to \$prefix/unicode.pf2 but /boot/grub/unicode.pf2 is not in the ISO"
+    else
+        pass "18d2: grub.cfg names no font path that does not ship (unicode.pf2 present or built-in font only)"
+    fi
+
+    # (d3) Serial console is appended AFTER gfxterm is selected. fb682a6 found
+    #      gfxterm chosen after the serial directives, which would have dropped
+    #      the serial console the QEMU gate reads.
+    SER_LINE="$(printf '%s\n' "$GRUB_CODE" | grep -n 'terminal_output --append serial' | head -1 | cut -d: -f1 || true)"
+    if [[ -n "$SER_LINE" && -n "$GT_LINE" && "$SER_LINE" -gt "$GT_LINE" ]]; then
+        pass "18d3: serial console appended after gfxterm selection (QEMU serial gate keeps its output)"
+    else
+        fail "18d3: serial console appended after gfxterm selection" \
+             "serial line=${SER_LINE:-none} gfxterm line=${GT_LINE:-none} — gfxterm selected after serial drops the serial console"
     fi
 
     # (e) menu visible for 5 s so the operator can pick failsafe
@@ -2461,12 +2497,19 @@ if [[ -f "$COMMON_LIB_SRC" ]]; then
     else
         skip "26a shellcheck: shellcheck not installed on this host"
     fi
-    # Library must NOT be executable (it is sourced, not run — DEC-PHASE11-011 invariant)
-    if [[ ! -x "$COMMON_LIB_SRC" ]]; then
-        pass "26a: lib/orionx-installer-common.sh is NOT executable (sourced, not run)"
+    # Library must NOT be executable (it is sourced, not run — DEC-PHASE11-011 invariant).
+    # Authority is the squashfs copy, and the mode is READ with stat rather than
+    # tested with -x: under a root container on a Docker Desktop bind mount,
+    # [[ -x ]] answered true for a file that lists as -rw-r--r-- (the same
+    # root-container false result that broke 26e), so -x on the source path
+    # failed on every macOS run while the image was correct.
+    COMMON_LIB_SQF="$SQF/opt/orionx/optional/lib/orionx-installer-common.sh"
+    _lib_mode="$(stat -c '%a' "$COMMON_LIB_SQF" 2>/dev/null || stat -f '%Lp' "$COMMON_LIB_SQF" 2>/dev/null || echo '?')"
+    if [[ "$_lib_mode" =~ ^[0-7]*[0-7]$ && $(( 8#${_lib_mode} & 8#111 )) -eq 0 ]]; then
+        pass "26a: lib/orionx-installer-common.sh is NOT executable in the squashfs (mode $_lib_mode — sourced, not run)"
     else
         fail "26a: lib/orionx-installer-common.sh is NOT executable" \
-             "Library has +x bit set — violates DEC-PHASE11-011 (sourced libs must not be executable)"
+             "squashfs mode is ${_lib_mode} — the library is sourced, never run; chmod -x it in includes.chroot (DEC-PHASE11-011)"
     fi
     # Squashfs check (informational if ISO not rebuilt)
     if [[ -f "$COMMON_LIB_SQF" ]]; then
