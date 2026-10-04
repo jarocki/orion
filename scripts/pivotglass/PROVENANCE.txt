@@ -3,11 +3,21 @@ Pivotglass — vendored Python package
 Roadmap #90 · DEC-PHASE12-013
 
 Source:    https://github.com/jarocki/pivotglass
-Commit:    0913e5b
-Version:   0.9.6 (distribution name "adversary-pursuit"; command `ap`)
+Tag:       v1.2.0
+Version:   1.2.0 (released 2026-10-02)
+Tarball:   v1.2.0.tar.gz  sha256 abe549188e0904bf338b311173bd29bea9813b57849139eb7681906136655655
+RENAME:    upstream renamed the package and command between 0.9.6 and 1.2.0 —
+           `src/adversary_pursuit` -> `src/pivotglass`, console script `ap` ->
+           `pivotglass`. This is NOT a drop-in re-vendor: a naive copy of
+           src/adversary_pursuit would have silently shipped nothing. Orion-X
+           keeps `ap` as an alias so existing muscle memory and the .desktop
+           entry still work; both /usr/bin/ap and /usr/bin/pivotglass run
+           `python3 -m pivotglass`.
+Verified:  imports + `python3 -m pivotglass --version` -> "pivotglass 1.2.0"
+           on debian:trixie-slim with Python 3.13.5 and the apt deps below.
 License:   MIT (LICENSE.pivotglass alongside this file)
-Package:   ./adversary_pursuit/  (src/adversary_pursuit copied verbatim, __pycache__
-           removed) + ./adversary_pursuit/web/static/ (= upstream web/out, the
+Package:   ./pivotglass/  (src/pivotglass copied verbatim, __pycache__
+           removed) + ./pivotglass/web/static/ (= upstream web/out, the
            committed Next.js static export; no Node at build or run time)
 Runtime:   Python >= 3.12 (trixie ships 3.13)
 Deps:      apt — python3-cmd2 python3-rich python3-sqlalchemy python3-httpx
@@ -43,5 +53,5 @@ Verified on trixie/3.13 before vendoring: imports clean with the apt+pip set;
 127.0.0.1:8765 and created ~/.ap/workspaces.
 
 To update: re-clone, checkout the tag, copy src/adversary_pursuit/ over
-./adversary_pursuit/ and web/out/ over ./adversary_pursuit/web/static/, strip
+./pivotglass/ and web/out/ over ./pivotglass/web/static/, strip
 __pycache__, re-check pyproject dependencies against the apt list above.

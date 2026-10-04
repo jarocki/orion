@@ -77,13 +77,21 @@ def _emit_event(severity: str, source: str, category: str, message: str) -> None
 
 
 def _load_rain() -> dict:
-    """Load rain.json over defaults; tolerant of missing/corrupt file."""
-    cfg = {"enabled": True, "min_severity": "warning", "volume": 0.8, "voice": False}
+    """Load rain.json over defaults; tolerant of missing/corrupt file.
+
+    Keys this panel does not know about are carried through untouched. The
+    authority for rain.json's schema is scripts/rain/rain_lib.py, and this
+    panel owns only the widgets below — it must not act as a second authority
+    that silently drops whatever R.A.I.N. adds next (RESILIENCE rule 7). It
+    did exactly that to "speech" (DEC-PHASE12-046) before this change.
+    """
+    cfg = {"enabled": True, "min_severity": "warning", "volume": 0.8,
+           "voice": False, "speech": False}
     try:
         with _RAIN_CONFIG.open(encoding="utf-8") as fh:
             data = json.load(fh)
         if isinstance(data, dict):
-            cfg.update({k: data[k] for k in cfg if k in data})
+            cfg.update(data)
     except (OSError, ValueError):
         pass
     if cfg["min_severity"] not in _RAIN_SEVERITIES:
@@ -374,9 +382,20 @@ class _AwarenessWidget:
         self._rain_voice = Gtk.CheckButton(label="Spoken voice cue")
         self._rain_voice.set_active(bool(cfg["voice"]))
         self._rain_voice.connect("toggled", self._on_rain_changed)
+        # DEC-PHASE12-046. Off by default and deliberately labelled with the
+        # consequence: speech is intelligible to everyone within earshot, a
+        # tone is not. It narrates AFTER the cue and never delays it.
+        self._rain_speech = Gtk.CheckButton(label="Narrate alerts aloud")
+        self._rain_speech.set_active(bool(cfg.get("speech", False)))
+        self._rain_speech.set_tooltip_text(
+            "Speak a one-sentence description after the alert tone. "
+            "Audible to everyone in the room — the tone is not."
+        )
+        self._rain_speech.connect("toggled", self._on_rain_changed)
         test_btn = Gtk.Button(label="Test alert")
         test_btn.connect("clicked", self._on_rain_test)
         brow.pack_start(self._rain_voice, False, False, 0)
+        brow.pack_start(self._rain_speech, False, False, 0)
         brow.pack_start(test_btn, False, False, 0)
         self.box.pack_start(brow, False, False, 2)
 
@@ -446,12 +465,15 @@ class _AwarenessWidget:
 
     def _on_rain_changed(self, _widget: Gtk.Widget) -> None:
         """Persist the R.A.I.N. config; the daemon re-reads rain.json live."""
-        _save_rain({
+        cfg = _load_rain()          # keep keys this panel does not own
+        cfg.update({
             "enabled": self._rain_enable.get_active(),
             "min_severity": self._rain_sev.get_active_id() or "warning",
             "volume": round(self._rain_vol.get_value() / 100.0, 2),
             "voice": self._rain_voice.get_active(),
+            "speech": self._rain_speech.get_active(),
         })
+        _save_rain(cfg)
 
     def _on_rain_test(self, _btn: Gtk.Button) -> None:
         """Play a sample cue so the operator can set the volume by ear."""

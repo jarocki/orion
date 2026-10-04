@@ -27,6 +27,28 @@ includes.chroot rather than as a second symlink authority.
   default route at all. Both decide whether an off-deck link may be offered,
   and both are read from local state — this process never reaches out to
   the network to find out whether the network is there.
+
+@decision DEC-PHASE12-045
+@title GODSEYE on Orion-X: vendored static globe, posture-gated at the server
+@status accepted
+@rationale GODSEYE (VrushankPatel/godseye, Apache-2.0) is a CesiumJS globe
+  whose every layer is a live third-party API. It is vendored here as a
+  pre-built static bundle under /opt/orionx/osint/godseye/app and served by
+  THIS server, because standing up a second loopback server would mean a
+  second answer to "may this deck reach out right now" — and that question
+  already has exactly one authority here: outbound_verdict().
+
+  The gate is enforced where the bytes are handed over, not only in the
+  page's JavaScript. A browser-side check is a courtesy; a server that
+  refuses to serve the document is a control. At a blocked posture, or with
+  no default route, a request for the globe returns 503 and a page that says
+  what is not working, what the consequence is, what still works, and the
+  command that changes it (docs/RESILIENCE.md rule 8).
+
+  The five /api/ routes upstream serves from its Node backend answer 501
+  with a named reason rather than a bare 404, because a 404 renders in
+  GODSEYE as an empty layer, and an empty layer on this deck reads as
+  "nothing is there" — which is a lie. Orion-X runs no Node at runtime.
 """
 
 from __future__ import annotations
@@ -66,6 +88,22 @@ OUTBOUND_BLOCKED_TIERS = ("2",)
 # Bus reads are bounded. The spool is tmpfs and normally small, but a flood
 # must not make this handler allocate the whole thing.
 BUS_TAIL_BYTES = 2 * 1024 * 1024
+
+# --- GODSEYE (DEC-PHASE12-045) ---------------------------------------------
+# The vendored bundle lives under the OSINT web root, so it inherits this
+# server's loopback binding and this server's posture authority.
+GODSEYE_APP_PREFIX = "/godseye/app"
+
+# Upstream GODSEYE proxies these through a Node service. Orion-X runs no Node
+# at runtime, so they do not exist here. They answer 501 and name themselves;
+# the alternative is a 404 the application draws as an empty layer.
+GODSEYE_BACKEND_ROUTES = (
+    ("/api/flights", "Aircraft via the upstream backend proxy"),
+    ("/api/cctv/", "CCTV source index and frame grabs"),
+    ("/api/radio/", "Radio station list and click-through"),
+    ("/api/traffic/", "Traffic flow tiles and status"),
+    ("/api/overpass", "OpenStreetMap Overpass queries"),
+)
 
 
 # ===========================================================================
@@ -165,6 +203,133 @@ def outbound_verdict(posture: dict, route: dict) -> dict[str, object]:
                       "is reachable — only that this deck has somewhere to "
                       "send packets.",
             "remedy": ""}
+
+
+def godseye_backend_route(path: str) -> str | None:
+    """Name the upstream Node route this request is asking for, or None.
+
+    Pure. The point of naming it is that the refusal can name it too: an
+    operator who sees "Aircraft via the upstream backend proxy — not served"
+    knows which layer went quiet and why, which a 404 never tells them.
+    """
+    for prefix, label in GODSEYE_BACKEND_ROUTES:
+        if path == prefix.rstrip("/") or path.startswith(prefix):
+            return label
+    return None
+
+
+def godseye_gate(path: str, outbound: dict) -> dict[str, object] | None:
+    """May this request for the GODSEYE document be served? None = yes.
+
+    Pure, and deliberately the ONLY place the question is answered for this
+    bundle. It governs the entry documents, not every asset: without
+    index.html the application never boots, and gating 400 static chunks
+    would mean re-reading /proc and the posture file four hundred times to
+    reach the same conclusion.
+
+    GODSEYE has no offline mode. Its base imagery, its terrain and every one
+    of its layers is a live third-party request. Served with no route it
+    draws a featureless dark ellipsoid; served at a raised posture it
+    announces this deck to several dozen hosts. Both are refusals here, and
+    each says which.
+    """
+    if not (path == GODSEYE_APP_PREFIX or path.startswith(GODSEYE_APP_PREFIX + "/")):
+        return None
+    if not (path.endswith("/") or path.endswith(".html")
+            or path == GODSEYE_APP_PREFIX):
+        return None
+    if outbound.get("allowed"):
+        return None
+
+    state = str(outbound.get("state") or "blocked")
+    if state == "no-route":
+        return {
+            "state": state,
+            "headline": "No default route — GODSEYE has nothing to draw",
+            "what": "Every layer in GODSEYE is a live internet API, and so is "
+                    "the map underneath them. With no route the globe would "
+                    "render as a featureless dark sphere with no imagery, no "
+                    "aircraft, no satellites and no seismic events.",
+            "so_what": "That empty globe is indistinguishable from a quiet "
+                       "world. It is not evidence that nothing is happening; "
+                       "it is evidence that this deck asked nobody.",
+            "still_works": "Everything under ON THIS DECK in the investigation "
+                           "surface: CyberChef, the artifact tools, the "
+                           "R.A.I.N. attack map of what THIS deck has seen.",
+            "remedy": str(outbound.get("remedy") or "nmcli device status   # or: ip route"),
+        }
+    if state == "shields-up":
+        return {
+            "state": state,
+            "headline": str(outbound.get("headline")
+                            or "Raised posture — GODSEYE will not be served"),
+            "what": "GODSEYE cannot be opened without contacting dozens of "
+                    "third-party hosts, and roughly fifteen of its feeds go "
+                    "through anonymous public relays (api.allorigins.win, "
+                    "r.jina.ai) that see this deck's address and the exact "
+                    "question being asked.",
+            "so_what": "On a network you have declared hostile, that is an "
+                       "announcement of this deck and of what it is looking "
+                       "for. Decoys are live; this would undo them.",
+            "still_works": "The whole local investigation surface. The host "
+                           "list is readable offline at "
+                           "/opt/orionx/osint/godseye/HOSTS.txt.",
+            "remedy": str(outbound.get("remedy")
+                          or "Lower the posture in the Control Center "
+                             "(Awareness -> Threat posture) if reaching out "
+                             "is appropriate."),
+        }
+    return {
+        "state": state,
+        "headline": str(outbound.get("headline")
+                        or "Deck status unknown — GODSEYE will not be served"),
+        "what": "This server could not establish what threat posture the deck "
+                "is in. " + str(outbound.get("detail") or ""),
+        "so_what": "Serving a page that reaches out to dozens of third "
+                   "parties on an unknown posture is a decision this deck is "
+                   "not entitled to make on your behalf. It fails closed.",
+        "still_works": "The whole local investigation surface.",
+        "remedy": str(outbound.get("remedy")
+                      or "systemctl status orionx-postured"),
+    }
+
+
+def godseye_refusal_html(refusal: dict) -> str:
+    """The refusal page itself. Pure, self-contained, no external resource."""
+    def esc(value: object) -> str:
+        return (str(value).replace("&", "&amp;").replace("<", "&lt;")
+                .replace(">", "&gt;"))
+    return (
+        "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        "<title>GODSEYE not served</title><style>"
+        "body{background:#0b0d11;color:#e6e8ec;font-family:system-ui,sans-serif;"
+        "margin:0;padding:48px 20px;line-height:1.55}"
+        "main{max-width:760px;margin:0 auto}"
+        "h1{font-size:1.25rem;letter-spacing:.04em;color:#ff5f56;margin:0 0 4px}"
+        "p.state{font-family:ui-monospace,monospace;font-size:.78rem;"
+        "color:#6b7280;letter-spacing:.14em;text-transform:uppercase;margin:0 0 20px}"
+        "h2{font-size:.78rem;letter-spacing:.18em;text-transform:uppercase;"
+        "color:#ff6a13;margin:22px 0 4px}"
+        "p{margin:0;color:#9aa0a6}"
+        "code{display:block;margin-top:8px;background:#0a0c10;border:1px solid #242a35;"
+        "border-radius:6px;padding:10px 12px;color:#ffb15c;font-size:.84rem;"
+        "white-space:pre-wrap;overflow-x:auto}"
+        "a{color:#7ab8ff}</style></head><body><main>"
+        "<h1>" + esc(refusal.get("headline")) + "</h1>"
+        "<p class=\"state\">GODSEYE &middot; refused by orionx-osint &middot; "
+        + esc(refusal.get("state")) + "</p>"
+        "<h2>What is not working</h2><p>" + esc(refusal.get("what")) + "</p>"
+        "<h2>Why that matters</h2><p>" + esc(refusal.get("so_what")) + "</p>"
+        "<h2>What still works</h2><p>" + esc(refusal.get("still_works")) + "</p>"
+        "<h2>Remedy</h2><code>" + esc(refusal.get("remedy")) + "</code>"
+        "<h2>Before you open it</h2><p>Read "
+        "<a href=\"/godseye/HOSTS.txt\">/opt/orionx/osint/godseye/HOSTS.txt</a> "
+        "&mdash; every host this bundle can contact, generated from the bytes "
+        "that ship.</p>"
+        "<p style=\"margin-top:26px\"><a href=\"/godseye/\">&larr; back to the "
+        "GODSEYE preflight</a> &middot; <a href=\"/\">investigation surface</a></p>"
+        "</main></body></html>\n")
 
 
 def geoip_state(country_db: Path, asn_db: Path) -> dict[str, object]:
@@ -316,6 +481,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _json_status(self, code: int, payload: dict) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _html_status(self, code: int, html: str) -> None:
+        body = html.encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
     def _window(self) -> float:
         """Look-back from ?window=, clamped. An unbounded window would let a
         page ask this handler to parse the whole spool on every poll."""
@@ -337,6 +520,27 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/pewpew.json":
             self._json(build_pewpew(self._window()))
             return
+
+        # GODSEYE's Node backend does not exist on this deck (DEC-PHASE12-045).
+        label = godseye_backend_route(path)
+        if label is not None:
+            self._json_status(501, {
+                "error": "no-node-backend",
+                "route": path,
+                "layer": label,
+                "detail": "Orion-X runs no Node at runtime, so the upstream "
+                          "GODSEYE backend that proxies this route is not "
+                          "installed. This layer cannot work on this deck, "
+                          "with or without a network.",
+                "remedy": "See section F of /opt/orionx/osint/godseye/HOSTS.txt",
+            })
+            return
+
+        refusal = godseye_gate(path, build_status()["outbound"])
+        if refusal is not None:
+            self._html_status(503, godseye_refusal_html(refusal))
+            return
+
         super().do_GET()
 
 
@@ -422,6 +626,20 @@ def check_root(root: Path) -> list[tuple[str, bool, str, str]]:
     row("pew-pew map", (root / "pewpew" / "index.html").is_file(),
         str(root / "pewpew" / "index.html"), "")
 
+    # GODSEYE (DEC-PHASE12-045). Required: if the menu offers it, it ships.
+    gs = root / "godseye"
+    row("GODSEYE preflight", (gs / "index.html").is_file(),
+        str(gs / "index.html"),
+        "the menu entry would open nothing")
+    row("GODSEYE bundle", (gs / "app" / "index.html").is_file(),
+        str(gs / "app" / "index.html"),
+        "re-vendor per /opt/orionx/osint/godseye/PROVENANCE.txt")
+    row("GODSEYE host list", (gs / "HOSTS.txt").is_file(), str(gs / "HOSTS.txt"),
+        "an operator cannot see what the globe would contact")
+    row("GODSEYE manifest", (gs / "MANIFEST.sha256").is_file(),
+        str(gs / "MANIFEST.sha256"),
+        "cannot verify the vendored bundle without it")
+
     status = build_status()
     row("event bus", status["bus"]["present"], status["bus"]["path"],
         status["bus"]["remedy"])
@@ -474,7 +692,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="loopback port, walks forward if busy "
                              "(default: %(default)s)")
     parser.add_argument("--page", default="",
-                        choices=("", "cyberchef", "pewpew"),
+                        choices=("", "cyberchef", "pewpew", "godseye"),
                         help="open this page instead of the launcher")
     parser.add_argument("--window", type=float,
                         default=pewpew_feed.DEFAULT_WINDOW_SECONDS,
@@ -504,7 +722,8 @@ def main(argv: list[str] | None = None) -> int:
     httpd, port = bind(root, args.port)
     url = "http://%s:%d/%s" % (HOST, port,
                                {"cyberchef": "cyberchef/",
-                                "pewpew": "pewpew/"}.get(args.page, ""))
+                                "pewpew": "pewpew/",
+                                "godseye": "godseye/"}.get(args.page, ""))
     # flush=True throughout: stdout is block-buffered when this is piped to a
     # log, and a server whose "I am up" line only appears after it exits is a
     # server nobody can tell has started.

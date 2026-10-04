@@ -17,19 +17,19 @@ skip() { SKIP=$((SKIP+1)); printf "  ${YELLOW}SKIP${NC}: %s — %s\n" "$1" "${2:
 section() { printf "\n[%s]\n" "$1"; }
 
 P="$REPO_ROOT/scripts/pivotglass"
-PKG="$P/adversary_pursuit"
+PKG="$P/pivotglass"   # renamed upstream between 0.9.6 and 1.2.0
 SETUP="$REPO_ROOT/iso/config/hooks/live/0700-orionx-setup.hook.chroot"
 EXT="$REPO_ROOT/iso/config/hooks/live/0500-install-external-tools.hook.chroot"
 PKGS="$REPO_ROOT/iso/config/package-lists/orionx.list.chroot"
 
 section "Vendored package + packaged web export"
-[[ -f "$PKG/__main__.py" && -f "$PKG/web/server.py" ]] && pass "adversary_pursuit package vendored" || fail "package vendored" "missing __main__/web/server.py"
+[[ -f "$PKG/__main__.py" && -f "$PKG/web/server.py" ]] && pass "pivotglass package package vendored" || fail "package vendored" "missing __main__/web/server.py"
 [[ -f "$PKG/web/static/index.html" ]] && pass "static web export at the PACKAGED path (web/static/index.html)" || fail "static export" "server.py expects web/static/ next to it"
 grep -q '_PACKAGED_WEB_ROOT = Path(__file__).with_name("static")' "$PKG/web/server.py" && pass "server.py supports the packaged static layout" || fail "packaged layout support" "upstream changed web root resolution"
 if find "$PKG" \( -name "__pycache__" -o -name "*.pyc" \) | grep -q .; then fail "no bytecode vendored" "__pycache__/*.pyc committed"; else pass "no bytecode vendored"; fi
 for junk in tests docs node_modules; do [[ -e "$P/$junk" || -e "$PKG/web/$junk" ]] && fail "no upstream $junk shipped" "size discipline"; done; pass "no upstream tests/docs/node_modules shipped"
 [[ -x "$P/ap" ]] && pass "ap launcher executable" || fail "ap launcher" "missing/not +x"
-grep -q 'exec python3 -m adversary_pursuit' "$P/ap" && pass "launcher runs python3 -m adversary_pursuit (no uv/venv)" || fail "launcher form" "expected python3 -m"
+grep -q 'exec python3 -m pivotglass' "$P/ap" && pass "launcher runs python3 -m pivotglass (no uv/venv)" || fail "launcher form" "expected python3 -m"
 grep -q 'while \[ -h "\$_SOURCE" \]' "$P/ap" && pass "launcher resolves its /usr/bin symlink" || fail "symlink resolution" "missing"
 [[ -f "$P/PROVENANCE.txt" && -f "$P/LICENSE.pivotglass" ]] && pass "provenance + MIT licence shipped" || fail "provenance/licence" "missing"
 # Compile with the bytecode cache redirected — otherwise this very check would
@@ -62,11 +62,11 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
         ln -s /opt/orionx/scripts/pivotglass/ap /usr/bin/ap
         export HOME=/tmp/h; mkdir -p $HOME
         echo "VERSION: $(ap --version 2>&1 | head -1)"
-        echo "TUI-IMPORT: $(PYTHONPATH=/opt/orionx/scripts/pivotglass python3 -c "import adversary_pursuit.agent.chat" 2>&1 | tail -1 || true)ok"
+        echo "TUI-IMPORT: $(PYTHONPATH=/opt/orionx/scripts/pivotglass python3 -c "import pivotglass.agent.chat" 2>&1 | tail -1 || true)ok"
         (timeout 15 ap web >/tmp/w.log 2>&1 &)
         for i in 1 2 3 4 5 6 7 8; do sleep 1; c=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8765/ 2>/dev/null); [ "$c" = "200" ] && break; done
         echo "WEB: HTTP $c"' 2>&1)
-    printf '%s' "$OUT" | grep -q "VERSION: adversary-pursuit" && pass "ap --version runs via /usr/bin symlink on trixie ($(printf '%s' "$OUT" | grep -o 'VERSION: .*' | head -1))" || fail "ap --version on trixie" "$(printf '%s' "$OUT" | head -c 200)"
+    printf '%s' "$OUT" | grep -q "VERSION: pivotglass 1\.2\.0" && pass "ap --version runs via /usr/bin symlink on trixie ($(printf '%s' "$OUT" | grep -o 'VERSION: .*' | head -1))" || fail "ap --version on trixie" "$(printf '%s' "$OUT" | head -c 200)"
     printf '%s' "$OUT" | grep -q "WEB: HTTP 200" && pass "ap web serves the packaged static export (HTTP 200)" || fail "ap web on trixie" "$(printf '%s' "$OUT" | grep -o 'WEB: .*' | head -1)"
     # The terminal deck path must import cleanly with python3-prompt-toolkit (agent extra).
     if printf '%s' "$OUT" | grep -q "TUI-IMPORT: ok"; then pass "ap tui/chat module imports (prompt_toolkit via apt)"; else fail "ap tui import" "$(printf '%s' "$OUT" | grep -o 'TUI-IMPORT: .*' | head -c 200)"; fi

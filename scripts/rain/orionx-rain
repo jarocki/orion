@@ -13,10 +13,17 @@ and is re-read live, so Control Center toggles take effect without a restart.
 Throttling guarantees an event STORM never becomes an audio storm: each severity
 has a cooldown, and no two cues ever play closer than a global minimum gap.
 
+Spoken narration (DEC-PHASE12-046) is layered strictly AFTER the cue: the tone
+is the safety-critical signal and fires synchronously, exactly as before; the
+narrator is a bounded, non-blocking, drop-don't-queue worker. Off by default.
+
 Modes:
     orionx-rain                 run the daemon (default)
     orionx-rain --test WARNING  play one cue for a severity and exit (CC "Test")
     orionx-rain --oneshot       drain current backlog, play the most urgent, exit
+    orionx-rain --speech on|off turn spoken narration on or off
+    orionx-rain --speech-status report the speech subsystem and how to fix it
+    orionx-rain --speech-test   narrate one synthetic alert end to end
 """
 
 from __future__ import annotations
@@ -36,6 +43,21 @@ import rain_lib  # noqa: E402
 # Poll cadence for new lines + config mtime (seconds).
 _POLL = 0.5
 _running = True
+
+
+def _speech_module():
+    """Import rain_speech, or None. DEC-PHASE12-046.
+
+    Deliberately not a module-level import: a broken, half-installed or
+    syntactically damaged rain_speech.py must cost the operator nothing but
+    speech. Tones are what this daemon exists for and they must survive
+    anything that happens to the narration layer.
+    """
+    try:
+        import rain_speech  # noqa: PLC0415
+        return rain_speech
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _stop(_signum, _frame):
@@ -88,6 +110,7 @@ def run_daemon() -> int:
     throttle = _Throttle()
     cfg = rain_lib.load_config()
     cfg_mtime = _config_mtime()
+    narrator = _sync_narrator(None, cfg)   # DEC-PHASE12-046
 
     path = rain_lib.EVENT_LOG
     fh = _open_at_end(path)
@@ -99,6 +122,7 @@ def run_daemon() -> int:
         if m != cfg_mtime:
             cfg = rain_lib.load_config()
             cfg_mtime = m
+            narrator = _sync_narrator(narrator, cfg)
 
         # Wait for the spool to appear if it does not exist yet.
         if fh is None:
@@ -133,9 +157,22 @@ def run_daemon() -> int:
         sev = rain_lib.normalize_severity(event.get("severity", "notice"))
         now = time.time()
         if throttle.allow(sev, now):
+            # The cue. Unchanged, first, synchronous. Nothing below may move,
+            # delay or condition this line (DEC-PHASE12-046 requirement 1).
             rain_lib.play_cue(sev, cfg)
             throttle.record(sev, now)
+            # Narration is offered only for events whose cue actually played,
+            # so the tone throttle is already the first rate limit and a storm
+            # cannot even reach the queue at full rate. offer() is one
+            # non-blocking put; it cannot raise and cannot block.
+            if narrator is not None:
+                try:
+                    narrator.offer(event)
+                except Exception:  # noqa: BLE001 - speech may never break tones
+                    narrator = None
 
+    if narrator is not None:
+        narrator.stop()
     if fh is not None:
         try:
             fh.close()
@@ -194,6 +231,120 @@ def run_oneshot() -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Spoken narration lifecycle + operator surface (DEC-PHASE12-046)
+# ---------------------------------------------------------------------------
+
+def _sync_narrator(narrator, cfg):
+    """Start/stop the narrator to match cfg['speech']. Never raises.
+
+    Called at startup and on every live config reload, so the Control Center
+    toggle takes effect without a restart — same contract as every other
+    rain.json key. A deck with speech off never starts a thread at all.
+    """
+    want = bool(cfg.get("speech", False))
+    try:
+        if want and narrator is None:
+            mod = _speech_module()
+            if mod is None:
+                return None
+            n = mod.Narrator()
+            n.start()
+            return n
+        if not want and narrator is not None:
+            narrator.stop()
+            return None
+    except Exception:  # noqa: BLE001 - speech may never break the daemon
+        return None
+    return narrator
+
+
+def set_speech(state: bool) -> int:
+    cfg = rain_lib.load_config()
+    cfg["speech"] = bool(state)
+    if not rain_lib.save_config(cfg):
+        print(f"could not write {rain_lib.CONFIG_FILE}", file=sys.stderr)
+        return 1
+    print(f"R.A.I.N. speech: {'on' if state else 'off'}  "
+          f"({rain_lib.CONFIG_FILE})")
+    if state:
+        return speech_status()
+    return 0
+
+
+def speech_status() -> int:
+    """Report the whole speech subsystem and name the remedy for each gap.
+
+    Rule 8 of docs/RESILIENCE.md in one command: what is not working, what the
+    consequence is, what still works, and the exact command that fixes it.
+    """
+    cfg = rain_lib.load_config()
+    mod = _speech_module()
+    print("R.A.I.N. speech (DEC-PHASE12-046)")
+    print(f"  config file   : {rain_lib.CONFIG_FILE}")
+    print(f"  speech        : {'on' if cfg.get('speech') else 'off'}"
+          f"   (orionx-rain --speech on|off)")
+    print(f"  min severity  : {cfg['min_severity']}  (narration follows the cue)")
+    if mod is None:
+        print("  engine        : UNAVAILABLE — rain_speech.py failed to import.")
+        print("                  Consequence: TONE-ONLY. Cues are unaffected.")
+        print("                  Fix: python3 -c 'import sys;"
+              "sys.path.insert(0,\"/opt/orionx/scripts/rain\");import rain_speech'")
+        return 1
+    backend = mod.tts_backend()
+    voice = mod.piper_voice()
+    print(f"  tts engine    : {backend or 'NONE'}")
+    if backend is None:
+        print("                  Consequence: nothing can be spoken; the deck")
+        print("                  is TONE-ONLY. Detection and cues unaffected.")
+        print("                  Fix: sudo apt-get install -y espeak-ng")
+    elif backend == "espeak-ng":
+        print("                  (robotic but zero-cost; shipped on the image)")
+        print("                  Natural voice: sudo /opt/orionx/optional/"
+              "install-piper-voice.sh")
+    else:
+        print(f"                  piper voice: {voice}")
+    reachable = mod.ollama_generate("Reply with the single word: ok") is not None
+    print(f"  nebula        : {'reachable' if reachable else 'not answering'}"
+          f"  ({mod.NEBULA_URL})")
+    if not reachable:
+        print("                  Consequence: narration uses built-in phrasing")
+        print("                  from the event's own fields. Still spoken.")
+        print("                  Fix: orionx-nebula status")
+    print(f"  bounds        : timeout {mod.SPEECH_TIMEOUT}s, queue "
+          f"{mod.SPEECH_QUEUE_MAX}, min gap {mod.SPEECH_MIN_GAP_SECONDS}s, "
+          f"max age {mod.SPEECH_MAX_AGE_SECONDS}s")
+    return 0
+
+
+_DEMO_EVENT = {
+    "severity": "critical", "source": "firewall", "category": "scan",
+    "message": "port scan from 192.168.4.77 \u2014 900 distinct ports in 11.0s",
+    "detail": {"src_ip": "192.168.4.77", "distinct_ports": 900,
+               "window_seconds": 11.0, "scan_kind": "port scan",
+               "protocols": ["tcp"], "detector": "orionx-scanwatch"},
+}
+
+
+def speech_test() -> int:
+    """Narrate one synthetic port scan end to end, printing every decision."""
+    mod = _speech_module()
+    if mod is None:
+        print("rain_speech unavailable", file=sys.stderr)
+        return 1
+    ev = dict(_DEMO_EVENT, ts=time.time())
+    print(f"template : {mod.speakable(mod.template_line(ev))}")
+    t0 = time.time()
+    text, provenance, reason = mod.narration_for(ev, mod.ollama_generate)
+    print(f"spoken   : {text}")
+    print(f"source   : {provenance} ({reason}) in {time.time() - t0:.2f}s")
+    backend = mod.tts_backend()
+    print(f"engine   : {backend or 'NONE'}")
+    ok = mod.speak(text, rain_lib.load_config()) if backend else False
+    print(f"played   : {ok}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="orionx-rain",
@@ -207,8 +358,27 @@ def main(argv: list[str] | None = None) -> int:
         "--oneshot", action="store_true",
         help="play the most urgent pending event once, then exit",
     )
+    # DEC-PHASE12-046 — spoken narration controls.
+    parser.add_argument(
+        "--speech", metavar="STATE", choices=("on", "off"),
+        help="turn spoken narration on or off (persists to rain.json)",
+    )
+    parser.add_argument(
+        "--speech-status", action="store_true",
+        help="report speech config, TTS engine, Nebula reachability and bounds",
+    )
+    parser.add_argument(
+        "--speech-test", action="store_true",
+        help="narrate one synthetic port-scan alert end to end and exit",
+    )
     args = parser.parse_args(argv)
 
+    if args.speech:
+        return set_speech(args.speech == "on")
+    if args.speech_status:
+        return speech_status()
+    if args.speech_test:
+        return speech_test()
     if args.test:
         # Test button: always audible, honour volume/voice but not enable/min.
         cfg = rain_lib.load_config()

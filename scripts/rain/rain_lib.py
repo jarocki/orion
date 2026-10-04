@@ -42,6 +42,7 @@ import shutil
 import subprocess
 import time
 import uuid
+import wave
 from pathlib import Path
 from typing import Any
 
@@ -150,6 +151,11 @@ def default_config() -> dict[str, Any]:
         "min_severity": "warning",
         "volume": 0.8,          # 0.0 - 1.0
         "voice": False,         # espeak-ng voice cue in addition to the tone
+        # DEC-PHASE12-046: spoken, model-authored narration AFTER the tone.
+        # Off by default — speech is intelligible to everyone in the room and a
+        # tone is not, so narrating alert contents aloud is opt-in.
+        # Toggle: orionx-rain --speech on|off   State: orionx-rain --speech-status
+        "speech": False,
     }
 
 
@@ -174,6 +180,7 @@ def load_config() -> dict[str, Any]:
         cfg["volume"] = 0.8
     cfg["enabled"] = bool(cfg.get("enabled", True))
     cfg["voice"] = bool(cfg.get("voice", False))
+    cfg["speech"] = bool(cfg.get("speech", False))   # DEC-PHASE12-046
     return cfg
 
 
@@ -309,6 +316,47 @@ def _tone_path(severity: str) -> Path:
     return TONE_DIR / f"{normalize_severity(severity)}.wav"
 
 
+# --- Music ducking (DEC-PHASE12-044) ----------------------------------------
+# The optional generative music deck (scripts/music/) watches this file and
+# goes silent for the number of seconds written here. Writing it BEFORE the
+# cue starts is what makes the duck LEAD the sound rather than chase it down
+# the event bus. Deliberately a plain file write and not an import: R.A.I.N.
+# must never acquire a dependency on an accessory, and a failure here must
+# cost nothing but a second of music.
+MUSIC_DUCK_GATE = Path("/run/orionx/music-duck")
+
+
+def _cue_airtime(sev: str, cfg: dict[str, Any]) -> float:
+    """How long this cue will occupy the speaker, measured where possible."""
+    total = 1.5
+    try:
+        with wave.open(str(_tone_path(sev)), "rb") as w:
+            total = w.getnframes() / float(w.getframerate() or 22050) + 0.6
+    except (OSError, wave.Error, ZeroDivisionError):
+        pass
+    if cfg.get("voice"):
+        total += 2.5
+    return total
+
+
+def duck_music(seconds: float) -> None:
+    """Ask the music deck for the room. Never raises; failure is acceptable."""
+    try:
+        data = f"{max(0.0, float(seconds)):.3f}\n".encode()
+        fd = os.open(str(MUSIC_DUCK_GATE), os.O_WRONLY | os.O_CREAT, 0o666)
+        try:
+            # Write before truncating, so a reader catching us mid-write sees
+            # stale-or-garbage (which ducks) and never an empty file (which
+            # does not). The unsafe direction is the one to avoid.
+            os.lseek(fd, 0, os.SEEK_SET)
+            written = os.write(fd, data)
+            os.ftruncate(fd, written)
+        finally:
+            os.close(fd)
+    except (OSError, TypeError, ValueError):
+        pass
+
+
 def play_cue(severity: str, cfg: dict[str, Any] | None = None) -> bool:
     """Play the cue for a severity. Degrades gracefully; never raises.
 
@@ -319,6 +367,8 @@ def play_cue(severity: str, cfg: dict[str, Any] | None = None) -> bool:
     """
     cfg = cfg or default_config()
     sev = normalize_severity(severity)
+    # Clear the room before making a sound, not after (DEC-PHASE12-044).
+    duck_music(_cue_airtime(sev, cfg))
     tone = _tone_path(sev)
     played = False
 

@@ -1,0 +1,144 @@
+#!/bin/bash
+# shellcheck shell=bash
+set -euo pipefail
+#
+# Orion-X Phoenix Edition — music subsystem wiring hook
+#
+# @decision DEC-PHASE12-044
+# @title Chroot hook is the authority for the music subsystem's PATH entries,
+#        and it installs NO systemd unit on purpose
+# @status accepted
+# @rationale scripts/ is rsynced wholesale into /opt/orionx/scripts/ by
+#   stage_application_content(), so scripts/music/ arrives in the squashfs by
+#   itself. What it does NOT get is a PATH name, and 0700-orionx-setup is the
+#   single authority for /usr/bin symlinks of the pre-existing tools — so this
+#   slice brings its own hook rather than editing that table. Prefix 0702 runs
+#   after 0700 (lexical order) and after 0615's unit installation, so the two
+#   verifications below see the finished filesystem.
+#
+#   NO UNIT IS INSTALLED, AND THAT IS THE FEATURE. The requirement is "off by
+#   default; starts only when the operator asks", and the strongest way to
+#   honour that is for no mechanism to exist that could start it: nothing is
+#   added to 0615's UNIT_FILES or AUTOSTART_UNITS, there is no user unit, no
+#   XDG autostart entry and no shell-profile line. The only paths to sound are
+#   an operator opening the DJ Deck or typing `orionx-music play`.
+#
+#   The hook VERIFIES rather than assumes (rules 2 and 3 of docs/RESILIENCE.md).
+#   The engine is imported inside the chroot: a staging failure, a syntax error
+#   or a missing stdlib module then fails the BUILD, instead of shipping an ISO
+#   whose menu has a DJ Deck entry that opens onto a traceback. The R.A.I.N.
+#   coupling is checked the same way, because the music's one hard requirement
+#   is that it can find out when a cue is firing.
+
+MUSIC_DIR="/opt/orionx/scripts/music"
+RAIN_LIB="/opt/orionx/scripts/rain/rain_lib.py"
+
+echo "[orionx-music] Wiring the music subsystem (DEC-PHASE12-044)..."
+
+# ---------------------------------------------------------------------------
+# 1. Presence
+# ---------------------------------------------------------------------------
+if [[ ! -d "$MUSIC_DIR" ]]; then
+    echo "[orionx-music] FATAL: $MUSIC_DIR missing — scripts/music/ was not staged." >&2
+    echo "[orionx-music]        remedy: check stage_application_content() in scripts/build-iso.sh" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 2. PATH symlinks
+# ---------------------------------------------------------------------------
+declare -A MUSIC_MAP=(
+    ["orionx-music"]="$MUSIC_DIR/orionx-music"
+    ["orionx-dj"]="$MUSIC_DIR/orionx-dj"
+)
+
+for name in "${!MUSIC_MAP[@]}"; do
+    src="${MUSIC_MAP[$name]}"
+    if [[ ! -f "$src" ]]; then
+        echo "[orionx-music] FATAL: source not found: $src" >&2
+        exit 1
+    fi
+    chmod +x "$src"
+    ln -sf "$src" "/usr/bin/${name}"
+    echo "  [orionx-music] symlinked: /usr/bin/${name} -> $src"
+done
+chmod 0644 "$MUSIC_DIR/orionx_synth.py"
+
+# ---------------------------------------------------------------------------
+# 3. Check: the engine actually imports in this chroot
+# ---------------------------------------------------------------------------
+if python3 -c "
+import sys
+sys.path.insert(0, '$MUSIC_DIR')
+import orionx_synth as s
+assert s.DUCK_FLOOR == 0.0, 'duck floor is not silence'
+assert s.DeckState().enabled is False, 'music does not default to off'
+assert s.CONTROL_KEYS, 'the deck has no controls'
+print('  [orionx-music] engine imports: %d controls, duck floor %.2f'
+      % (len(s.CONTROL_KEYS), s.DUCK_FLOOR))
+"; then
+    :
+else
+    echo "[orionx-music] FATAL: the synthesis engine does not import in the chroot." >&2
+    echo "[orionx-music]        consequence: the DJ Deck menu entry would open onto a traceback." >&2
+    echo "[orionx-music]        remedy: python3 -c 'import sys; sys.path.insert(0,\"$MUSIC_DIR\"); import orionx_synth'" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 4. Check: the R.A.I.N. coupling the safety gate depends on
+# ---------------------------------------------------------------------------
+if [[ ! -f "$RAIN_LIB" ]]; then
+    echo "[orionx-music] FATAL: $RAIN_LIB missing — the music cannot learn R.A.I.N.'s" >&2
+    echo "[orionx-music]        alert threshold, so it would duck for every event." >&2
+    exit 1
+fi
+if python3 -c "
+import sys
+sys.path.insert(0, '$MUSIC_DIR')
+import orionx_synth as s
+g = s.AlertGuard()
+if g._rain is None:
+    raise SystemExit('rain_lib not importable from the music engine')
+print('  [orionx-music] R.A.I.N. severity model reachable: %s' % (g._rain.SEVERITIES,))
+"; then
+    :
+else
+    echo "[orionx-music] FATAL: the music engine cannot import rain_lib." >&2
+    echo "[orionx-music]        consequence: ducking would fall back to 'every event is" >&2
+    echo "[orionx-music]        audible', which is safe but wrong." >&2
+    echo "[orionx-music]        remedy: ls -l $RAIN_LIB" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Check: an audio player exists for BOTH R.A.I.N. and the music
+# ---------------------------------------------------------------------------
+if command -v paplay >/dev/null 2>&1 || command -v aplay >/dev/null 2>&1; then
+    echo "  [orionx-music] raw-PCM player present: $(command -v paplay || command -v aplay)"
+else
+    echo "[orionx-music] FATAL: neither paplay nor aplay is installed." >&2
+    echo "[orionx-music]        consequence: R.A.I.N. intrusion cues would be silent." >&2
+    echo "[orionx-music]        remedy: add pulseaudio-utils / alsa-utils to" >&2
+    echo "[orionx-music]                iso/config/package-lists/orionx.list.chroot" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 6. Check: no mechanism exists that could start the music by itself
+# ---------------------------------------------------------------------------
+started_by=""
+for unit in /lib/systemd/system/orionx-music*.service \
+            /lib/systemd/system/orionx-dj*.service \
+            /etc/xdg/autostart/orionx-music*.desktop \
+            /etc/xdg/autostart/orionx-dj*.desktop; do
+    [[ -e "$unit" ]] && started_by="$started_by $unit"
+done
+if [[ -n "$started_by" ]]; then
+    echo "[orionx-music] FATAL: something can autostart the music:$started_by" >&2
+    echo "[orionx-music]        Music is off by default by construction; remove it." >&2
+    exit 1
+fi
+echo "  [orionx-music] off by default: no unit, no autostart entry"
+
+echo "[orionx-music] Music subsystem wired (no autostart — operator action only)."

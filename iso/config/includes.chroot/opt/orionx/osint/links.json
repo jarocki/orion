@@ -25,6 +25,15 @@
       "runtime_path": "/opt/orionx/osint/pewpew/index.html"
     },
     {
+      "id": "godseye",
+      "name": "GODSEYE (globe)",
+      "category": "visualise",
+      "blurb": "3-D globe of live public feeds — aircraft, satellites, seismic, weather, hazards. NEEDS THE INTERNET: it caches nothing, so with no route there is no map, and orionx-osint refuses to serve it at a raised posture. Opens a preflight that names every dead layer and every host it would contact.",
+      "kind": "page",
+      "launch": "/godseye/",
+      "runtime_path": "/opt/orionx/osint/godseye/index.html"
+    },
+    {
       "id": "logquery",
       "name": "orionx-logquery",
       "category": "correlate",

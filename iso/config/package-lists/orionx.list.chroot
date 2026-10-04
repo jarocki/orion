@@ -62,7 +62,12 @@ mate-polkit
 #   pulseaudio        — desktop-session sound server (paplay honours per-cue volume)
 #   pulseaudio-utils  — provides paplay (preferred cue player)
 #   alsa-utils        — provides aplay (fallback when PulseAudio is absent)
-#   espeak-ng         — optional spoken voice cue (off by default)
+#   espeak-ng         — optional spoken voice cue (off by default), and the
+#                       SHIPPED text-to-speech engine for R.A.I.N. spoken
+#                       narration (DEC-PHASE12-046). Zero additional ISO
+#                       bytes. Natural voice is opt-in post-boot:
+#                       sudo /opt/orionx/optional/install-piper-voice.sh
+#                       (63,201,294 bytes of voice model, so NOT shipped)
 pulseaudio
 pulseaudio-utils
 alsa-utils
