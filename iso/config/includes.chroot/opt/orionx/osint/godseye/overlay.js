@@ -95,7 +95,7 @@
       "nothing on the canvas that would tell you so. A stale picture that " +
       "looks live is worse than no picture."],
      ["What still works",
-      "The local investigation surface: CyberChef, the artifact and PCAP " +
+      "The local Workbench: CyberChef, the artifact and PCAP " +
       "tools, and the R.A.I.N. attack map of what this deck has itself seen."]
     ].forEach(function (pair) {
       var dt = document.createElement("h2");

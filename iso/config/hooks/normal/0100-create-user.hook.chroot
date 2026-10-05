@@ -33,8 +33,9 @@
 #   at boot. DEC-PHASE9-002's /etc/skel/ prohibition was the LOAD-BEARING BUG.
 #   This fix:
 #     (a) REMOVES chroot-time 'orionx' user creation (live-config creates
-#         'orionx-operator' at boot with sudo group + empty password by default
-#         per Debian live-config 0080-user-setup specification).
+#         'orionx-operator' at boot with sudo group and live-config's default
+#         password `live` — not empty; see 10-orionx-autologin.conf — per
+#         Debian live-config 0030-user-setup on trixie, 0080 on older releases).
 #     (b) REDIRECTS all home-dir writes to /etc/skel/ (copied to
 #         /home/orionx-operator/ at boot by live-config).
 #     (c) EXTENDS the xfconf XML to include xsettings.xml with GTK theme,

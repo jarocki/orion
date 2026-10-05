@@ -106,6 +106,8 @@ assert_file_contains "$SYNAPSE_PROFILE" "#include <tunables/global>" \
     "Synapse profile includes tunables/global"
 assert_file_contains "$WIREGUARD_PROFILE" "#include <tunables/global>" \
     "WireGuard profile includes tunables/global"
+assert_file_contains "$WIREGUARD_PROFILE" "network netlink raw," \
+    "WireGuard profile permits generic netlink — wg set needs it (DEC-PHASE12-047)"
 assert_file_contains "$VOLATILITY_PROFILE" "#include <tunables/global>" \
     "Volatility3 profile includes tunables/global"
 assert_file_contains "$BULKEXT_PROFILE" "#include <tunables/global>" \

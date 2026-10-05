@@ -1,11 +1,11 @@
 [Desktop Entry]
-# Orion-X Investigation Surface (DEC-PHASE12-043).
+# Orion Workbench — the analyst toolbox (DEC-PHASE12-043; named "Investigation Surface" until 2026-10-05).
 # Static .desktop rather than one written by a hook: 0700 owns the hook-written
 # entries and this slice does not edit it. includes.chroot/usr/share/applications
 # already carries static entries (orionx-control-center, orionx-matrix-commander),
 # so this follows the pattern rather than adding a second hook authority.
 Type=Application
-Name=Orion-X Investigation Surface
+Name=Orion Workbench
 GenericName=OSINT launcher
 Comment=OSINT and investigation launcher — local tools, CyberChef, attack map, verified off-deck resources
 Exec=/usr/bin/orionx-osint

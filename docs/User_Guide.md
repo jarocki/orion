@@ -39,7 +39,7 @@ Release: **v2.2.0-rc5** (v2.2.0 line, Trixie; release candidate after v2.2.0-bet
    - [R.A.I.N. — Real-time Audible Intrusion Notification](#rain-real-time-audible-intrusion-notification)
    - [The Event Bus](#the-event-bus)
    - [Orion Cockpit](#orion-cockpit)
-   - [Investigation Surface (OSINT)](#investigation-surface-osint)
+   - [Orion Workbench (analyst toolbox)](#orion-workbench-analyst-toolbox)
    - [GODSEYE (globe)](#godseye-globe)
    - [DJ Deck (optional music)](#dj-deck-optional-music)
 
@@ -398,7 +398,7 @@ Applications → **Orion** (Phoenix icon) groups the Orion-X tools:
 - **Orion-X Artifact Analyzer**
 - **Orion-X Storyboard Generator**
 - **Pivotglass**
-- **Orion-X Investigation Surface** — OSINT launcher page (§7)
+- **Orion Workbench** — the analyst toolbox: local web tools and every Orion-X tool in one page (§7)
 - **CyberChef (local)**
 - **Orion-X Attack Map**
 - **GODSEYE (globe)** — opens the network preflight, not the globe (§7)
@@ -672,9 +672,9 @@ Keys: **F11** toggles fullscreen; **Esc** or **q** quits. Flags: `--fullscreen` 
 
 *Figure: Orion Cockpit layout.*
 
-### Investigation Surface (OSINT)
+### Orion Workbench (analyst toolbox)
 
-Applications → **Orion** → **Orion-X Investigation Surface** (or `orionx-osint`) serves a launcher page on 127.0.0.1 (port 8787, walking forward if busy) that groups the deck's own tools with two vendored web tools: **CyberChef 11.5.0** (local; its 74 files are checksum-verified when the image is built; 23 incident-response recipes) and the **Orion-X Attack Map**, which draws what *this* deck has seen on the event bus. No GeoIP database ships, so sources that cannot be located are drawn in a labelled PUBLIC UNLOCATED sector, and the page says on every render that bearing and distance are layout, not location. The page also links `orionx-logquery`, Pivotglass, nucleotide, the analyzers, `orionx-capture`, the Cockpit, `storyboard-gen.py`, `orionx-diag`, `orionx-freshen-intel` and GODSEYE. Everything under *ON THIS DECK* works with no network. `orionx-osint --check` reports what is present.
+Applications → **Orion** → **Orion Workbench** (or `orionx-osint`; it was called the Investigation Surface before rc6) serves a launcher page on 127.0.0.1 (port 8787, walking forward if busy) that groups the deck's own tools with two vendored web tools: **CyberChef 11.5.0** (local; its 74 files are checksum-verified when the image is built; 23 incident-response recipes) and the **Orion-X Attack Map**, which draws what *this* deck has seen on the event bus. No GeoIP database ships, so sources that cannot be located are drawn in a labelled PUBLIC UNLOCATED sector, and the page says on every render that bearing and distance are layout, not location. The page also links `orionx-logquery`, Pivotglass, nucleotide, the analyzers, `orionx-capture`, the Cockpit, `storyboard-gen.py`, `orionx-diag`, `orionx-freshen-intel` and GODSEYE. Everything under *ON THIS DECK* works with no network. `orionx-osint --check` reports what is present.
 
 ### GODSEYE (globe)
 
@@ -1598,6 +1598,8 @@ Each installer:
 ## 16. Troubleshooting
 
 ### Boot Issues
+
+**A password box appears over the Phoenix wallpaper** (rc5 and earlier): that is the `light-locker` screen lock, which the desktop installed as a recommendation and which locks after idle; it is not a failed autologin. The live account's password is `live` (set by live-config; the first-boot wizard can change it). From rc6 the locker is not on the image.
 
 If you encounter problems booting Orion-X:
 

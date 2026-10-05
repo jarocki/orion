@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""osint_server — the Orion-X investigation surface, served on loopback.
+"""osint_server — the Orion Workbench (analyst toolbox), served on loopback.
 
 This module is the single authority for the server. /usr/bin/orionx-osint is
 a three-line entrypoint that imports main() from here, following the
@@ -271,7 +271,7 @@ def godseye_gate(path: str, outbound: dict) -> dict[str, object] | None:
             "so_what": "On a network you have declared hostile, that is an "
                        "announcement of this deck and of what it is looking "
                        "for. Decoys are live; this would undo them.",
-            "still_works": "The whole local investigation surface. The host "
+            "still_works": "The whole local Workbench. The host "
                            "list is readable offline at "
                            "/opt/orionx/osint/godseye/HOSTS.txt.",
             "remedy": str(outbound.get("remedy")
@@ -288,7 +288,7 @@ def godseye_gate(path: str, outbound: dict) -> dict[str, object] | None:
         "so_what": "Serving a page that reaches out to dozens of third "
                    "parties on an unknown posture is a decision this deck is "
                    "not entitled to make on your behalf. It fails closed.",
-        "still_works": "The whole local investigation surface.",
+        "still_works": "The whole local Workbench.",
         "remedy": str(outbound.get("remedy")
                       or "systemctl status orionx-postured"),
     }
@@ -328,7 +328,7 @@ def godseye_refusal_html(refusal: dict) -> str:
         "&mdash; every host this bundle can contact, generated from the bytes "
         "that ship.</p>"
         "<p style=\"margin-top:26px\"><a href=\"/godseye/\">&larr; back to the "
-        "GODSEYE preflight</a> &middot; <a href=\"/\">investigation surface</a></p>"
+        "GODSEYE preflight</a> &middot; <a href=\"/\">Workbench</a></p>"
         "</main></body></html>\n")
 
 

@@ -1,4 +1,4 @@
-/* Orion-X Investigation Surface — launcher logic.
+/* Orion Workbench — launcher logic.
  * @decision DEC-PHASE12-043
  *
  * Three rules this file exists to enforce, in the browser, every render:

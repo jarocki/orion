@@ -96,7 +96,7 @@ mesh_genkeys() {
     key_dir="$(dirname "$MESH_PRIVATE_KEY")"
     mkdir -p "$key_dir"
 
-    wg genkey > "$MESH_PRIVATE_KEY"
+    (umask 077; wg genkey > "$MESH_PRIVATE_KEY")   # born 0600; chmod below is belt
     chmod 0600 "$MESH_PRIVATE_KEY"
 
     mesh_log INFO "Generated new WireGuard keypair"
@@ -319,7 +319,7 @@ mesh_ensure_psk() {
     psk_dir="$(dirname "$MESH_PSK_FILE")"
     mkdir -p "$psk_dir"
 
-    wg genpsk > "$MESH_PSK_FILE"
+    (umask 077; wg genpsk > "$MESH_PSK_FILE")   # wg warned "world accessible file" on the deck
     chmod 0600 "$MESH_PSK_FILE"
     mesh_log INFO "Generated mesh-wide PSK at $MESH_PSK_FILE"
 }

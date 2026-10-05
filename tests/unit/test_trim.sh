@@ -35,7 +35,7 @@ grep -q "DEC-PHASE12-015" "$EXT" && pass "DEC-PHASE12-015 annotated in 0500" || 
 section "0900 trim hook: purge list"
 [[ -x "$TRIM" ]] && pass "0900-trim hook present + executable" || fail "0900 hook" "missing/not +x"
 bash -n "$TRIM" 2>/dev/null && pass "0900 hook bash syntax" || fail "0900 syntax" "bash -n failed"
-for p in zeek-zkg zeek-spicy-dev zeek-btest-data python3-scipy python3-matplotlib python3-pyqtgraph ukui-polkit mesa-vulkan-drivers firmware-nvidia-graphics unhide.rb gcc-14 g++-14; do
+for p in zeek-zkg zeek-spicy-dev zeek-btest-data python3-scipy python3-matplotlib python3-pyqtgraph ukui-polkit light-locker mesa-vulkan-drivers firmware-nvidia-graphics unhide.rb gcc-14 g++-14; do
     purge_list | grep -qxF -- "$p" && pass "purge list names $p" || fail "purge list: $p" "missing"
 done
 for p in cpp cpp-14 cpp-14-x86-64-linux-gnu; do

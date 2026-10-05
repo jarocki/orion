@@ -88,7 +88,10 @@ def parse_event(line: str) -> dict[str, Any] | None:
         ts = 0.0
     # Structured detail (DEC-PHASE12-029) rides through untruncated so the
     # drill-down view can show the source IP, signature, matching content and
-    # triggering rule. The summary line stays clipped to 160 for the stream.
+    # triggering rule. The message is kept WHOLE here too: the stream row clips
+    # it at draw time, the drill-down wraps all of it. Clipping at parse time
+    # meant the drill-down could never show more than the stream (reference
+    # deck, 2026-10-05).
     detail = obj.get("detail")
     if not isinstance(detail, dict):
         detail = {}
@@ -97,7 +100,7 @@ def parse_event(line: str) -> dict[str, Any] | None:
         "severity": sev,
         "source": str(obj.get("source", "?"))[:24],
         "category": str(obj.get("category", ""))[:24],
-        "message": str(obj.get("message", ""))[:160],
+        "message": str(obj.get("message", "")),
         "id": str(obj.get("id", ""))[:32],
         "detail": detail,
     }

@@ -153,7 +153,7 @@ function renderVerdict() {
           "interest, to several dozen hosts — about fifteen of them through " +
           "anonymous public relays that see your address and your query."],
       ["What still works",
-       "Everything on the investigation surface that runs here: CyberChef, " +
+       "Everything on the Workbench that runs here: CyberChef, " +
        "the artifact and PCAP tools, and the R.A.I.N. attack map of what " +
        "THIS deck has actually seen."],
       ["Detail", ob.detail || ""]

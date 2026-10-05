@@ -132,6 +132,15 @@ good = "Port scan from 192.168.4.77, 900 distinct ports in 11 seconds."
 acc, why = rs.validate_line(good, EV)
 check(acc == good, f"a faithful model sentence is ACCEPTED ({why})")
 
+# speakable() shapes to a boundary and never cuts mid-word (reference deck 2026-10-05)
+_long = "Critical. " + " ".join(["signature ET POLICY something long"] * 30)
+_s = rs.speakable(_long)
+check(len(_s) <= rs.SPEAK_MAX_CHARS, f"spoken text is bounded ({len(_s)} <= SPEAK_MAX_CHARS)")
+check(_s.endswith("."), "spoken text ends on a sentence boundary")
+check(not _s.endswith(" .") and _s[-2].isalnum(), f"spoken text does not end mid-word: {_s[-24:]!r}")
+_short = "Warning. port scan from 192.168.4.77, 900 ports in 11 seconds."
+check(rs.speakable(_short).startswith("Warning. port scan from 192 dot 168 dot 4 dot 77"), "short text is spoken whole, with the address expanded")
+
 # --- and these are the fabrications it must refuse ------------------------
 FABRICATIONS = [
     ("invented attribution",

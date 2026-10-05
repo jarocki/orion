@@ -119,6 +119,14 @@ PURGE_WANTED=(
     python3-fonttools unicode-data
     # stray polkit agent + its OpenCV/GDAL tail
     ukui-polkit
+    # @decision DEC-PHASE12-048 — no screen-lock mechanism on the live deck.
+    # light-locker arrives as a Recommends of xfce4-session/task-xfce-desktop
+    # on trixie and, after idle, hands the display to the LightDM greeter with
+    # a password box over the Phoenix wallpaper — indistinguishable from a
+    # failed autologin (reference deck, 2026-10-05). W11-2f (#76) disables
+    # xfce4-screensaver only. Purging the locker means no mechanism exists;
+    # xflock4 then finds no backend and locks nothing.
+    light-locker
     # misc
     unhide.rb ruby3.3 libruby3.3 ruby
     mesa-vulkan-drivers firmware-nvidia-graphics

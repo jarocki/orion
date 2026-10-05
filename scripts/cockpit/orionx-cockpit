@@ -29,6 +29,7 @@ import argparse
 import math
 import random
 import sys
+import textwrap
 import time
 from pathlib import Path
 
@@ -479,6 +480,8 @@ class Cockpit(Gtk.Window):
             self._text(cr, cx + 22, ry, f"{L.fmt_age(age):>3}", 11, tuple(c * fade for c in L.DIM))
             self._text(cr, cx + 58, ry, f"{ev['source']}/{ev['category']}", 11, tuple(c * fade for c in col), bold=True)
             msg = ev["message"]
+            if len(msg) > 160:
+                msg = msg[:159] + "\u2026"   # the stream clips; the drill-down shows it whole
             self._text(cr, cx + 230, ry, msg, 11.5, tuple(c * fade for c in (0.9, 0.9, 0.9)))
         cr.restore()
 
@@ -592,10 +595,18 @@ class Cockpit(Gtk.Window):
         self._text(cr, x + w - 44, y + 28, "Esc", 10, L.DIM, align="right")
         self._text(cr, x + 18, y + 52,
                    f"{ev['severity'].upper()}  {ev['source']}/{ev['category']}", 11, col)
-        self._text(cr, x + 18, y + 72, ev["message"][:96], 11.5, (0.93, 0.93, 0.93))
+        # The whole message, wrapped. It used to be clipped to 96 characters
+        # here — in the one view whose purpose is to show everything.
+        chars = max(40, int((w - 36) / (11.5 * 0.56)))
+        lines = textwrap.wrap(ev["message"], width=chars) or [""]
+        if len(lines) > 5:
+            lines = lines[:5]
+            lines[-1] = lines[-1][: max(0, chars - 1)] + "\u2026"
+        for n, line in enumerate(lines):
+            self._text(cr, x + 18, y + 72 + 16 * n, line, 11.5, (0.93, 0.93, 0.93))
 
         d = ev.get("detail") or {}
-        ry = y + 102
+        ry = y + 102 + 16 * (len(lines) - 1)
         if not d:
             self._text(cr, x + 18, ry,
                        "This event carries no structured detail.", 11, L.AMBER)

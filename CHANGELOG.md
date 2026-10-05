@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.2.0-rc6] — in progress
+
+Found by booting rc5 on the reference deck (2026-10-05). None of this is in the
+rc5 image; it lands in the next build.
+
+### Changed
+
+- **The Investigation Surface is now the Orion Workbench** — the analyst
+  toolbox (local web tools and every Orion-X tool on one page). The Orion
+  Cockpit is the place for seeing, hearing and changing the deck's immediate
+  environment; the Workbench is where the analysis happens. Menu entry, page
+  title, launcher, GODSEYE refusal pages and the User Guide follow the rename.
+  `orionx-osint` keeps its name as the command.
+
+### Fixed
+
+- **`orionx-mesh join` failed as root with "Unable to modify interface:
+  Permission denied"** (DEC-PHASE12-047). The `wg` AppArmor profile granted
+  `capability net_admin` and `network inet dgram` but not `network netlink raw`,
+  and wg(8) configures the interface over generic netlink. The profile had
+  never been enforced before 3e48cfa made AppArmor actually load, so rc5 was the
+  first image where the mesh could fail this way. The keys had already been
+  written: the denial was AppArmor's, not Unix permissions'.
+- **A password box over the wallpaper after idle** (DEC-PHASE12-048). Not a
+  failed autologin: `light-locker` arrives on trixie as a Recommends of
+  `xfce4-session` and `task-xfce-desktop`, and after idle hands the display to
+  the LightDM greeter. W11-2f (#76) disables `xfce4-screensaver` only. The
+  locker is purged by the trim hook, so no lock mechanism exists; content-presence
+  16a asserts its absence. Until then the password is `live` — live-config's
+  fixed default (crypt `8Ab05sVQ4LLps`), which the autologin config and the
+  create-user hook had both described as "empty"; those comments are corrected.
+- **Alert messages were truncated everywhere, including the one view meant to
+  show everything.** `cockpit_lib.parse_event` clipped the message to 160
+  characters at parse time, and the drill-down then clipped that to 96. The
+  message is now kept whole; the stream row clips at draw time with an ellipsis
+  and the drill-down wraps the full text.
+- **Spoken narration cut off mid-word.** `speakable()` sliced at 240 characters
+  — the model-validation budget — *after* expanding every dotted quad to "192
+  dot 168 dot 4 dot 77". Speech now has its own budget (360 characters, ~20 s)
+  and is cut at a sentence or word boundary, never mid-word or mid-address.
+- **Mesh key files were created world-readable for an instant.** `wg genkey`
+  and `wg genpsk` output was redirected under the default umask and chmod'ed
+  afterwards; wg itself printed "writing to world accessible file" on the deck.
+  Both are now created under `umask 077`.
+
 ## [v2.2.0-rc5] — 2026-10-04 (release candidate; internal build, not published)
 
 Fifth release candidate after the beta. rc1–rc4 were internal builds, booted on
@@ -27,7 +72,7 @@ the login marker in QEMU: BIOS 130 s, UEFI 125 s. `test-iso-hooks-applied`
 ### Added
 
 - **Investigation surface (OSINT)** — `orionx-osint`, Orion menu → *Orion-X
-  Investigation Surface* (DEC-PHASE12-043). A loopback launcher page grouping
+  Investigation Surface* (DEC-PHASE12-043; renamed **Orion Workbench** in rc6). A loopback launcher page grouping
   the deck's own tools with two vendored web tools: **CyberChef v11.5.0** (74
   files, checksum manifest verified at build time; 23 incident-response
   recipes) and the **Orion-X Attack Map**, fed from the R.A.I.N. bus. It ships

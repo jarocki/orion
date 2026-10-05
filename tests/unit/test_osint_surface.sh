@@ -852,7 +852,7 @@ def get(path):
     with urllib.request.urlopen(base + path, timeout=10) as r:
         return r.status, r.headers.get("Content-Type", ""), r.read()
 
-for path, needle in (("/", b"Investigation Surface"),
+for path, needle in (("/", b"Workbench"),
                      ("/app.js", b"DEC-PHASE12-043"),
                      ("/links.json", b"bellingcat"),
                      ("/recipes.json", b"Defang"),

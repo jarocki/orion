@@ -863,9 +863,9 @@ section "16. W11-2: debloat post-conditions + GENERATED bootloader + W9-2 import
 # via grep against the dpkg status file, which is cheaper than running dpkg -l.
 # The dpkg status file is at $SQF/var/lib/dpkg/status.
 DPKG_STATUS="$SQF/var/lib/dpkg/status"
-DROPPED_PACKAGES=(hashcat john hydra proxychains chntpw steghide encfs openvpn build-essential gcc make libssl-dev python3-dev vim)
+DROPPED_PACKAGES=(hashcat john hydra proxychains chntpw steghide encfs openvpn build-essential gcc make libssl-dev python3-dev vim light-locker)
 
-echo "  [16a] Verifying 14 dropped packages absent from squashfs dpkg database"
+echo "  [16a] Verifying 15 dropped packages absent from squashfs dpkg database"
 if [[ -f "$DPKG_STATUS" ]]; then
     for pkg in "${DROPPED_PACKAGES[@]}"; do
         # grep for "Package: <pkg>" followed shortly by "Status: install ok installed"

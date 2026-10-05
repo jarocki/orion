@@ -150,6 +150,12 @@ ev = cl.parse_event(json.dumps({"ts":1.0,"severity":"critical","source":"firewal
                                 "category":"scan","message":"m","id":"abc",
                                 "detail":{"src_ip":"10.0.0.9","signature":"S"}}))
 ck(ev["detail"]["src_ip"] == "10.0.0.9", "parse_event carries structured detail")
+long = "x" * 500
+ev2 = cl.parse_event(json.dumps({"ts":1.0,"severity":"warning","source":"s","category":"c","message":long}))
+ck(len(ev2["message"]) == 500, f"parse_event keeps the message whole for the drill-down ({len(ev2['message'])} chars; was clipped to 160)")
+ck_src = (root/"scripts/cockpit/orionx-cockpit").read_text()
+ck('ev["message"][:96]' not in ck_src, "drill-down no longer clips the message to 96 chars")
+ck("textwrap.wrap(ev[\"message\"]" in ck_src, "drill-down wraps the whole message")
 ck(cl.parse_event(json.dumps({"ts":1.0,"message":"m"}))["detail"] == {},
    "event without detail parses to an empty dict, not None")
 ck(cl.parse_event('{"detail":"not-a-dict","ts":1}')["detail"] == {},

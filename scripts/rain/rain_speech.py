@@ -100,6 +100,13 @@ SPEECH_MAX_AGE_SECONDS = 20.0
 # Hard caps on what may ever reach the speaker.
 SPEECH_MAX_WORDS = 24
 SPEECH_MAX_CHARS = 240
+# What may actually be SPOKEN. Larger than the model-validation budget above
+# because speakable() expands every dotted quad to "192 dot 168 dot 4 dot 77"
+# (about double) and the template prefixes the severity. ~20 s at espeak's
+# default rate. Shaping cuts at a sentence or word boundary, never mid-word:
+# "port scan from 192 dot 168 dot" is worse than saying less (reference
+# deck, 2026-10-05: narration audibly cut off mid-message).
+SPEAK_MAX_CHARS = 360
 TTS_TIMEOUT = 15.0
 
 # DEC-006: localhost only, always. Mirrors orionx-postured's NEBULA_URL; the
@@ -352,7 +359,15 @@ def speakable(text: str) -> str:
     flat = _IP_RE.sub(lambda m: " dot ".join(m.group(0).split(".")), flat)
     flat = flat.replace("—", ", ").replace("–", ", ").replace("…", ".")
     flat = " ".join(flat.split())
-    return flat[:SPEECH_MAX_CHARS]
+    if len(flat) <= SPEAK_MAX_CHARS:
+        return flat
+    cut = flat[:SPEAK_MAX_CHARS]
+    end = max(cut.rfind(". "), cut.rfind("; "), cut.rfind(", "))
+    if end < SPEAK_MAX_CHARS // 2:
+        end = cut.rfind(" ")
+    if end <= 0:
+        end = SPEAK_MAX_CHARS
+    return cut[:end].rstrip(" ,;.") + "."
 
 
 def narration_for(event: dict[str, Any],

@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "decision": "DEC-PHASE12-043",
-  "title": "Orion-X Investigation Surface",
+  "title": "Orion Workbench",
   "note": "Hand-maintained. tests/unit/test_osint_surface.sh is the gate: it fails if a local entry points at something that does not ship.",
   "online_verified": "2026-10-03",
   "online_method": "Every URL below was fetched with curl -L and returned HTTP 200 at its final effective address on 2026-10-03. Nothing that returned 403, 404, 000 or an unexpected redirect was kept. The list is deliberately shorter than it could be.",
