@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [v2.2.0-rc8] — in progress
+## [v2.2.0-rc8] — 2026-10-06 (release candidate; internal build, not published)
 
-From the rc6/rc7 boots on the reference deck (2026-10-06). Not in rc7.
+From the rc6/rc7 boots on the reference deck (2026-10-06).
+
+ISO SHA-256 `0060e1d9feac58c8768716c5622a09f8adf6d3f68839cfeeba6761e10c3826d9`,
+3,134,275,584 bytes (3.13 GB), built 2026-10-06T18:53:29Z from `d3a2b878` in
+34 min with a clean chroot. Baked `ISO_VERSION=v2.2.0-rc8`, baked README ==
+repo; the green GTK theme, the wallpaper-aware toggle, the Neon wallpaper and
+the corrected menu entry are all in the squashfs. QEMU (run alone) BIOS 108 s /
+UEFI 128 s, hooks-applied 20/20, content-presence 363/0/5 after one stale
+assertion pinning the old menu Exec was corrected. Not yet booted on the deck.
 
 ### Fixed
 

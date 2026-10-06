@@ -570,11 +570,12 @@ fi
 #     (DEC-PHASE9-006 invariant: no lxterminal, direct GTK executable)
 CONTROL_DESKTOP="$SQF/usr/share/applications/orionx-control-center.desktop"
 if [[ -f "$CONTROL_DESKTOP" ]]; then
-    if grep -qE "^Exec=/usr/bin/orionx-control-center" "$CONTROL_DESKTOP" 2>/dev/null; then
-        pass ".desktop Exec line is Exec=/usr/bin/orionx-control-center (DEC-PHASE9-006)"
+    # DEC-PHASE12-053: the entry opens the Orion Cockpit on a tab — still a direct GTK exec.
+    if grep -qE "^Exec=/usr/bin/orionx-cockpit --tab network" "$CONTROL_DESKTOP" 2>/dev/null; then
+        pass ".desktop Exec line opens the Cockpit tabs directly (DEC-PHASE12-053, DEC-PHASE9-006)"
     else
-        fail ".desktop Exec line is Exec=/usr/bin/orionx-control-center" \
-             "Check orionx-control-center.desktop Exec line — must be direct GTK exec (no lxterminal)"
+        fail ".desktop Exec line is Exec=/usr/bin/orionx-cockpit --tab network" \
+             "Check the 0700 hook's orionx-control-center.desktop block — must be the direct Cockpit exec (no terminal wrapper)"
     fi
     # DEC-PHASE9-006: no lxterminal in the Exec line
     # || true: DEC-PHASE9-014 — grep exits 1 on no-match; under pipefail this kills
