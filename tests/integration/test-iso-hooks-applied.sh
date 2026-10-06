@@ -323,11 +323,12 @@ if [[ -f "$HOOK_0700" ]]; then
     fi
 
     # (c) Exec line for orionx-control-center.desktop uses absolute path
-    if grep -q "Exec=/usr/bin/orionx-control-center" "$HOOK_0700" 2>/dev/null; then
-        pass "W9-2: orionx-control-center.desktop Exec=/usr/bin/orionx-control-center (DEC-PHASE9-006)"
+    # DEC-PHASE12-053: the entry opens the Orion Cockpit on a tab (still a direct GTK binary).
+    if grep -q "Exec=/usr/bin/orionx-cockpit --tab network" "$HOOK_0700" 2>/dev/null; then
+        pass "W9-2: orionx-control-center.desktop Exec opens the Cockpit tabs directly (DEC-PHASE12-053, DEC-PHASE9-006)"
     else
-        fail "W9-2: orionx-control-center.desktop Exec=/usr/bin/orionx-control-center" \
-             "0700 hook must emit Exec=/usr/bin/orionx-control-center in the .desktop block"
+        fail "W9-2: orionx-control-center.desktop Exec=/usr/bin/orionx-cockpit --tab network" \
+             "0700 hook must emit the Cockpit-tab Exec in the .desktop block (the tabs live in the Cockpit now)"
     fi
 
     # (d) /usr/bin/orionx-control-center symlink entry present in SCRIPT_MAP
@@ -339,12 +340,15 @@ if [[ -f "$HOOK_0700" ]]; then
     fi
 
     # (e) .desktop file staged in includes.chroot (source-tree presence check)
+    # DEC-PHASE12-053: the 0700 hook is the ONLY writer of this file. rc7 shipped a
+    # stale entry because a static copy here was edited while the hook's heredoc
+    # overwrote it at build time. A static copy must NOT exist.
     DESKTOP_SRC="$REPO_ROOT/iso/config/includes.chroot/usr/share/applications/orionx-control-center.desktop"
-    if [[ -f "$DESKTOP_SRC" ]]; then
-        pass "W9-2: iso/config/includes.chroot/usr/share/applications/orionx-control-center.desktop staged"
+    if [[ ! -f "$DESKTOP_SRC" ]]; then
+        pass "W9-2: no static orionx-control-center.desktop beside the 0700 heredoc (one writer)"
     else
-        fail "W9-2: iso/config/includes.chroot/usr/share/applications/orionx-control-center.desktop staged" \
-             "Static .desktop file must be present in includes.chroot for live-build to copy into chroot"
+        fail "W9-2: no static orionx-control-center.desktop beside the 0700 heredoc" \
+             "a static copy exists and the hook overwrites it at build time — delete it (DEC-PHASE12-053)"
     fi
 else
     skip "W9-2: orionx-control-center hook wiring checks" "hook file not found: $HOOK_0700"
