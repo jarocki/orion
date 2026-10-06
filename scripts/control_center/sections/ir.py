@@ -1,68 +1,51 @@
 """
-Orion-X Control Center — IR Tools section (W11-16: "work like magic").
-
-The forensic analyzers require an input file/dir, so launching them bare just
-printed a usage error (the operator's "tools just run --help" complaint). Each
-tool now gathers what it needs FIRST — via an in-process GTK file/folder picker
-(the Control Center is already GTK, so no scraping a terminal) — then runs on the
-chosen artifact in an xfce4-terminal (--hold, so the output stays readable). A
-missing tool becomes a one-line toast, never a raw error (helpers.ux).
-
-  Artifact Analyzer     → pick a file  → artifact-analyzer.py <file> -o ~/Analysis/…
-  Storyboard Generator  → pick a folder→ storyboard-gen.py -i <dir> -o …/timeline.html
-  PCAP Analyzer         → pick a pcap  → pcap-analyzer.py <file>   (self-dated output)
-  Lynis Security Audit  → sudo run-lynis.sh --quick  (real audit needs root)
-  Download Samples      → download-samples.sh --offline --samples-dir ~/orionx-samples
-  Toggle Theme          → runs in-session (no terminal — it's a UI action)
-
-@decision DEC-PHASE9-001
-@title Terminal emulator: xfce4-terminal (lxterminal is not installed)
-@status accepted
-@rationale All interactive launches use xfce4-terminal (via helpers.ux), matching
-  the .desktop Exec pattern.
-
-@decision DEC-PHASE11-034
-@title IR tools gather their input before running (file/folder pickers)
-@status accepted
-@rationale Three of the six tools have a required input; bare launch produced a
-  usage error. In-process Gtk.FileChooserDialog collects the artifact, then the
-  tool runs on it with a sensible ~/Analysis output — the tools now DO something.
+Orion Cockpit — Orion Tools tab (DEC-PHASE12-057): every on-deck and optional tool,
+read from the Workbench catalogue at runtime, plus the guided actions.
 
 @decision DEC-PHASE9-019
-@title from __future__ import annotations required in all Phase 10 Python modules
+@title Bullseye Python 3.9 + PEP-563 (from __future__ import annotations)
 @status accepted
+@rationale See helpers/subprocess_runner.py for the full rationale.
 """
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 
 import gi
 
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # type: ignore[import]  # noqa: E402
 
+from ..helpers import tools_data as T  # noqa: E402
 from ..helpers import ux  # noqa: E402
+from ..helpers.state_polling import add_poll  # noqa: E402
+
+_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(_ROOT / "osint"))
+try:
+    import osint_server as _OS  # noqa: E402  (single authority for installed-probe logic)
+except Exception:  # noqa: BLE001  pragma: no cover
+    _OS = None
 
 _ANALYSIS_DIR = os.path.expanduser("~/Analysis")
 _SAMPLES_DIR = os.path.expanduser("~/orionx-samples")
-
-_ARTIFACT_PATTERNS = [
-    "*.raw", "*.dmp", "*.mem", "*.vmem", "*.dd", "*.img", "*.001", "*.e01",
-    "*.pcap", "*.pcapng", "*.cap", "*.log", "*.evt", "*.evtx",
-]
+_ARTIFACT_PATTERNS = ["*.raw", "*.mem", "*.dd", "*.img", "*.E01", "*.vmem", "*.log", "*.evtx"]
 _PCAP_PATTERNS = ["*.pcap", "*.pcapng", "*.cap"]
+_DIM = "#9aa0a6"
+_POLL_MS = 30000
 
 
 def _pick_file(parent: Gtk.Widget, title: str, patterns: list[str], pname: str) -> str | None:
-    dlg = Gtk.FileChooserDialog(title=title, transient_for=parent.get_toplevel(),
-                                action=Gtk.FileChooserAction.OPEN)
+    dlg = Gtk.FileChooserDialog(title=title, parent=parent.get_toplevel(), action=Gtk.FileChooserAction.OPEN)
     dlg.add_button("Cancel", Gtk.ResponseType.CANCEL)
     dlg.add_button("Open", Gtk.ResponseType.OK)
-    filt = Gtk.FileFilter()
-    filt.set_name(pname)
+    f = Gtk.FileFilter()
+    f.set_name(pname)
     for p in patterns:
-        filt.add_pattern(p)
-    dlg.add_filter(filt)
+        f.add_pattern(p)
+    dlg.add_filter(f)
     allf = Gtk.FileFilter()
     allf.set_name("All files")
     allf.add_pattern("*")
@@ -73,8 +56,7 @@ def _pick_file(parent: Gtk.Widget, title: str, patterns: list[str], pname: str) 
 
 
 def _pick_dir(parent: Gtk.Widget, title: str) -> str | None:
-    dlg = Gtk.FileChooserDialog(title=title, transient_for=parent.get_toplevel(),
-                                action=Gtk.FileChooserAction.SELECT_FOLDER)
+    dlg = Gtk.FileChooserDialog(title=title, parent=parent.get_toplevel(), action=Gtk.FileChooserAction.SELECT_FOLDER)
     dlg.add_button("Cancel", Gtk.ResponseType.CANCEL)
     dlg.add_button("Select", Gtk.ResponseType.OK)
     path = dlg.get_filename() if dlg.run() == Gtk.ResponseType.OK else None
@@ -82,69 +64,43 @@ def _pick_dir(parent: Gtk.Widget, title: str) -> str | None:
     return path
 
 
-# --- per-tool handlers (parent is the clicked widget) ---
-
 def _run_artifact(parent: Gtk.Widget) -> None:
-    path = _pick_file(parent, "Select an artifact to analyze", _ARTIFACT_PATTERNS,
-                      "Forensic artifacts")
-    if not path:
-        return
-    _ensure_dir(_ANALYSIS_DIR)
-    outdir = os.path.join(_ANALYSIS_DIR, os.path.basename(path) + "-analysis")
-    ux.launch_in_terminal(["artifact-analyzer.py", path, "-o", outdir],
-                          needs="artifact-analyzer.py", friendly="Artifact Analyzer",
-                          title="Artifact Analyzer")
+    path = _pick_file(parent, "Choose an artifact to analyze", _ARTIFACT_PATTERNS, "Forensic artifacts")
+    if path:
+        os.makedirs(_ANALYSIS_DIR, exist_ok=True)
+        ux.launch_in_terminal(["artifact-analyzer.py", path, "--output", _ANALYSIS_DIR],
+                              needs="artifact-analyzer.py", friendly="Artifact Analyzer", title="Artifact Analyzer")
 
 
 def _run_storyboard(parent: Gtk.Widget) -> None:
-    d = _pick_dir(parent, "Select a folder of logs to correlate")
-    if not d:
-        return
-    _ensure_dir(_ANALYSIS_DIR)
-    out = os.path.join(_ANALYSIS_DIR, "timeline-" + os.path.basename(d.rstrip("/")) + ".html")
-    ux.launch_in_terminal(["storyboard-gen.py", "-i", d, "-o", out, "-f", "html"],
-                          needs="storyboard-gen.py", friendly="Storyboard Generator",
-                          title="Storyboard Generator")
+    path = _pick_dir(parent, "Choose a folder of logs")
+    if path:
+        os.makedirs(_ANALYSIS_DIR, exist_ok=True)
+        ux.launch_in_terminal(["storyboard-gen.py", path, "--output", _ANALYSIS_DIR],
+                              needs="storyboard-gen.py", friendly="Storyboard Generator", title="Storyboard Generator")
 
 
 def _run_pcap(parent: Gtk.Widget) -> None:
-    path = _pick_file(parent, "Select a packet capture to analyze", _PCAP_PATTERNS,
-                      "Packet captures")
-    if not path:
-        return
-    ux.launch_in_terminal(["pcap-analyzer.py", path],
-                          needs="pcap-analyzer.py", friendly="PCAP Analyzer",
-                          title="PCAP Analyzer")
+    path = _pick_file(parent, "Choose a packet capture", _PCAP_PATTERNS, "Packet captures")
+    if path:
+        ux.launch_in_terminal(["pcap-analyzer.py", path], needs="pcap-analyzer.py",
+                              friendly="PCAP Analyzer", title="PCAP Analyzer")
 
 
 def _run_lynis(_parent: Gtk.Widget) -> None:
-    # A meaningful audit needs root; sudo prompts inside the terminal.
-    ux.launch_in_terminal(["sudo", "run-lynis.sh", "--quick"],
-                          needs="run-lynis.sh", friendly="Lynis Security Audit",
-                          title="Lynis Security Audit")
+    ux.launch_in_terminal(["sudo", "run-lynis.sh", "--quick"], needs="run-lynis.sh",
+                          friendly="Lynis Security Audit", title="Lynis Security Audit")
 
 
 def _run_samples(_parent: Gtk.Widget) -> None:
-    _ensure_dir(_SAMPLES_DIR)
-    ux.launch_in_terminal(["download-samples.sh", "--offline", "--samples-dir", _SAMPLES_DIR],
-                          needs="download-samples.sh", friendly="Download Samples",
-                          title="Download Samples")
+    ux.launch_in_terminal(["download-samples.sh", _SAMPLES_DIR], needs="download-samples.sh",
+                          friendly="Download Samples", title="Download Samples")
 
 
 def _run_toggle_theme(_parent: Gtk.Widget) -> None:
-    # A UI action, not a forensic tool — run it in-session, no terminal.
-    if ux.launch_detached(["toggle-theme.sh"], needs="toggle-theme.sh", friendly="Theme"):
-        ux.notify("✓ Theme toggled — new terminals + wallpaper updated", ux.LEVEL_OK)
+    ux.launch_detached(["toggle-theme.sh"], needs="toggle-theme.sh", friendly="Toggle Theme")
 
 
-def _ensure_dir(path: str) -> None:
-    try:
-        os.makedirs(path, exist_ok=True)
-    except OSError:
-        pass
-
-
-# (label, tooltip, handler)
 _IR_TOOLS = [
     ("Artifact Analyzer", "Pick a memory/disk/log artifact and analyze it", _run_artifact),
     ("Storyboard Generator", "Pick a folder of logs and build an incident timeline", _run_storyboard),
@@ -155,30 +111,42 @@ _IR_TOOLS = [
 ]
 
 
+def _hdr(box: Gtk.Box, text: str) -> None:
+    h = Gtk.Label()
+    h.set_markup(f"<b>{text}</b>")
+    h.set_halign(Gtk.Align.START)
+    box.pack_start(h, False, False, 4)
+
+
+def _optional_states(installable: list[dict]) -> dict:
+    if _OS is None:
+        return {}
+    try:
+        geo = _OS.geoip_state(Path(_OS.pewpew_feed.GEOIP_COUNTRY_DB), Path(_OS.pewpew_feed.GEOIP_ASN_DB))
+        return _OS.optional_state(installable, bool(geo.get("available")))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def build_section() -> Gtk.Widget:
-    """Return the IR Tools section widget."""
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
     box.set_border_width(12)
-
     title = Gtk.Label()
-    title.set_markup("<b>IR Tools</b>")
+    title.set_markup("<b>Orion Tools</b>")
     title.set_halign(Gtk.Align.START)
     box.pack_start(title, False, False, 0)
-
-    desc = Gtk.Label(
-        label="Click a tool — you'll be asked for the file or folder it needs, then it "
-        "runs on it. If a tool isn't installed you'll get a clear message, not an error."
-    )
+    desc = Gtk.Label(label="Everything on this deck, and everything you can add. The list is read from the "
+                           "Workbench catalogue at runtime, so it is what is actually here — not what a build promised.")
     desc.set_halign(Gtk.Align.START)
     desc.set_line_wrap(True)
-    box.pack_start(desc, False, False, 4)
+    box.pack_start(desc, False, False, 2)
 
+    _hdr(box, "Guided actions")
     grid = Gtk.Grid()
     grid.set_column_spacing(8)
     grid.set_row_spacing(6)
     grid.set_column_homogeneous(True)
     box.pack_start(grid, False, False, 0)
-
     for idx, (label, tip, handler) in enumerate(_IR_TOOLS):
         btn = Gtk.Button(label=label)
         btn.get_style_context().add_class("orionx-tool")
@@ -187,4 +155,69 @@ def build_section() -> Gtk.Widget:
         btn.connect("clicked", lambda w, h=handler: h(w))
         grid.attach(btn, idx % 2, idx // 2, 1, 1)
 
+    _hdr(box, "On this deck")
+    deck_grid = Gtk.Grid()
+    deck_grid.set_column_spacing(8)
+    deck_grid.set_row_spacing(4)
+    box.pack_start(deck_grid, False, False, 0)
+    _hdr(box, "Optional — install when you need it")
+    opt_grid = Gtk.Grid()
+    opt_grid.set_column_spacing(8)
+    opt_grid.set_row_spacing(4)
+    box.pack_start(opt_grid, False, False, 0)
+
+    def _clear(g: Gtk.Grid) -> None:
+        for ch in g.get_children():
+            g.remove(ch)
+
+    def _refresh() -> bool:
+        local, installable = T.load_catalogue()
+        _clear(deck_grid)
+        for i, it in enumerate(T.on_deck(local, os.path.exists)):
+            name = Gtk.Label()
+            name.set_markup(f"{it.get('name', it.get('id'))}  <span foreground=\"{_DIM}\">{str(it.get('blurb', ''))[:90]}</span>")
+            name.set_halign(Gtk.Align.START)
+            name.set_line_wrap(True)
+            name.set_hexpand(True)
+            deck_grid.attach(name, 0, i, 1, 1)
+            b = Gtk.Button(label="Run")
+            b.get_style_context().add_class("orionx-tool")
+            how, argv = T.launch_argv(it)
+            if argv:
+                if how == "detached":
+                    b.connect("clicked", lambda _w, a=argv, n=it.get("name", ""): ux.launch_detached(a, needs=a[0], friendly=str(n)))
+                else:
+                    b.connect("clicked", lambda _w, a=argv, n=it.get("name", ""): ux.launch_in_terminal(
+                        a, needs=a[0], friendly=str(n), title=str(n)))
+            else:
+                b.set_sensitive(False)
+            deck_grid.attach(b, 1, i, 1, 1)
+        states = _optional_states(installable)
+        _clear(opt_grid)
+        for i, it in enumerate(installable):
+            st = states.get(str(it.get("id")), {})
+            installed = bool(st.get("known") and st.get("installed"))
+            name = Gtk.Label()
+            tag = f"installed — {st.get('evidence', '')}" if installed else ("not installed" if st.get("known") else "unknown")
+            name.set_markup(f"{it.get('name', it.get('id'))}  <span foreground=\"{_DIM}\">{tag}</span>")
+            name.set_halign(Gtk.Align.START)
+            name.set_line_wrap(True)
+            name.set_hexpand(True)
+            opt_grid.attach(name, 0, i, 1, 1)
+            b = Gtk.Button(label="Re-run installer" if installed else "Install")
+            b.get_style_context().add_class("orionx-tool")
+            argv = T.install_argv(it)
+            if argv:
+                needs = argv[1] if argv[0] == "sudo" and len(argv) > 1 else argv[0]
+                b.connect("clicked", lambda _w, a=argv, nd=needs, n=it.get("name", ""): ux.launch_in_terminal(
+                    a, needs=nd, friendly=f"Install {n}", title=f"Install {n}"))
+            else:
+                b.set_sensitive(False)
+            opt_grid.attach(b, 1, i, 1, 1)
+        deck_grid.show_all()
+        opt_grid.show_all()
+        return True
+
+    _refresh()
+    add_poll(_POLL_MS, _refresh)
     return box

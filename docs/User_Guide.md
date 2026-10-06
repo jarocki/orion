@@ -389,7 +389,7 @@ After login you land on the XFCE desktop with the Phoenix wallpaper, a top panel
 
 Applications → **Orion** (Phoenix icon) groups the Orion-X tools:
 
-- **Orion-X Control Center**
+- **Orion Cockpit — Tabs** — opens the Cockpit on its tabs (Network, Mesh, Comms, Awareness, Orion Tools, Nebula AI, Auto-Healing); this replaced the separate Control Center window
 - **Orion Cockpit**
 - **Orion-X Mesh**
 - **Orion-X — Start Mesh**
@@ -415,22 +415,9 @@ The top panel shows, left to right:
 | ◎ *scans* | Number of scan / intrusion-detection events published to the event bus since boot (categories `ids`, `scan`, `recon`, `probe`, or sources `suricata`, `zeek`, `nucleotide`). `◎ 0` on a quiet deck is normal |
 | ◉ *clients* | Number of other machines on the local network segment that have exchanged traffic with this deck (live entries in the ARP/neighbour table) |
 
-### Control Center
+### Control Center → Cockpit tabs
 
-The Control Center (`orionx-control-center`) opens automatically with the desktop session. Its header carries the tagline **"Designed for your 3am self"**, a **◈ COCKPIT** button that opens the Orion Cockpit, and a message line (the "toast bar") that reports the result of every action you take. It is organized into seven tabs:
-
-**Network · Mesh · Comms · Awareness · IR Tools · Nebula AI · Auto-Healing**
-
-- **Network** — local connectivity (wired/Wi-Fi) and VPN.
-- **Mesh** — join, inspect and leave the WireGuard P2P mesh (see [WireGuard P2P Mesh](#wireguard-p2p-mesh)).
-- **Comms** — Matrix setup and clients (see [Secure Communication](#6-secure-communication)).
-- **Awareness**
-    - *Live health*: CPU load, memory, disk, uptime, Nebula AI, Network, Mesh, Firewall — each green/amber/red, refreshed every 3 s.
-    - *Threat posture* (radio) sets how actively the deck behaves on the network. **Tier 0 · Passive** — quiet monitoring only: passive host/network observation, no active probing (the default). **Tier 1 · Active Monitoring** — IDS-style detection (Suricata with rules) with Nebula contextualising alerts; Suricata must be enabled first (§10). **Tier 2 · Deception** — canaries, honeytokens and tarpits; explicit opt-in. Selecting a tier records it in `~/.config/orionx/threat-posture` for the detection tools and Nebula to read; nothing above Tier 0 is active unless you choose it.
-    - *Audible alerts · R.A.I.N.*: **Enable audible alerts**, **Alert from severity** (Info / Notice / Warning / Critical; default Warning), **Volume** slider, **Spoken voice cue**, **Test alert** button. Stored in `~/.config/orionx/rain.json`. See [R.A.I.N.](#rain-real-time-audible-intrusion-notification).
-- **IR Tools** — Artifact Analyzer, Storyboard Generator, PCAP Analyzer, Lynis Security Audit (a host security checklist, `run-lynis.sh`), Download Samples, Toggle Theme. Click one, pick the file or folder it needs, and it runs. A tool that is not installed produces a clear message, not an error.
-- **Nebula AI** — runtime and integrity status, a **Warm up model** button (loads the model into memory ahead of your first question), the **Ask Nebula** chat pane, and the list of MCP tools (see [Nebula AI](#8-nebula-ai)). There are no start/stop buttons; the service is managed with `systemctl` (§8).
-- **Auto-Healing** — pre-approves how much Orion-X may do on its own when it detects a problem, per class of response: **Block IP** (drop traffic from a hostile source with nftables), **Kill process**, **Quarantine file** (move it to a sealed vault), **Isolate node** (cut this host off the network), **Rotate mesh keys**, **Revoke Matrix session**. For each choose **off** (never), **propose** (suggest only — the default), **confirm** (ask first) or **autonomous** (act, then tell you). Stored in `~/.config/orionx/autonomy.json`; the healing engine and Nebula read it before acting.
+The Control Center's tabs now live inside the Orion Cockpit (press the tab strip on the left; `orionx-cockpit --tab mesh` opens one directly). **LIVE** is the dashboard. **Mesh** shows the WireGuard identity, every connected node with its endpoint, last handshake and traffic, rx/tx sparklines, and the mesh's own history from the event bus, with Start/Stop/Peers. **Comms** says where the Matrix homeserver is (this deck or a remote), its service state, which rooms and members this deck's login can see, which clients are installed (Matrix CLI, Element, gomuks) with an Open button each — and an Install button for the ones that are not. **Awareness** adds the firewall's addresses, the next hop, the DNS servers and four trend sparklines (packets/s, CPU, memory, disk) to the live health rows, posture tiers and R.A.I.N. controls. **Orion Tools** (formerly IR Tools) lists the guided actions plus every tool actually on this deck and every optional one, read from the Workbench catalogue at runtime — Run for what is here, Install for what is not. **Nebula AI** and **Auto-Healing** are unchanged.
 
 ## 5. Networking
 

@@ -1,9 +1,5 @@
 """
-Orion-X Control Center — Comms section.
-
-Displays matrix-synapse-orionx.service status and provides a button to open
-the Element-web chat interface.  The button is present-but-disabled when the
-service is inactive, with a tooltip explaining why.
+Orion Cockpit — Comms tab: the Matrix server, who is on it, every client (DEC-PHASE12-055).
 
 @decision DEC-PHASE9-019
 @title Bullseye Python 3.9 + PEP-563 (from __future__ import annotations)
@@ -12,85 +8,166 @@ service is inactive, with a tooltip explaining why.
 """
 from __future__ import annotations
 
+import os
+import shutil
+import sys
+from pathlib import Path
+
 import gi
 
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # type: ignore[import]  # noqa: E402
 
+from ..helpers import comms_data as C  # noqa: E402
 from ..helpers import ux  # noqa: E402
-from ..helpers.state_polling import (  # noqa: E402
-    DEFAULT_POLL_MS,
-    add_poll,
-    get_matrix_service_state,
-)
+from ..helpers.state_polling import add_poll, get_matrix_service_state  # noqa: E402
+from ..helpers.subprocess_runner import run_stdout  # noqa: E402
 
-_MATRIX_CHAT_URL = "https://localhost:8008/"
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "awareness"))
+try:
+    import deck_vitals as _V  # noqa: E402
+except ImportError:  # pragma: no cover
+    _V = None
+
+_POLL_MS = 10000
+_DIM = "#9aa0a6"
+
+
+def _primary_ip() -> str | None:
+    if _V is None:
+        return None
+    try:
+        ifs = _V.parse_ip_addr(_V._run(["ip", "-j", "addr"]))
+        rt = _V.parse_default_route(_V._run(["ip", "-j", "route", "show", "default"]))
+        return _V.primary_ipv4(ifs, rt)[0]
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def build_section() -> Gtk.Widget:
-    """Return the Comms section widget."""
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
     box.set_border_width(12)
-
     title = Gtk.Label()
     title.set_markup("<b>Comms (Matrix)</b>")
     title.set_halign(Gtk.Align.START)
     box.pack_start(title, False, False, 0)
 
-    status_label = Gtk.Label(label="Checking Matrix service…")
-    status_label.set_halign(Gtk.Align.START)
-    status_label.set_selectable(True)
-    box.pack_start(status_label, False, False, 4)
+    headline = Gtk.Label(label="Checking Matrix…")
+    headline.set_halign(Gtk.Align.START)
+    headline.set_line_wrap(True)
+    headline.set_selectable(True)
+    box.pack_start(headline, False, False, 2)
+    detail = Gtk.Label(label="")
+    detail.set_halign(Gtk.Align.START)
+    detail.set_line_wrap(True)
+    detail.set_selectable(True)
+    box.pack_start(detail, False, False, 0)
 
-    chat_btn = Gtk.Button(label="Open Matrix Chat")
-    chat_btn.get_style_context().add_class("orionx-tool")
-    chat_btn.set_tooltip_text(f"Open {_MATRIX_CHAT_URL} in the default browser")
+    who_hdr = Gtk.Label()
+    who_hdr.set_markup("<b>Who is connected</b>")
+    who_hdr.set_halign(Gtk.Align.START)
+    box.pack_start(who_hdr, False, False, 2)
+    who = Gtk.Label(label="…")
+    who.set_halign(Gtk.Align.START)
+    who.set_line_wrap(True)
+    who.set_selectable(True)
+    who.set_xalign(0.0)
+    box.pack_start(who, False, False, 0)
+    refresh_btn = Gtk.Button(label="Refresh rooms & members")
+    refresh_btn.get_style_context().add_class("orionx-tool")
+    box.pack_start(refresh_btn, False, False, 2)
 
-    def _open_chat(_widget: Gtk.Widget) -> None:
-        # Say what is wrong instead of opening nothing (DEC-PHASE12-036).
-        #
-        # Reported from hardware: with matrix-synapse-orionx inactive, this
-        # button handed a URL to xdg-open, no browser could reach it, and the
-        # operator got silence. The button "worked"; its destination did not
-        # exist. Matrix is opt-in by design (W11-14f) — the honest answer is to
-        # name the two things that have to happen, not to fail quietly.
-        if get_matrix_service_state() != "active":
-            status_label.set_text(
-                "Matrix is not running — nothing was opened.\n"
-                "It is opt-in and not installed by default: run\n"
-                "  sudo setup-matrix.sh --mode client   (or --mode server)\n"
-                "on a network-connected node, then reopen this tab."
-            )
-            status_label.set_line_wrap(True)
+    clients_hdr = Gtk.Label()
+    clients_hdr.set_markup("<b>Clients</b>")
+    clients_hdr.set_halign(Gtk.Align.START)
+    box.pack_start(clients_hdr, False, False, 2)
+    clients_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    box.pack_start(clients_box, False, False, 0)
+
+    setup_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 4)
+    box.pack_start(setup_box, False, False, 0)
+    for label, mode in (("Set up as server", "server"), ("Set up as client", "client")):
+        b = Gtk.Button(label=label)
+        b.get_style_context().add_class("orionx-tool")
+        b.connect("clicked", lambda _w, m=mode: ux.launch_in_terminal(
+            ["sudo", "setup-matrix.sh", "--mode", m], needs="setup-matrix.sh",
+            friendly=f"Matrix setup ({m})", title=f"Orion-X Matrix — {m}"))
+        setup_box.pack_start(b, False, False, 0)
+
+    def _who_refresh(_w=None) -> None:
+        if not C.MC_CREDENTIALS.exists() or not shutil.which("matrix-commander"):
+            who.set_text("No Matrix login on this deck (matrix-commander --login) — nothing to list.")
             return
-        ux.launch_detached(
-            ["xdg-open", _MATRIX_CHAT_URL], needs="xdg-open", friendly="Matrix chat"
-        )
+        rooms = C.parse_joined_rooms(run_stdout(["matrix-commander", "--joined-rooms"], timeout=12))
+        members = C.parse_joined_members(run_stdout(["matrix-commander", "--joined-members", "*"], timeout=15))
+        if not rooms:
+            who.set_text("Logged in, but this account has joined no rooms.")
+            return
+        lines = []
+        for r in rooms:
+            ms = members.get(r, [])
+            lines.append(f"{r}  — {len(ms)} member(s)" + (": " + ", ".join(ms[:8]) + ("…" if len(ms) > 8 else "") if ms else ""))
+        who.set_text("\n".join(lines))
 
-    chat_btn.connect("clicked", _open_chat)
-    box.pack_start(chat_btn, False, False, 0)
+    refresh_btn.connect("clicked", _who_refresh)
 
-    def _refresh_comms() -> bool:
-        state = get_matrix_service_state()
-        is_active = state == "active"
-        status_label.set_text(f"matrix-synapse-orionx: {state}")
-        # Deliberately NOT set_sensitive(False) (DEC-PHASE12-036). A greyed
-        # button explains itself only on hover, so clicking it produced silence
-        # — reported from hardware as "matrix chat still does nothing". It now
-        # stays clickable and answers in the status label.
-        #
-        # The old tooltip also gave the wrong remedy: `systemctl start` cannot
-        # help when Synapse is not installed, which is the default state.
-        if not is_active:
-            chat_btn.set_tooltip_text(
-                f"Matrix service is {state} — click for how to enable it "
-                "(it is opt-in: setup-matrix.sh)"
-            )
+    def _rebuild_clients() -> None:
+        for ch in clients_box.get_children():
+            clients_box.remove(ch)
+        for c in C.client_states(os.path.exists, lambda n: shutil.which(n) is not None):
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            lbl = Gtk.Label()
+            state = "installed" if c["installed"] else "not installed"
+            lbl.set_markup(f"{c['label']}  <span foreground=\"{_DIM}\">{state}</span>")
+            lbl.set_halign(Gtk.Align.START)
+            row.pack_start(lbl, True, True, 0)
+            if c["installed"]:
+                b = Gtk.Button(label="Open")
+                b.get_style_context().add_class("orionx-tool")
+                if c["id"] == "matrix-commander":
+                    argv = C.desktop_exec(C.MC_DESKTOP.read_text(encoding="utf-8") if C.MC_DESKTOP.exists() else "") \
+                        or ["matrix-commander", "--help"]
+                    b.connect("clicked", lambda _w, a=argv: ux.launch_in_terminal(
+                        a, needs=a[0], friendly="Matrix chat (CLI)", title="Orion-X Matrix Comms"))
+                elif c["id"] == "gomuks":
+                    b.connect("clicked", lambda _w: ux.launch_in_terminal(
+                        ["gomuks"], needs="gomuks", friendly="gomuks", title="gomuks"))
+                else:
+                    b.connect("clicked", lambda _w: ux.launch_detached(["element-desktop"], needs="element-desktop", friendly="Element"))
+            else:
+                b = Gtk.Button(label="Install")
+                b.get_style_context().add_class("orionx-tool")
+                inst = c["installer"]
+                if inst:
+                    b.connect("clicked", lambda _w, i=inst, lab=c["label"]: ux.launch_in_terminal(
+                        i.split(), needs=i.split()[1] if i.startswith("sudo ") else i.split()[0],
+                        friendly=f"Install {lab}", title=f"Install {lab}"))
+                else:
+                    b.set_sensitive(False)
+                    b.set_tooltip_text("ships on the image")
+            row.pack_start(b, False, False, 0)
+            clients_box.pack_start(row, False, False, 0)
+        clients_box.show_all()
+
+    def _refresh() -> bool:
+        st = C.server_state(
+            get_matrix_service_state(),
+            shutil.which("synapse_homeserver") is not None,
+            C.HOMESERVER_YAML.exists(),
+            C.ELEMENT_CFG.read_text(encoding="utf-8") if C.ELEMENT_CFG.exists() else None,
+            _primary_ip())
+        headline.set_text(st["headline"])
+        if st["mode"] == "server":
+            detail.set_text(f"{C.SYNAPSE_UNIT}: {st['unit']}  ·  clients connect to {st['url']}")
+        elif st["mode"] == "client":
+            detail.set_text(f"homeserver {st['url']}  ·  configured in {C.ELEMENT_CFG}")
         else:
-            chat_btn.set_tooltip_text(f"Open {_MATRIX_CHAT_URL} in the default browser")
+            detail.set_text("")
+        _rebuild_clients()
         return True
 
-    _refresh_comms()
-    add_poll(DEFAULT_POLL_MS, _refresh_comms)
-
+    _refresh()
+    _who_refresh()
+    add_poll(_POLL_MS, _refresh)
     return box

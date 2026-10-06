@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.2.0-rc7] — in progress
+
+From the rc6 boot on the reference deck (2026-10-06). Not in the rc6 image.
+
+### Changed
+
+- **The Orion Cockpit is the one tabbed window** (DEC-PHASE12-053). LIVE is the
+  dashboard; the Control Center's sections are its other tabs, built from a
+  single list (`control_center/app.py: SECTIONS`). `orionx-control-center` is
+  now a launcher that opens the Cockpit on a tab (`orionx-cockpit --tab mesh`),
+  and the menu entry says so. There is no second window to drift against.
+- **Mesh tab** (DEC-PHASE12-054): interface, VPN IP, mode, uptime, health;
+  every connected node with endpoint, last handshake, rx/tx; rx/tx
+  sparklines; and the mesh's history from the event bus. Reads `wg show wg0
+  dump` and `orionx-mesh status` — the tab had been reporting one word while
+  the mesh was up.
+- **Comms tab** (DEC-PHASE12-055): where the Matrix homeserver is (this deck
+  at its address, or a remote configured in Element) and its service state;
+  rooms and members this deck's login can see (via `matrix-commander`, or a
+  plain "no login" line); every client with Open (Matrix CLI, Element,
+  gomuks) or Install; set-up buttons for server and client mode.
+- **Awareness tab** (DEC-PHASE12-056): firewall address(es), next hop, DNS
+  servers; sparklines for packets/s, CPU, memory and disk.
+- **IR Tools is now Orion Tools** (DEC-PHASE12-057): the six guided actions
+  plus every tool on this deck and every optional one, read from the
+  Workbench catalogue at runtime with the same installed-probe logic the
+  Workbench uses — Run for what is here, Install for what is not.
+
+### Notes from the deck
+
+- `gnupg` was reported missing. The rc6 image carries `gnupg`, `gpg`, `gpgv`,
+  `dirmngr`, `gpg-agent`, `gpgconf` and `gpgsm` (dpkg status), and no Orion-X
+  script calls `gpg` directly. The report needs the exact command and output.
+
 ## [v2.2.0-rc6] — 2026-10-05 (release candidate; internal build, not published)
 
 Everything here was found by booting rc5 on the reference deck on 2026-10-05

@@ -267,7 +267,11 @@ while IFS= read -r -d '' pyfile; do
         # W10-1 adds JSON parsing (status.py output), logging (audit), and
         # pathlib (cross-platform paths) — all stdlib. (DEC-PHASE10-005)
         # W11-15 adds shutil (which() preflight in helpers/ux.py) — stdlib. (DEC-PHASE11-030)
-        if ! [[ "$top" =~ ^(os|sys|subprocess|shutil|typing|argparse|gi|__future__|json|logging|pathlib)$ ]]; then
+        # The stdlib is asked, not listed: a hand-kept regex failed six times on
+        # 2026-10-06 for re/shlex/time/collections (all stdlib). In-repo sibling
+        # modules under scripts/ are ours, not third-party (DEC-PHASE12-053).
+        if ! [[ "$top" =~ ^(gi|__future__|control_center|deck_vitals|osint_server|pewpew_feed|tuning_lib|cockpit_lib|rain_lib)$ ]] \
+           && ! python3 -c 'import sys; raise SystemExit(0 if sys.argv[1] in sys.stdlib_module_names else 1)' "$top"; then
             fail "no third-party import: ${pyfile#"$REPO_ROOT/"} imports '$top'" \
                  "Only stdlib + gi.repository allowed in shipped Python"
             _found_violation=1

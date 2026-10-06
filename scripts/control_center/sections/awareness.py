@@ -237,6 +237,41 @@ def _mesh_health() -> tuple[str, str]:
     return "not joined", _AMBER
 
 
+def _vitals() -> dict:
+    """deck_vitals.collect() if importable, else {} (never raises). DEC-PHASE12-056."""
+    try:
+        import sys as _s
+        from pathlib import Path as _P
+        _s.path.insert(0, str(_P(__file__).resolve().parents[2] / "awareness"))
+        import deck_vitals as _V  # noqa: PLC0415
+        return _V.collect()
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _firewall_addr() -> tuple[str, str]:
+    """The addresses this deck's firewall is protecting, and whether it is up."""
+    v = _vitals()
+    up = _svc_active("orionx-firewall.service")
+    addrs = [f"{i['iface']} {i['ipv4'][0].split('/')[0]}" for i in v.get("interfaces", []) if i.get("ipv4")]
+    txt = ("active" if up else "INACTIVE") + (" · " + ", ".join(addrs) if addrs else " · no addresses")
+    return txt, (_GREEN if up else _RED)
+
+
+def _next_hop() -> tuple[str, str]:
+    v = _vitals()
+    gw = v.get("gateway")
+    if gw:
+        return f"{gw} via {v.get('gateway_dev') or '?'}", _GREEN
+    return "no default route", _AMBER
+
+
+def _dns() -> tuple[str, str]:
+    v = _vitals()
+    dns = v.get("dns") or []
+    return (", ".join(dns), _GREEN) if dns else ("no nameserver configured", _AMBER)
+
+
 def _firewall_health() -> tuple[str, str]:
     if _svc_active("orionx-firewall.service"):
         return "active", _GREEN
@@ -276,6 +311,10 @@ class _AwarenessWidget:
             ("Network", _network_health),
             ("Mesh", _mesh_health),
             ("Firewall", _firewall_health),
+            # DEC-PHASE12-056: where this deck sits on the wire.
+            ("Firewall address", _firewall_addr),
+            ("Next hop", _next_hop),
+            ("DNS", _dns),
         ]
         # Edge-trigger state for R.A.I.N. service alerts (baseline on first poll).
         self._svc_prev: dict[str, bool] = {}
@@ -294,6 +333,21 @@ class _AwarenessWidget:
 
         self._refresh_health()
         GLib.timeout_add(_POLL_MS, self._refresh_health)
+
+        # --- Trends (DEC-PHASE12-056): packets/s, CPU, memory, disk ---
+        from ..helpers.spark import Spark  # noqa: PLC0415
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._sp_pkts = Spark("packets/s", lambda v: f"{v:.0f}", color=(0.2, 0.85, 0.5))
+        self._sp_cpu = Spark("cpu", lambda v: f"{v:.0f}%", vmax=100.0)
+        self._sp_mem = Spark("mem", lambda v: f"{v:.0f}%", vmax=100.0, color=(0.55, 0.7, 1.0))
+        self._sp_disk = Spark("disk", lambda v: f"{v:.0f}%", vmax=100.0, color=(0.9, 0.75, 0.3))
+        for s in (self._sp_pkts, self._sp_cpu, self._sp_mem, self._sp_disk):
+            s.set_hexpand(True)
+            row.pack_start(s, True, True, 0)
+        self.box.pack_start(row, False, False, 4)
+        self._trend_prev: dict = {}
+        self._refresh_trends()
+        GLib.timeout_add(2000, self._refresh_trends)
 
         self.box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL),
                             False, False, 6)
@@ -398,6 +452,27 @@ class _AwarenessWidget:
         brow.pack_start(self._rain_speech, False, False, 0)
         brow.pack_start(test_btn, False, False, 0)
         self.box.pack_start(brow, False, False, 2)
+
+    def _refresh_trends(self) -> bool:
+        try:
+            import sys as _s
+            from pathlib import Path as _P
+            _s.path.insert(0, str(_P(__file__).resolve().parents[2] / "awareness"))
+            import deck_vitals as _V  # noqa: PLC0415
+            import time as _t
+            v = _V.collect(self._trend_prev.get("cpu"))
+            now = _t.time()
+            net = v.get("net") or {}
+            pk = net.get("rx_packets", 0) + net.get("tx_packets", 0)
+            if "pk" in self._trend_prev and now > self._trend_prev["t"]:
+                self._sp_pkts.push(max(0.0, (pk - self._trend_prev["pk"]) / (now - self._trend_prev["t"])))
+            self._trend_prev.update(pk=pk, t=now, cpu=v.get("cpu_sample"))
+            self._sp_cpu.push(v.get("cpu_pct"))
+            self._sp_mem.push((v.get("mem") or {}).get("used_pct"))
+            self._sp_disk.push((v.get("disk") or {}).get("used_pct"))
+        except Exception:  # noqa: BLE001 - a trend widget must never break the tab
+            pass
+        return True
 
     def _refresh_health(self) -> bool:
         for label, (name, fn) in zip(self._value_labels, self._probes):

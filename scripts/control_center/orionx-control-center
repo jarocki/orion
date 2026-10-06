@@ -39,9 +39,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="orionx-control-center",
         description=(
-            "Orion-X Control Center — cyberdeck UX baseline.\n\n"
-            "Opens a GTK window with sections: Network, Mesh, Comms, "
-            "Situational Awareness, IR Tools, Nebula AI, Auto-Healing."
+            "Orion-X Control Center — launcher for the Orion Cockpit tabs (DEC-PHASE12-053).\n\n"
+            "Opens the Cockpit on a tab: Network, Mesh, Comms, "
+            "Awareness, Orion Tools, Nebula AI, Auto-Healing."
         ),
     )
     parser.add_argument(
@@ -49,6 +49,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         action="version",
         version=f"%(prog)s {_VERSION}",
     )
+    # DEC-PHASE12-053: the tabs live in the Orion Cockpit; this is a launcher.
+    parser.add_argument("--tab", default=None,
+                        help="open the Orion Cockpit on this tab (network, mesh, comms, awareness, tools, nebula, healing)")
     return parser.parse_args(argv)
 
 

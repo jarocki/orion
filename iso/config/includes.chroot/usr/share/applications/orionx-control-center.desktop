@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=Orion-X Control Center
-Comment=Orion-X cyberdeck control surface (Network, Mesh, Comms, IR, Nebula AI)
-Exec=/usr/bin/orionx-control-center
+Name=Orion Cockpit — Tabs
+Comment=Mesh, Comms, Awareness, Orion Tools, Nebula AI and Auto-Healing — the Cockpit's tabs (the former Control Center)
+Exec=/usr/bin/orionx-cockpit --tab network
 Icon=preferences-desktop
 Categories=X-Orion;

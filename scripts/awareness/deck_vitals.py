@@ -162,6 +162,40 @@ def primary_ipv4(ifaces: list[dict[str, Any]], route: dict[str, Any]) -> tuple[s
     return None, None
 
 
+def parse_net_dev(text: str) -> dict[str, int]:
+    """/proc/net/dev totals over non-loopback interfaces: rx/tx bytes and packets."""
+    out = {"rx_bytes": 0, "tx_bytes": 0, "rx_packets": 0, "tx_packets": 0}
+    for line in (text or "").splitlines():
+        if ":" not in line:
+            continue
+        name, rest = line.split(":", 1)
+        if name.strip() in SKIP_IFACES:
+            continue
+        f = rest.split()
+        if len(f) < 10:
+            continue
+        try:
+            out["rx_bytes"] += int(f[0])
+            out["rx_packets"] += int(f[1])
+            out["tx_bytes"] += int(f[8])
+            out["tx_packets"] += int(f[9])
+        except ValueError:
+            continue
+    return out
+
+
+def parse_resolv_conf(text: str) -> list[str]:
+    """nameserver entries from resolv.conf, in order, de-duplicated."""
+    out: list[str] = []
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if s.startswith("nameserver"):
+            parts = s.split()
+            if len(parts) >= 2 and parts[1] not in out:
+                out.append(parts[1])
+    return out
+
+
 def fmt_bytes(n: float | None) -> str:
     if n is None:
         return "—"
@@ -250,6 +284,8 @@ def collect(prev_cpu: tuple[int, int] | None = None, sample: float = 0.0,
     out["gateway"] = route.get("gateway")
     out["gateway_dev"] = route.get("dev")
     out["primary_ipv4"], out["primary_iface"] = primary_ipv4(ifaces, route)
+    out["net"] = parse_net_dev(_safe(read, "/proc/net/dev"))
+    out["dns"] = parse_resolv_conf(_safe(read, "/etc/resolv.conf"))
     return out
 
 

@@ -39,6 +39,9 @@ sys.path.insert(0, str(_here.parent))
 import cockpit_lib as L  # noqa: E402
 sys.path.insert(0, str(_here.parent.parent / "awareness"))
 import deck_vitals as V  # noqa: E402  (DEC-PHASE12-049: one authority for hostname/IP/vitals)
+sys.path.insert(0, str(_here.parent.parent))
+from control_center import app as CC  # noqa: E402  (DEC-PHASE12-053: the tab authority)
+from control_center.helpers import ux as CCUX  # noqa: E402
 
 try:
     import gi
@@ -72,9 +75,9 @@ _DEMO_MSGS = [
 
 
 class Cockpit(Gtk.Window):
-    def __init__(self, fullscreen: bool = False, demo: bool = False) -> None:
+    def __init__(self, fullscreen: bool = False, demo: bool = False, tab: str = "live") -> None:
         super().__init__(title="Orion Cockpit")
-        self.set_default_size(1280, 720)
+        self.set_default_size(1280, 760)
         try:
             self.set_icon_from_file(ICON)
         except Exception:
@@ -83,7 +86,20 @@ class Cockpit(Gtk.Window):
         self.demo = demo
 
         self.da = Gtk.DrawingArea()
-        self.add(self.da)
+        # DEC-PHASE12-053: one tabbed window. LIVE is the Cairo dashboard; the
+        # other tabs are the Control Center's sections, built from CC.SECTIONS.
+        CC.install_css()
+        self.nb = Gtk.Notebook()
+        self.nb.set_tab_pos(Gtk.PositionType.LEFT)
+        self.nb.append_page(self.da, CC.tab_label("LIVE", "utilities-system-monitor-symbolic"))
+        self._pages = {"live": 0}
+        self._pages.update(CC.append_sections(self.nb))
+        self.toast_bar = CC.ToastBar()
+        CCUX.set_notifier(self.toast_bar.notify)
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        root.pack_start(self.nb, True, True, 0)
+        root.pack_start(self.toast_bar, False, False, 0)
+        self.add(root)
         self.da.connect("draw", self._draw)
         self.connect("key-press-event", self._on_key)
         self.da.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.SCROLL_MASK)
@@ -129,6 +145,8 @@ class Cockpit(Gtk.Window):
         if fullscreen:
             self.fullscreen()
             self._fs = True
+        if tab in self._pages:
+            self.nb.set_current_page(self._pages[tab])
 
     # ------------------------------------------------------------------ polling
     def _poll_events(self) -> bool:
@@ -184,6 +202,9 @@ class Cockpit(Gtk.Window):
 
     def _on_key(self, _w, ev) -> bool:
         name = Gdk.keyval_name(ev.keyval) or ""
+        on_live = self.nb.get_current_page() == self._pages.get("live", 0)
+        if not on_live and name != "F11":
+            return False   # GTK tabs own their keys; 'q'/'s'/'t' must not fire inside a text field
         if name == "F11":
             if self._fs:
                 self.unfullscreen()
@@ -824,9 +845,11 @@ def main(argv=None) -> int:
                                  description="Orion-X live cockpit — see the cyber activity around you.")
     ap.add_argument("--fullscreen", action="store_true", help="start fullscreen (F11 toggles)")
     ap.add_argument("--demo", action="store_true", help="synthesize events/traffic for a live demo")
+    ap.add_argument("--tab", default="live", choices=CC.TAB_KEYS,
+                    help="open on this tab (DEC-PHASE12-053): " + ", ".join(CC.TAB_KEYS))
     args = ap.parse_args(argv)
     try:
-        win = Cockpit(fullscreen=args.fullscreen, demo=args.demo)
+        win = Cockpit(fullscreen=args.fullscreen, demo=args.demo, tab=args.tab)
     except Exception as exc:  # no display, etc.
         print(f"orionx-cockpit: cannot open a window ({exc}). Is DISPLAY set?", file=sys.stderr)
         return 1
