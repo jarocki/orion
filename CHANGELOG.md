@@ -267,7 +267,7 @@ the login marker in QEMU: BIOS 130 s, UEFI 125 s. `test-iso-hooks-applied`
 
 - The first-boot wizard still prints the unusable "SSH admin one-shot"
   credential (root login is disabled by the SSH hardening drop-in).
-  Documented as ignorable; the code fix is tracked separately.
+  Documented as ignorable; the code fix is tracked in #98.
 - `radare2`, `bulk_extractor` and the Iosevka font are not packaged in trixie
   and stay out.
 - The model is still inside the ISO, so a published image is a multi-part
@@ -566,7 +566,7 @@ fixed on `release/2.2.0` for v2.2.0 unless noted.
 - **First-boot wizard prints an unusable "SSH admin one-shot" credential** to
   the console, `/etc/motd.d/` and `/etc/issue.d/` — root login is disabled by
   the SSH hardening drop-in, so the key cannot be used. Documented as ignorable
-  and removable in the User Guide; the code fix is tracked separately.
+  and removable in the User Guide; the code fix is tracked in #98.
 
 ## [v2.1.0-bullseye-rain] — 2026-09-13 (pre-release; final Bullseye build)
 
