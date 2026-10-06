@@ -222,12 +222,16 @@ DESKTOP_EOF
 # DEC-PHASE9-006: no lxterminal in any Exec line (lxterminal is NOT installed).
 # DEC-PHASE10-005: Control Center ships ahead of Phase 10 Nebula AI; Nebula
 # and Auto-Healing sections are placeholders that W10-1..W10-6 populate.
+# DEC-PHASE12-053: the tabs live in the Orion Cockpit; this entry opens it on a
+# tab. This hook is the ONLY writer of this file — rc7 shipped the old entry
+# because a static copy in includes.chroot was edited while this heredoc
+# silently overwrote it at build time (two authorities). The static copy is gone.
 cat > /usr/share/applications/orionx-control-center.desktop << 'DESKTOP_EOF'
 [Desktop Entry]
 Type=Application
-Name=Orion-X Control Center
-Comment=Orion-X cyberdeck control surface (Network, Mesh, Comms, IR, Nebula AI)
-Exec=/usr/bin/orionx-control-center
+Name=Orion Cockpit — Tabs
+Comment=Mesh, Comms, Awareness, Orion Tools, Nebula AI and Auto-Healing — the Cockpit's tabs (the former Control Center)
+Exec=/usr/bin/orionx-cockpit --tab network
 Icon=/usr/share/pixmaps/orionx.png
 Categories=X-Orion;
 DESKTOP_EOF

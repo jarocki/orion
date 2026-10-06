@@ -17,7 +17,9 @@ grep -q 'from control_center import app as CC' "$CK" && grep -q 'CC.append_secti
 grep -q 'CCUX.set_notifier(self.toast_bar.notify)' "$CK" && pass "sections toast through the Cockpit's toast bar" || fail "toast" "not wired"
 grep -q 'if not on_live and name != "F11":' "$CK" && pass "LIVE keys do not fire on GTK tabs" || fail "key routing" "missing"
 grep -q 'choices=CC.TAB_KEYS' "$CK" && pass "--tab accepts exactly the authority's keys" || fail "--tab" "missing"
-grep -q 'Exec=/usr/bin/orionx-cockpit --tab network' "$ROOT/iso/config/includes.chroot/usr/share/applications/orionx-control-center.desktop" && pass "menu entry opens the Cockpit tabs" || fail "desktop" "Exec not updated"
+HOOK="$ROOT/iso/config/hooks/live/0700-orionx-setup.hook.chroot"
+grep -q 'Exec=/usr/bin/orionx-cockpit --tab network' "$HOOK" && pass "menu entry (written by the 0700 hook) opens the Cockpit tabs" || fail "desktop" "hook Exec not updated"
+[[ -f "$ROOT/iso/config/includes.chroot/usr/share/applications/orionx-control-center.desktop" ]] && fail "one writer for orionx-control-center.desktop" "a static copy exists beside the hook's heredoc — it overwrote the edit in rc7" || pass "one writer for orionx-control-center.desktop (the 0700 hook; no static copy)"
 python3 -m py_compile "$CC/app.py" "$CK" "$CC/sections/mesh.py" "$CC/sections/comms.py" "$CC/sections/ir.py" "$CC/sections/awareness.py" "$CC/helpers/"*.py 2>/dev/null && pass "everything compiles" || fail "compile" "syntax error"
 
 echo "[pure helpers]"

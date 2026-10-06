@@ -280,12 +280,13 @@ else
          "The 0700 hook must create /usr/share/applications/orionx-control-center.desktop"
 fi
 
-# W9-2: Control Center Exec uses /usr/bin/orionx-control-center (NO lxterminal — GTK app)
-if grep -q "Exec=/usr/bin/orionx-control-center" "$HOOK_FILE" 2>/dev/null; then
-    pass "W9-2: Control Center .desktop Exec=/usr/bin/orionx-control-center (DEC-PHASE9-006)"
+# W9-2 / DEC-PHASE12-053: the Control Center entry opens the Orion Cockpit on a tab —
+# still the direct GTK binary (NO lxterminal / terminal wrapper, DEC-PHASE9-006).
+if grep -q "Exec=/usr/bin/orionx-cockpit --tab network" "$HOOK_FILE" 2>/dev/null; then
+    pass "W9-2: Control Center .desktop Exec opens the Cockpit tabs directly (DEC-PHASE12-053, DEC-PHASE9-006)"
 else
-    fail "W9-2: Control Center .desktop Exec=/usr/bin/orionx-control-center" \
-         "Control Center is a GTK app — Exec must be the direct binary, not xfce4-terminal wrapper"
+    fail "W9-2: Control Center .desktop Exec=/usr/bin/orionx-cockpit --tab network" \
+         "the tabs live in the Cockpit now; Exec must be the direct GTK binary, not a terminal wrapper"
 fi
 
 # W9-2: Control Center .desktop must NOT contain lxterminal in any Exec line
