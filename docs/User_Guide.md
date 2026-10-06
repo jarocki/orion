@@ -1288,17 +1288,19 @@ When handling forensic data:
 
 ### Switching Visual Themes
 
-Orion-X includes two **terminal** colour schemes for different operational contexts. The desktop look (Phoenix wallpaper, `Orion-X-Cyberdeck` theme) is the same in both.
+Orion-X has two desktop themes for different operational contexts, and switching changes five things at once: the wallpaper (Phoenix amber ↔ cyan Neon phoenix), the GTK accent colour (selections, progress bars, suggested buttons), the window frames, the terminal palette and transparency, and the bash prompt colour.
 
-1. Using the theme toggle script (also **Toggle Theme** in the Control Center IR Tools tab):
+1. Using the theme toggle script (also **Toggle Theme** in the Cockpit's Orion Tools tab):
    ```bash
    toggle-theme.sh
    ```
 
 2. The script will:
-   - Switch between the dark/amber and green schemes (remembered in `~/.orionx_theme`)
-   - Update xfce4-terminal colours and the bash prompt
-   - Re-assert the Phoenix wallpaper (there is one branded wallpaper; it does not change)
+   - Switch between the dark/amber and green themes (remembered in `~/.orionx_theme`)
+   - Set the GTK theme, window-frame theme and compositor opacity, and read each back from xfconf
+   - Write the xfce4-terminal palette and the bash prompt accent, and set the theme's wallpaper on every backdrop xfdesktop registered
+   - Report every item as OK or FAILED with the remedy; `toggle-theme.sh --status` repeats the check later
+   - **Already-open terminal windows keep their old colours** — xfce4-terminal reads its settings only when a window is created. The Cockpit's Toggle Theme button opens a new terminal for you, showing the report; from a shell, open a new window.
 
 3. Theme use guidelines:
    - Dark/amber scheme: Default for normal operations

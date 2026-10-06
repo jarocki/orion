@@ -279,13 +279,25 @@ if [[ -n "$_plan_dark" && -n "$_plan_green" && "$_plan_dark" != "$_plan_green" ]
 else
     fail "--plan differs per theme" "the plan is identical, so the toggle cannot change anything"
 fi
-# The difference must be the window theme and the opacities — not everything.
+# The difference must be exactly what a theme IS (DEC-PHASE12-058): the xfwm4
+# theme, the two opacities, the GTK theme, the wallpaper asset and the terminal
+# asset — six rows, twelve diff lines. Not more (icon theme and compositing are
+# shared), not fewer (rc6 shipped with the wallpaper and GTK theme identical,
+# which is why "Toggle Theme did nothing" on the reference deck).
 _plan_diff="$(diff <(printf '%s\n' "$_plan_dark") <(printf '%s\n' "$_plan_green") | grep -c '^[<>]')"
-if [[ "$_plan_diff" -eq 6 ]]; then
-    pass "--plan differs on exactly 3 rows (xfwm4 theme + 2 opacities); GTK theme stays single-authority"
+if [[ "$_plan_diff" -eq 12 ]]; then
+    pass "--plan differs on exactly 6 rows (xfwm4 theme, 2 opacities, GTK theme, wallpaper, terminalrc)"
 else
-    fail "--plan diff is $_plan_diff changed lines, expected 6" \
-         "the GTK ThemeName must NOT differ between themes — Orion-X-Cyberdeck is the single GTK theme"
+    fail "--plan diff is $_plan_diff changed lines, expected 12" \
+         "a theme is six things (DEC-PHASE12-058); check theme_plan and theme_assets"
+fi
+# Both GTK themes must be the SAME Adwaita-dark base (DEC-PHASE11-010 kept): the
+# green one is a recolour, never a second base theme.
+_green_css="$REPO_ROOT/iso/config/includes.chroot/usr/share/themes/Orion-X-Cyberdeck-Green/gtk-3.0/gtk.css"
+if [[ -f "$_green_css" ]] && grep -q 'resource:///org/gtk/libgtk/theme/Adwaita/gtk-dark.css' "$_green_css"; then
+    pass "the green GTK theme is a recolour of the same Adwaita-dark base"
+else
+    fail "green GTK theme base" "Orion-X-Cyberdeck-Green/gtk-3.0/gtk.css missing or not importing the Adwaita-dark base"
 fi
 
 # DO + CHECK, everything succeeding.
@@ -359,10 +371,12 @@ else
 fi
 # No second wallpaper authority (rule 7): the backdrop belongs to set-wallpaper.sh.
 # Comments in toggle-theme.sh explain WHY it must not; code must not.
-if ! grep -v '^[[:space:]]*#' "$TOGGLE" | grep -q 'backdrop'; then
-    pass "toggle-theme.sh never touches a backdrop property (set-wallpaper.sh is the authority)"
+# WRITES are the dual authority; --status READS the backdrops to verify the
+# theme's wallpaper landed (DEC-PHASE12-058), which is rule 3, not rule 7.
+if ! grep -v '^[[:space:]]*#' "$TOGGLE" | grep 'backdrop' | grep -qE 'xfconf_set_verified|xfconf-query[^|]* -s |xfconf-query[^|]* -n '; then
+    pass "toggle-theme.sh never WRITES a backdrop property (set-wallpaper.sh is the authority; reading to verify is allowed)"
 else
-    fail "toggle-theme.sh touches backdrop properties" "that is the DEC-PHASE12-035 dual authority coming back"
+    fail "toggle-theme.sh writes backdrop properties" "that is the DEC-PHASE12-035 dual authority coming back"
 fi
 
 section "set-wallpaper.sh reports what actually happened (DEC-PHASE12-042)"

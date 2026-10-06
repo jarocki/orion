@@ -1,0 +1,30 @@
+/* Orion-X-Cyberdeck-Green — GTK 3 (DEC-PHASE12-058)
+ *
+ * The phosphor-green variant of Orion-X-Cyberdeck: the SAME Adwaita-dark base
+ * and the same six overrides, recoloured to the green xfwm4 theme's accent
+ * (#0CFA54, see ../xfwm4/themerc). Before this file existed, toggle-theme.sh
+ * switched window frames to green while every GTK selection, progress bar and
+ * suggested button stayed Phoenix orange — the two halves of the desktop
+ * disagreed. Dark text on the bright accent for contrast.
+ */
+@import url("resource:///org/gtk/libgtk/theme/Adwaita/gtk-dark.css");
+@define-color theme_selected_bg_color #0CFA54;
+@define-color theme_selected_fg_color #04140C;
+@define-color accent_color #0CFA54;
+@define-color accent_bg_color #0CFA54;
+@define-color accent_fg_color #04140C;
+progressbar trough { background-color: #121c17; }
+progressbar progress { background-color: #0CFA54; }
+entry selection { background-color: #0CFA54; color: #04140C; }
+notebook > header > tabs > tab:checked {
+    border-bottom-color: #0CFA54;
+}
+button.suggested-action {
+    background-color: #0CFA54;
+    color: #04140C;
+}
+button.suggested-action:hover {
+    background-color: #0AD847;
+    color: #04140C;
+}
+scrollbar slider:hover { background-color: alpha(#0CFA54, 0.6); }

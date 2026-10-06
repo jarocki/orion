@@ -98,7 +98,13 @@ def _run_samples(_parent: Gtk.Widget) -> None:
 
 
 def _run_toggle_theme(_parent: Gtk.Widget) -> None:
-    ux.launch_detached(["toggle-theme.sh"], needs="toggle-theme.sh", friendly="Toggle Theme")
+    # DEC-PHASE12-058: xfce4-terminal 1.1 has no file monitor on terminalrc, so
+    # a window that exists when the toggle runs keeps its palette. Run the
+    # toggle, THEN open a new terminal — born with the new palette — that shows
+    # the script's own plan/do/check report. The operator sees both at once.
+    ux.launch_detached(
+        ["sh", "-c", "toggle-theme.sh; exec xfce4-terminal --title 'Orion-X theme' --hold -e 'toggle-theme.sh --status'"],
+        needs="toggle-theme.sh", friendly="Toggle Theme")
 
 
 _IR_TOOLS = [
@@ -107,7 +113,7 @@ _IR_TOOLS = [
     ("PCAP Analyzer", "Pick a .pcap and run the full traffic analysis", _run_pcap),
     ("Lynis Security Audit", "Run a quick system hardening audit (asks for sudo)", _run_lynis),
     ("Download Samples", "Populate ~/orionx-samples with offline practice data", _run_samples),
-    ("Toggle Theme", "Switch the amber/green desktop + terminal theme", _run_toggle_theme),
+    ("Toggle Theme", "Switch amber ↔ green: wallpaper, GTK accent, window frames, terminal, prompt (opens a new terminal with the report)", _run_toggle_theme),
 ]
 
 

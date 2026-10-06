@@ -27,10 +27,11 @@
 [Desktop Entry]
 Type=X-GNOME-Metatheme
 Name=Orion-X-Cyberdeck-Green
-Comment=Orion-X cyberdeck phosphor-green window decorations (xfwm4 only)
+Comment=Orion-X cyberdeck phosphor-green theme — window decorations and GTK accent (DEC-PHASE12-042, DEC-PHASE12-058)
 Encoding=UTF-8
 
 [X-GNOME-Metatheme]
+GtkTheme=Orion-X-Cyberdeck-Green
 MetacityTheme=Orion-X-Cyberdeck-Green
 IconTheme=Orion-X-Icons
 CursorTheme=Orion-X-Cursor

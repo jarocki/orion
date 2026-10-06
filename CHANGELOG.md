@@ -35,6 +35,21 @@ From the rc6 boot on the reference deck (2026-10-06). Not in the rc6 image.
   Workbench catalogue at runtime with the same installed-probe logic the
   Workbench uses — Run for what is here, Install for what is not.
 
+### Fixed
+
+- **Toggle Theme changed only the window frame and the prompt** (DEC-PHASE12-058).
+  Three causes, all in the toggle's own plan: it re-asserted the same Phoenix
+  wallpaper for both themes; it set the same GTK theme for both, so every
+  selection and button stayed orange; and the terminal palette it wrote only
+  reaches *new* windows — xfce4-terminal 1.1.4 has no file monitor on
+  terminalrc (verified against the trixie binary) — while the Cockpit ran it
+  detached with no window and no report. Now the green theme has its own
+  wallpaper (the cyan Neon phoenix) and its own GTK theme
+  (`Orion-X-Cyberdeck-Green`, a recolour of the same Adwaita-dark base with the
+  green frames' `#0CFA54` accent); `--status` checks every registered backdrop;
+  `--plan` lists the assets; and the Cockpit's button opens a new terminal
+  afterwards — born with the new palette — showing the status report.
+
 ### Notes from the deck
 
 - `gnupg` was reported missing. The rc6 image carries `gnupg`, `gpg`, `gpgv`,

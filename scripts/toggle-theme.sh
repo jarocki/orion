@@ -16,6 +16,24 @@
 # landed. Non-zero means at least one did not, and the summary names which and
 # what to do about it.
 #
+# @decision DEC-PHASE12-058
+# @title A theme is wallpaper + GTK accent + window frames + terminal + prompt, and the toggle changes all five
+# @status accepted
+# @rationale rc6 on the reference deck (2026-10-06): "Toggle Theme does NOTHING
+#   except the window frame and the prompt colour; the wallpaper is not
+#   changing AT ALL." Three causes, all in this script's plan: (1) it
+#   re-asserted the SAME Phoenix wallpaper for both themes; (2) it set the SAME
+#   GTK theme for both (DEC-PHASE11-010's single-theme rule), so every
+#   selection, progress bar and suggested button stayed orange; (3) the terminal
+#   palette WAS written, but xfce4-terminal 1.1.4 does not watch terminalrc
+#   (verified: the binary imports no file monitor), so every already-open
+#   window kept the old colours and nothing said so where the operator could
+#   see it. Now: dark = Phoenix wallpaper + Orion-X-Cyberdeck; green = Neon
+#   wallpaper + Orion-X-Cyberdeck-Green (a recolour of the same Adwaita-dark
+#   base, DEC-PHASE11-010 kept for the base). --status checks the backdrop too.
+#   The Cockpit button opens a NEW terminal afterwards, born with the new
+#   palette, showing this script's status report.
+#
 # ---------------------------------------------------------------------------
 # @decision DEC-PHASE12-042
 # @title toggle-theme.sh plans, applies, re-reads, and reports honestly
@@ -126,26 +144,26 @@ bad()  {
 # ---------------------------------------------------------------------------
 # PLAN — pure. Theme name in, desired state out, nothing touched.
 #
-# Rows are channel|property|type|value. Note that ThemeName and IconThemeName
-# are IDENTICAL in both themes: Orion-X-Cyberdeck is the single GTK theme
-# (DEC-PHASE11-010) and this script is not going to become a second authority
-# for it. They are listed anyway so that every run REASSERTS them — if a
-# session came up without its xsettings seed, running the toggle repairs it,
-# and --status reports the gap instead of hiding it.
+# Rows are channel|property|type|value. IconThemeName is identical in both
+# themes and listed so every run REASSERTS it. ThemeName now differs
+# (DEC-PHASE12-058): Orion-X-Cyberdeck-Green is a recolour of the same
+# Adwaita-dark base, so DEC-PHASE11-010's single-base rule still holds.
 #
 # What genuinely differs between the two themes:
 #   - the xfwm4 window-decoration theme (visible: titlebar colour and border)
 #   - the compositor opacity (visible: how much shows through)
 #   - the terminal palette asset (visible: the terminal)
 #   - the PS1 accent colour
+#   - the GTK theme accent (DEC-PHASE12-058)
+#   - the wallpaper (DEC-PHASE12-058; see theme_wallpaper below)
 # ---------------------------------------------------------------------------
 theme_plan() {
-    local theme="$1" wm_theme frame_op inactive_op
+    local theme="$1" wm_theme gtk_theme frame_op inactive_op
     case "$theme" in
         green)
-            wm_theme="Orion-X-Cyberdeck-Green"; frame_op=78; inactive_op=88 ;;
+            wm_theme="Orion-X-Cyberdeck-Green"; gtk_theme="Orion-X-Cyberdeck-Green"; frame_op=78; inactive_op=88 ;;
         dark)
-            wm_theme="Orion-X-Cyberdeck";       frame_op=88; inactive_op=92 ;;
+            wm_theme="Orion-X-Cyberdeck";       gtk_theme="Orion-X-Cyberdeck";       frame_op=88; inactive_op=92 ;;
         *)
             echo "theme_plan: unknown theme '$theme'" >&2; return 2 ;;
     esac
@@ -154,7 +172,7 @@ xfwm4|/general/theme|string|$wm_theme
 xfwm4|/general/use_compositing|bool|true
 xfwm4|/general/frame_opacity|int|$frame_op
 xfwm4|/general/inactive_opacity|int|$inactive_op
-xsettings|/Net/ThemeName|string|Orion-X-Cyberdeck
+xsettings|/Net/ThemeName|string|$gtk_theme
 xsettings|/Net/IconThemeName|string|Orion-X-Icons
 PLAN
 }
@@ -168,6 +186,19 @@ theme_ps1_color() {
 }
 
 theme_terminal_asset() { printf '%s/terminal/%s.terminalrc' "$THEME_ROOT" "$1"; }
+# The wallpaper is part of the theme (DEC-PHASE12-058): Phoenix (amber) for
+# dark, the cyan Neon phoenix for green. Both ship in /opt/orionx/theme/wallpapers.
+theme_wallpaper() {
+    case "$1" in
+        green) printf '%s/wallpapers/orionx-wp-neon.png' "$THEME_ROOT" ;;
+        *)     printf '%s/wallpapers/orionx-phoenix-wallpaper.png' "$THEME_ROOT" ;;
+    esac
+}
+# Everything a theme consists of, as data (for --plan and the tests).
+theme_assets() {
+    printf 'asset|wallpaper|file|%s\n' "$(theme_wallpaper "$1")"
+    printf 'asset|terminalrc|file|%s\n' "$(theme_terminal_asset "$1")"
+}
 
 # ---------------------------------------------------------------------------
 # Is there a session to talk to? An honest SKIP beats a fabricated PASS and
@@ -264,6 +295,12 @@ apply_ps1() {
 # Report exactly what it did — never the old unconditional success line.
 # ---------------------------------------------------------------------------
 apply_wallpaper() {
+    local theme="$1" wp
+    wp="$(theme_wallpaper "$theme")"
+    if [ ! -f "$wp" ]; then
+        bad "wallpaper asset missing: $wp" "reinstall /opt/orionx/theme/wallpapers/ (staged from theme/wallpapers/)"
+        return 1
+    fi
     if [ ! -x "$SET_WALLPAPER" ]; then
         bad "set-wallpaper.sh not found (looked in /opt/orionx/scripts and $SELF_DIR)" \
             "reinstall /opt/orionx/scripts/set-wallpaper.sh"
@@ -273,8 +310,8 @@ apply_wallpaper() {
         skip "wallpaper (no X session; set-wallpaper.sh needs one)"
         return 0
     fi
-    if "$SET_WALLPAPER"; then
-        ok "wallpaper applied via set-wallpaper.sh (details: ~/.cache/orionx/set-wallpaper.log)"
+    if "$SET_WALLPAPER" "$wp"; then
+        ok "wallpaper = $(basename "$wp") (set-wallpaper.sh verified every backdrop; ~/.cache/orionx/set-wallpaper.log)"
         return 0
     fi
     bad "set-wallpaper.sh exited non-zero" \
@@ -332,6 +369,25 @@ do_status() {
     else
         bad "terminal profile $dst does not match $src" "run: $0 --set $theme"
     fi
+    # Wallpaper (DEC-PHASE12-058): every backdrop xfdesktop registered must show the theme's image.
+    local wp props p n_ok n_bad
+    wp="$(theme_wallpaper "$theme")"
+    if have_session; then
+        props="$(xfconf-query -c xfce4-desktop -l 2>/dev/null | grep -E '/backdrop/screen0/monitor[^/]+/(workspace[0-9]+/)?last-image$')"
+        n_ok=0; n_bad=0
+        for p in $props; do
+            if [ "$(xfconf_read xfce4-desktop "$p")" = "$wp" ]; then n_ok=$((n_ok + 1)); else n_bad=$((n_bad + 1)); fi
+        done
+        if [ -z "$props" ]; then
+            bad "no xfdesktop backdrop properties registered" "is xfdesktop running? xfconf-query -c xfce4-desktop -l | grep backdrop"
+        elif [ "$n_bad" -eq 0 ]; then
+            ok "wallpaper = $(basename "$wp") on $n_ok backdrop(s)"
+        else
+            bad "$n_bad backdrop(s) do not show $(basename "$wp")" "run: $SET_WALLPAPER $wp"
+        fi
+    else
+        skip "wallpaper check (no X session)"
+    fi
     summarise "status"
 }
 
@@ -368,12 +424,13 @@ do_apply() {
 
     apply_terminal_profile "$theme"
     apply_ps1 "$theme"
-    apply_wallpaper
+    apply_wallpaper "$theme"
     apply_state_file "$theme"
 
     echo ""
-    echo "Already-open terminals keep their old palette — xfce4-terminal reads"
-    echo "terminalrc at window creation. Open a new window to see $theme."
+    echo "Already-open terminals keep their old palette: xfce4-terminal 1.1 reads"
+    echo "terminalrc only when a window is created (it has no file monitor). New"
+    echo "windows get $theme; the Cockpit's button opens one for you."
     summarise "switch to $theme"
 }
 
@@ -383,7 +440,7 @@ main() {
         --status)
             do_status ;;
         --plan)
-            theme_plan "${2:-$(current_theme)}" ;;
+            theme_plan "${2:-$(current_theme)}" && theme_assets "${2:-$(current_theme)}" ;;
         --set)
             case "${2:-}" in
                 dark|green) do_apply "$2" ;;
