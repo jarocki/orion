@@ -104,6 +104,8 @@ declare -A SCRIPT_MAP=(
     ["orionx-heald"]="/opt/orionx/scripts/healing/orionx-heald"
     # W10-5 (DEC-PHASE12-024): posture enforcement daemon.
     ["orionx-postured"]="/opt/orionx/scripts/awareness/orionx-postured"
+    # DEC-PHASE12-050: operator squelch/tune of IDS alerts (no root needed).
+    ["orionx-tune"]="/opt/orionx/scripts/awareness/orionx-tune"
     # DEC-PHASE12-028: bounded on-demand PCAP capture control surface.
     ["orionx-capture"]="/opt/orionx/scripts/awareness/orionx-capture"
     # DEC-PHASE12-027: forensic log correlation + its intel refresh. The

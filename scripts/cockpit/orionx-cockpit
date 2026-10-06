@@ -201,6 +201,9 @@ class Cockpit(Gtk.Window):
                 return True
             Gtk.main_quit()
             return True
+        if self.drill and name in ("s", "t"):
+            self._tune_selected("squelch" if name == "s" else "tune")
+            return True
         if name == "q":
             Gtk.main_quit()
             return True
@@ -265,8 +268,17 @@ class Cockpit(Gtk.Window):
         self.heal = L.healing_actions()
         self.da.queue_draw()
 
+    def _tune_selected(self, mode: str) -> None:
+        """[s]quelch for an hour / [t]une for good, via orionx-tune (DEC-PHASE12-050)."""
+        if not (0 <= self.sel < len(self._shown)):
+            self._say("no event selected")
+            return
+        ok, msg = L.tune_event(self._shown[self.sel], mode)
+        self._say(msg if ok else f"NOT tuned: {msg}")
+        self.da.queue_draw()
+
     def _say(self, msg: str) -> None:
-        self.toast = msg[:96]
+        self.toast = msg[:160]
         self.toast_until = time.time() + 6.0
 
     def _on_click(self, _w, ev) -> bool:
@@ -497,7 +509,8 @@ class Cockpit(Gtk.Window):
             cr.fill()
             cr.set_source_rgba(*L.DIM, fade)
             self._text(cr, cx + 22, ry, f"{L.fmt_age(age):>3}", 11, tuple(c * fade for c in L.DIM))
-            self._text(cr, cx + 58, ry, f"{ev['source']}/{ev['category']}", 11, tuple(c * fade for c in col), bold=True)
+            tag = "SELF " if (ev.get("detail") or {}).get("origin") == "self" else ""
+            self._text(cr, cx + 58, ry, f"{tag}{ev['source']}/{ev['category']}", 11, tuple(c * fade for c in col), bold=True)
             msg = ev["message"]
             if len(msg) > 160:
                 msg = msg[:159] + "\u2026"   # the stream clips; the drill-down shows it whole
@@ -612,6 +625,12 @@ class Cockpit(Gtk.Window):
         self._text(cr, bx + bs / 2, by + 16, "\u2715", 12, col, bold=True, align="center")
         self._close_rect = (bx, by, bs, bs)
         self._text(cr, x + w - 44, y + 28, "Esc", 10, L.DIM, align="right")
+        if L.tune_args(ev, "squelch") is not None:
+            self._text(cr, x + 18, y + h - 14,
+                       "[s] squelch this signature for 1 h    [t] tune it off and keep it   \u2014 "
+                       "the outcome says whether it survives a reboot", 10, L.AMBER)
+        elif (ev.get("detail") or {}).get("origin") == "self":
+            self._text(cr, x + 18, y + h - 14, "SELF: this deck's own traffic", 10, L.AMBER)
         self._text(cr, x + 18, y + 52,
                    f"{ev['severity'].upper()}  {ev['source']}/{ev['category']}", 11, col)
         # The whole message, wrapped. It used to be clipped to 96 characters

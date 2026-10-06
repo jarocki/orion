@@ -128,6 +128,8 @@ from pathlib import Path
 # fails at boot with the daemon dead and the tier unenforced.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import suricata_capture as capture  # noqa: E402
+import tuning_lib  # noqa: E402  (DEC-PHASE12-050: operator squelch/tune authority)
+import deck_vitals  # noqa: E402  (DEC-PHASE12-051: the deck's own addresses -> origin=self)
 
 # --- Paths (single authorities, all overridable for tests) ------------------
 
@@ -2267,6 +2269,16 @@ class PostureDaemon:
             self.nebula = None
         self.alerts_published = 0
         self.alerts_suppressed = 0
+        # DEC-PHASE12-050: operator tuning. Bus-side for both engines; the
+        # Suricata threshold file is DERIVED from it and reloaded on change.
+        self.tuning = tuning_lib.TuningState(os.environ.get("ORIONX_TUNING_FILE"))
+        self.tuned_suppressed = 0
+        self._tuning_warned = 0.0
+        # DEC-PHASE12-051: alerts whose SOURCE is this deck are labelled
+        # origin=self so the Cockpit says "this deck did this" instead of
+        # implying an intruder, and the threat gauge does not count them.
+        self.deck_addrs: set[str] = set()
+        self._deck_addrs_at = 0.0
 
         # --- capture (DEC-PHASE12-038) ---
         self.sysfs = Path(args.sysfs)
@@ -2291,6 +2303,62 @@ class PostureDaemon:
         self.heartbeat_tick(time.time())
 
     # --- bus helper ---
+    def _alert_detail(self, alert: dict, engine: str, technique: tuple) -> dict:
+        """Evidence for the drill-down, plus origin (DEC-PHASE12-051)."""
+        src = alert.get("src_ip") or ""
+        d: dict = {"engine": engine, "src_ip": src, "dest_ip": alert.get("dest_ip") or "",
+                   "proto": alert.get("proto") or ""}
+        if engine == "suricata":
+            d.update({"sid": alert.get("signature_id"), "signature": alert.get("signature") or "",
+                      "classtype": alert.get("classtype") or "",
+                      "src_port": alert.get("src_port"), "dest_port": alert.get("dest_port")})
+        else:
+            d.update({"note": alert.get("note") or "", "msg": alert.get("msg") or ""})
+        if technique and technique[0]:
+            d["technique"] = f"{technique[0]} {technique[1]}".strip()
+        if src and src in self.deck_addrs:
+            d["origin"] = "self"
+            d["origin_note"] = "this deck's own traffic; not an intruder"
+        return d
+
+    def _refresh_deck_addrs(self, now: float) -> None:
+        if now - self._deck_addrs_at < 30.0:
+            return
+        self._deck_addrs_at = now
+        addrs: set[str] = set()
+        try:
+            for it in deck_vitals.parse_ip_addr(deck_vitals._run(["ip", "-j", "addr"])):
+                for cidr in it.get("ipv4", []) + it.get("ipv6", []):
+                    addrs.add(cidr.split("/")[0])
+        except Exception:  # noqa: BLE001 - labelling must never break detection
+            addrs = set()
+        self.deck_addrs = addrs
+
+    def _refresh_tuning(self, now: float) -> None:
+        """Re-read tuning.json; on a change to the DERIVED Suricata text, write
+        the threshold file and reload the ruleset over the command socket."""
+        try:
+            changed = self.tuning.refresh(now)
+        except Exception:  # noqa: BLE001
+            changed = False
+        if not changed or self.dry_run:
+            return
+        try:
+            tmp = tuning_lib.THRESHOLD_FILE.with_suffix(".tmp")
+            tmp.write_text(self.tuning.derived_text, encoding="utf-8")
+            os.replace(tmp, tuning_lib.THRESHOLD_FILE)
+        except OSError as exc:
+            if now - self._tuning_warned > 600:
+                self._tuning_warned = now
+                self.emit("warning", "health",
+                          f"tuning: cannot write {tuning_lib.THRESHOLD_FILE} ({exc}); "
+                          "alerts are still filtered bus-side, Suricata keeps evaluating them",
+                          detail={"remedy": "ls -l /etc/suricata; journalctl -u orionx-postured"})
+            return
+        sock = getattr(capture, "COMMAND_SOCKET", Path("/var/lib/suricata/orionx-command.socket"))
+        if service_active(SURICATA_UNIT):
+            capture.suricatasc("ruleset-reload-nonblocking", Path(sock))
+
     def emit(self, severity: str, category: str, message: str,
              source: str = "postured", detail: dict | None = None) -> None:
         publish(severity, source, category, message, dry_run=self.dry_run,
@@ -2584,6 +2652,13 @@ class PostureDaemon:
             # drop log. One scan is one story.
             self.alerts_suppressed += 1
             return
+        rule = self.tuning.suppressed_by("suricata", alert.get("signature_id"), None,
+                                         alert.get("src_ip"), now)
+        if rule is not None:
+            # The operator said so (orionx-tune). COUNTED, so a silence nobody
+            # can account for is distinguishable from a detector that died.
+            self.tuned_suppressed += 1
+            return
         if not self.deduper.should_publish(dedup_key(alert), now):
             return
         if is_scan_alert(alert):
@@ -2593,8 +2668,11 @@ class PostureDaemon:
         technique = attack_technique(alert.get("classtype"),
                                      alert.get("signature"))
         # Publish FIRST. The model is never in the path of a detection.
+        # Structured detail (DEC-PHASE12-029) so the Cockpit drill-down can
+        # show sid/signature/addresses and offer [s]quelch / [t]une on them.
         self.emit(bus_severity(alert), "ids",
-                  format_alert_message(alert, technique), source="suricata")
+                  format_alert_message(alert, technique), source="suricata",
+                  detail=self._alert_detail(alert, "suricata", technique))
         self.alerts_published += 1
         if self.nebula is not None and bus_severity(alert) in ("warning",
                                                                "critical"):
@@ -2620,12 +2698,16 @@ class PostureDaemon:
                 self.zeek_suppressed += 1
                 return
             self.scan_ledger.record("zeek", alert.get("src_ip", ""), now)
+        rule = self.tuning.suppressed_by("zeek", None, note, alert.get("src_ip"), now)
+        if rule is not None:
+            self.tuned_suppressed += 1
+            return
         if not self.deduper.should_publish(zeek_dedup_key(alert), now):
             return
         technique = zeek_attack_technique(note)
         severity = zeek_notice_severity(alert)
         self.emit(severity, "ids", format_zeek_message(alert, technique),
-                  source="zeek")
+                  source="zeek", detail=self._alert_detail(alert, "zeek", technique))
         self.zeek_published += 1
         if note in ZEEK_BLINDNESS_NOTES:
             # Zeek just said it is missing traffic. Do not let that be
@@ -2782,6 +2864,10 @@ class PostureDaemon:
             "deception_armed": self.deception.armed,
             "alerts_published": self.alerts_published,
             "alerts_suppressed": self.alerts_suppressed,
+            # DEC-PHASE12-050/051
+            "tuned_suppressed": self.tuned_suppressed,
+            "tuning": self.tuning.status(time.time()),
+            "deck_addrs": sorted(self.deck_addrs),
             "posture_file": str(self.posture_path or ""),
             # DEC-PHASE12-028. Zeek ingest and PCAP capture are folded in here
             # rather than given status files of their own, so the Cockpit has
@@ -2864,6 +2950,8 @@ class PostureDaemon:
                     posture_candidates(self.args.posture_file))
                 new_tier = read_tier(self.posture_path)
                 now = time.time()
+                self._refresh_tuning(now)
+                self._refresh_deck_addrs(now)
                 if (now - self._last_heartbeat) >= self.args.heartbeat:
                     # DEC-PHASE12-038. The interface heartbeat runs on its own
                     # cadence, faster than the 30s reassert, because a USB NIC

@@ -32,6 +32,21 @@ rc5 image; it lands in the next build.
   interface's address, default gateway, uptime, CPU/MEM/DISK bars with the
   numbers on them — and shows hostname · IP in its header; the Workbench's
   status API carries the same object and its strip shows the same chips.
+- **Squelch or tune any IDS alert from the Cockpit** (DEC-PHASE12-050). In the
+  drill-down, **s** squelches the signature from that source for an hour,
+  **t** tunes it off and keeps it; `orionx-tune` is the CLI. One authority,
+  `~/.config/orionx/tuning.json`, written by the operator without root and
+  found by `orionx-postured` the way the posture file is; postured filters
+  both engines bus-side (counted in its status as `tuned_suppressed`),
+  derives `/etc/suricata/orionx-threshold.config` from it and reloads the
+  ruleset over the command socket. Every write says whether the rule
+  **survives a reboot** — on a live USB without a persistence partition it
+  does not, and the deck says so. Suricata and Zeek events now carry
+  structured detail (sid, signature, addresses, ports, technique).
+- **Deck-originated alerts are tagged SELF** (DEC-PHASE12-051). An alert whose
+  source address is one of this deck's own (the archive.ph policy hit on the
+  reference deck) is labelled `origin: self` in its detail and `SELF` in the
+  stream, and no longer counts toward THREAT PRESSURE.
 
 ### Fixed
 

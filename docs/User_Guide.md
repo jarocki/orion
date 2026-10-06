@@ -669,6 +669,8 @@ The Orion Cockpit (`orionx-cockpit`; also in the Orion menu and behind the **◈
 
 Keys: **F11** toggles fullscreen; **Esc** or **q** quits. Flags: `--fullscreen` starts fullscreen; `--demo` feeds synthetic events for a demonstration.
 
+**Tuning a false positive.** Open an IDS event (Suricata or Zeek) in the drill-down and press **s** to *squelch* that signature — from that source — for an hour, or **t** to *tune* it off and keep it. The outcome line states whether the rule **survives a reboot**: on a live USB without a persistence partition it does not, and the deck says so rather than letting you believe otherwise. `orionx-tune list` shows the rules, `orionx-tune remove <id>` restores an alert, `orionx-tune status` reports where the file is and whether it persists. Rules are applied by `orionx-postured` for both engines and derived into Suricata's threshold file, so the engine stops evaluating them too. Events whose source is one of this deck's own addresses are tagged **SELF** — the deck did that, not an intruder — and they do not raise THREAT PRESSURE.
+
 ![Orion Cockpit layout](images/orionx-cockpit-layout.svg)
 
 *Figure: Orion Cockpit layout.*
@@ -1917,6 +1919,9 @@ orionx-rain --test warning     # Play a sample alert cue
 orionx-rain --oneshot          # Play the most urgent pending event once
 orionx-rain --speech on|off    # Spoken narration after the cue (off by default)
 orionx-rain --speech-status    # Narration engine, Nebula reachability, bounds
+orionx-tune squelch --sid N [--src IP] [--ttl S]   # Silence an IDS signature for a while
+orionx-tune tune --sid N | --note Zeek::Note       # Keep it off (says if it survives reboot)
+orionx-tune list | remove ID | status
 orionx-osint [--page godseye]  # Investigation surface / GODSEYE preflight
 orionx-music status|play|render out.wav   # Optional music bed (off by default)
 tail -f /run/orionx/events.jsonl   # Watch the event bus

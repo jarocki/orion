@@ -31,6 +31,7 @@ import json
 import math
 import os
 import shutil
+import re
 import subprocess
 import time
 from collections import deque
@@ -220,6 +221,10 @@ def pressure(events, now: float, half_life: float = PRESSURE_HALF_LIFE) -> float
     total = 0.0
     for ev in events:
         if ev.get("category") in SELF_STATUS_CATEGORIES:
+            continue
+        # DEC-PHASE12-051: the deck's own traffic tripping a policy rule is
+        # not threat pressure (it was: archive.ph from the deck read as HOSTILE).
+        if (ev.get("detail") or {}).get("origin") == "self":
             continue
         age = max(0.0, now - float(ev.get("ts", now)))
         w = SEVERITY_WEIGHT.get(ev.get("severity", "notice"), 8.0)
@@ -485,6 +490,53 @@ def healing_actions(chain: Path = HEAL_CHAIN) -> dict[str, Any]:
     out["pending"].sort(key=lambda r: float(r.get("ts") or 0), reverse=True)
     out["active"].sort(key=lambda r: float(r.get("ts") or 0), reverse=True)
     return out
+
+
+def tune_args(ev: dict[str, Any], mode: str) -> list[str] | None:
+    """orionx-tune argv for this event, or None if it is not tunable. Pure.
+
+    Only IDS events from an engine carry a sid or a Zeek note; anything else
+    (a health warning, a scan from scanwatch) has nothing to tune. The source
+    address is included so a squelch is as narrow as the evidence: this
+    signature FROM THIS HOST, not this signature from everyone.
+    """
+    if mode not in ("squelch", "tune"):
+        return None
+    d = ev.get("detail") or {}
+    src = str(ev.get("source", ""))
+    args = ["orionx-tune", mode]
+    if src == "suricata" or d.get("sid") is not None:
+        sid = d.get("sid")
+        if sid is None:
+            m = re.search(r"\bsid:(\d+)\b", str(ev.get("message", "")))
+            sid = int(m.group(1)) if m else None
+        if sid is None:
+            return None
+        args += ["--sid", str(int(sid))]
+        if d.get("signature"):
+            args += ["--signature", str(d["signature"])[:120]]
+    elif src == "zeek" and d.get("note"):
+        args += ["--note", str(d["note"])]
+    else:
+        return None
+    if d.get("src_ip"):
+        args += ["--src", str(d["src_ip"])]
+    args += ["--reason", "from the Cockpit drill-down"]
+    return args
+
+
+def tune_event(ev: dict[str, Any], mode: str) -> tuple[bool, str]:
+    """Run orionx-tune for this event. Returns (ok, the CLI's own words), which
+    include whether the rule survives a reboot (DEC-PHASE12-050)."""
+    args = tune_args(ev, mode)
+    if args is None:
+        return False, "not tunable: no IDS signature or Zeek note on this event"
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, timeout=6.0, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"orionx-tune failed: {exc}"
+    out = " ".join((r.stdout or r.stderr or "").split())
+    return r.returncode == 0, out or f"orionx-tune exit {r.returncode}"
 
 
 def approve_action(action_id: str) -> tuple[bool, str]:
