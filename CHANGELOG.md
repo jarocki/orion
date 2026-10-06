@@ -7,10 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [v2.2.0-rc6] — in progress
+## [v2.2.0-rc6] — 2026-10-05 (release candidate; internal build, not published)
 
-Found by booting rc5 on the reference deck (2026-10-05). None of this is in the
-rc5 image; it lands in the next build.
+Everything here was found by booting rc5 on the reference deck on 2026-10-05
+(GRUB splash and Cockpit confirmed; the password box after idle, the mesh
+join failure, truncated alerts and narration, the missing deck identity and
+the un-tunable false positives reported from the same session).
+
+ISO SHA-256 `8026c847536936585ca2a1a4e1eb6ef0f51788371d7cb922d2726bf07ed99b60`,
+3,134,275,584 bytes (3.13 GB), built 2026-10-06T03:24:33Z from `de73af9` in
+40 min with a warm package cache and a clean chroot (the only `already done`
+skip was the bootstrap cache). Baked `/etc/orionx-version` reports
+`ISO_VERSION=v2.2.0-rc6` and `GIT_HEAD_SHA=de73af97349d`; the baked README is
+byte-identical to the repository. The squashfs carries no `light-locker`,
+the `wg` profile with its netlink rule, the Orion Workbench menu entry and
+the Suricata threshold file. QEMU boots to the login marker in BIOS (130 s)
+and UEFI (122 s); `test-iso-hooks-applied` 20/20; content-presence 363
+passed, 0 failed, 5 skipped (shellcheck absent in the container). Not yet
+booted on the reference deck.
 
 ### Changed
 
