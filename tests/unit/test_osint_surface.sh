@@ -878,6 +878,8 @@ check(st["route"]["default_route"] is False,
 check(st["outbound"]["allowed"] is False and st["outbound"]["state"] == "no-route",
       "with no route the server refuses to enable off-deck links")
 check(bool(st["outbound"]["remedy"]), "the refusal carries a remedy")
+check("deck" in st and "hostname" in st["deck"] and "cpu_pct" in st["deck"] and "interfaces" in st["deck"],
+      "status carries deck vitals from the shared module (DEC-PHASE12-049)")
 
 status, ctype, body = get("/api/pewpew.json?window=900")
 feed = json.loads(body)

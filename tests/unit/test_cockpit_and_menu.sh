@@ -66,6 +66,8 @@ else
 fi
 grep -q "DEC-PHASE12-007" "$CK/cockpit_lib.py" && pass "DEC-PHASE12-007 annotation" || fail "DEC-PHASE12-007 annotation" "missing"
 # Same bus as R.A.I.N. — single event authority.
+grep -q 'import deck_vitals as V' "$CK/orionx-cockpit" && pass "cockpit reads deck vitals from the shared module (DEC-PHASE12-049)" || fail "deck_vitals import" "missing"
+grep -q 'def _deck_panel' "$CK/orionx-cockpit" && pass "cockpit draws a DECK band (hostname, addresses, gateway, CPU/MEM/DISK)" || fail "DECK band" "missing"
 grep -q '/run/orionx/events.jsonl' "$CK/cockpit_lib.py" && pass "cockpit consumes the R.A.I.N. event bus (single authority)" || fail "cockpit event bus path" "not /run/orionx/events.jsonl"
 # Pure logic must be provable with no display/gi.
 if python3 - "$CK" <<'PY'

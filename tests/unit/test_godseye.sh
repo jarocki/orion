@@ -82,10 +82,13 @@ if git -C "$REPO_ROOT" check-ignore -q "$GS/app/index.html"; then
 else
     pass ".gitignore does not drop opt/orionx/osint/godseye/ from the build"
 fi
-TRACKED="$(git -C "$REPO_ROOT" status --porcelain --untracked-files=all -- \
-    "$GS" 2>/dev/null | grep -c . || true)"
-if [[ "$TRACKED" -gt 0 ]]; then pass "git sees $TRACKED file(s) under godseye/"
-else fail "git sees the godseye tree" "git reports nothing to add or track"; fi
+# Tracked, not "has pending changes": the previous form used `git status`,
+# which is non-empty only while the tree is uncommitted — it passed while the
+# slice was staged and failed the moment it was committed (2026-10-05). The
+# invariant is that git TRACKS the bundle, so a clean checkout builds it.
+TRACKED="$(git -C "$REPO_ROOT" ls-files -- "$GS" 2>/dev/null | grep -c . || true)"
+if [[ "$TRACKED" -ge 400 ]]; then pass "git tracks $TRACKED file(s) under godseye/ (402 in app/ + the preflight files)"
+else fail "git tracks the godseye tree" "git ls-files reports $TRACKED file(s) — the bundle would be absent from a clean build"; fi
 
 section "Provenance: the bundle is the build that was pinned"
 if grep -q 'eb4b8db218cba9cc4aa1ac700676e8d5bff7b3ef' "$GS/PROVENANCE.txt"; then

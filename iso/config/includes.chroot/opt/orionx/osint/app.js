@@ -91,6 +91,22 @@ function renderStrip(){
        st.geoip.available ? "go" : "warn");
   chip("event bus", st.bus.present ? "live" : "not yet",
        st.bus.present ? "go" : "warn");
+  // Deck identity + vitals (DEC-PHASE12-049) — the same module the Cockpit's
+  // DECK band reads, so the two never disagree about what this machine is.
+  var d = st.deck;
+  if (d) {
+    if (d.hostname) chip("deck", d.hostname, "go");
+    chip("ip", d.primary_ipv4 ? (d.primary_ipv4 + (d.primary_iface ? " \u00b7 " + d.primary_iface : "")) : "none",
+         d.primary_ipv4 ? "go" : "warn");
+    if (d.gateway) chip("gateway", d.gateway, "go");
+    function pct(label, v, extra){
+      if (v === null || v === undefined) return;
+      chip(label, Math.round(v) + "%" + (extra || ""), v >= 90 ? "stop" : v >= 75 ? "warn" : "go");
+    }
+    pct("cpu", d.cpu_pct);
+    if (d.mem) pct("mem", d.mem.used_pct);
+    if (d.disk) pct("disk", d.disk.used_pct, " used");
+  }
 }
 
 function renderBanners(){

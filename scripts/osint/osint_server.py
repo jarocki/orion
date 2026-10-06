@@ -67,6 +67,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pewpew_feed  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "awareness"))
+import deck_vitals  # noqa: E402  (DEC-PHASE12-049: same hostname/IP/vitals as the Cockpit)
 
 # --- Where things are -------------------------------------------------------
 DEFAULT_ROOT = Path(os.environ.get("ORIONX_OSINT_ROOT", "/opt/orionx/osint"))
@@ -426,6 +428,7 @@ def build_status() -> dict:
         "route": route,
         "posture": posture,
         "outbound": outbound_verdict(posture, route),
+        "deck": deck_vitals.collect(sample=0.15),
         "geoip": geo,
         "bus": {
             "path": str(BUS),

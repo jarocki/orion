@@ -21,6 +21,18 @@ rc5 image; it lands in the next build.
   title, launcher, GODSEYE refusal pages and the User Guide follow the rename.
   `orionx-osint` keeps its name as the command.
 
+### Added
+
+- **Deck vitals on both surfaces** (DEC-PHASE12-049). Neither the Cockpit nor
+  the Workbench could say the deck's own hostname, addresses, gateway, disk,
+  memory or CPU. One stdlib module, `scripts/awareness/deck_vitals.py`, now
+  answers for both: pure parsers over `/proc` and `ip -j`, a `collect()` that
+  never raises (every field is independently None with a reason), reads only.
+  The Cockpit gains a DECK band under the event stream — hostname, each
+  interface's address, default gateway, uptime, CPU/MEM/DISK bars with the
+  numbers on them — and shows hostname · IP in its header; the Workbench's
+  status API carries the same object and its strip shows the same chips.
+
 ### Fixed
 
 - **`orionx-mesh join` failed as root with "Unable to modify interface:

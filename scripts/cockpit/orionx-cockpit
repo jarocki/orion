@@ -37,6 +37,8 @@ _here = Path(__file__).resolve()
 sys.path.insert(0, str(_here.parent))
 
 import cockpit_lib as L  # noqa: E402
+sys.path.insert(0, str(_here.parent.parent / "awareness"))
+import deck_vitals as V  # noqa: E402  (DEC-PHASE12-049: one authority for hostname/IP/vitals)
 
 try:
     import gi
@@ -53,6 +55,7 @@ FPS_MS = 160          # ~6 fps redraw
 POLL_EVENTS_MS = 500
 POLL_NET_MS = 1000
 POLL_SYS_MS = 5000
+POLL_VITALS_MS = 2000      # deck vitals (DEC-PHASE12-049): two /proc/stat samples apart
 ICON = "/usr/share/pixmaps/orionx.png"
 FONT = "Hack"         # fonts-hack-otf is in the image; cairo falls back if absent
 
@@ -95,6 +98,8 @@ class Cockpit(Gtk.Window):
         self.pressure_shown = 0.0
         self.flash = 0.0                    # 1.0 on a new warning/critical, decays
         self.systems = {"NEBULA": False, "FIREWALL": False, "MESH": False, "R.A.I.N.": False}
+        self.vitals: dict = {}
+        self._cpu_prev = None
         self.posture = "0"
         self.posture_status: dict = {}
         # Drill-down + approval state (DEC-PHASE12-029).
@@ -114,11 +119,13 @@ class Cockpit(Gtk.Window):
         GLib.timeout_add(POLL_EVENTS_MS, self._poll_events)
         GLib.timeout_add(POLL_NET_MS, self._poll_net)
         GLib.timeout_add(POLL_SYS_MS, self._poll_sys)
+        GLib.timeout_add(POLL_VITALS_MS, self._poll_vitals)
         if demo:
             GLib.timeout_add(1400, self._demo_event)
         self._poll_events()
         self._poll_net()
         self._poll_sys()
+        self._poll_vitals()
         if fullscreen:
             self.fullscreen()
             self._fs = True
@@ -161,6 +168,12 @@ class Cockpit(Gtk.Window):
         self.heal = L.healing_actions()
         if self.demo:
             self.systems.update({"NEBULA": True, "FIREWALL": True, "MESH": True, "R.A.I.N.": True})
+        return True
+
+    def _poll_vitals(self) -> bool:
+        v = V.collect(self._cpu_prev)
+        self._cpu_prev = v.get("cpu_sample")
+        self.vitals = v
         return True
 
     def _tick(self) -> bool:
@@ -291,7 +304,9 @@ class Cockpit(Gtk.Window):
         body_y = header_h + pad
         body_h = H - header_h - pad * 2
         left_w = int(W * 0.58) - pad
-        self._events_panel(cr, pad, body_y, left_w, body_h)
+        d_h = 118   # DECK band: identity + vitals, under the stream (DEC-PHASE12-049)
+        self._events_panel(cr, pad, body_y, left_w, body_h - d_h - pad)
+        self._deck_panel(cr, pad, body_y + body_h - d_h, left_w, d_h)
 
         rx = pad + left_w + pad
         rw = W - rx - pad
@@ -415,6 +430,10 @@ class Cockpit(Gtk.Window):
         cr.stroke()
         self._text(cr, 22, 38, "ORION-X", 22, L.EMBER, bold=True, glow=1.0)
         self._text(cr, 22 + 118, 38, "//  COCKPIT", 16, L.DIM)
+        v = self.vitals or {}
+        who = " \u00b7 ".join(s for s in (v.get("hostname"), v.get("primary_ipv4")) if s)
+        if who:
+            self._text(cr, 22 + 118 + 150, 38, who, 13, L.DIM)
         # posture badge — DEC-PHASE12-024: a tier that cannot detect says so.
         label, badge_state = L.posture_badge(self.posture, self.posture_status)
         col = {"0": L.GREEN, "1": L.AMBER, "2": L.RED}.get(self.posture, L.GREEN)
@@ -631,6 +650,60 @@ class Cockpit(Gtk.Window):
             self._text(cr, x + 18, ry, label, 10.5, L.DIM)
             self._text(cr, x + 190, ry, str(v)[:74], 11, (0.9, 0.9, 0.9))
             ry += 18
+
+    # --- deck identity + vitals (DEC-PHASE12-049) ---
+    def _deck_panel(self, cr, x, y, w, h):
+        cx, cy, cw, ch = self._panel(cr, x, y, w, h, "DECK")
+        v = self.vitals or {}
+        if not v:
+            self._text(cr, cx, cy + 20, "reading\u2026", 11, L.DIM)
+            return
+        parts = []
+        if v.get("hostname"):
+            parts.append(v["hostname"])
+        for it in v.get("interfaces") or []:
+            if it["ipv4"]:
+                parts.append(f"{it['iface']} {it['ipv4'][0].split('/')[0]}")
+        if v.get("gateway"):
+            parts.append(f"gw {v['gateway']}" + (f" ({v['gateway_dev']})" if v.get("gateway_dev") else ""))
+        elif v.get("interfaces") is not None:
+            parts.append("no default route")
+        parts.append("up " + V.fmt_uptime(v.get("uptime_s")))
+        line = "  \u00b7  ".join(parts)
+        maxc = max(20, int(cw / 7.0))
+        if len(line) > maxc:
+            line = line[: maxc - 1] + "\u2026"
+        self._text(cr, cx, cy + 16, line, 11.5, (0.9, 0.9, 0.9))
+        # three bars: CPU, MEM, DISK — each labelled with the number, not just a colour
+        mem = v.get("mem") or {}
+        dsk = v.get("disk") or {}
+        load = v.get("load")
+        bars = [
+            ("CPU", v.get("cpu_pct"),
+             (f"{v['cpu_pct']:.0f}%" if v.get("cpu_pct") is not None else "\u2014")
+             + (f"  load {load[0]:.2f}" if load else "")
+             + (f"  {v['cpu_count']} cpu" if v.get("cpu_count") else "")),
+            ("MEM", mem.get("used_pct"),
+             (f"{mem['used_pct']:.0f}%  {V.fmt_bytes((mem['total_kib'] - mem['available_kib']) * 1024)} of {V.fmt_bytes(mem['total_kib'] * 1024)}"
+              if mem.get("used_pct") is not None else "\u2014")),
+            ("DISK", dsk.get("used_pct"),
+             (f"{dsk['used_pct']:.0f}%  {V.fmt_bytes(dsk['free_bytes'])} free on {dsk['path']}"
+              if dsk.get("used_pct") is not None else "\u2014")),
+        ]
+        bw = (cw - 24) / 3.0
+        by = cy + 46
+        for i, (name, pct, label) in enumerate(bars):
+            bx = cx + i * (bw + 12)
+            col = L.DIM if pct is None else (L.RED if pct >= 90 else L.AMBER if pct >= 75 else L.GREEN)
+            self._text(cr, bx, by, name, 10, L.DIM, bold=True)
+            self._text(cr, bx + 36, by, label, 10.5, (0.85, 0.85, 0.85))
+            self._rrect(cr, bx, by + 8, bw, 8, 3)
+            cr.set_source_rgba(*L.DIM, 0.25)
+            cr.fill()
+            if pct is not None:
+                self._rrect(cr, bx, by + 8, max(2.0, bw * min(100.0, pct) / 100.0), 8, 3)
+                cr.set_source_rgba(*col, 0.85)
+                cr.fill()
 
     # --- threat gauge ---
     def _gauge_panel(self, cr, x, y, w, h):

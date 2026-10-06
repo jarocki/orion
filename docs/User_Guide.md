@@ -664,6 +664,7 @@ The Orion Cockpit (`orionx-cockpit`; also in the Orion menu and behind the **◈
 - **THREAT PRESSURE** gauge — severity-weighted with a 60 s half-life: **CALM** below 25, **ELEVATED** below 60, **HOSTILE** at 60 and above.
 - **NETWORK** — rx/tx sparkline.
 - **SYSTEMS** LEDs — Nebula, Firewall, Mesh, R.A.I.N.
+- **DECK** band (under the stream) — this machine: hostname, every interface's address, the default gateway, uptime, and CPU / memory / disk bars with the numbers written on them. The header repeats hostname and primary address so they are visible at a glance.
 - Posture badge (current threat-posture tier) and clock.
 
 Keys: **F11** toggles fullscreen; **Esc** or **q** quits. Flags: `--fullscreen` starts fullscreen; `--demo` feeds synthetic events for a demonstration.
@@ -674,7 +675,7 @@ Keys: **F11** toggles fullscreen; **Esc** or **q** quits. Flags: `--fullscreen` 
 
 ### Orion Workbench (analyst toolbox)
 
-Applications → **Orion** → **Orion Workbench** (or `orionx-osint`; it was called the Investigation Surface before rc6) serves a launcher page on 127.0.0.1 (port 8787, walking forward if busy) that groups the deck's own tools with two vendored web tools: **CyberChef 11.5.0** (local; its 74 files are checksum-verified when the image is built; 23 incident-response recipes) and the **Orion-X Attack Map**, which draws what *this* deck has seen on the event bus. No GeoIP database ships, so sources that cannot be located are drawn in a labelled PUBLIC UNLOCATED sector, and the page says on every render that bearing and distance are layout, not location. The page also links `orionx-logquery`, Pivotglass, nucleotide, the analyzers, `orionx-capture`, the Cockpit, `storyboard-gen.py`, `orionx-diag`, `orionx-freshen-intel` and GODSEYE. Everything under *ON THIS DECK* works with no network. `orionx-osint --check` reports what is present.
+Applications → **Orion** → **Orion Workbench** (or `orionx-osint`; it was called the Investigation Surface before rc6) serves a launcher page on 127.0.0.1 (port 8787, walking forward if busy) that groups the deck's own tools with two vendored web tools: **CyberChef 11.5.0** (local; its 74 files are checksum-verified when the image is built; 23 incident-response recipes) and the **Orion-X Attack Map**, which draws what *this* deck has seen on the event bus. No GeoIP database ships, so sources that cannot be located are drawn in a labelled PUBLIC UNLOCATED sector, and the page says on every render that bearing and distance are layout, not location. The page also links `orionx-logquery`, Pivotglass, nucleotide, the analyzers, `orionx-capture`, the Cockpit, `storyboard-gen.py`, `orionx-diag`, `orionx-freshen-intel` and GODSEYE. Everything under *ON THIS DECK* works with no network. The strip under the title shows the deck's hostname, address, gateway, CPU, memory and disk — the same numbers as the Cockpit's DECK band, read from the same module, so the two can never disagree. `orionx-osint --check` reports what is present.
 
 ### GODSEYE (globe)
 
