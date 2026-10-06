@@ -880,6 +880,14 @@ check(st["outbound"]["allowed"] is False and st["outbound"]["state"] == "no-rout
 check(bool(st["outbound"]["remedy"]), "the refusal carries a remedy")
 check("deck" in st and "hostname" in st["deck"] and "cpu_pct" in st["deck"] and "interfaces" in st["deck"],
       "status carries deck vitals from the shared module (DEC-PHASE12-049)")
+_ls, _lc, _lb = get("/links.json")
+links = json.loads(_lb)
+_ids = [i["id"] for i in links["installable"]]
+check(all(k in _ids for k in ("piper-voice", "element", "gomuks")), "every optional installer is offered (piper-voice, element, gomuks added)")
+check(all(("probe" in i) for i in links["installable"]), "every optional entry declares its installed-probe")
+check(all(i["probe"] for i in links["installable"] if i["id"] != "geoip"), "every probe is non-empty except geoip (answered by the server's own state)")
+check("optional" in st and set(st["optional"]) == set(_ids), "status.optional answers for exactly the offered installers (DEC-PHASE12-052)")
+check(all(st["optional"][k]["known"] for k in _ids), "every answer is from evidence, none 'unknown'")
 
 status, ctype, body = get("/api/pewpew.json?window=900")
 feed = json.loads(body)
@@ -1019,6 +1027,27 @@ if python3 -c "import ast,sys; [ast.parse(open(p,encoding='utf-8').read()) for p
      "$SRC/pewpew_feed.py" "$SRC/osint_server.py" "$CH/usr/bin/orionx-osint"; then
     pass "python sources parse"
 else fail "python sources parse"; fi
+
+# DEC-PHASE12-052: optional_state() is pure — installed only from evidence.
+if python3 - "$SRC" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1]); import osint_server as O
+def ck(c, m):
+    print(("  ok   " if c else "  FAIL ") + m)
+    if not c: raise SystemExit(1)
+ents = [{"id":"zeek","probe":["/opt/zeek/bin/zeek"]},{"id":"duckdb","probe":["python:duckdb"]},
+        {"id":"geoip","probe":[]},{"id":"mystery","probe":[]}]
+present = {"/opt/zeek/bin/zeek"}
+res = O.optional_state(ents, geoip_available=False, exists=lambda p: p in present, find_spec=lambda m: object() if m == "duckdb" else None)
+ck(res["zeek"]["installed"] and res["zeek"]["evidence"] == "/opt/zeek/bin/zeek", "path probe -> installed with the path as evidence")
+ck(res["duckdb"]["installed"] and res["duckdb"]["evidence"] == "python:duckdb", "python-module probe -> installed")
+ck(res["geoip"]["installed"] is False and res["geoip"]["known"], "geoip answered from the server's own state")
+ck(res["mystery"]["known"] is False and res["mystery"]["installed"] is False, "no probe -> unknown, never claimed installed")
+res2 = O.optional_state(ents, geoip_available=True, exists=lambda p: False, find_spec=lambda m: None)
+ck(not res2["zeek"]["installed"] and res2["zeek"]["evidence"].startswith("none of:"), "absent -> not installed, says what was looked for")
+ck(res2["geoip"]["installed"], "geoip available -> installed")
+PY
+then pass "optional_state is pure and evidence-based"; else fail "optional_state" "see output above"; fi
 
 printf "\n===========================================\n"
 printf "  Results: ${GREEN}%s passed${NC}, ${RED}%s failed${NC}\n" "$PASS" "$FAIL"

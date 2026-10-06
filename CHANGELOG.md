@@ -47,6 +47,14 @@ rc5 image; it lands in the next build.
   source address is one of this deck's own (the archive.ph policy hit on the
   reference deck) is labelled `origin: self` in its detail and `SELF` in the
   stream, and no longer counts toward THREAT PRESSURE.
+- **Optional features are visible on the deck, with their real state**
+  (DEC-PHASE12-052). The Workbench's *Optional* section now lists every
+  post-boot installer — Piper voice, Element and gomuks were missing — and
+  each card says **installed** or **not installed** from the installer's own
+  idempotence probe (reported by `/api/status.json`), never from an
+  assumption; an entry without evidence is shown as unknown rather than
+  claimed. The Piper card states what the voice costs and that espeak-ng
+  speaks without it.
 
 ### Fixed
 

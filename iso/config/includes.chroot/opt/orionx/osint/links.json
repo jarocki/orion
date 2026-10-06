@@ -238,49 +238,98 @@
       "name": "GeoIP country + ASN labels",
       "command": "sudo /opt/orionx/optional/install-geoip.sh",
       "runtime_path": "/opt/orionx/optional/install-geoip.sh",
-      "blurb": "DB-IP Lite (CC BY 4.0). Adds country and ASN LABELS to the attack map's sources. It does not add coordinates and the map still places nothing. ~10 MB, monthly data."
+      "blurb": "DB-IP Lite (CC BY 4.0). Adds country and ASN LABELS to the attack map's sources. It does not add coordinates and the map still places nothing. ~10 MB, monthly data.",
+      "probe": []
     },
     {
       "id": "zeek",
       "name": "Zeek network security monitor",
       "command": "sudo /opt/orionx/optional/install-zeek.sh",
       "runtime_path": "/opt/orionx/optional/install-zeek.sh",
-      "blurb": "Protocol-level logging and notices; orionx-postured ingests its notice/weird/conn logs into the bus the map reads."
+      "blurb": "Protocol-level logging and notices; orionx-postured ingests its notice/weird/conn logs into the bus the map reads.",
+      "probe": [
+        "/opt/zeek/bin/zeek"
+      ]
     },
     {
       "id": "ghidra",
       "name": "Ghidra",
       "command": "sudo /opt/orionx/optional/install-ghidra.sh",
       "runtime_path": "/opt/orionx/optional/install-ghidra.sh",
-      "blurb": "NSA's reverse-engineering suite. Deferred off the base image for size (DEC-PHASE11-004)."
+      "blurb": "NSA's reverse-engineering suite. Deferred off the base image for size (DEC-PHASE11-004).",
+      "probe": [
+        "/opt/ghidra"
+      ]
     },
     {
       "id": "floss",
       "name": "FLOSS",
       "command": "sudo /opt/orionx/optional/install-floss.sh",
       "runtime_path": "/opt/orionx/optional/install-floss.sh",
-      "blurb": "Mandiant's obfuscated-string extractor — the strings a packed sample does not hand you."
+      "blurb": "Mandiant's obfuscated-string extractor — the strings a packed sample does not hand you.",
+      "probe": [
+        "/opt/orionx/floss"
+      ]
     },
     {
       "id": "trid",
       "name": "TrID",
       "command": "sudo /opt/orionx/optional/install-trid.sh",
       "runtime_path": "/opt/orionx/optional/install-trid.sh",
-      "blurb": "File-type identification by signature when `file` shrugs."
+      "blurb": "File-type identification by signature when `file` shrugs.",
+      "probe": [
+        "/opt/orionx/trid"
+      ]
     },
     {
       "id": "clamav",
       "name": "ClamAV",
       "command": "sudo /opt/orionx/optional/install-clamav.sh",
       "runtime_path": "/opt/orionx/optional/install-clamav.sh",
-      "blurb": "Signature scanning. Off the base image at -350 MB (DEC-PHASE11-009)."
+      "blurb": "Signature scanning. Off the base image at -350 MB (DEC-PHASE11-009).",
+      "probe": [
+        "/usr/bin/clamscan"
+      ]
     },
     {
       "id": "duckdb",
       "name": "DuckDB",
       "command": "sudo /opt/orionx/optional/install-duckdb.sh",
       "runtime_path": "/opt/orionx/optional/install-duckdb.sh",
-      "blurb": "Columnar acceleration for orionx-logquery on very large captures. Not required."
+      "blurb": "Columnar acceleration for orionx-logquery on very large captures. Not required.",
+      "probe": [
+        "python:duckdb"
+      ]
+    },
+    {
+      "id": "piper-voice",
+      "name": "Piper natural voice for R.A.I.N. narration",
+      "command": "sudo /opt/orionx/optional/install-piper-voice.sh",
+      "runtime_path": "/opt/orionx/optional/install-piper-voice.sh",
+      "blurb": "espeak-ng speaks today (robotic, zero added bytes). This adds en_US-lessac-medium — a 63 MB voice model plus onnxruntime, SHA-256-pinned; the installer synthesises real audio and checks the WAV before it declares success. R.A.I.N. discovers it by itself; nothing to configure. On a small CPU synthesis takes seconds: narration is bounded and never delays the alert tone. Turn narration on with `orionx-rain --speech on`.",
+      "probe": [
+        "/usr/share/orionx/voices/en_US-lessac-medium.onnx"
+      ]
+    },
+    {
+      "id": "element",
+      "name": "Element desktop (Matrix client)",
+      "command": "sudo /opt/orionx/optional/install-element.sh",
+      "runtime_path": "/opt/orionx/optional/install-element.sh",
+      "blurb": "Encrypted team communications over Matrix. Adds Element's repository and installs element-desktop; a Synapse server for the team is `sudo setup-matrix.sh --mode server`.",
+      "probe": [
+        "/usr/bin/element-desktop"
+      ]
+    },
+    {
+      "id": "gomuks",
+      "name": "gomuks (Matrix client, terminal)",
+      "command": "sudo /opt/orionx/optional/install-gomuks.sh",
+      "runtime_path": "/opt/orionx/optional/install-gomuks.sh",
+      "blurb": "A terminal Matrix client for a deck without a desktop session, or over SSH.",
+      "probe": [
+        "/usr/local/bin/gomuks"
+      ]
     }
   ],
   "online": [

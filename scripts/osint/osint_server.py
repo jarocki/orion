@@ -72,6 +72,7 @@ import deck_vitals  # noqa: E402  (DEC-PHASE12-049: same hostname/IP/vitals as t
 
 # --- Where things are -------------------------------------------------------
 DEFAULT_ROOT = Path(os.environ.get("ORIONX_OSINT_ROOT", "/opt/orionx/osint"))
+WEB_ROOT = DEFAULT_ROOT        # set from --root in main(); build_status() reads links.json here
 BUS = Path(os.environ.get("ORIONX_EVENT_LOG", pewpew_feed.EVENT_LOG))
 POSTURE_STATUS = Path(os.environ.get("ORIONX_POSTURE_STATUS",
                                      "/run/orionx/posture-status.json"))
@@ -415,6 +416,58 @@ class _AsnShim:
         return self._reader.get(ip)
 
 
+def load_installable(root: Path) -> list[dict]:
+    """links.json's installable entries, or [] on any failure. Never raises."""
+    try:
+        data = json.loads((Path(root) / "links.json").read_text(encoding="utf-8"))
+        items = data.get("installable", [])
+        return [i for i in items if isinstance(i, dict) and i.get("id")]
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def optional_state(entries: list[dict], geoip_available: bool,
+                   exists=os.path.exists, find_spec=None) -> dict:
+    """Which optional installers have actually been run on THIS deck. Pure.
+
+    Each entry's `probe` is a list of paths (or `python:<module>`) that exist
+    only after its installer succeeded — the same gates the installers use
+    for idempotence. An entry with no probe is answered by what the server
+    already knows (GeoIP), or reported unknown rather than guessed. The page
+    shows 'installed' only from evidence (docs/RESILIENCE.md rule 3).
+    """
+    if find_spec is None:
+        import importlib.util  # noqa: PLC0415
+        find_spec = importlib.util.find_spec
+    out: dict = {}
+    for it in entries:
+        iid = str(it.get("id"))
+        probe = it.get("probe") or []
+        if iid == "geoip" and not probe:
+            out[iid] = {"installed": bool(geoip_available), "known": True,
+                        "evidence": "GeoIP databases readable" if geoip_available else "databases absent"}
+            continue
+        if not probe:
+            out[iid] = {"installed": False, "known": False, "evidence": "no probe declared"}
+            continue
+        hit = None
+        for p in probe:
+            p = str(p)
+            if p.startswith("python:"):
+                try:
+                    if find_spec(p[7:]) is not None:
+                        hit = p
+                except (ImportError, ValueError):
+                    pass
+            elif exists(p):
+                hit = p
+            if hit:
+                break
+        out[iid] = {"installed": hit is not None, "known": True,
+                    "evidence": hit or ("none of: " + ", ".join(map(str, probe)))}
+    return out
+
+
 def build_status() -> dict:
     route = read_default_route(_read(PROC_ROUTE) or "", _read(PROC_ROUTE6) or "")
     posture = read_posture(_read(POSTURE_STATUS))
@@ -430,6 +483,9 @@ def build_status() -> dict:
         "outbound": outbound_verdict(posture, route),
         "deck": deck_vitals.collect(sample=0.15),
         "geoip": geo,
+        # DEC-PHASE12-052: optional installers, with evidence of whether each
+        # has been run on this deck, so the Workbench can say so.
+        "optional": optional_state(load_installable(WEB_ROOT), bool(geo.get("available"))),
         "bus": {
             "path": str(BUS),
             "present": bus_present,
@@ -709,6 +765,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = Path(args.root)
+    global WEB_ROOT
+    WEB_ROOT = root
     if args.check:
         return run_check(root)
 

@@ -134,6 +134,8 @@ section > p.lede{margin:0 0 14px;color:var(--dim);font-size:.86rem;max-width:78c
 .badge.local{color:var(--go)}
 .badge.offdeck{color:var(--cool)}
 .badge.install{color:var(--warn)}
+.badge.installed{background:rgba(70,200,120,.16);color:#8fe3ad;border-color:rgba(70,200,120,.55)}
+.card.installed{border-color:rgba(70,200,120,.35)}
 .badge.caution{color:var(--stop)}
 .badge.cat{color:var(--faint);border-color:var(--line2)}
 
@@ -209,10 +211,11 @@ footer a{color:var(--dim)}
 </section>
 
 <section id="sec-install">
-  <h2>Installable &middot; not here yet</h2>
+  <h2>Optional &middot; install when you need it</h2>
   <p class="lede">Deliberately off the base image, for size or licence. Each
-  needs a network and one command. Nothing on this deck degrades if you never
-  run any of them.</p>
+  needs a network and one command, and each card says whether it is already
+  on this deck &mdash; from the installer's own evidence, not a guess. Nothing
+  on this deck degrades if you never run any of them.</p>
   <div class="grid" id="grid-install"></div>
 </section>
 

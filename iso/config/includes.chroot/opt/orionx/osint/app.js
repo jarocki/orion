@@ -207,12 +207,23 @@ function recipeCard(rec){
 }
 
 function installCard(item){
-  var c = el("div", "card install");
+  // DEC-PHASE12-052: the badge is EVIDENCE from /api/status.json (the
+  // installer's own idempotence probe), never an assumption.
+  var st = (S.status && S.status.optional && S.status.optional[item.id]) || null;
+  var installed = !!(st && st.known && st.installed);
+  var c = el("div", "card install" + (installed ? " installed" : ""));
   var top = el("div", "top");
   top.appendChild(el("h3", null, item.name));
-  top.appendChild(el("span", "badge install", "installable"));
+  if (installed) top.appendChild(el("span", "badge installed", "installed"));
+  else if (st && st.known) top.appendChild(el("span", "badge install", "not installed"));
+  else top.appendChild(el("span", "badge install", "installable"));
   c.appendChild(top);
   c.appendChild(el("p", null, item.blurb));
+  if (installed && st.evidence) {
+    var ev = el("p", "why");
+    ev.appendChild(document.createTextNode("present: " + st.evidence + " — the command below re-runs the installer"));
+    c.appendChild(ev);
+  }
   c.appendChild(el("div", "cmd", item.command));
   var foot = el("div", "foot");
   foot.appendChild(copyButton(item.command));

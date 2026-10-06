@@ -1581,6 +1581,9 @@ as post-boot installers under `/opt/orionx/optional/`:
 | `install-floss.sh` | Mandiant FLOSS | ~50 MB |
 | `install-trid.sh` | File type identification | ~5 MB |
 | `install-gomuks.sh` | Matrix TUI client | ~20 MB |
+| `install-zeek.sh` | Zeek network security monitor (the recovery path if the build-time install failed) | ~100 MB |
+| `install-geoip.sh` | DB-IP Lite country + ASN labels for the attack map | ~70 MB |
+| `install-duckdb.sh` | DuckDB accelerator for `orionx-logquery` | ~30 MB |
 | `install-piper-voice.sh` | Piper natural voice for R.A.I.N. narration (en_US-lessac-medium, SHA-256-pinned; installer synthesises audio to prove it works) | ~63 MB model, >150 MB installed with onnxruntime |
 
 ### Usage
@@ -1589,6 +1592,8 @@ as post-boot installers under `/opt/orionx/optional/`:
 # Verify network first — optional installers fetch from the internet by design
 sudo /opt/orionx/optional/install-clamav.sh
 ```
+
+The Orion Workbench's **Optional** section lists every one of these with whether it is already installed on this deck (from the installer's own evidence) and the exact command to run.
 
 Each installer:
 
