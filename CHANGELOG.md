@@ -7,9 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [v2.2.0-rc7] — in progress
+## [v2.2.0-rc8] — in progress
 
-From the rc6 boot on the reference deck (2026-10-06). Not in the rc6 image.
+From the rc6/rc7 boots on the reference deck (2026-10-06). Not in rc7.
+
+### Fixed
+
+- **Toggle Theme changed only the window frame and the prompt** (DEC-PHASE12-058).
+  Three causes, all in the toggle's own plan: it re-asserted the same Phoenix
+  wallpaper for both themes; it set the same GTK theme for both, so every
+  selection and button stayed orange; and the terminal palette it wrote only
+  reaches *new* windows — xfce4-terminal 1.1.4 has no file monitor on
+  terminalrc (verified against the trixie binary) — while the Cockpit ran it
+  detached with no window and no report. Now the green theme has its own
+  wallpaper (the cyan Neon phoenix) and its own GTK theme
+  (`Orion-X-Cyberdeck-Green`, a recolour of the same Adwaita-dark base with the
+  green frames' `#0CFA54` accent); `--status` checks every registered backdrop;
+  `--plan` lists the assets; and the Cockpit's button opens a new terminal
+  afterwards — born with the new palette — showing the status report.
+- **The tabs' menu entry still said "Orion-X Control Center" on rc7.** Two
+  writers for one file: a static `.desktop` in includes.chroot (edited) and
+  the 0700 hook's heredoc (which won at build time). The static copy is gone;
+  the hook is the one writer and opens the Cockpit on a tab; a test fails if a
+  static copy reappears.
+
+## [v2.2.0-rc7] — 2026-10-06 (release candidate; internal build, not published)
+
+From the rc6 boot on the reference deck (2026-10-06).
+
+ISO SHA-256 `2bfaea261a1b3edd2998b2144dc395e6928425cd39907f42730f2271a45e349e`,
+3,134,275,584 bytes (3.13 GB), built 2026-10-06T18:00:25Z from `7b35c146` in
+34 min with a clean chroot. Baked `ISO_VERSION=v2.2.0-rc7`, baked README ==
+repo, QEMU BIOS 108 s / UEFI 118 s, hooks-applied 20/20, content-presence
+363/0/5. (A first QEMU pass reported a UEFI timeout at 300 s while two other
+gates saturated the host; the guest's own clock read ~1 min 35 s and it had
+reached getty.target — starvation, not a boot defect. Re-run alone: pass.)
+Known defect in this image: the menu entry for the tabs still reads "Orion-X
+Control Center" — a static copy of the .desktop file was edited while the 0700
+hook overwrote it at build time; the launcher binary opens the Cockpit tabs
+regardless. Fixed in rc8.
 
 ### Changed
 
@@ -34,21 +70,6 @@ From the rc6 boot on the reference deck (2026-10-06). Not in the rc6 image.
   plus every tool on this deck and every optional one, read from the
   Workbench catalogue at runtime with the same installed-probe logic the
   Workbench uses — Run for what is here, Install for what is not.
-
-### Fixed
-
-- **Toggle Theme changed only the window frame and the prompt** (DEC-PHASE12-058).
-  Three causes, all in the toggle's own plan: it re-asserted the same Phoenix
-  wallpaper for both themes; it set the same GTK theme for both, so every
-  selection and button stayed orange; and the terminal palette it wrote only
-  reaches *new* windows — xfce4-terminal 1.1.4 has no file monitor on
-  terminalrc (verified against the trixie binary) — while the Cockpit ran it
-  detached with no window and no report. Now the green theme has its own
-  wallpaper (the cyan Neon phoenix) and its own GTK theme
-  (`Orion-X-Cyberdeck-Green`, a recolour of the same Adwaita-dark base with the
-  green frames' `#0CFA54` accent); `--status` checks every registered backdrop;
-  `--plan` lists the assets; and the Cockpit's button opens a new terminal
-  afterwards — born with the new palette — showing the status report.
 
 ### Notes from the deck
 
