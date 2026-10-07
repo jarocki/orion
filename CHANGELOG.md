@@ -7,9 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [v2.2.0-rc9] — in progress
+## [v2.2.0-rc9] — 2026-10-07 (release candidate; internal build, not published)
 
 From the rc8 boot on the reference deck (2026-10-06/07). Not in rc8.
+
+ISO SHA-256 `243117b73eab9101db80e5efd415de66f5a022b53945b10d64a360e66a771c4b`,
+3,134,275,584 bytes (3.13 GB), built 2026-10-07T05:33:03Z from `e02b157a` in
+34 min with a clean chroot (only the bootstrap stage was reused). Baked
+`ISO_VERSION=v2.2.0-rc9`, baked README == repo; `gnome-keyring` is in the
+package database, `orionx-mesh-status.timer` is enabled, Suricata's
+`threshold-file` points at `/var/lib/suricata/orionx-threshold.config` and the
+file ships, and the Matrix unit starts Synapse from the dh-virtualenv python.
+Hooks-applied 20/20, content-presence 363/0/5. QEMU BIOS 114 s / UEFI 114 s;
+the first UEFI pass timed out at 301 s wall-clock with the guest clock at 96 s
+and getty already reached — the TCG-starvation signature recorded for rc7, not
+an image fault — and passed when re-run alone. Not yet booted on the deck.
 
 ### Fixed
 
