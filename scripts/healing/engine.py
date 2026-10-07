@@ -40,15 +40,23 @@ from pathlib import Path
 from typing import Any
 
 _HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
+for _p in (_HERE, _HERE.parent / "rain"):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 import healing_lib as hl  # noqa: E402
 import playbooks as pb  # noqa: E402
+import rain_lib  # noqa: E402  (bus attestation, DEC-PHASE12-084)
 
 #: How long a confirm-level proposal waits for an operator answer before it
 #: lapses. Unanswered is "no" — a question nobody answered must never escalate.
 CONFIRM_GRACE_SECONDS = 3600.0
+
+#: A signed event older than this (or this far in the future) is not acted on:
+#: the bus is world-readable, so a captured signed line could be re-appended.
+ATTEST_MAX_AGE_SECONDS = 300.0
+ATTEST_MAX_SKEW_SECONDS = 60.0
+_SEEN_AUTH_MAX = 4096
 
 
 # ---------------------------------------------------------------------------
@@ -152,8 +160,60 @@ class Engine:
             window=float(self.config.get("window_seconds", 300.0)),
         )
         self.runner = pb.Runner(dry_run=self.dry_run, verbose=self.verbose)
+        self.status_file = hl.HEALING_STATUS_FILE
+        self._bus_key: bytes | None = None
+        self.key_error: str | None = None
+        self._seen_auth: dict[str, None] = {}
 
     # -- plumbing ---------------------------------------------------------
+    def bus_key(self) -> bytes | None:
+        """The attestation key, re-tried until found (heald creates it at start)."""
+        if self._bus_key is None:
+            self._bus_key, self.key_error = rain_lib.read_bus_key(rain_lib.BUS_KEY)
+        return self._bus_key
+
+    def attested(self, event: dict[str, Any], now: float) -> tuple[bool, str]:
+        """Was this event written by a root producer, recently, exactly once?
+        (DEC-PHASE12-084). Returns (ok, why-not)."""
+        key = self.bus_key()
+        if key is None:
+            return False, self.key_error or "no attestation key"
+        tag = event.get(rain_lib.AUTH_FIELD)
+        if not isinstance(tag, str):
+            return False, "unsigned event (not written by a root producer)"
+        if not rain_lib.verify_event(event, key):
+            return False, "signature does not verify (forged or altered)"
+        try:
+            age = now - float(event.get("ts"))
+        except (TypeError, ValueError):
+            return False, "signed event has no usable timestamp"
+        if age > ATTEST_MAX_AGE_SECONDS or age < -ATTEST_MAX_SKEW_SECONDS:
+            return False, f"signed event is {age:.0f}s old (replay window {ATTEST_MAX_AGE_SECONDS:.0f}s)"
+        if tag in self._seen_auth:
+            return False, "replayed event (this signature was already acted on)"
+        self._seen_auth[tag] = None
+        while len(self._seen_auth) > _SEEN_AUTH_MAX:
+            self._seen_auth.pop(next(iter(self._seen_auth)))
+        return True, ""
+
+    def publish_status(self, now: float | None = None) -> bool:
+        """Project the chain into the world-readable status file (DEC-PHASE12-085).
+        A dry run writes nothing. A failed write is said on stderr (journal)."""
+        if self.dry_run:
+            return False
+        self.bus_key()
+        payload = hl.status_snapshot(
+            self.chain_file(), now,
+            extra_error=(f"bus events cannot be verified: {self.key_error}"
+                         if self._bus_key is None and self.key_error else None))
+        try:
+            hl.write_status(payload, self.status_file)
+            return True
+        except OSError as exc:
+            print(f"orionx-heal: cannot publish {self.status_file}: {exc}",
+                  file=sys.stderr, flush=True)
+            return False
+
     def chain_file(self) -> Path:
         return self.state_dir / "chain.jsonl"
 
@@ -180,7 +240,9 @@ class Engine:
                       f"{entry.get('playbook', '')} {entry.get('target', '')}",
                       flush=True)
             return entry
-        return hl.append_entry(entry, self.chain_file())
+        sealed = hl.append_entry(entry, self.chain_file())
+        self.publish_status()          # every state change reaches the Cockpit
+        return sealed
 
     def publish(self, severity: str, message: str, category: str = "heal") -> None:
         """Announce on the R.A.I.N. bus via the orionx-event CLI.
@@ -207,18 +269,29 @@ class Engine:
             print(text, flush=True)
 
     # -- the decision path -------------------------------------------------
-    def handle_event(self, event: dict[str, Any], now: float | None = None) -> str:
-        """Process one bus event end to end. Returns a short outcome token."""
+    def handle_event(self, event: dict[str, Any], now: float | None = None,
+                     trusted: bool | None = None) -> str:
+        """Process one bus event end to end. Returns a short outcome token.
+
+        `trusted=None` (the bus) verifies the event's attestation; `True` is
+        for input the invoking root process vouches for itself (--stdin)."""
         now = time.time() if now is None else now
         proposal = hl.match_event(event)
         if proposal is None:
             return "no-match"
+        why = ""
+        if trusted is None:
+            trusted, why = self.attested(event, now)
         return self.consider(proposal.playbook, proposal.target, proposal.reason,
-                             now=now)
+                             now=now, verified=bool(trusted), unverified_why=why)
 
     def consider(self, playbook: str, target: str, reason: str,
-                 now: float | None = None) -> str:
-        """Guards, then consent, then rate limit, then act. In that order."""
+                 now: float | None = None, verified: bool = True,
+                 unverified_why: str = "") -> str:
+        """Guards, then consent, then rate limit, then act. In that order.
+
+        An UNVERIFIED trigger (DEC-PHASE12-084) never parks or executes: at
+        most it becomes a suggestion that says it is unverified."""
         now = time.time() if now is None else now
 
         # 1. Guards. Unconditional; no level lifts them (DEC-PHASE12-023a).
@@ -238,6 +311,17 @@ class Engine:
         if disp == hl.ACT_SKIP:
             self.say(f"off: {playbook} not pre-approved (level={level})")
             return "off"
+
+        if not verified and disp in (hl.ACT_AWAIT, hl.ACT_EXECUTE):
+            self.record(kind=hl.KIND_PROPOSED, playbook=playbook, target=target,
+                        level=level, reason=f"UNVERIFIED trigger ({unverified_why}); {reason}")
+            self.publish("warning",
+                         f"NOT acted on: {playbook} on {target or 'this host'} was "
+                         f"requested by an unverified bus event ({unverified_why}). "
+                         f"If it is real: orionx-heal run {playbook}"
+                         + (f" --target {target}" if target else ""))
+            self.say(f"UNVERIFIED {playbook} {target}: {unverified_why}")
+            return "unverified"
 
         if disp == hl.ACT_PROPOSE:
             self.record(kind=hl.KIND_PROPOSED, playbook=playbook, target=target,

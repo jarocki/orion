@@ -602,7 +602,26 @@ def make(levels, dry_run=False, guards=None, state=None):
     real_run = e.runner.run
     e.runner.run = lambda argv, check=False: (e.runner.commands.append(list(argv))
                                               or (0, "", "")) if not e.dry_run else real_run(argv)
+    # Bus events must be attested by a root producer (DEC-PHASE12-084). These
+    # tests are about the decision path, so every event they feed is signed
+    # the way rain_lib.emit_event signs it; the gate has its own section.
+    orig = e.handle_event
+    e.handle_event = lambda ev, now=None, trusted=None: orig(signed(ev), now, trusted)
     return e
+
+import uuid
+import rain_lib as rl
+rl.BUS_KEY = WORK / "bus.key"
+BUSKEY, _why = rl.ensure_bus_key(rl.BUS_KEY)
+assert BUSKEY, _why
+
+def signed(ev):
+    if not isinstance(ev, dict):
+        return ev
+    ev = {k: v for k, v in ev.items() if k != "auth"}
+    ev.update(ts=time.time(), id=uuid.uuid4().hex[:16])
+    ev["auth"] = rl.sign_event(ev, BUSKEY)
+    return ev
 
 SCAN = {"ts": time.time(), "severity": "critical", "source": "firewall",
         "category": "scan",
@@ -986,6 +1005,139 @@ if grep -q 'lands in W10-6' "$CC_TAB"; then
 else
     fail "W10-6 marker preserved in auto_healing.py"
 fi
+
+section "Bus attestation (DEC-PHASE12-084) and the published status (DEC-PHASE12-085)"
+# security F7: only events a ROOT producer signed may park or execute anything.
+# python P1-1/P1-2 contract: heald projects the chain into a 0644 status file.
+if python3 - <<'PY'
+import json, os, stat, sys, time, uuid
+from pathlib import Path
+import healing_lib as hl
+import engine as eng
+import rain_lib as rl
+ok = True
+def check(cond, label):
+    global ok
+    print(("  ok   " if cond else "  BAD  ") + label)
+    ok = ok and bool(cond)
+
+WORK = Path(os.environ["ORIONX_HEALING_STATE"]).parent / "attest"
+WORK.mkdir(parents=True, exist_ok=True)
+AUT = Path(os.environ["ORIONX_AUTONOMY_FILE"])
+rl.BUS_KEY = WORK / "bus.key"
+KEY, why = rl.ensure_bus_key(rl.BUS_KEY)
+check(KEY is not None and oct(rl.BUS_KEY.stat().st_mode & 0o777) == "0o600", f"key created 0600 ({why})")
+check(rl.ensure_bus_key(rl.BUS_KEY)[0] == KEY, "ensure_bus_key never overwrites an existing key")
+
+n = 0
+def make(levels):
+    global n
+    n += 1
+    AUT.write_text(json.dumps(levels))
+    e = eng.Engine(state_dir=WORK / f"e{n}", probe_host=False)
+    e.status_file = WORK / f"status{n}.json"
+    e.published = []
+    e.publish = lambda sev, msg, category="heal": e.published.append((sev, msg))
+    e.runner.run = lambda argv, check=False: (e.runner.commands.append(list(argv)) or (0, "", ""))
+    return e
+
+def scan(ip="203.0.113.9", ts=None):
+    return {"ts": time.time() if ts is None else ts, "id": uuid.uuid4().hex[:16], "severity": "critical",
+            "source": "firewall", "category": "scan", "message": f"port scan from {ip} - 60 ports"}
+def sign(ev):
+    ev = dict(ev); ev["auth"] = rl.sign_event(ev, KEY); return ev
+
+e = make({"block_ip": "autonomous"})
+check(e.handle_event(scan()) == "unverified" and not e.runner.commands, "an UNSIGNED critical scan at 'autonomous' is NOT executed")
+check(any("NOT acted on" in m and "unsigned" in m for _s, m in e.published), "the operator is told it was not acted on, and why")
+rec = [x for x in e.entries() if x.get("kind") == hl.KIND_PROPOSED]
+check(len(rec) == 1 and "UNVERIFIED" in rec[0]["reason"], "the ledger records it as an UNVERIFIED suggestion")
+forged = dict(scan(), auth="0" * 64)
+check(e.handle_event(forged) == "unverified", "a forged signature is refused")
+tampered = sign(scan()); tampered["message"] = "port scan from 198.51.100.7 - 60 ports"
+check(e.handle_event(tampered) == "unverified", "a signed event with an altered message is refused")
+check(e.handle_event(sign(scan(ts=time.time() - 3600))) == "unverified", "a stale signed event (replay window) is refused")
+good = sign(scan())
+check(e.handle_event(good) == "applied" and e.runner.commands, "a fresh signed event IS executed")
+check(e.handle_event(dict(good)) == "unverified", "the same signed line appended again is refused (replay)")
+e2 = make({"block_ip": "confirm"})
+check(e2.handle_event(scan("203.0.113.20")) == "unverified" and not hl.pending_actions(e2.entries()),
+      "an unsigned event cannot even park a confirm-level action")
+check(e2.handle_event(scan("203.0.113.21"), trusted=True) == "pending", "--stdin input (trusted=True) still follows consent")
+
+# emit_event signs when (and only when) the writer can read the key
+bus = WORK / "bus.jsonl"; rl.EVENT_LOG = bus
+rl._key_cache.clear()
+rl.emit_event("critical", "firewall", "scan", "port scan from 203.0.113.30 - 60 ports")
+ev = json.loads(bus.read_text().splitlines()[-1])
+check(rl.verify_event(ev, KEY), "emit_event attaches a valid signature when the key is readable")
+e3 = make({"block_ip": "autonomous"})
+check(e3.handle_event(ev) == "applied", "an event emitted that way is acted on end to end")
+rl.BUS_KEY = WORK / "absent.key"; rl._key_cache.clear()
+rl.emit_event("critical", "health", "compromise", "host compromise asserted")
+ev2 = json.loads(bus.read_text().splitlines()[-1])
+check("auth" not in ev2, "without the key (a non-root writer) nothing is signed")
+bad = WORK / "loose.key"; bad.write_text(KEY.hex()); os.chmod(bad, 0o644)
+k, why = rl.read_bus_key(bad)
+check(k is None and "0600" in why, f"a key readable by others is refused ({why})")
+lnk = WORK / "link.key"; lnk.symlink_to(WORK / "bus.key")
+check(rl.read_bus_key(lnk)[0] is None, "a symlinked key is refused")
+rl.BUS_KEY = WORK / "bus.key"; rl._key_cache.clear()
+
+# ---- the status projection (contract with the Cockpit) ------------------
+SCHEMA = {"ts", "chain_ok", "in_force", "pending", "error"}
+e = make({"block_ip": "confirm"})
+check(e.handle_event(sign(scan("203.0.113.40"))) == "pending", "signed confirm-level event parks")
+st = json.loads(e.status_file.read_text())
+mode = stat.S_IMODE(e.status_file.stat().st_mode)
+check(set(st) == SCHEMA and mode == 0o644, f"status written on the state change, schema exact, mode {oct(mode)}")
+check(st["chain_ok"] is True and st["error"] is None and st["in_force"] == [], "chain ok, nothing in force yet")
+pend = st["pending"]
+check(len(pend) == 1 and set(pend[0]) == {"id", "action", "target", "proposed_ts"}
+      and pend[0]["action"] == "block_ip" and pend[0]["target"] == "203.0.113.40"
+      and isinstance(pend[0]["proposed_ts"], float), f"pending entry has the agreed fields: {pend}")
+aid = pend[0]["id"]
+okc, msg = e.confirm(aid)
+st = json.loads(e.status_file.read_text())
+inf = st["in_force"]
+check(okc and st["pending"] == [] and len(inf) == 1 and inf[0]["id"] == aid
+      and set(inf[0]) == {"id", "action", "target", "applied_ts", "expires_ts"}
+      and isinstance(inf[0]["expires_ts"], float) and inf[0]["expires_ts"] > time.time(),
+      f"after confirm the engine's real 'applied' record is IN FORCE: {inf}")
+check(any(x.get("kind") == hl.KIND_APPLIED for x in e.entries()), "...and the chain holds kind='applied' (no 'active' anywhere)")
+e.renew(aid, ttl=0)
+check(json.loads(e.status_file.read_text())["in_force"][0]["expires_ts"] is None, "no rollback timer -> expires_ts null")
+e.undo(aid)
+check(json.loads(e.status_file.read_text())["in_force"] == [], "after undo nothing is in force")
+leftovers = [p.name for p in WORK.iterdir() if p.name.startswith(".healing-status.")]
+check(not leftovers, "no temp files left beside the status file")
+# a tampered chain is reported, not hidden
+cf = e.chain_file(); lines = cf.read_text().splitlines()
+x = json.loads(lines[0]); x["target"] = "198.51.100.1"; lines[0] = json.dumps(x)
+cf.write_text("\n".join(lines) + "\n")
+snap = hl.status_snapshot(cf)
+check(snap["chain_ok"] is False and "broken" in (snap["error"] or ""), f"tampered chain -> chain_ok false + error ({snap['error'][:60]})")
+if os.geteuid() != 0:
+    os.chmod(cf, 0)
+    snap = hl.status_snapshot(cf)
+    os.chmod(cf, 0o600)
+    check(snap["chain_ok"] is None and "cannot read" in snap["error"] and snap["in_force"] == [],
+          "unreadable chain -> chain_ok null and the real error, never silent empty lists")
+check(hl.status_snapshot(WORK / "nochain.jsonl")["chain_ok"] is True, "no chain yet -> ok, empty")
+sys.exit(0 if ok else 1)
+PY
+then pass "attestation + status projection assertions"; else fail "attestation + status projection assertions" "see output above"; fi
+
+# The daemon keeps the file fresh (<= 10 s) even when nothing happens.
+HS="$WORK/heald-status"; mkdir -p "$HS"
+ORIONX_BUS_KEY="$HS/bus.key" ORIONX_HEALING_STATUS="$HS/healing-status.json" \
+  python3 "$HEAL_DIR/orionx-heald" --no-reconcile --bus "$HS/bus.jsonl" --state-dir "$HS/state" >"$HS/out" 2>&1 &
+HPID=$!
+sleep 2
+if [[ -f "$HS/healing-status.json" ]] && [[ -f "$HS/bus.key" ]]; then pass "heald creates the attestation key and publishes status at start"; else fail "heald start publish" "$(ls "$HS"; tail -3 "$HS/out")"; fi
+rm -f "$HS/healing-status.json"; sleep 6.5
+if [[ -f "$HS/healing-status.json" ]]; then pass "heald re-publishes the status within 10 s with no events"; else fail "heald periodic publish" "$(tail -3 "$HS/out")"; fi
+kill "$HPID" 2>/dev/null; wait "$HPID" 2>/dev/null
 
 section "Daemon bus tailing"
 # Regression: --once seeked to EOF before reading, so "process what is already

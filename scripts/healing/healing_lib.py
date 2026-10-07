@@ -69,6 +69,7 @@ import ipaddress
 import json
 import os
 import pwd
+import tempfile
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
@@ -151,6 +152,12 @@ def quarantine_dir() -> Path:
 def backup_dir() -> Path:
     return STATE_DIR / "backups"
 
+
+#: The world-readable projection of the chain (DEC-PHASE12-085). heald writes
+#: it as root; the Cockpit (operator uid) reads it, because the chain itself is
+#: root:0600 and must stay that way.
+HEALING_STATUS_FILE = Path(os.environ.get("ORIONX_HEALING_STATUS",
+                                          "/run/orionx/healing-status.json"))
 
 #: The R.A.I.N. event bus (rain_lib.EVENT_LOG). Read-only from here.
 EVENT_LOG = Path(os.environ.get("ORIONX_EVENT_LOG", "/run/orionx/events.jsonl"))
@@ -764,12 +771,20 @@ def verify_chain(entries: list[dict[str, Any]]) -> tuple[bool, int, str]:
 def read_chain(path: Path | None = None) -> list[dict[str, Any]]:
     """Load the ledger. A malformed line becomes a placeholder so verification
     reports it as a break rather than silently skipping the damage."""
+    return read_chain_checked(path)[0]
+
+
+def read_chain_checked(path: Path | None = None) -> tuple[list[dict[str, Any]], str | None]:
+    """(entries, None), or ([], why) when the chain exists but cannot be read.
+    An absent chain is an empty one, not an error."""
     p = Path(path) if path is not None else chain_path()
     out: list[dict[str, Any]] = []
     try:
         text = p.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return out
+    except FileNotFoundError:
+        return out, None
+    except OSError as exc:
+        return out, f"cannot read the audit chain {p}: {exc}"
     for line in text.splitlines():
         line = line.strip()
         if not line:
@@ -782,7 +797,7 @@ def read_chain(path: Path | None = None) -> list[dict[str, Any]]:
             continue
         out.append(obj if isinstance(obj, dict) else {"prev": "", "hash": "",
                                                       "raw": str(obj)[:200]})
-    return out
+    return out, None
 
 
 def head_hash(entries: list[dict[str, Any]]) -> str:
@@ -881,6 +896,72 @@ def expired_pending(entries: list[dict[str, Any]], now: float,
     return [a for a in replay(entries).values()
             if a.status == "pending" and a.applied_at and
             (now - a.applied_at) > grace]
+
+
+# ---------------------------------------------------------------------------
+# The published projection (contract with the Cockpit)
+# ---------------------------------------------------------------------------
+# @decision DEC-PHASE12-085
+# @title heald publishes /run/orionx/healing-status.json; the chain stays root:0600
+# @status accepted
+# @rationale QA round 1 (python P1-1, P1-2). The chain is root:0600 so the
+#   Cockpit (operator uid) could not read it on the deck, and its own replay
+#   looked for a "status":"active" the engine never writes - IN FORCE was
+#   always empty while the deck was blocking a host. Loosening the chain mode
+#   would expose undo data (vault paths, nft handles) and invite a second
+#   replay implementation. Instead the ONE replay (replay()/active_actions()/
+#   pending_actions()) is projected by root into a 0644 file, atomically
+#   (temp + rename in the same directory), on every chain append and at least
+#   every 10 s by the daemon loop. Schema (agreed with the Cockpit owner):
+#     {"ts": float, "chain_ok": bool|null,
+#      "in_force": [{"id","action","target","applied_ts","expires_ts"|null}],
+#      "pending":  [{"id","action","target","proposed_ts"}],
+#      "error": str|null}
+#   chain_ok is null when the chain could not be read (error says why);
+#   false when verification failed (error carries the break). An unreadable
+#   chain yields empty lists AND the error, never silently empty lists.
+def status_snapshot(path: Path | None = None, now: float | None = None,
+                    extra_error: str | None = None) -> dict[str, Any]:
+    now = time.time() if now is None else now
+    entries, err = read_chain_checked(path)
+    if err is not None:
+        return {"ts": now, "chain_ok": None, "in_force": [], "pending": [],
+                "error": "; ".join(x for x in (err, extra_error) if x)}
+    ok, idx, why = verify_chain(entries)
+    errors = [] if ok else [f"audit chain broken at record {idx}: {why}"]
+    if extra_error:
+        errors.append(extra_error)
+    state = replay(entries).values()
+    return {
+        "ts": now,
+        "chain_ok": ok,
+        "in_force": [{"id": a.action_id, "action": a.playbook, "target": a.target,
+                      "applied_ts": float(a.applied_at),
+                      "expires_ts": float(a.expires_at) if a.expires_at else None}
+                     for a in state if a.status == "active"],
+        "pending": [{"id": a.action_id, "action": a.playbook, "target": a.target,
+                     "proposed_ts": float(a.applied_at)}
+                    for a in state if a.status == "pending"],
+        "error": "; ".join(errors) or None,
+    }
+
+
+def write_status(payload: dict[str, Any], path: Path | None = None) -> None:
+    """Atomic 0644 write: unique temp file in the target directory, then rename.
+    Raises OSError; the caller decides how to report it."""
+    p = Path(path) if path is not None else HEALING_STATUS_FILE
+    fd, tmp = tempfile.mkstemp(prefix=".healing-status.", suffix=".tmp", dir=str(p.parent))
+    try:
+        os.fchmod(fd, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, sort_keys=True)
+        os.replace(tmp, p)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def describe_remaining(action: ActionState, now: float) -> str:
