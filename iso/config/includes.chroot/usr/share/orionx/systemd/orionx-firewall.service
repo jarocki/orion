@@ -15,7 +15,9 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/sbin/nft -f /etc/nftables.conf
 ExecReload=/usr/sbin/nft -f /etc/nftables.conf
-ExecStop=/usr/sbin/nft flush ruleset
+# DEC-PHASE12-104: stop removes THIS table only. `flush ruleset` also wiped
+# heald's block/isolate tables and postured's (security F15).
+ExecStop=/usr/sbin/nft delete table inet orionx_firewall
 StandardOutput=journal
 StandardError=journal
 

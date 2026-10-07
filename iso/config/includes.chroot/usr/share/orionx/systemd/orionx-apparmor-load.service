@@ -39,11 +39,10 @@ Type=oneshot
 RemainAfterExit=yes
 # -r replaces an already-loaded profile, so this is safe alongside
 # apparmor.service on an installed system. Per-file so one bad profile
-# cannot prevent the rest from loading — a partial confinement is worth
-# more than none, and the failure is visible in the journal.
-ExecStart=/bin/sh -c 'rc=0; for p in /etc/apparmor.d/*; do [ -f "$p" ] || continue; \
-  /sbin/apparmor_parser -r "$p" || { echo "orionx-apparmor-load: FAILED $p" >&2; rc=1; }; \
-  done; /sbin/aa-status --enforced >/dev/null 2>&1 || echo "orionx-apparmor-load: no enforced profiles" >&2; exit $rc'
+# cannot prevent the rest from loading. DEC-PHASE12-103: the script reports
+# partial loads by name on the R.A.I.N. bus and fails ONLY when a required
+# Orion-X profile (ollama, nebula-mcp, wireguard, tshark) is not enforced.
+ExecStart=/usr/lib/orionx/orionx-apparmor-load
 StandardOutput=journal
 StandardError=journal
 

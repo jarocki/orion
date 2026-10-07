@@ -119,7 +119,9 @@ assert_mesh_discover_enabled() {
 # ---------------------------------------------------------------------------
 # Assertion: matrix_synapse_state
 #
-# Checks that matrix-synapse-orionx.service is not in a broken state.
+# Checks that matrix-synapse.service is not in a broken state.
+# DEC-PHASE12-102: the package unit is the ONE Synapse unit (the Cockpit and
+# setup-matrix.sh name the same one); matrix-synapse-orionx.service is gone.
 # Accepts: not-found, inactive, active, activating — every state except one.
 # Rejects only: failed.
 #
@@ -135,7 +137,7 @@ assert_matrix_synapse_state() {
     # "failed" is the only rejected state — see the block comment above.
     local verdict="PASS"
     local svc_state
-    svc_state="$(systemctl is-active matrix-synapse-orionx.service 2>/dev/null || true)"
+    svc_state="$(systemctl is-active matrix-synapse.service 2>/dev/null || true)"
     if [[ "${svc_state}" == "failed" ]]; then
         verdict="FAIL"
     fi
@@ -146,9 +148,10 @@ assert_matrix_synapse_state() {
 # ---------------------------------------------------------------------------
 # Assertion: apparmor_enforcing
 #
-# Checks that AppArmor is loaded and at least 5 profiles are in enforce mode.
-# The 5 documented profiles are: Synapse, WireGuard (wg), Volatility3,
-# bulk_extractor, and tshark — installed by 0610-apparmor-setup.hook.chroot.
+# DEC-PHASE12-103: checks BY NAME that the profiles Orion-X advertises are in
+# enforce mode (ollama, nebula-mcp, wireguard, tshark), in the kernel's own
+# list. A count of ">= 5 enforced" passed with any five stock profiles while
+# ollama ran unconfined (system P2-7). Synapse has no profile (DEC-PHASE12-102).
 #
 # Implementation: parse `aa-status` output for the enforced-profile count.
 # `aa-status --enforced` prints a count and exits 0 when >=1 profile enforced,
@@ -157,15 +160,13 @@ assert_matrix_synapse_state() {
 # "AppArmor not loaded".
 # ---------------------------------------------------------------------------
 assert_apparmor_enforcing() {
-    local verdict="FAIL"
-    if command -v aa-status >/dev/null 2>&1; then
-        local enforced_count
-        enforced_count="$(aa-status 2>/dev/null | grep -oE '^[0-9]+ profiles are in enforce mode' | grep -oE '^[0-9]+' || echo "0")"
-        if [[ "${enforced_count}" -ge 5 ]] 2>/dev/null; then
-            verdict="PASS"
-        fi
-    fi
-    emit "ORIONX_VERIFY: apparmor_enforcing=${verdict}"
+    local verdict="PASS" name missing=""
+    local list="${ORIONX_AA_KERNEL_PROFILES:-/sys/kernel/security/apparmor/profiles}"
+    for name in ollama nebula-mcp wireguard tshark; do
+        grep -qxF "${name} (enforce)" "$list" 2>/dev/null || missing+=" ${name}"
+    done
+    [[ -z "$missing" ]] || verdict="FAIL"
+    emit "ORIONX_VERIFY: apparmor_enforcing=${verdict}${missing:+ (not enforced:${missing})}"
     [[ "${verdict}" == "PASS" ]] || mark_fail
 }
 

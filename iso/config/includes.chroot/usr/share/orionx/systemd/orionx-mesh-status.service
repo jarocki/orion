@@ -21,6 +21,9 @@ StandardError=journal
 ProtectSystem=strict
 ProtectHome=yes
 ReadWritePaths=/run/orionx
+# system P3-3: mesh_log appends to /var/log/orionx/mesh.log; without this the
+# failure report itself hit EROFS under ProtectSystem=strict.
+LogsDirectory=orionx
 NoNewPrivileges=yes
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_OVERRIDE
 RestrictSUIDSGID=yes

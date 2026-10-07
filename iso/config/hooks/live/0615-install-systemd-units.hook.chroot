@@ -86,6 +86,13 @@ UNIT_FILES=(
     # orionx-mesh-discover.service was never triggered either. Both halves of
     # discovery were dead.
     "orionx-mesh-beacon.service"
+    # DEC-PHASE12-109: the CI runtime probes. They used to arrive through a
+    # SECOND install path (committed copies in includes.chroot/lib/systemd/system
+    # plus committed wants/ symlinks), outside this authority, and ran on every
+    # production boot. Installed here only; each carries
+    # ConditionVirtualization=vm, so on a deck they are skipped.
+    "orionx-perf-measure.service"
+    "orionx-runtime-verify.service"
 )
 
 # ---------------------------------------------------------------------------
@@ -131,6 +138,10 @@ AUTOSTART_UNITS=(
     # autostart: ConditionPathExists=/sys/class/net/wg0 makes it a clean no-op
     # on a deck that has not joined a mesh.
     "orionx-mesh-discover.service"
+    # DEC-PHASE12-109: enabled here (the only enablement authority); they run
+    # only under virtualization (the QEMU harness), never on a deck.
+    "orionx-perf-measure.service"
+    "orionx-runtime-verify.service"
 )
 
 echo "[install-systemd-units] Installing Orion-X systemd units from $SOURCE_DIR to $TARGET_DIR"

@@ -353,6 +353,36 @@ fi
 echo ""
 
 # =========================================================================
+# DEC-PHASE12-104: EXECUTE the hook (in a throwaway trixie container, with a
+# recording systemctl) and check what it actually disables and masks.
+# =========================================================================
+echo "--- Hook execution: sshd off at boot, apt timers and exim masked ---"
+if [[ "${ORIONX_SKIP_DOCKER:-0}" != 1 ]] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    CALLS="$(docker run --rm -v "$HOOK_FILE:/hook:ro" debian:trixie-slim bash -c '
+        mkdir -p /stub /etc/ssh/sshd_config.d /etc/sysctl.d; touch /etc/ssh/sshd_config
+        printf "#!/bin/sh\necho \"\$*\" >> /tmp/calls\nexit 0\n" > /stub/systemctl; chmod +x /stub/systemctl
+        PATH=/stub:$PATH bash /hook >/dev/null 2>&1; echo "rc=$?"; cat /tmp/calls; echo "--conf"; cat /etc/ssh/sshd_config.d/orionx-hardening.conf' 2>&1)"
+    assert_contains "hook exits 0" "rc=0" "$CALLS"
+    assert_contains "ssh.service is disabled at boot" "disable ssh.service" "$CALLS"
+    for u in apt-daily.timer apt-daily-upgrade.timer exim4.service exim4-base.timer; do
+        assert_contains "$u is masked" "mask $u" "$CALLS"
+    done
+    assert_contains "root login stays refused" "PermitRootLogin no" "$CALLS"
+    assert_contains "password auth stays off" "PasswordAuthentication no" "$CALLS"
+    if [[ "$CALLS" == *"enable ssh"* ]]; then
+        echo "  FAIL: nothing enables ssh"; (( FAIL_COUNT++ )) || true
+    else
+        echo "  PASS: nothing enables ssh"; (( PASS_COUNT++ )) || true
+    fi
+else
+    echo "  SKIP: docker unavailable — hook not executed"
+fi
+NMCONF="$REPO_ROOT/iso/config/includes.chroot/etc/NetworkManager/conf.d/90-orionx-no-hostname.conf"
+assert_contains "NetworkManager does not send the hostname in DHCPv4 (F14)" "ipv4.dhcp-send-hostname=false" "$(cat "$NMCONF" 2>/dev/null)"
+assert_contains "NetworkManager does not send the hostname in DHCPv6 (F14)" "ipv6.dhcp-send-hostname=false" "$(cat "$NMCONF" 2>/dev/null)"
+echo ""
+
+# =========================================================================
 # Summary
 # =========================================================================
 echo "==========================================="

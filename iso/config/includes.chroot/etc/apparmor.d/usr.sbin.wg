@@ -4,7 +4,8 @@ profile wireguard /usr/bin/wg {
   #include <abstractions/base>
 
   /etc/wireguard/** rw,
-  /var/run/orionx-mesh* rw,
+  # (system P3-4) The old `/var/run/orionx-mesh* rw` never matched: AppArmor
+  # sees /run/..., and wg itself writes nothing there. Removed.
 
   capability net_admin,
   capability net_raw,

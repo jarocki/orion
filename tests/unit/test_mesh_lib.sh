@@ -346,6 +346,116 @@ assert_eq "PSK path matches MESH_PSK_FILE" "$MESH_PSK_FILE" "$PSK_PATH"
 teardown
 echo ""
 
+# ---------------------------------------------------------------------------
+# DEC-PHASE12-096: mesh_add_peer is the validation gate (security F2)
+# ---------------------------------------------------------------------------
+echo "--- mesh_add_peer validation gate ---"
+setup
+VK="$(printf 'V%.0s' {1..42})A="
+OK2="$(printf 'W%.0s' {1..42})A="
+WG_SET_LOG="$TMPDIR_TEST/wgset"; : > "$WG_SET_LOG"
+WG_ALLOWED_OUT=""
+wg() {
+    case "$1 ${3:-}" in
+        "show peers") printf '%s' "$WG_ALLOWED_OUT" | awk 'NF{print $1}' ;;
+        "show allowed-ips") printf '%s' "$WG_ALLOWED_OUT" ;;
+        "set "*) echo "$*" >> "$WG_SET_LOG" ;;
+    esac
+}
+try_add() { local rc=0; mesh_add_peer "$@" 2>/dev/null || rc=$?; echo "$rc"; }
+
+assert_eq "valid peer accepted" "0" "$(try_add "$VK" 10.0.99.20 192.168.1.20 51820)"
+assert_match "valid peer reaches wg set with a /32" "allowed-ips 10\.0\.99\.20/32 endpoint 192\.168\.1\.20:51820" "$(cat "$WG_SET_LOG")"
+: > "$WG_SET_LOG"
+assert_eq "comma injection in vpn_ip rejected (rc 3)" "3" "$(try_add "$OK2" "10.0.99.0/24,10.0.99.1" 192.168.1.21 51820)"
+assert_eq "CIDR wider than /32 rejected" "3" "$(try_add "$OK2" "10.0.99.0/24" 192.168.1.21 51820)"
+assert_eq "address outside the mesh subnet rejected" "3" "$(try_add "$OK2" 10.1.99.5 192.168.1.21 51820)"
+assert_eq "network address .0 rejected" "3" "$(try_add "$OK2" 10.0.99.0 192.168.1.21 51820)"
+assert_eq "broadcast address .255 rejected" "3" "$(try_add "$OK2" 10.0.99.255 192.168.1.21 51820)"
+assert_eq "non-key pubkey rejected" "3" "$(try_add "not-a-key" 10.0.99.22 192.168.1.21 51820)"
+assert_eq "hostname endpoint ('unknown') rejected" "3" "$(try_add "$OK2" 10.0.99.22 unknown 51820)"
+assert_eq "port 0 rejected" "3" "$(try_add "$OK2" 10.0.99.22 192.168.1.21 0)"
+assert_eq "port 70000 rejected" "3" "$(try_add "$OK2" 10.0.99.22 192.168.1.21 70000)"
+WG_ALLOWED_OUT="$(printf '%s\t10.0.99.20/32\n' "$VK")"
+assert_eq "an address another peer holds is rejected" "3" "$(try_add "$OK2" 10.0.99.20 192.168.1.21 51820)"
+assert_eq "an existing peer is left untouched (no allowed-ips change)" "0" "$(try_add "$VK" 10.0.99.99 192.168.1.99 51820)"
+assert_eq "none of the rejected or existing peers reached wg set" "" "$(cat "$WG_SET_LOG")"
+mesh_state_write wg0 10.0.99.42 discovery "$OK2" 2>/dev/null
+WG_ALLOWED_OUT=""
+assert_eq "our own mesh address is rejected" "3" "$(try_add "$VK" 10.0.99.42 192.168.1.21 51820)"
+unset -f wg
+teardown
+echo ""
+
+# ---------------------------------------------------------------------------
+# DEC-PHASE12-098: the team PSK is optional and arrives out of band (F17)
+# ---------------------------------------------------------------------------
+echo "--- team PSK: never invented, installed only from a valid file ---"
+setup
+mesh_psk_status 2>/dev/null
+if [[ -e "$MESH_PSK_FILE" ]]; then
+    echo "  FAIL: mesh_psk_status must never create a PSK"; (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: no PSK is created implicitly"; (( PASS_COUNT++ )) || true
+fi
+if declare -F mesh_ensure_psk >/dev/null; then
+    echo "  FAIL: mesh_ensure_psk (per-deck random PSK) must be gone"; (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: mesh_ensure_psk is gone"; (( PASS_COUNT++ )) || true
+fi
+BAD="$TMPDIR_TEST/bad.psk"; echo "hello" > "$BAD"
+rc=0; mesh_psk_install "$BAD" >/dev/null 2>&1 || rc=$?
+assert_eq "installing a non-key file fails" "1" "$rc"
+GOOD="$TMPDIR_TEST/team.psk"; printf '%s\n' "$(printf 'P%.0s' {1..42})A=" > "$GOOD"
+rc=0; mesh_psk_install "$GOOD" >/dev/null 2>&1 || rc=$?
+assert_eq "installing a real key succeeds" "0" "$rc"
+assert_eq "installed PSK matches the file" "$(cat "$GOOD")" "$(cat "$MESH_PSK_FILE" 2>/dev/null)"
+PERM="$(stat -f '%Lp' "$MESH_PSK_FILE" 2>/dev/null || stat -c '%a' "$MESH_PSK_FILE")"
+assert_eq "installed PSK is mode 600" "600" "$PERM"
+rc=0; mesh_psk_generate "$GOOD" >/dev/null 2>&1 || rc=$?
+assert_eq "generate refuses to overwrite an existing team PSK" "1" "$rc"
+teardown
+echo ""
+
+# ---------------------------------------------------------------------------
+# B2 handoff: mesh_genkeys fails loudly when the key cannot be written
+# ---------------------------------------------------------------------------
+echo "--- mesh_genkeys reports a failed key write ---"
+setup
+RO="$TMPDIR_TEST/ro"; mkdir -p "$RO"; chmod 0500 "$RO"
+wg() { case "$1" in genkey) echo "$(printf 'G%.0s' {1..42})A=" ;; pubkey) cat >/dev/null; echo "$(printf 'H%.0s' {1..42})A=" ;; esac; }
+rc=0; OUT="$(MESH_PRIVATE_KEY="$RO/k" mesh_genkeys 2>&1)" || rc=$?
+if [[ "$EUID" -ne 0 ]]; then
+    assert_eq "unwritable key dir: mesh_genkeys returns non-zero" "1" "$rc"
+    if [[ "$OUT" == *"Generated new WireGuard keypair"* ]]; then
+        echo "  FAIL: no 'Generated' claim after a failed write"; (( FAIL_COUNT++ )) || true
+    else
+        echo "  PASS: no 'Generated' claim after a failed write"; (( PASS_COUNT++ )) || true
+    fi
+    assert_match "the error names the path" "Could not write the WireGuard private key to $RO/k" "$OUT"
+else
+    echo "  SKIP: running as root (directory permissions do not bind)"
+fi
+rc=0; PUB="$(MESH_PRIVATE_KEY="$TMPDIR_TEST/ok.key" mesh_genkeys 2>/dev/null)" || rc=$?
+assert_eq "writable: mesh_genkeys succeeds" "0" "$rc"
+assert_eq "writable: prints the derived public key only" "$(printf 'H%.0s' {1..42})A=" "$PUB"
+chmod 0700 "$RO"; unset -f wg
+teardown
+echo ""
+
+# ---------------------------------------------------------------------------
+# shell P3-6: the state file is replaced atomically (no temp left behind)
+# ---------------------------------------------------------------------------
+echo "--- mesh_state_write is atomic ---"
+setup
+mesh_state_write wg0 10.0.99.5 discovery "$VK" 2>/dev/null
+mesh_state_write wg0 10.0.99.6 discovery "$VK" 2>/dev/null
+assert_eq "state reads back the last write" "10.0.99.6" "$(mesh_state_read vpn_ip 2>/dev/null)"
+LEFT="$(find "$(dirname "$MESH_STATE_FILE")" -name "$(basename "$MESH_STATE_FILE").*" | wc -l | tr -d ' ')"
+assert_eq "no temp files left next to the state file" "0" "$LEFT"
+teardown
+echo ""
+
 # =========================================================================
 # Summary
 # =========================================================================

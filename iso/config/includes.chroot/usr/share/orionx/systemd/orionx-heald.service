@@ -44,6 +44,15 @@ Environment=ORIONX_OPERATOR_USER=orionx-operator
 # The ledger must survive a restart, so it is NOT on tmpfs.
 StateDirectory=orionx/healing
 ReadWritePaths=/var/lib/orionx /run/orionx /etc/wireguard
+# DEC-PHASE12-108 (security F19): kernel-facing hardening only. heald's
+# playbooks need nft/wg (netlink, CAP_NET_ADMIN), kill (CAP_KILL) and file
+# moves (DAC_OVERRIDE/CHOWN/FOWNER), all kept; none needs these.
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
 
 NoNewPrivileges=yes
 ProtectSystem=strict

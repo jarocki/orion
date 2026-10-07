@@ -143,10 +143,20 @@ setup() {
         echo "MockPublicKeyABC123=="
     }
 
-    mesh_ensure_psk() {
-        echo "mock_ensure_psk" >> "$MOCK_CALLS_FILE"
-        echo "fake-psk" > "$MESH_PSK_FILE"
-    }
+    # DEC-PHASE12-097: join drives units through MESH_SYSTEMCTL; record calls.
+    export MESH_FORCE_SYSTEMD=1
+    export SYSTEMCTL_CALLS="$TMPDIR_TEST/systemctl.calls"
+    : > "$SYSTEMCTL_CALLS"
+    cat > "$TMPDIR_TEST/systemctl" <<'STUBEOF'
+#!/usr/bin/env bash
+echo "$*" >> "$SYSTEMCTL_CALLS"
+[[ "$1" == "is-active" ]] && echo active
+exit 0
+STUBEOF
+    chmod +x "$TMPDIR_TEST/systemctl"
+    export MESH_SYSTEMCTL="$TMPDIR_TEST/systemctl"
+    export MESH_HEALTH_COUNTER_DIR="$TMPDIR_TEST/run"
+    mkdir -p "$MESH_HEALTH_COUNTER_DIR"
 
     mesh_get_vpn_ip() {
         echo "mock_get_vpn_ip" >> "$MOCK_CALLS_FILE"
@@ -315,7 +325,7 @@ assert_eq "join discovery mode exits 0" "0" "$rc"
 
 # Verify key generation was called
 assert_file_contains "genkeys was called" "$MOCK_CALLS_FILE" "mock_genkeys"
-assert_file_contains "ensure_psk was called" "$MOCK_CALLS_FILE" "mock_ensure_psk"
+assert_file_not_exists "join never invents a team PSK (DEC-PHASE12-098)" "$MESH_PSK_FILE"
 assert_file_contains "get_vpn_ip was called" "$MOCK_CALLS_FILE" "mock_get_vpn_ip"
 assert_file_contains "interface_up was called" "$MOCK_CALLS_FILE" "mock_interface_up"
 
@@ -548,6 +558,81 @@ assert_eq "join exits 0" "0" "$rc"
 # Verify interface_up was called with the VPN IP
 assert_file_contains "interface_up called with VPN IP" "$MOCK_CALLS_FILE" "mock_interface_up 10.0.99.42"
 
+teardown
+echo ""
+
+# ---------------------------------------------------------------------------
+# 10. DEC-PHASE12-097: join STARTS every runtime unit leave STOPS, via
+#     systemctl — never a listener forked into the operator's terminal.
+# ---------------------------------------------------------------------------
+echo "--- Join/Leave: the same mesh units, started and stopped ---"
+setup
+_mock_is_active=1
+OUTPUT="$(mesh_join "" 2>/dev/null)"
+assert_match "join says whether it survives reboot, from tuning_lib (UX-27)" "survives reboot: (NO|PARTLY)" "$OUTPUT"
+STARTED="$(awk '$1=="start"{print $2}' "$SYSTEMCTL_CALLS" | sort -u)"
+for u in orionx-mesh-discover.service orionx-mesh-discover.timer orionx-mesh-health.timer orionx-mesh-status.timer; do
+    if grep -qxF "$u" <<< "$STARTED"; then echo "  PASS: discovery join starts $u"; (( PASS_COUNT++ )) || true; else echo "  FAIL: discovery join starts $u"; (( FAIL_COUNT++ )) || true; fi
+done
+assert_file_not_exists "join does not fork a listener PID file of its own" "$MESH_DISCOVER_PID_FILE"
+
+# leave stops at least everything join started
+_mock_is_active=0
+: > "$SYSTEMCTL_CALLS"
+LOUT="$(mesh_leave 2>/dev/null)"
+assert_match "leave states its reboot behaviour (UX-27)" "survives reboot:" "$LOUT"
+STOPPED="$(awk '$1=="stop"{print $2}' "$SYSTEMCTL_CALLS" | sort -u)"
+MISSING=""
+while IFS= read -r u; do
+    [[ -z "$u" ]] && continue
+    grep -qxF "$u" <<< "$STOPPED" || MISSING+=" $u"
+done <<< "$STARTED"
+assert_eq "every unit join started is stopped by leave" "" "$MISSING"
+teardown
+
+setup
+_mock_is_active=1
+CONF="$TMPDIR_TEST/peers.conf"
+printf 'alpha %s 10.0.99.7 192.168.1.7 51820\n' "$(printf 'K%.0s' {1..42})A=" > "$CONF"
+mesh_join "$CONF" >/dev/null 2>&1
+CSTARTED="$(awk '$1=="start"{print $2}' "$SYSTEMCTL_CALLS" | sort -u)"
+assert_match "config join starts the health timer" "orionx-mesh-health.timer" "$CSTARTED"
+if grep -q "orionx-mesh-discover" <<< "$CSTARTED"; then
+    echo "  FAIL: a pre-planned (--config) join must not start the listener or beacon"; (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: a pre-planned (--config) join starts no listener and no beacon"; (( PASS_COUNT++ )) || true
+fi
+teardown
+
+# A listener that does not come up is SAID, not hidden.
+setup
+_mock_is_active=1
+cat > "$TMPDIR_TEST/systemctl" <<'STUBEOF'
+#!/usr/bin/env bash
+echo "$*" >> "$SYSTEMCTL_CALLS"
+[[ "$1" == "is-active" ]] && echo failed
+exit 0
+STUBEOF
+OUTPUT="$(mesh_join "" 2>/dev/null)"
+assert_match "a dead listener after join is reported to the operator" "discovery listener is NOT running" "$OUTPUT"
+teardown
+echo ""
+
+# ---------------------------------------------------------------------------
+# 11. shell P2-3: leave clears the heal state in the directory mesh-health
+#     actually writes, so leave+rejoin really resets a spent budget.
+# ---------------------------------------------------------------------------
+echo "--- Leave: heal budget and escalation markers are cleared ---"
+setup
+mesh_state_write "wg0" "10.0.99.42" "discovery" "MockPublicKeyABC123==" 2>/dev/null
+_mock_is_active=0
+: > "$MESH_HEALTH_COUNTER_DIR/orionx-mesh-heal-budget"
+: > "$MESH_HEALTH_COUNTER_DIR/orionx-mesh-escalated-abc123"
+: > "$MESH_HEALTH_COUNTER_DIR/orionx-mesh-health-abc123"
+mesh_leave >/dev/null 2>&1
+assert_file_not_exists "heal budget cleared" "$MESH_HEALTH_COUNTER_DIR/orionx-mesh-heal-budget"
+assert_file_not_exists "escalation marker cleared" "$MESH_HEALTH_COUNTER_DIR/orionx-mesh-escalated-abc123"
+assert_file_not_exists "per-peer counter cleared" "$MESH_HEALTH_COUNTER_DIR/orionx-mesh-health-abc123"
 teardown
 echo ""
 

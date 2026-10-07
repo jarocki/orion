@@ -223,8 +223,12 @@ assert_match "beacon contains vpn_ip field" \
 assert_match "beacon contains wg_port field" \
     '"wg_port"[[:space:]]*:[[:space:]]*51820' "$BEACON"
 
-assert_match "beacon contains hostname field" \
-    '"hostname"[[:space:]]*:[[:space:]]*"test-node"' "$BEACON"
+# DEC-PHASE12-099: the hostname is no longer broadcast to the LAN.
+if [[ "$BEACON" == *hostname* ]]; then
+    echo "  FAIL: beacon must not carry the hostname (security F14)"; (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: beacon does not carry the hostname"; (( PASS_COUNT++ )) || true
+fi
 
 # Verify it's valid-looking JSON (starts with { ends with })
 assert_match "beacon is JSON object" '^\{.*\}$' "$BEACON"
@@ -418,7 +422,7 @@ RX_HOST=$(_mesh_parse_field "$PEER_BEACON" "hostname")
 assert_eq "pipeline: pubkey roundtrip" "$PEER_PUBKEY" "$RX_PUBKEY"
 assert_eq "pipeline: vpn_ip roundtrip" "$PEER_VPN" "$RX_VPN"
 assert_eq "pipeline: wg_port roundtrip" "$PEER_PORT" "$RX_PORT"
-assert_eq "pipeline: hostname roundtrip" "$PEER_HOST" "$RX_HOST"
+assert_eq "pipeline: no hostname on the wire (DEC-PHASE12-099)" "" "$RX_HOST"
 
 # Verify it's not our own beacon
 if _mesh_is_own_beacon "$RX_PUBKEY" "$OUR_PUBKEY"; then
@@ -499,6 +503,109 @@ assert_match "peer 1 added with correct pubkey" '^PeerKey1==' "${MOCK_ADD_PEER_C
 assert_match "peer 2 added with correct pubkey" '^PeerKey2==' "${MOCK_ADD_PEER_CALLS[1]}"
 assert_match "peer 3 added with correct pubkey" '^PeerKey3==' "${MOCK_ADD_PEER_CALLS[2]}"
 
+teardown
+echo ""
+
+# ---------------------------------------------------------------------------
+# 9b. The REAL listener path (DEC-PHASE12-095/096): socat spawns the handler
+#     once per datagram with SOCAT_PEERADDR set; the handler validates and
+#     calls `wg set` with the sender's real address. Stub `wg` and `socat` on
+#     PATH; the SYSTEM: command the listener hands socat is then executed
+#     exactly as socat would (sh -c, datagram on stdin, peer in the env).
+# ---------------------------------------------------------------------------
+echo "--- Listener: real handler path, sender address, validation, rate limit ---"
+setup
+mkkey() { printf "%0.s$1" {1..42}; printf 'A='; }
+OUR_K="$(mkkey O)"; KEY_B="$(mkkey B)"; KEY_C="$(mkkey C)"; KEY_D="$(mkkey D)"; KEY_E="$(mkkey E)"
+STUB="$TMPDIR_TEST/bin"; mkdir -p "$STUB"
+export WG_CALLS="$TMPDIR_TEST/wg.calls" WG_PEERS="$TMPDIR_TEST/wg.peers" WG_ALLOWED="$TMPDIR_TEST/wg.allowed"
+export SOCAT_ARGS="$TMPDIR_TEST/socat.args" OUR_K
+: > "$WG_CALLS"; : > "$WG_PEERS"; : > "$WG_ALLOWED"
+cat > "$STUB/wg" <<'STUBEOF'
+#!/usr/bin/env bash
+case "$1 ${3:-}" in
+    "show peers")       cat "$WG_PEERS" ;;
+    "show allowed-ips") cat "$WG_ALLOWED" ;;
+    "pubkey "*)         cat >/dev/null; echo "$OUR_K" ;;
+    "set "*)            echo "$*" >> "$WG_CALLS" ;;
+esac
+STUBEOF
+cat > "$STUB/socat" <<'STUBEOF'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$SOCAT_ARGS"
+STUBEOF
+chmod +x "$STUB/wg" "$STUB/socat"
+export MESH_RUNTIME_DIR="$TMPDIR_TEST/run" MESH_RATE_DIR="$TMPDIR_TEST/run/rate"
+echo "private" > "$MESH_PRIVATE_KEY"
+PATH="$STUB:$PATH" mesh_state_write wg0 10.0.99.1 discovery "$OUR_K" 2>/dev/null
+
+rc=0
+PATH="$STUB:$PATH" bash "$DISCOVER_SCRIPT" listen 2>/dev/null || rc=$?
+assert_eq "listener execs socat (stub returns 0)" "0" "$rc"
+SYS_ARG="$(grep '^SYSTEM:' "$SOCAT_ARGS" 2>/dev/null || true)"
+assert_match "listener hands socat a SYSTEM: per-datagram handler, not STDOUT" '^SYSTEM:exec .*mesh-discover\.sh handle$' "$SYS_ARG"
+assert_match "listener receives on UDP-RECVFROM with fork" '^UDP-RECVFROM:55555,.*fork' "$(grep '^UDP-RECVFROM' "$SOCAT_ARGS" || true)"
+HANDLER_CMD="${SYS_ARG#SYSTEM:}"
+
+# Deliver one datagram the way socat does.
+deliver() {  # deliver <peeraddr> <line>
+    printf '%s\n' "$2" | env PATH="$STUB:$PATH" SOCAT_PEERADDR="$1" sh -c "$HANDLER_CMD" 2>>"$TMPDIR_TEST/handler.err"
+}
+
+rc=0; deliver 192.168.7.20 "$(_mesh_build_beacon "$KEY_B" 10.0.99.20 51820)" || rc=$?
+assert_eq "handler exits 0 for a good beacon" "0" "$rc"
+assert_match "peer added with the SENDER's real address as endpoint" \
+    "peer $KEY_B allowed-ips 10\.0\.99\.20/32 endpoint 192\.168\.7\.20:51820" "$(cat "$WG_CALLS")"
+if grep -q "unknown" "$WG_CALLS"; then
+    echo "  FAIL: endpoint must never be the literal 'unknown'"; (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: no 'unknown' endpoint"; (( PASS_COUNT++ )) || true
+fi
+
+: > "$WG_CALLS"
+rc=0; deliver 192.168.7.21 "{\"pubkey\":\"$KEY_C\",\"vpn_ip\":\"10.0.99.0/24,10.0.99.1\",\"wg_port\":51820}" || rc=$?
+assert_eq "handler survives an allowed-ips injection beacon (exit 0)" "0" "$rc"
+assert_eq "allowed-ips injection is NOT passed to wg (security F2)" "" "$(cat "$WG_CALLS")"
+assert_match "the rejection is logged with its reason" "Rejected peer.*not a single host" "$(cat "$TMPDIR_TEST/handler.err")"
+
+: > "$WG_CALLS"
+deliver 192.168.7.22 "{\"pubkey\":\"$KEY_D\",\"vpn_ip\":\"10.0.98.5\",\"wg_port\":51820}" || true
+assert_eq "an address outside the mesh /24 is rejected" "" "$(cat "$WG_CALLS")"
+
+: > "$WG_CALLS"
+printf '%s\t10.0.99.20/32\n' "$KEY_B" > "$WG_ALLOWED"; printf '%s\n' "$KEY_B" > "$WG_PEERS"
+deliver 192.168.7.23 "$(_mesh_build_beacon "$KEY_E" 10.0.99.20 51820)" || true
+assert_eq "an address another peer already holds is rejected" "" "$(cat "$WG_CALLS")"
+deliver 192.168.7.24 "$(_mesh_build_beacon "$KEY_B" 10.0.99.99 51820)" || true
+assert_eq "a known peer's allowed-ips are never changed by a beacon" "" "$(cat "$WG_CALLS")"
+deliver 192.168.7.25 "$(_mesh_build_beacon "$KEY_E" 10.0.99.1 51820)" || true
+assert_eq "our own mesh address is rejected (collision)" "" "$(cat "$WG_CALLS")"
+
+: > "$WG_CALLS"; : > "$WG_PEERS"; : > "$WG_ALLOWED"
+rc=0; deliver "" "$(_mesh_build_beacon "$KEY_C" 10.0.99.30 51820)" || rc=$?
+assert_eq "no sender address: handler still exits 0" "0" "$rc"
+assert_eq "no sender address: nothing added" "" "$(cat "$WG_CALLS")"
+rc=0; deliver 192.168.7.26 'not json at all' || rc=$?
+assert_eq "garbage datagram: handler exits 0 (listener never dies)" "0" "$rc"
+
+deliver 192.168.7.30 "$(_mesh_build_beacon "$KEY_C" 10.0.99.30 51820)" || true
+deliver 192.168.7.30 "$(_mesh_build_beacon "$KEY_D" 10.0.99.31 51820)" || true
+assert_eq "rate limit: a second beacon from one sender within the interval is dropped" \
+    "1" "$(grep -c 'peer ' "$WG_CALLS" || true)"
+
+# Beacons are only sent after a DISCOVERY-mode join (security F14).
+rm -f "$SOCAT_ARGS"
+PATH="$STUB:$PATH" mesh_state_write wg0 10.0.99.1 config "$OUR_K" 2>/dev/null
+PATH="$STUB:$PATH" bash "$DISCOVER_SCRIPT" send 2>/dev/null || true
+assert_file_not_exists "config-mode join sends no beacon" "$SOCAT_ARGS"
+rm -f "$MESH_STATE_FILE" "$SOCAT_ARGS"
+PATH="$STUB:$PATH" bash "$DISCOVER_SCRIPT" send 2>/dev/null || true
+assert_file_not_exists "an unjoined deck sends no beacon" "$SOCAT_ARGS"
+PATH="$STUB:$PATH" mesh_state_write wg0 10.0.99.1 discovery "$OUR_K" 2>/dev/null
+PATH="$STUB:$PATH" bash "$DISCOVER_SCRIPT" send 2>/dev/null || true
+assert_file_exists "a discovery-mode join does send its beacon" "$SOCAT_ARGS"
+
+unset WG_CALLS WG_PEERS WG_ALLOWED SOCAT_ARGS MESH_RUNTIME_DIR MESH_RATE_DIR
 teardown
 echo ""
 

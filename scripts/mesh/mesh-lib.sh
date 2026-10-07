@@ -42,9 +42,37 @@ MESH_STATE_FILE="${MESH_STATE_FILE:-/var/run/orionx-mesh.state}"
 # /run/orionx-mesh is the mesh units' RuntimeDirectory (DEC-PHASE12-041), so
 # the confined units can write here under ProtectSystem=strict without being
 # handed all of /run.
-MESH_DISCOVER_PID_FILE="${MESH_DISCOVER_PID_FILE:-/run/orionx-mesh/orionx-mesh-discover.pid}"
+MESH_RUNTIME_DIR="${MESH_RUNTIME_DIR:-/run/orionx-mesh}"
+MESH_DISCOVER_PID_FILE="${MESH_DISCOVER_PID_FILE:-$MESH_RUNTIME_DIR/orionx-mesh-discover.pid}"
+# Heal counters, budget and escalation markers (mesh-health.sh). Defined here,
+# not in mesh-health.sh, because `orionx-mesh leave` must clear the SAME
+# directory (DEC-PHASE12-097: leave used to rm /var/run/orionx-mesh-health-*,
+# a path nothing writes, so a spent heal budget survived leave+rejoin).
+MESH_HEALTH_COUNTER_DIR="${MESH_HEALTH_COUNTER_DIR:-$MESH_RUNTIME_DIR}"
+# Per-sender beacon rate limiter state (DEC-PHASE12-096).
+MESH_RATE_DIR="${MESH_RATE_DIR:-$MESH_RUNTIME_DIR/beacon-rate}"
+MESH_BEACON_MIN_INTERVAL="${MESH_BEACON_MIN_INTERVAL:-5}"
 MESH_PRIVATE_KEY="${MESH_PRIVATE_KEY:-/etc/wireguard/mesh-private.key}"
 MESH_PSK_FILE="${MESH_PSK_FILE:-/etc/wireguard/mesh-psk}"
+
+# @decision DEC-PHASE12-097
+# @title One list of mesh runtime units: join starts it, leave stops it
+# @status accepted
+# @rationale leave stopped the listener and the beacon/health timers, and
+#   join started nothing — so after leave+join the deck sent no beacon, ran
+#   no health check and processed no inbound beacon until reboot, and a deck
+#   that joined after boot never got the listener at all (its
+#   ConditionPathExists=/sys/class/net/wg0 was false at boot and nothing
+#   retried it). Instead join forked `mesh-discover.sh listen &` as a child of
+#   the Cockpit's terminal, unconfined and killed by SIGHUP when the window
+#   closed. Both commands now read these two lists, so they cannot drift.
+#   MESH_UNITS_ALWAYS run in either join mode; MESH_UNITS_DISCOVERY only in
+#   discovery mode (a pre-planned --config join must not broadcast).
+MESH_UNITS_ALWAYS="${MESH_UNITS_ALWAYS:-orionx-mesh-health.timer orionx-mesh-status.timer}"
+MESH_UNITS_DISCOVERY="${MESH_UNITS_DISCOVERY:-orionx-mesh-discover.service orionx-mesh-discover.timer}"
+# Oneshots the timers trigger; leave stops them too in case one is mid-run.
+MESH_UNITS_ONESHOT="${MESH_UNITS_ONESHOT:-orionx-mesh-beacon.service orionx-mesh-health.service}"
+MESH_SYSTEMCTL="${MESH_SYSTEMCTL:-systemctl}"
 MESH_LOG_FILE="${MESH_LOG_FILE:-/var/log/orionx/mesh.log}"
 MESH_HEALTH_INTERVAL="${MESH_HEALTH_INTERVAL:-60}"
 MESH_DISCOVER_INTERVAL="${MESH_DISCOVER_INTERVAL:-10}"
@@ -72,7 +100,9 @@ mesh_log() {
     log_dir="$(dirname "$MESH_LOG_FILE")"
 
     if [[ -d "$log_dir" ]]; then
-        echo "$formatted" >> "$MESH_LOG_FILE"
+        # `|| true`: under ProtectSystem=strict an unwritable log (EROFS) must
+        # not abort the caller's own failure report under set -e (system P3-3).
+        { echo "$formatted" >> "$MESH_LOG_FILE"; } 2>/dev/null || true
     fi
     # Always echo to stderr for terminal visibility
     echo "$formatted" >&2
@@ -92,15 +122,30 @@ mesh_genkeys() {
         return 0
     fi
 
+    # B2 handoff: every step is checked. Callers run this inside $(...), where
+    # set -e is NOT inherited, so a failed write used to fall through to
+    # "Generated new WireGuard keypair" and then "Private key not found".
     local key_dir
     key_dir="$(dirname "$MESH_PRIVATE_KEY")"
-    mkdir -p "$key_dir"
+    if ! mkdir -p "$key_dir" 2>/dev/null; then
+        mesh_log ERROR "Cannot create $key_dir — no WireGuard key generated (run as root: sudo orionx-mesh join)"
+        return 1
+    fi
 
-    (umask 077; wg genkey > "$MESH_PRIVATE_KEY")   # born 0600; chmod below is belt
-    chmod 0600 "$MESH_PRIVATE_KEY"
+    if ! (umask 077; wg genkey > "$MESH_PRIVATE_KEY") 2>/dev/null || [[ ! -s "$MESH_PRIVATE_KEY" ]]; then
+        rm -f "$MESH_PRIVATE_KEY" 2>/dev/null || true
+        mesh_log ERROR "Could not write the WireGuard private key to $MESH_PRIVATE_KEY"
+        return 1
+    fi
+    chmod 0600 "$MESH_PRIVATE_KEY"   # born 0600 under umask 077; chmod is belt
 
+    local pub
+    if ! pub="$(mesh_get_pubkey)" || [[ -z "$pub" ]]; then
+        mesh_log ERROR "Generated $MESH_PRIVATE_KEY but could not derive its public key (wg pubkey failed)"
+        return 1
+    fi
     mesh_log INFO "Generated new WireGuard keypair"
-    mesh_get_pubkey
+    echo "$pub"
 }
 
 # Read public key derived from the private key file.
@@ -227,8 +272,82 @@ mesh_interface_down() {
     mesh_log INFO "Interface $MESH_IFACE removed"
 }
 
+# =========================================================================
+# Peer validation — the single gate every peer passes before `wg set`
+# =========================================================================
+#
+# @decision DEC-PHASE12-096
+# @title Every peer is validated before it reaches `wg set`; a beacon can add
+#   a peer but never move an address
+# @status accepted
+# @rationale Beacons are unauthenticated UDP from the LAN. vpn_ip went into
+#   `allowed-ips "${vpn_ip}/32"` verbatim, so a beacon carrying
+#   "10.0.99.0/24,10.0.99.1" produced allowed-ips 10.0.99.0/24,10.0.99.1/32
+#   and — because WireGuard allowed-ips are unique across peers — moved the
+#   whole mesh /24 onto the rogue key (security F2). The gate lives here, in
+#   mesh_add_peer, so the discovery path and the --config path share it:
+#     pubkey   44-char base64 of a 32-byte key (the only shape wg emits)
+#     vpn_ip   ONE dotted-quad host inside MESH_VPN_PREFIX.0/24, .1-.254,
+#              never our own address, never an address another peer holds
+#     endpoint an IPv4 literal (no name lookup: "unknown" used to go to DNS,
+#              which a hostile LAN's DHCP server answers)
+#     port     1-65535
+#   A pubkey that is already a peer is left untouched (no allowed-ips change).
+#   Rejections are logged with the reason and return 3; callers treat that as
+#   "dropped", not as a fatal error.
+
+mesh_valid_pubkey() {
+    [[ "${1:-}" =~ ^[A-Za-z0-9+/]{42}[AEIMQUYcgkosw480]=$ ]]
+}
+
+mesh_valid_ipv4() {
+    local ip="${1:-}" o
+    [[ "$ip" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
+    for o in "${BASH_REMATCH[@]:1}"; do
+        [[ "$o" =~ ^(0|[1-9][0-9]*)$ ]] || return 1
+        (( o <= 255 )) || return 1
+    done
+}
+
+# One host inside the mesh /24, not the network or broadcast address.
+mesh_valid_mesh_ip() {
+    local ip="${1:-}" last
+    mesh_valid_ipv4 "$ip" || return 1
+    [[ "${ip%.*}" == "$MESH_VPN_PREFIX" ]] || return 1
+    last="${ip##*.}"
+    (( last >= 1 && last <= 254 ))
+}
+
+mesh_valid_port() {
+    [[ "${1:-}" =~ ^[1-9][0-9]{0,4}$ ]] && (( $1 <= 65535 ))
+}
+
+# Print the reason a peer is unacceptable, or nothing (and return 0) if it is.
+mesh_peer_reject_reason() {
+    local pubkey="$1" vpn_ip="$2" endpoint="$3" port="$4"
+    mesh_valid_pubkey "$pubkey" || { echo "pubkey is not a WireGuard public key"; return 1; }
+    mesh_valid_mesh_ip "$vpn_ip" || { echo "vpn_ip '$vpn_ip' is not a single host in ${MESH_VPN_PREFIX}.0/24"; return 1; }
+    mesh_valid_ipv4 "$endpoint" || { echo "endpoint '$endpoint' is not an IPv4 address"; return 1; }
+    mesh_valid_port "$port" || { echo "port '$port' is not 1-65535"; return 1; }
+    local own
+    own="$(mesh_state_read vpn_ip 2>/dev/null || true)"
+    if [[ -n "$own" && "$vpn_ip" == "$own" ]]; then
+        echo "vpn_ip $vpn_ip is THIS deck's mesh address (address collision: two decks derived the same last octet; one must leave and rejoin from a LAN address with a different last octet)"
+        return 1
+    fi
+    local holder
+    holder="$(wg show "$MESH_IFACE" allowed-ips 2>/dev/null \
+              | awk -v ip="${vpn_ip}/32" -v me="$pubkey" '$1 != me { for (i = 2; i <= NF; i++) if ($i == ip) { print $1; exit } }')"
+    if [[ -n "$holder" ]]; then
+        echo "vpn_ip $vpn_ip is already held by peer ${holder:0:10}…"
+        return 1
+    fi
+    return 0
+}
+
 # Add a peer to the mesh interface.
-# Idempotent: skips if peer already exists with same config.
+# Idempotent: skips if peer already exists (its allowed-ips are never changed).
+# Returns 3 when the peer is rejected by the validation gate above.
 mesh_add_peer() {
     local pubkey="$1"
     local vpn_ip="$2"
@@ -236,10 +355,16 @@ mesh_add_peer() {
     local port="$4"
     local psk_file="${5:-$MESH_PSK_FILE}"
 
-    # Check if peer already exists
-    if wg show "$MESH_IFACE" peers 2>/dev/null | grep -q "^${pubkey}$"; then
-        mesh_log INFO "Peer $pubkey already exists, skipping"
+    # Check if peer already exists — never rewrite a known peer's allowed-ips.
+    if mesh_valid_pubkey "$pubkey" && wg show "$MESH_IFACE" peers 2>/dev/null | grep -qxF -- "$pubkey"; then
+        mesh_log INFO "Peer ${pubkey:0:10}… already exists, skipping"
         return 0
+    fi
+
+    local reason
+    if ! reason="$(mesh_peer_reject_reason "$pubkey" "$vpn_ip" "$endpoint" "$port")"; then
+        mesh_log WARN "Rejected peer from ${endpoint:-?}: $reason"
+        return 3
     fi
 
     mesh_log INFO "Adding peer $pubkey (${vpn_ip}) endpoint ${endpoint}:${port}"
@@ -307,21 +432,118 @@ ${trimmed}"
 # PSK management
 # =========================================================================
 
-# Generate mesh-wide PSK at MESH_PSK_FILE (mode 0600) if not exists.
-# Idempotent.
-mesh_ensure_psk() {
+# @decision DEC-PHASE12-098
+# @title The team PSK is optional, off by default, and only ever arrives out
+#   of band
+# @status accepted
+# @rationale mesh_ensure_psk used to mint a fresh random PSK on every deck
+#   that lacked one — which on a live USB is every deck, every boot. Two stock
+#   decks therefore always held DIFFERENT pre-shared keys and could never
+#   complete a handshake (security F17): the mesh's only peer-authentication
+#   control was also the reason the mesh never worked. A PSK is only useful
+#   when every deck holds the SAME one, which needs a channel the LAN cannot
+#   see. So: join never invents a PSK; if MESH_PSK_FILE exists it is used for
+#   every peer, otherwise peers are keyed by public key alone (WireGuard's
+#   normal mode). The out-of-band exchange is:
+#     deck A:      sudo orionx-mesh psk generate /media/USB/team.psk
+#     every deck:  sudo orionx-mesh psk install /media/USB/team.psk
+#   and then `orionx-mesh join`. All decks in a mesh must agree: a deck with a
+#   PSK cannot handshake with one without it.
+
+# Report the PSK posture. Never creates a PSK.
+mesh_psk_status() {
     if [[ -f "$MESH_PSK_FILE" ]]; then
-        mesh_log INFO "PSK already exists at $MESH_PSK_FILE, skipping"
+        mesh_log INFO "Team PSK in use ($MESH_PSK_FILE) — every peer must hold the same PSK"
+    else
+        mesh_log INFO "No team PSK installed — peers authenticate by public key only (optional: orionx-mesh psk install <file>)"
+    fi
+}
+
+# Write a new PSK to a file the operator carries to the other decks.
+mesh_psk_generate() {
+    local out="${1:-}"
+    [[ -n "$out" ]] || { mesh_log ERROR "usage: orionx-mesh psk generate <file>"; return 1; }
+    [[ ! -e "$out" ]] || { mesh_log ERROR "$out already exists — refusing to overwrite a team PSK"; return 1; }
+    (umask 077; wg genpsk > "$out") || { mesh_log ERROR "could not write $out"; return 1; }
+    echo "Team PSK written to $out (mode 0600). Install it on EVERY deck with: sudo orionx-mesh psk install $out"
+}
+
+# Install a PSK file (validated: one base64 32-byte key) as MESH_PSK_FILE.
+mesh_psk_install() {
+    local src="${1:-}" key
+    [[ -n "$src" && -f "$src" ]] || { mesh_log ERROR "usage: orionx-mesh psk install <file> (file not found: ${src:-<none>})"; return 1; }
+    key="$(head -c 100 "$src" | tr -d '[:space:]')"
+    if ! mesh_valid_pubkey "$key"; then
+        mesh_log ERROR "$src does not contain a WireGuard key (expected 44 base64 characters from 'wg genpsk')"
+        return 1
+    fi
+    mkdir -p "$(dirname "$MESH_PSK_FILE")"
+    if ! { (umask 077; printf '%s\n' "$key" > "${MESH_PSK_FILE}.tmp.$$") && mv -f "${MESH_PSK_FILE}.tmp.$$" "$MESH_PSK_FILE"; }; then
+        rm -f "${MESH_PSK_FILE}.tmp.$$"
+        mesh_log ERROR "could not install $MESH_PSK_FILE"
+        return 1
+    fi
+    chmod 0600 "$MESH_PSK_FILE"   # born 0600 under umask 077; chmod is belt
+    echo "Team PSK installed at $MESH_PSK_FILE. Peers added from now on use it; already-added peers do not (leave and rejoin)."
+}
+
+mesh_psk_remove() {
+    rm -f "$MESH_PSK_FILE"
+    echo "Team PSK removed. Peers added from now on authenticate by public key only."
+}
+
+# =========================================================================
+# Mesh runtime units (DEC-PHASE12-097)
+# =========================================================================
+
+# True when PID 1 is systemd and we can drive units. MESH_FORCE_SYSTEMD=1 lets
+# tests substitute MESH_SYSTEMCTL with a stub.
+mesh_systemd_available() {
+    [[ "${MESH_FORCE_SYSTEMD:-0}" == "1" ]] && return 0
+    command -v "$MESH_SYSTEMCTL" >/dev/null 2>&1 && [[ -d /run/systemd/system ]]
+}
+
+# Start each unit; print the ones that did not start. Returns non-zero if any failed.
+mesh_units_start() {
+    local u rc=0
+    for u in "$@"; do
+        if "$MESH_SYSTEMCTL" start "$u" 2>/dev/null; then
+            mesh_log INFO "started $u"
+        else
+            mesh_log WARN "could not start $u (systemctl status $u)"
+            rc=1
+        fi
+    done
+    return "$rc"
+}
+
+# Stop each unit (best effort: a unit that is already stopped is fine).
+mesh_units_stop() {
+    local u
+    for u in "$@"; do
+        "$MESH_SYSTEMCTL" stop "$u" 2>/dev/null || true
+    done
+}
+
+# "survives reboot" line for join/leave (UX-27, RESILIENCE honesty rule 4).
+# The persistence check is tuning_lib.persistence_present() — the single
+# authority — so the mesh never has its own idea of what persistence is.
+# Even WITH persistence nothing re-joins at boot: wg0 is created only by join.
+_MESH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MESH_AWARENESS_DIR="${MESH_AWARENESS_DIR:-$_MESH_LIB_DIR/../awareness}"
+mesh_reboot_line() {
+    local out present where
+    out="$(PYTHONDONTWRITEBYTECODE=1 python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import tuning_lib as t; p, w = t.persistence_present(); print(("1" if p else "0") + "\t" + w)' "$MESH_AWARENESS_DIR" 2>/dev/null)" || out=""
+    if [[ -z "$out" ]]; then
+        echo "survives reboot: UNKNOWN (the persistence check could not run). Assume NO: run 'sudo orionx-mesh join' again after a reboot."
         return 0
     fi
-
-    local psk_dir
-    psk_dir="$(dirname "$MESH_PSK_FILE")"
-    mkdir -p "$psk_dir"
-
-    (umask 077; wg genpsk > "$MESH_PSK_FILE")   # wg warned "world accessible file" on the deck
-    chmod 0600 "$MESH_PSK_FILE"
-    mesh_log INFO "Generated mesh-wide PSK at $MESH_PSK_FILE"
+    present="${out%%$'\t'*}"; where="${out#*$'\t'}"
+    if [[ "$present" == "1" ]]; then
+        echo "survives reboot: PARTLY — keys persist (persistence at $where), but the mesh interface does not come back by itself: run 'sudo orionx-mesh join' after each boot."
+    else
+        echo "survives reboot: NO — $where. Keys, address and peers are lost at reboot; run 'sudo orionx-mesh join' again after booting."
+    fi
 }
 
 # Return PSK file path.
@@ -347,7 +569,12 @@ mesh_state_write() {
     state_dir="$(dirname "$MESH_STATE_FILE")"
     mkdir -p "$state_dir"
 
-    cat > "$MESH_STATE_FILE" << STATEEOF
+    # Atomic: the beacon and status timers read this every 10 s, and a reader
+    # must never see a half-written file (shell.md P3-6). mktemp in the SAME
+    # directory so the mv is a rename, never a copy.
+    local tmp
+    tmp="$(mktemp "${MESH_STATE_FILE}.XXXXXX")" || { mesh_log ERROR "could not create a temp file next to $MESH_STATE_FILE"; return 1; }
+    cat > "$tmp" << STATEEOF
 {
   "interface": "${interface}",
   "vpn_ip": "${vpn_ip}",
@@ -356,6 +583,8 @@ mesh_state_write() {
   "pubkey": "${pubkey}"
 }
 STATEEOF
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$MESH_STATE_FILE"
 
     mesh_log INFO "State written to $MESH_STATE_FILE"
 }
@@ -550,12 +779,15 @@ mesh_snapshot_write() {
                   "${pubkey:0:10}" "$node" "$endpoint" "$hs" "$rx" "$tx")"
     done < <(wg show "${iface:-$MESH_IFACE}" dump 2>/dev/null | tail -n +2)
     peers+="]"
-    tmp="${MESH_SNAPSHOT_FILE}.tmp"
-    if printf '{"ts":%s,"active":%s,"interface":"%s","vpn_ip":"%s","mode":"%s","start_time":%s,"pubkey_short":"%s","peers":%s}\n' \
+    # Unique temp name: the timer and join/leave can write concurrently, and a
+    # fixed ".tmp" let one writer rename the other's half-written file.
+    tmp="$(mktemp "${MESH_SNAPSHOT_FILE}.XXXXXX" 2>/dev/null)" || tmp=""
+    if [[ -n "$tmp" ]] && printf '{"ts":%s,"active":%s,"interface":"%s","vpn_ip":"%s","mode":"%s","start_time":%s,"pubkey_short":"%s","peers":%s}\n' \
             "$now" "$active" "${iface:-$MESH_IFACE}" "$vpn_ip" "$mode" "$start" "${pub:0:10}" "$peers" > "$tmp" 2>/dev/null \
        && chmod 0644 "$tmp" 2>/dev/null && mv -f "$tmp" "$MESH_SNAPSHOT_FILE" 2>/dev/null; then
         return 0
     fi
+    [[ -n "$tmp" ]] && rm -f "$tmp"
     mesh_log WARN "could not write $MESH_SNAPSHOT_FILE — the Cockpit's Mesh tab will say 'no snapshot'"
     return 1
 }

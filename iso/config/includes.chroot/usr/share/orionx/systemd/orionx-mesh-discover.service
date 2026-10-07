@@ -28,6 +28,12 @@ Description=Orion-X Mesh Peer Discovery Listener
 # W11-14f offline-safe: no network-online pull; gated on mesh interface.
 After=network.target
 ConditionPathExists=/sys/class/net/wg0
+# Bound the restarts. An unbounded Restart=on-failure is the shape
+# DEC-PHASE12-034 was written about. These are [Unit] keys: in [Service]
+# systemd 257 ignores them ("Unknown key", system P3-2) and the default 10 s
+# window with RestartSec=5 could never trip.
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -35,10 +41,6 @@ ExecStart=/opt/orionx/scripts/mesh/mesh-discover.sh listen
 ExecStop=/opt/orionx/scripts/mesh/mesh-discover.sh stop
 Restart=on-failure
 RestartSec=5
-# Bound the restarts. An unbounded Restart=on-failure is the shape
-# DEC-PHASE12-034 was written about.
-StartLimitIntervalSec=120
-StartLimitBurst=5
 StandardOutput=journal
 StandardError=journal
 

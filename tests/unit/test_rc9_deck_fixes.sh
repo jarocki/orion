@@ -87,20 +87,17 @@ if grep -q '^synapse_present() {' "$PROBE"; then
 else
     fail "synapse probe" "synapse_present() not found in setup-matrix.sh"
 fi
-grep -q '"\$SYNAPSE_PY" -m synapse.app.homeserver' "$S" && ! grep -qE '^\s*python3 -m synapse\.app\.homeserver' "$S" && pass "installer generates config with the venv python" || fail "generate-config python" "still system python3"
+# DEC-PHASE12-102: setup-matrix no longer runs --generate-config (the package
+# ships homeserver.yaml; setup writes conf.d/orionx.yaml); it must never run
+# Synapse with the system python3.
+! grep -qE '^\s*python3 -m synapse\.app\.homeserver' "$S" && pass "installer never runs Synapse with the system python3" || fail "system python3" "found"
 # Synapse unit authority (lead ruling, QA round 1): the package's
 # matrix-synapse.service is the authority and matrix-synapse-orionx.service is
 # being retired (group B1). Whichever ships, no live line may reference
 # wg0.conf, and any ExecStart must use the venv python.
-SU="$U/matrix-synapse-orionx.service"
-if [[ -f "$SU" ]]; then
-    grep -q 'ExecStart=/opt/venvs/matrix-synapse/bin/python -m synapse.app.homeserver' "$SU" && pass "unit runs the venv python" || fail "unit ExecStart" "still /usr/bin/python3"
-    # F-12: this used to be `grep -q … | grep -v '^#'`, which can never fail
-    # (grep -q prints nothing). Filter comments FIRST, then look.
-    grep -v '^[[:space:]]*#' "$SU" | grep -q 'wg0.conf' && fail "stale wg0.conf pre-check removed" "a non-comment line still references wg0.conf" || pass "no non-comment wg0.conf line in the unit (DEC-PHASE12-041)"
-else
-    pass "matrix-synapse-orionx.service retired (package unit is the authority)"
-fi
+D="$ROOT/iso/config/includes.chroot/etc/systemd/system/matrix-synapse.service.d/orionx.conf"
+[[ ! -e "$U/matrix-synapse-orionx.service" ]] && pass "matrix-synapse-orionx.service retired (package unit is the one authority, DEC-PHASE12-102)" || fail "unit authority" "matrix-synapse-orionx.service is back"
+[[ -f "$D" ]] && ! grep -q '^ExecStart' "$D" && pass "drop-in present and keeps the package's venv ExecStart" || fail "drop-in" "missing or overrides ExecStart"
 for d in "$ROOT"/iso/config/includes.chroot/etc/systemd/system/matrix-synapse.service.d/*.conf; do
     [[ -f "$d" ]] || continue
     bad="$(grep -E '^ExecStart=.+' "$d" | grep -v '^ExecStart=/opt/venvs/matrix-synapse/bin/python' || true)"
@@ -114,7 +111,7 @@ echo "[keyring]"
 grep -qE '^gnome-keyring$' "$ROOT/iso/config/package-lists/orionx.list.chroot" && pass "gnome-keyring on the image (DEC-PHASE12-061)" || fail "gnome-keyring" "not in package list"
 grep -q 'Use no encryption' "$ROOT/docs/User_Guide.md" && pass "User Guide explains Element's keyring prompt" || fail "guide" "missing"
 # Annotation presence is bookkeeping, not behaviour; counted separately (F-13).
-ANN=0; for d in 059 060 061; do grep -rq "DEC-PHASE12-$d" "$ROOT/scripts" "$ROOT/iso/config" && ANN=$((ANN+1)); done
+ANN=0; for d in 059 060 061; do git -C "$ROOT" grep -q "DEC-PHASE12-$d" -- scripts iso/config && ANN=$((ANN+1)); done
 echo "  (annotations present: $ANN/3 — not counted as behavioural passes)"
 echo "==========================================="; echo "Results: $PASS passed, $FAIL failed"; echo "==========================================="
 [[ $FAIL -eq 0 ]]
