@@ -719,6 +719,24 @@ printf "\n===========================================\n"
 if [[ ${PENDING:-0} -gt 0 ]]; then
   printf "  ${RED}%s wiring entr(y/ies) PENDING${NC} — see WIRING above\n" "$PENDING"
 fi
+# Every remedy R.A.I.N. prints must name a command the image provides: the
+# operator types it at 3 a.m. (rc9 told them to run `orionx-nebula`, which
+# does not exist; the shipped CLI is `nebula`).
+_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+_bad=""
+while IFS= read -r cmd; do
+    w="${cmd%% *}"; [ "$w" = "sudo" ] && { rest="${cmd#sudo }"; w="${rest%% *}"; }
+    case "$w" in
+        python3|sudo|apt-get|systemctl) continue ;;               # base system / package tools
+        /*) [ -e "$_ROOT/iso/config/includes.chroot$w" ] || _bad="$_bad $w" ;;
+        *)  grep -rqsE "(/usr/(local/)?s?bin/$w\b|^$w$|\[\"$w\"\]=)" "$_ROOT/iso/config/hooks" "$_ROOT/iso/config/package-lists" \
+              || [ -e "$_ROOT/iso/config/includes.chroot/usr/bin/$w" ] || _bad="$_bad $w" ;;
+    esac
+done < <(grep -hoE "(Fix|Check with|Natural voice): [a-z/][^\"']*" "$_ROOT/scripts/rain/orionx-rain" "$_ROOT/scripts/rain/rain_speech.py" \
+         | sed -E 's/^[^:]+: //' | sort -u)
+if [ -z "$_bad" ]; then pass "every remedy R.A.I.N. prints names a command the image ships"
+else fail "R.A.I.N. remedy names a missing command" "$_bad"; fi
+
 printf "  Results: ${GREEN}%s passed${NC}, ${RED}%s failed${NC}\n" "$PASS" "$FAIL"
 printf "===========================================\n"
 [[ $FAIL -gt 0 ]] && exit 1

@@ -273,7 +273,7 @@ def speech_status() -> int:
     if not reachable:
         print("                  Consequence: narration uses built-in phrasing")
         print("                  from the event's own fields. Still spoken.")
-        print("                  Fix: orionx-nebula status")
+        print("                  Fix: nebula status")
     print(f"  bounds        : timeout {mod.SPEECH_TIMEOUT}s, queue "
           f"{mod.SPEECH_QUEUE_MAX}, min gap {mod.SPEECH_MIN_GAP_SECONDS}s, "
           f"max age {mod.SPEECH_MAX_AGE_SECONDS}s")

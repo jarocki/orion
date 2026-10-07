@@ -548,7 +548,7 @@ NO_TTS_MESSAGE = (
 NO_MODEL_MESSAGE = (
     "R.A.I.N. speech is using built-in phrasing: Nebula did not answer within "
     f"{SPEECH_TIMEOUT:.0f}s. Alerts are still spoken from the event's own "
-    "fields. Check with: orionx-nebula status"
+    "fields. Check with: nebula status"
 )
 
 
