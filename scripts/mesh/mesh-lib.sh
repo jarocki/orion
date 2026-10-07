@@ -509,6 +509,27 @@ mesh_units_stop() {
     done
 }
 
+# "survives reboot" line for join/leave (UX-27, RESILIENCE honesty rule 4).
+# The persistence check is tuning_lib.persistence_present() — the single
+# authority — so the mesh never has its own idea of what persistence is.
+# Even WITH persistence nothing re-joins at boot: wg0 is created only by join.
+_MESH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MESH_AWARENESS_DIR="${MESH_AWARENESS_DIR:-$_MESH_LIB_DIR/../awareness}"
+mesh_reboot_line() {
+    local out present where
+    out="$(PYTHONDONTWRITEBYTECODE=1 python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import tuning_lib as t; p, w = t.persistence_present(); print(("1" if p else "0") + "\t" + w)' "$MESH_AWARENESS_DIR" 2>/dev/null)" || out=""
+    if [[ -z "$out" ]]; then
+        echo "survives reboot: UNKNOWN (the persistence check could not run). Assume NO: run 'sudo orionx-mesh join' again after a reboot."
+        return 0
+    fi
+    present="${out%%$'\t'*}"; where="${out#*$'\t'}"
+    if [[ "$present" == "1" ]]; then
+        echo "survives reboot: PARTLY — keys persist (persistence at $where), but the mesh interface does not come back by itself: run 'sudo orionx-mesh join' after each boot."
+    else
+        echo "survives reboot: NO — $where. Keys, address and peers are lost at reboot; run 'sudo orionx-mesh join' again after booting."
+    fi
+}
+
 # Return PSK file path.
 mesh_get_psk_path() {
     echo "$MESH_PSK_FILE"

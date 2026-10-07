@@ -568,7 +568,8 @@ echo ""
 echo "--- Join/Leave: the same mesh units, started and stopped ---"
 setup
 _mock_is_active=1
-OUTPUT="$(mesh_join "" 2>&1)"
+OUTPUT="$(mesh_join "" 2>/dev/null)"
+assert_match "join says whether it survives reboot, from tuning_lib (UX-27)" "survives reboot: (NO|PARTLY)" "$OUTPUT"
 STARTED="$(awk '$1=="start"{print $2}' "$SYSTEMCTL_CALLS" | sort -u)"
 for u in orionx-mesh-discover.service orionx-mesh-discover.timer orionx-mesh-health.timer orionx-mesh-status.timer; do
     if grep -qxF "$u" <<< "$STARTED"; then echo "  PASS: discovery join starts $u"; (( PASS_COUNT++ )) || true; else echo "  FAIL: discovery join starts $u"; (( FAIL_COUNT++ )) || true; fi
@@ -578,7 +579,8 @@ assert_file_not_exists "join does not fork a listener PID file of its own" "$MES
 # leave stops at least everything join started
 _mock_is_active=0
 : > "$SYSTEMCTL_CALLS"
-mesh_leave >/dev/null 2>&1
+LOUT="$(mesh_leave 2>/dev/null)"
+assert_match "leave states its reboot behaviour (UX-27)" "survives reboot:" "$LOUT"
 STOPPED="$(awk '$1=="stop"{print $2}' "$SYSTEMCTL_CALLS" | sort -u)"
 MISSING=""
 while IFS= read -r u; do

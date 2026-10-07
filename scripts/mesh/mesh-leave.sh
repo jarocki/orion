@@ -66,6 +66,7 @@ mesh_leave() {
 
     # --- 5. Print message ---
     echo "Left the mesh. Interface $MESH_IFACE removed."
+    echo "survives reboot: n/a — leaving takes effect now, and a reboot never rejoins by itself."
 
     return 0
 }

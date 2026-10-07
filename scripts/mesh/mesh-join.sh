@@ -103,6 +103,7 @@ mesh_join() {
     echo "  Mode:      $mode"
     echo "  Pubkey:    ${pubkey:0:8}..."
     [[ -n "$units_note" ]] && echo "$units_note"
+    mesh_reboot_line
 
     return 0
 }
