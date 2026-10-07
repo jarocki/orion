@@ -1019,11 +1019,8 @@ else
 fi
 # The daemon loop must do the opposite: start at EOF so a systemd restart
 # during an incident does not replay an hour of history as fresh actions.
-if grep -q 'fh.seek(0, 2)' "$HEAL_DIR/orionx-heald"; then
-    pass "the daemon loop starts at EOF (a restart does not re-action history)"
-else
-    fail "the daemon loop starts at EOF"
-fi
+# Proven by EXECUTING the daemon in tests/unit/test_bus_reader.sh (the shared
+# rain_lib.BusTail, DEC-PHASE12-083); the old source-text grep is gone.
 STDIN_OUT="$(python3 "$HEAL_DIR/orionx-heald" --stdin --dry-run -v \
     --state-dir "$BUSW/state2" < "$BUSW/bus.jsonl" 2>&1)"
 if echo "$STDIN_OUT" | grep -q 'PROPOSE block_ip'; then

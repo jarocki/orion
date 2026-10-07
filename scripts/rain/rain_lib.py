@@ -311,6 +311,133 @@ def emit_event(severity: str, source: str, category: str, message: str,
         return False
 
 
+# --- Reading the bus ----------------------------------------------------------
+
+#: A partial line longer than this is not a line in progress, it is garbage
+#: (the writer budget is LINE_BUDGET); it is dropped so memory stays bounded.
+MAX_PARTIAL_BYTES = 64 * 1024
+
+
+class BusTail:
+    """The ONE incremental reader of the event bus (DEC-PHASE12-083).
+
+    @decision DEC-PHASE12-083
+    @title One bus reader: survives deletion/rotation/truncation, never drops a partial line
+    @status accepted
+    @rationale QA round 1 (python P1-4, P1-6). orionx-rain crashed with
+      FileNotFoundError when the bus file was deleted (rotation path called
+      open() outside any try) and, being an autostart rather than a unit with
+      Restart=, stayed dead for the session. orionx-rain, orionx-heald and the
+      Cockpit each parsed whatever readline() returned: a line read before its
+      newline arrived failed JSON parsing and was skipped for good, so a
+      critical event could be neither heard, acted on nor seen. This class
+      reads bytes, keeps the unterminated tail in a buffer and only yields
+      complete lines; a missing file is a normal state (poll again); an inode
+      change or a shrink reopens from the top so a fresh bus is read in full.
+      Readers that start at EOF (daemons must not re-act on history) still see
+      every event written after the first successful open.
+
+    poll() never raises. Lines are returned decoded; poll_events() parses them.
+    """
+
+    def __init__(self, path: Path | str | None = None, at_end: bool = True) -> None:
+        self.path = Path(path) if path is not None else EVENT_LOG
+        self._at_end = at_end          # only the FIRST open may skip history
+        self._fh = None
+        self._ino: int | None = None
+        self._buf = b""
+        self.reopens = 0
+        self.dropped_partial = 0
+
+    def _open(self) -> bool:
+        try:
+            fh = open(self.path, "rb")
+        except OSError:
+            return False
+        try:
+            st = os.fstat(fh.fileno())
+            if self._at_end:
+                fh.seek(0, os.SEEK_END)
+        except OSError:
+            fh.close()
+            return False
+        self._at_end = False           # any later (re)open reads a new file in full
+        self._fh, self._ino, self._buf = fh, st.st_ino, b""
+        return True
+
+    def _close(self) -> None:
+        if self._fh is not None:
+            try:
+                self._fh.close()
+            except OSError:
+                pass
+        self._fh, self._ino, self._buf = None, None, b""
+
+    def rewind(self) -> None:
+        """Read from the start on the next poll (one-shot modes)."""
+        self._close()
+        self._at_end = False
+
+    def _drain(self, max_bytes: int) -> list[str]:
+        try:
+            data = self._fh.read(max_bytes)
+        except OSError:
+            return []
+        if not data:
+            return []
+        data = self._buf + data
+        *lines, tail = data.split(b"\n")
+        if len(tail) > MAX_PARTIAL_BYTES:
+            self.dropped_partial += 1
+            tail = b""
+        self._buf = tail
+        return [ln.decode("utf-8", errors="replace") for ln in lines if ln.strip()]
+
+    def poll(self, max_bytes: int = 1 << 20) -> list[str]:
+        """Complete new lines since the last poll ([] when there are none)."""
+        if self._fh is None:
+            if not self._open():
+                # Not there yet: whatever it holds when it appears is new.
+                self._at_end = False
+                return []
+            return self._drain(max_bytes)
+        try:
+            st = os.stat(self.path)
+        except OSError:
+            st = None
+        if st is None or st.st_ino != self._ino:
+            # Deleted or replaced: finish what the old file still holds, then
+            # follow the new one (or wait for it) from its top.
+            out = self._drain(max_bytes)
+            self._close()
+            self.reopens += 1
+            if st is not None and self._open():
+                out += self._drain(max_bytes)
+            return out
+        try:
+            if st.st_size < self._fh.tell():
+                self._fh.seek(0)       # truncated in place: start over
+                self._buf = b""
+                self.reopens += 1
+        except OSError:
+            self._close()
+            return []
+        return self._drain(max_bytes)
+
+    def poll_events(self, max_bytes: int = 1 << 20) -> list[dict[str, Any]]:
+        out = []
+        for line in self.poll(max_bytes):
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(obj, dict):
+                out.append(obj)
+        return out
+
+    def close(self) -> None:
+        self._close()
+
 # --- Audio playback ---------------------------------------------------------
 def _tone_path(severity: str) -> Path:
     return TONE_DIR / f"{normalize_severity(severity)}.wav"
