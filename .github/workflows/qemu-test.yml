@@ -221,7 +221,7 @@ jobs:
           PERF_WAIT: "90"
 
       # W7-6: Run host-side failure-resilience config inspection.
-      # Reads each of the 8 Orion-X systemd unit files from systemd/ and
+      # Reads each of the 8 Orion-X systemd unit files from iso/config/includes.chroot/usr/share/orionx/systemd/ and
       # asserts per-Type recovery configuration:
       #   - Long-running daemons (Type=notify, Type=simple) must declare
       #     Restart= with on-failure|always|on-abnormal.

@@ -58,7 +58,6 @@ EXPECTED HOOKS (iso/config/hooks/ — post-move canonical paths)
   live/0615-install-systemd-units.hook.chroot
   live/0620-service-hardening.hook.chroot
   normal/0100-create-user.hook.chroot
-  normal/0500-bootloader-serial.hook.binary
 EOF
     exit 0
 fi

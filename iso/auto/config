@@ -20,8 +20,8 @@
 #   Linux processes console= left-to-right; the LAST entry becomes the
 #   primary console (where getty/login attaches). ttyS0 is last so CI sees
 #   the login prompt on serial.
-#   0500-bootloader-serial.hook.binary patches isolinux.cfg and grub.cfg
-#   with serial directives during the binary stage for bootloader visibility.
+#   (The old 0500-bootloader-serial.hook.binary was retired in v3.0.0: it never
+#   found its targets; the bootloader config generator is the one authority.)
 #   References: issue #30, W7-3 acceptance gate, DEC-PHASE7-020.
 #
 # @decision DEC-PHASE7-024 (supersedes DEC-PHASE7-023 wiring paragraph)

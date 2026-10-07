@@ -52,7 +52,6 @@ ERRORS=()
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
 AUTO_CONFIG="$REPO_ROOT/iso/auto/config"
-HOOK_SCRIPT="$REPO_ROOT/iso/config/hooks/normal/0500-bootloader-serial.hook.binary"
 
 pass() { PASS=$((PASS + 1)); echo "  PASS: $1"; }
 fail() {
@@ -91,7 +90,6 @@ trap 'rm -rf "$SCRATCH"' EXIT
 echo "================================================================"
 echo "test_iso_serial_console.sh — W7-3 serial console unit test suite"
 echo "AUTO_CONFIG : $AUTO_CONFIG"
-echo "HOOK_SCRIPT : $HOOK_SCRIPT"
 echo "================================================================"
 echo ""
 
@@ -163,12 +161,13 @@ echo ""
 # keeping both would create dual-registration. This test verifies:
 #   (a) the hook file is present at its canonical binary/ path
 #   (b) --hook-files is NOT present in iso/auto/config (removal confirmed)
-echo "[T6] canonical hook at iso/config/hooks/normal/ AND --hook-files absent from auto/config"
-if [[ -f "$HOOK_SCRIPT" ]]; then
-    pass "hook exists at canonical path iso/config/hooks/normal/0500-bootloader-serial.hook.binary"
-else
-    fail "hook NOT found at canonical path: $HOOK_SCRIPT"
-fi
+echo "[T6] serial-patch hook retired AND --hook-files absent from auto/config"
+# 0500-bootloader-serial.hook.binary was retired (QA round 1, B2 P3-1): in
+# the real build it never found its targets (rc9 log: both patches skipped);
+# the bootloader configs' generator is the one authority (T16-T18).
+[[ ! -e "$REPO_ROOT/iso/config/hooks/normal/0500-bootloader-serial.hook.binary" ]] \
+    && pass "retired serial-patch hook stays retired (generator is the authority)" \
+    || fail "0500-bootloader-serial.hook.binary is back" "the generator owns the serial directives"
 # Strip comment lines (sh comments start with #) before checking for --hook-files
 # so explanatory comments referencing the removed flag don't trigger a false
 # positive. Intent: no FUNCTIONAL --hook-files in the lb config invocation.
@@ -185,252 +184,6 @@ if bash -n "$AUTO_CONFIG" 2>&1; then
 else
     fail "iso/auto/config bash syntax invalid"
 fi
-echo ""
-
-# ---------------------------------------------------------------------------
-# T8: Hook file exists and is executable
-# ---------------------------------------------------------------------------
-echo "[T8] Hook file presence and executability"
-if [[ -f "$HOOK_SCRIPT" ]]; then
-    pass "0500-bootloader-serial.hook.binary exists"
-else
-    fail "0500-bootloader-serial.hook.binary does NOT exist at $HOOK_SCRIPT"
-fi
-if [[ -x "$HOOK_SCRIPT" ]]; then
-    pass "0500-bootloader-serial.hook.binary is executable"
-else
-    fail "0500-bootloader-serial.hook.binary is NOT executable"
-fi
-echo ""
-
-# ---------------------------------------------------------------------------
-# T9: Hook file bash syntax valid
-# ---------------------------------------------------------------------------
-echo "[T9] Hook file bash syntax"
-if bash -n "$HOOK_SCRIPT" 2>&1; then
-    pass "hook file bash syntax valid"
-else
-    fail "hook file bash syntax invalid"
-fi
-echo ""
-
-# ---------------------------------------------------------------------------
-# T10: Hook patches isolinux.cfg (BIOS) correctly
-# ---------------------------------------------------------------------------
-echo "[T10] Hook patches isolinux.cfg with serial 0 115200"
-BIOS_SCRATCH="$SCRATCH/bios_test"
-mkdir -p "$BIOS_SCRATCH/binary/isolinux"
-# Simulate what live-build generates for isolinux.cfg (real-world minimal example)
-cat > "$BIOS_SCRATCH/binary/isolinux/isolinux.cfg" <<'EOF'
-DEFAULT vesamenu.c32
-PROMPT 0
-TIMEOUT 0
-MENU TITLE Orion-X Phoenix Edition
-
-LABEL live
-  MENU LABEL Live
-  KERNEL /live/vmlinuz
-  APPEND initrd=/live/initrd.img boot=live components splash quiet persistence
-EOF
-
-(cd "$BIOS_SCRATCH" && bash "$HOOK_SCRIPT" > /dev/null 2>&1)
-
-PATCHED_ISOLINUX="$(cat "$BIOS_SCRATCH/binary/isolinux/isolinux.cfg")"
-# serial directive must be on the FIRST line
-FIRST_LINE="$(head -1 "$BIOS_SCRATCH/binary/isolinux/isolinux.cfg")"
-contains "serial 0 115200 is first line of isolinux.cfg" "serial 0 115200" "$FIRST_LINE"
-contains "original DEFAULT line still present after patch" "DEFAULT vesamenu.c32" "$PATCHED_ISOLINUX"
-echo ""
-
-# ---------------------------------------------------------------------------
-# T11: Hook patches grub.cfg (UEFI) correctly
-# ---------------------------------------------------------------------------
-echo "[T11] Hook patches grub.cfg with serial + terminal directives"
-UEFI_SCRATCH="$SCRATCH/uefi_test"
-mkdir -p "$UEFI_SCRATCH/binary/boot/grub"
-# Simulate what live-build generates for grub.cfg
-cat > "$UEFI_SCRATCH/binary/boot/grub/grub.cfg" <<'EOF'
-if loadfont /boot/grub/font.pf2 ; then
-  set gfxmode=auto
-  insmod efi_gop
-  insmod font
-  if terminal_output gfxterm ; then true ; else
-    unset terminal_output
-  fi
-fi
-set default="0"
-set timeout="0"
-EOF
-
-(cd "$UEFI_SCRATCH" && bash "$HOOK_SCRIPT" > /dev/null 2>&1)
-
-PATCHED_GRUB="$(cat "$UEFI_SCRATCH/binary/boot/grub/grub.cfg")"
-FIRST_LINE_GRUB="$(head -1 "$UEFI_SCRATCH/binary/boot/grub/grub.cfg")"
-contains "serial --unit=0 is first line of grub.cfg" "serial --unit=0" "$FIRST_LINE_GRUB"
-contains "serial --speed=115200 in grub.cfg" "--speed=115200" "$PATCHED_GRUB"
-contains "terminal_input --append serial in grub.cfg" "terminal_input --append serial" "$PATCHED_GRUB"
-contains "terminal_output --append serial in grub.cfg" "terminal_output --append serial" "$PATCHED_GRUB"
-contains "original grub content still present" 'set default="0"' "$PATCHED_GRUB"
-echo ""
-
-# ---------------------------------------------------------------------------
-# T12: Hook is idempotent (second run does not double-patch)
-# ---------------------------------------------------------------------------
-echo "[T12] Hook idempotency (no double-patch on second run)"
-IDEM_SCRATCH="$SCRATCH/idempotency_test"
-mkdir -p "$IDEM_SCRATCH/binary/isolinux"
-mkdir -p "$IDEM_SCRATCH/binary/boot/grub"
-cat > "$IDEM_SCRATCH/binary/isolinux/isolinux.cfg" <<'EOF'
-DEFAULT vesamenu.c32
-LABEL live
-  MENU LABEL Live
-EOF
-cat > "$IDEM_SCRATCH/binary/boot/grub/grub.cfg" <<'EOF'
-set default="0"
-EOF
-
-# Run twice
-(cd "$IDEM_SCRATCH" && bash "$HOOK_SCRIPT" > /dev/null 2>&1)
-(cd "$IDEM_SCRATCH" && bash "$HOOK_SCRIPT" > /dev/null 2>&1)
-
-# Count occurrences of "serial 0 115200" in isolinux.cfg — must be exactly 1
-ISOLINUX_SERIAL_COUNT="$(grep -c "^serial 0 115200" "$IDEM_SCRATCH/binary/isolinux/isolinux.cfg" || echo 0)"
-if [[ "$ISOLINUX_SERIAL_COUNT" -eq 1 ]]; then
-    pass "isolinux.cfg has exactly one serial directive after two runs"
-else
-    fail "isolinux.cfg has $ISOLINUX_SERIAL_COUNT serial directives (expected 1) — not idempotent"
-fi
-
-# Count occurrences of "serial --unit=0" in grub.cfg — must be exactly 1
-GRUB_SERIAL_COUNT="$(grep -c "^serial --unit=0" "$IDEM_SCRATCH/binary/boot/grub/grub.cfg" || echo 0)"
-if [[ "$GRUB_SERIAL_COUNT" -eq 1 ]]; then
-    pass "grub.cfg has exactly one serial directive after two runs"
-else
-    fail "grub.cfg has $GRUB_SERIAL_COUNT serial directives (expected 1) — not idempotent"
-fi
-echo ""
-
-# ---------------------------------------------------------------------------
-# T13: Missing isolinux.cfg emits WARNING but exits 0
-# ---------------------------------------------------------------------------
-echo "[T13] Missing isolinux.cfg — WARNING emitted, exits 0"
-MISS_BIOS_SCRATCH="$SCRATCH/missing_bios_test"
-mkdir -p "$MISS_BIOS_SCRATCH/binary/boot/grub"
-# No isolinux directory — grub.cfg exists
-cat > "$MISS_BIOS_SCRATCH/binary/boot/grub/grub.cfg" <<'EOF'
-set default="0"
-EOF
-
-MISS_BIOS_OUTPUT="$( (cd "$MISS_BIOS_SCRATCH" && bash "$HOOK_SCRIPT") 2>&1 || true)"
-MISS_BIOS_EXIT=0
-(cd "$MISS_BIOS_SCRATCH" && bash "$HOOK_SCRIPT" > /dev/null 2>&1) || MISS_BIOS_EXIT=$?
-if [[ "$MISS_BIOS_EXIT" -eq 0 ]]; then
-    pass "hook exits 0 when isolinux.cfg is missing"
-else
-    fail "hook exits non-zero ($MISS_BIOS_EXIT) when isolinux.cfg is missing"
-fi
-contains "WARNING emitted for missing isolinux.cfg" "WARNING" "$MISS_BIOS_OUTPUT"
-echo ""
-
-# ---------------------------------------------------------------------------
-# T14: Missing grub.cfg emits WARNING but exits 0
-# ---------------------------------------------------------------------------
-echo "[T14] Missing grub.cfg — WARNING emitted, exits 0"
-MISS_UEFI_SCRATCH="$SCRATCH/missing_uefi_test"
-mkdir -p "$MISS_UEFI_SCRATCH/binary/isolinux"
-# No boot/grub directory — isolinux.cfg exists
-cat > "$MISS_UEFI_SCRATCH/binary/isolinux/isolinux.cfg" <<'EOF'
-DEFAULT vesamenu.c32
-EOF
-
-MISS_UEFI_OUTPUT="$( (cd "$MISS_UEFI_SCRATCH" && bash "$HOOK_SCRIPT") 2>&1 || true)"
-MISS_UEFI_EXIT=0
-(cd "$MISS_UEFI_SCRATCH" && bash "$HOOK_SCRIPT" > /dev/null 2>&1) || MISS_UEFI_EXIT=$?
-if [[ "$MISS_UEFI_EXIT" -eq 0 ]]; then
-    pass "hook exits 0 when grub.cfg is missing"
-else
-    fail "hook exits non-zero ($MISS_UEFI_EXIT) when grub.cfg is missing"
-fi
-contains "WARNING emitted for missing grub.cfg" "WARNING" "$MISS_UEFI_OUTPUT"
-echo ""
-
-# ---------------------------------------------------------------------------
-# T15: Production sequence — config present + hook patches both configs
-# ---------------------------------------------------------------------------
-# This test exercises the real production sequence end-to-end at the unit level:
-# 1. hook lives at canonical path iso/config/hooks/normal/ (verified in T6)
-# 2. The hook is present and executable (verified in T8)
-# 3. The hook patches isolinux.cfg AND grub.cfg in a single run
-# This mirrors what lb_binary does: runs all .hook.binary scripts from CWD
-# with binary/ as the working tree. Auto-discovery finds the hook because
-# it is in iso/config/hooks/normal/ (DEC-PHASE7-024, no --hook-files needed).
-echo "[T15] Production sequence — hook at canonical path; hook patches both configs"
-
-E2E_SCRATCH="$SCRATCH/e2e_test"
-mkdir -p "$E2E_SCRATCH/binary/isolinux"
-mkdir -p "$E2E_SCRATCH/binary/boot/grub"
-# Realistic generated configs (post-lb_binary, pre-hook)
-cat > "$E2E_SCRATCH/binary/isolinux/isolinux.cfg" <<'EOF'
-DEFAULT vesamenu.c32
-PROMPT 0
-TIMEOUT 300
-
-LABEL live
-  MENU LABEL Orion-X Live
-  KERNEL /live/vmlinuz
-  APPEND initrd=/live/initrd.img boot=live components splash quiet persistence console=tty0 console=ttyS0,115200n8
-EOF
-
-cat > "$E2E_SCRATCH/binary/boot/grub/grub.cfg" <<'EOF'
-if loadfont /boot/grub/font.pf2 ; then
-  set gfxmode=auto
-fi
-set default="0"
-set timeout="5"
-
-menuentry "Orion-X Live" {
-  linux /live/vmlinuz boot=live components splash quiet persistence console=tty0 console=ttyS0,115200n8
-  initrd /live/initrd.img
-}
-EOF
-
-# Verify hook is at canonical path — auto-discovery is the single wiring authority (DEC-PHASE7-024)
-if [[ -f "$HOOK_SCRIPT" ]]; then
-    pass "production run: hook present at canonical normal/ path"
-else
-    fail "production run: hook missing from canonical normal/ path — $HOOK_SCRIPT"
-fi
-
-# Run the hook (simulating lb_binary stage)
-E2E_OUTPUT="$( (cd "$E2E_SCRATCH" && bash "$HOOK_SCRIPT") 2>&1)"
-
-# Verify both configs were patched
-E2E_ISOLINUX="$(cat "$E2E_SCRATCH/binary/isolinux/isolinux.cfg")"
-E2E_GRUB="$(cat "$E2E_SCRATCH/binary/boot/grub/grub.cfg")"
-
-# isolinux.cfg: serial line first
-E2E_ISOLINUX_FIRST="$(head -1 "$E2E_SCRATCH/binary/isolinux/isolinux.cfg")"
-contains "production run: isolinux.cfg has serial 0 115200 as first line" \
-    "serial 0 115200" "$E2E_ISOLINUX_FIRST"
-
-# grub.cfg: serial line first, then terminal directives, then original content
-E2E_GRUB_FIRST="$(head -1 "$E2E_SCRATCH/binary/boot/grub/grub.cfg")"
-contains "production run: grub.cfg has serial --unit=0 as first line" \
-    "serial --unit=0" "$E2E_GRUB_FIRST"
-contains "production run: grub.cfg has terminal_input --append serial" \
-    "terminal_input --append serial" "$E2E_GRUB"
-contains "production run: grub.cfg has terminal_output --append serial" \
-    "terminal_output --append serial" "$E2E_GRUB"
-contains "production run: hook completed without error" \
-    "Bootloader serial console patch complete" "$E2E_OUTPUT"
-
-# Verify kernel cmdline in the configs contains ttyS0 (kernel console param already injected
-# by lb via --bootappend-live — this verifies the ISO will have the full serial stack)
-contains "kernel cmdline in isolinux.cfg has console=ttyS0" \
-    "console=ttyS0" "$E2E_ISOLINUX"
-contains "kernel cmdline in grub.cfg has console=ttyS0" \
-    "console=ttyS0" "$E2E_GRUB"
-
 echo ""
 
 # ---------------------------------------------------------------------------
