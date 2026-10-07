@@ -31,7 +31,7 @@ for f in build.sh container-setup.sh session-start.sh build_demo.py fake-ollama.
     [[ -x "$D/$f" ]] && pass "$f present + executable" || fail "$f" "missing or not executable"
 done
 [[ -f "$D/scenes.yaml" ]] && pass "scenes.yaml present" || fail "scenes.yaml" "missing"
-python3 -m py_compile "$D/build_demo.py" "$D/fake-ollama.py" 2>/dev/null && pass "python tooling compiles" || fail "py_compile" "failed"
+PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/orionx-pycache" python3 -m py_compile "$D/build_demo.py" "$D/fake-ollama.py" 2>/dev/null && pass "python tooling compiles" || fail "py_compile" "failed"
 for f in build.sh container-setup.sh session-start.sh; do bash -n "$D/$f" && pass "$f bash syntax" || fail "$f syntax" "bash -n failed"; done
 grep -q "DEC-PHASE12-018" "$D/build_demo.py" && pass "DEC-PHASE12-018 annotated" || fail "annotation" "missing"
 

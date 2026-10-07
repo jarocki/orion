@@ -101,14 +101,14 @@ echo ""
 # ===========================================================================
 echo "[T3] py_compile clean on all scripts/nebula/ Python files"
 while IFS= read -r -d '' pyfile; do
-    if python3 -m py_compile "$pyfile" 2>/dev/null; then
+    if PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/orionx-pycache" python3 -m py_compile "$pyfile" 2>/dev/null; then
         pass "py_compile clean: $(basename "$pyfile")"
     else
         fail "py_compile: $(basename "$pyfile")" "syntax error in $pyfile"
     fi
 done < <(find "$NEBULA_DIR" -name '*.py' -print0)
 # Also compile the dispatcher (no .py extension)
-if python3 -m py_compile "$NEBULA_BIN" 2>/dev/null; then
+if PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/orionx-pycache" python3 -m py_compile "$NEBULA_BIN" 2>/dev/null; then
     pass "py_compile clean: nebula (dispatcher)"
 else
     fail "py_compile: nebula (dispatcher)" "syntax error in dispatcher"

@@ -50,7 +50,7 @@ EOF
 
 section "module + CLI"
 [[ -f "$STORE_PY" ]] && pass "store.py present" || { fail "store.py" "missing"; exit 1; }
-python3 -m py_compile "$STORE_PY" && pass "store.py compiles" || fail "compile" "py_compile failed"
+PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/orionx-pycache" python3 -m py_compile "$STORE_PY" && pass "store.py compiles" || fail "compile" "py_compile failed"
 python3 "$STORE_PY" --help >/dev/null 2>&1 && pass "--help works" || fail "--help" "non-zero"
 python3 "$STORE_PY" consolidate >/dev/null 2>&1; [[ $? -eq 2 ]] && pass "missing --models-dir → usage error 2" || fail "usage error" "expected 2"
 grep -q "DEC-PHASE12-016" "$STORE_PY" && pass "DEC-PHASE12-016 annotated" || fail "annotation" "missing"

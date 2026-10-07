@@ -39,7 +39,7 @@ if head -1 "$RS" | grep -q python3; then pass "python3 shebang"; else fail "pyth
 if grep -q '@decision DEC-PHASE12-046' "$RS"; then pass "rain_speech carries decision annotation"; else fail "rain_speech carries decision annotation"; fi
 if grep -q 'DEC-PHASE12-046' "$RAIN"; then pass "orionx-rain annotates the speech hook"; else fail "orionx-rain annotates the speech hook"; fi
 if grep -q 'DEC-PHASE12-046' "$RLIB"; then pass "rain_lib annotates the new config key"; else fail "rain_lib annotates the new config key"; fi
-if python3 -m py_compile "$RS" 2>/dev/null; then pass "rain_speech compiles"; else fail "rain_speech compiles"; fi
+if PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/orionx-pycache" python3 -m py_compile "$RS" 2>/dev/null; then pass "rain_speech compiles"; else fail "rain_speech compiles"; fi
 
 section "Config: off by default, discoverable, live"
 if python3 - "$REPO_ROOT" <<'PY'

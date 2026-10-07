@@ -58,7 +58,7 @@ for f in cockpit_lib.py orionx-cockpit; do
     [[ -f "$CK/$f" ]] && pass "$f present" || fail "$f present" "missing"
 done
 [[ -x "$CK/orionx-cockpit" ]] && pass "orionx-cockpit executable" || fail "orionx-cockpit executable" "not +x"
-if python3 -m py_compile "$CK/cockpit_lib.py" "$CK/orionx-cockpit" 2>/dev/null; then pass "cockpit compiles"; else fail "cockpit compiles" "py_compile error"; fi
+if PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/orionx-pycache" python3 -m py_compile "$CK/cockpit_lib.py" "$CK/orionx-cockpit" 2>/dev/null; then pass "cockpit compiles"; else fail "cockpit compiles" "py_compile error"; fi
 if grep -q "^python3-gi-cairo$" "$PKGS"; then
     pass "python3-gi-cairo in package list (Cairo draw handler prerequisite)"
 else

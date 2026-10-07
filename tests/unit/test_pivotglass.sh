@@ -26,7 +26,9 @@ section "Vendored package + packaged web export"
 [[ -f "$PKG/__main__.py" && -f "$PKG/web/server.py" ]] && pass "pivotglass package package vendored" || fail "package vendored" "missing __main__/web/server.py"
 [[ -f "$PKG/web/static/index.html" ]] && pass "static web export at the PACKAGED path (web/static/index.html)" || fail "static export" "server.py expects web/static/ next to it"
 grep -q '_PACKAGED_WEB_ROOT = Path(__file__).with_name("static")' "$PKG/web/server.py" && pass "server.py supports the packaged static layout" || fail "packaged layout support" "upstream changed web root resolution"
-if find "$PKG" \( -name "__pycache__" -o -name "*.pyc" \) | grep -q .; then fail "no bytecode vendored" "__pycache__/*.pyc committed"; else pass "no bytecode vendored"; fi
+# Committed bytecode is the defect; a local __pycache__ from another suite's
+# import is ignored by .gitignore and excluded by build-iso.sh's rsync.
+if git -C "$PKG" ls-files -- . | grep -qE '(^|/)__pycache__/|\.pyc$'; then fail "no bytecode vendored" "__pycache__/*.pyc committed"; else pass "no bytecode vendored"; fi
 for junk in tests docs node_modules; do [[ -e "$P/$junk" || -e "$PKG/web/$junk" ]] && fail "no upstream $junk shipped" "size discipline"; done; pass "no upstream tests/docs/node_modules shipped"
 [[ -x "$P/ap" ]] && pass "ap launcher executable" || fail "ap launcher" "missing/not +x"
 grep -q 'exec python3 -m pivotglass' "$P/ap" && pass "launcher runs python3 -m pivotglass (no uv/venv)" || fail "launcher form" "expected python3 -m"
