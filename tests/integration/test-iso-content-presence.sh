@@ -29,7 +29,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-ISO_PATH="${1:-$REPO_ROOT/output/orionx-phoenix-edition-v2.0.0-rc9.iso}"
+# Default: the newest output/orionx-phoenix-edition-*.iso (packages-build P3-9;
+# the old default named v2.0.0-rc9).
+ISO_PATH="${1:-$(ls -t "$REPO_ROOT"/output/orionx-phoenix-edition-*.iso 2>/dev/null | head -1)}"
 WORK=""
 
 # ---------------------------------------------------------------------------
@@ -83,6 +85,25 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# ---------------------------------------------------------------------------
+# Self-check (DEC-PHASE12-119): section numbers are unique, and every
+# numbered section from 14 on reads the image ($SQF or the ISO's boot tree),
+# never only the source. `--self-check` runs this alone (no ISO needed).
+# ---------------------------------------------------------------------------
+self_check() {
+    local me="${BASH_SOURCE[0]}" dups bad
+    dups="$(grep -oE '^section "[0-9]+\.' "$me" | sort | uniq -d)"
+    bad="$(awk '
+        /^section "[0-9]+\./ { if (n >= 14 && !img) print n; match($0, /[0-9]+/); n = substr($0, RSTART, RLENGTH) + 0; img = 0; next }
+        /\$SQF|\$ISO_|sqf_resolve|dpkg_state|assert_release_promises|ISO_PATH/ { img = 1 }
+        END { if (n >= 14 && !img) print n }' "$me")"
+    if [[ -n "$dups" ]]; then echo "SELF-CHECK FAIL: duplicate section numbers: $dups" >&2; return 1; fi
+    if [[ -n "$bad" ]]; then echo "SELF-CHECK FAIL: sections that never read the image: $(echo $bad)" >&2; return 1; fi
+    echo "  self-check: $(grep -cE '^section "[0-9]+\.' "$me") numbered sections, unique; every section >= 14 reads the image"
+}
+if [[ "${1:-}" == "--self-check" ]]; then self_check; exit $?; fi
+self_check || exit 1
+
 echo "=== W8-content-staging: ISO Content Presence Integration Test ==="
 echo "    ISO: $ISO_PATH"
 
@@ -91,7 +112,7 @@ echo "    ISO: $ISO_PATH"
 # ===========================================================================
 section "Prerequisites"
 
-if [[ ! -f "$ISO_PATH" ]]; then
+if [[ -z "$ISO_PATH" || ! -f "$ISO_PATH" ]]; then
     echo "${RED}FATAL${NC}: ISO not found at $ISO_PATH"
     echo "       Build the ISO first: bash scripts/build-iso.sh"
     echo "       Or pass the ISO path as an argument: $0 /path/to/orionx.iso"
@@ -1148,17 +1169,17 @@ section "17. W11-9a: Boot chain branding assets (section 23a)"
 PLYMOUTH_THEME_DIR="$SQF/usr/share/plymouth/themes/orionx-phoenix"
 
 if [[ -d "$PLYMOUTH_THEME_DIR" ]]; then
-    pass "23a-a: /usr/share/plymouth/themes/orionx-phoenix/ present in squashfs"
+    pass "17-a: /usr/share/plymouth/themes/orionx-phoenix/ present in squashfs"
 else
-    fail "23a-a: /usr/share/plymouth/themes/orionx-phoenix/ present in squashfs" \
+    fail "17-a: /usr/share/plymouth/themes/orionx-phoenix/ present in squashfs" \
          "Plymouth theme directory missing — check includes.chroot staging"
 fi
 
 # 23a-a(ii): .plymouth metadata file
 if [[ -f "$PLYMOUTH_THEME_DIR/orionx-phoenix.plymouth" ]]; then
-    pass "23a-a: orionx-phoenix.plymouth metadata file present"
+    pass "17-a: orionx-phoenix.plymouth metadata file present"
 else
-    fail "23a-a: orionx-phoenix.plymouth metadata file present" \
+    fail "17-a: orionx-phoenix.plymouth metadata file present" \
          "Missing: $PLYMOUTH_THEME_DIR/orionx-phoenix.plymouth"
 fi
 
@@ -1166,9 +1187,9 @@ fi
 # 23a-b: Plymouth script file present
 # ---------------------------------------------------------------------------
 if [[ -f "$PLYMOUTH_THEME_DIR/orionx-phoenix.script" ]]; then
-    pass "23a-b: orionx-phoenix.script present in squashfs"
+    pass "17-b: orionx-phoenix.script present in squashfs"
 else
-    fail "23a-b: orionx-phoenix.script present in squashfs" \
+    fail "17-b: orionx-phoenix.script present in squashfs" \
          "Missing: $PLYMOUTH_THEME_DIR/orionx-phoenix.script"
 fi
 
@@ -1181,9 +1202,9 @@ if [[ -d "$PLYMOUTH_THEME_DIR" ]]; then
 fi
 
 if [[ "$PLYMOUTH_PNG_COUNT" -ge 1 ]]; then
-    pass "23a-c: at least one PNG asset present under Plymouth theme dir (found: $PLYMOUTH_PNG_COUNT)"
+    pass "17-c: at least one PNG asset present under Plymouth theme dir (found: $PLYMOUTH_PNG_COUNT)"
 else
-    fail "23a-c: at least one PNG asset present under Plymouth theme dir" \
+    fail "17-c: at least one PNG asset present under Plymouth theme dir" \
          "No *.png files found under $PLYMOUTH_THEME_DIR"
 fi
 
@@ -1193,9 +1214,9 @@ fi
 PLYMOUTHD_CONF="$SQF/etc/plymouth/plymouthd.conf"
 
 if [[ -f "$PLYMOUTHD_CONF" ]] && grep -q "Theme=orionx-phoenix" "$PLYMOUTHD_CONF"; then
-    pass "23a-d: /etc/plymouth/plymouthd.conf contains Theme=orionx-phoenix"
+    pass "17-d: /etc/plymouth/plymouthd.conf contains Theme=orionx-phoenix"
 else
-    fail "23a-d: /etc/plymouth/plymouthd.conf contains Theme=orionx-phoenix" \
+    fail "17-d: /etc/plymouth/plymouthd.conf contains Theme=orionx-phoenix" \
          "File missing or Theme= line absent: $PLYMOUTHD_CONF"
 fi
 
@@ -1206,9 +1227,9 @@ GRUB_THEME_DIR="$SQF/usr/share/grub/themes/orionx"
 GRUB_THEME_TXT="$GRUB_THEME_DIR/theme.txt"
 
 if [[ -f "$GRUB_THEME_TXT" ]]; then
-    pass "23a-e: /usr/share/grub/themes/orionx/theme.txt present in squashfs"
+    pass "17-e: /usr/share/grub/themes/orionx/theme.txt present in squashfs"
 else
-    fail "23a-e: /usr/share/grub/themes/orionx/theme.txt present in squashfs" \
+    fail "17-e: /usr/share/grub/themes/orionx/theme.txt present in squashfs" \
          "Missing: $GRUB_THEME_TXT"
 fi
 
@@ -1221,9 +1242,9 @@ if [[ -d "$GRUB_THEME_DIR" ]]; then
 fi
 
 if [[ "$GRUB_PNG_COUNT" -ge 1 ]]; then
-    pass "23a-f: at least one PNG asset present under GRUB theme dir (found: $GRUB_PNG_COUNT)"
+    pass "17-f: at least one PNG asset present under GRUB theme dir (found: $GRUB_PNG_COUNT)"
 else
-    fail "23a-f: at least one PNG asset present under GRUB theme dir" \
+    fail "17-f: at least one PNG asset present under GRUB theme dir" \
          "No *.png files found under $GRUB_THEME_DIR"
 fi
 
@@ -1233,9 +1254,9 @@ fi
 LIGHTDM_GREETER_DIR="$SQF/usr/share/lightdm-gtk-greeter/orionx"
 
 if [[ -d "$LIGHTDM_GREETER_DIR" ]]; then
-    pass "23a-g: /usr/share/lightdm-gtk-greeter/orionx/ present in squashfs"
+    pass "17-g: /usr/share/lightdm-gtk-greeter/orionx/ present in squashfs"
 else
-    fail "23a-g: /usr/share/lightdm-gtk-greeter/orionx/ present in squashfs" \
+    fail "17-g: /usr/share/lightdm-gtk-greeter/orionx/ present in squashfs" \
          "LightDM greeter asset directory missing — check includes.chroot staging"
 fi
 
@@ -1251,16 +1272,16 @@ EXPECTED_BG="/opt/orionx/theme/wallpapers/orionx-wp-badge.png"
 
 if [[ -f "$LIGHTDM_GREETER_CONF" ]] && \
    grep -q "^background=${EXPECTED_BG}$" "$LIGHTDM_GREETER_CONF"; then
-    pass "23a-h: /etc/lightdm/lightdm-gtk-greeter.conf present and background=orionx-wp-badge.png (DEC-PHASE11-028)"
+    pass "17-h: /etc/lightdm/lightdm-gtk-greeter.conf present and background=orionx-wp-badge.png (DEC-PHASE11-028)"
 else
-    fail "23a-h: /etc/lightdm/lightdm-gtk-greeter.conf present and background=orionx-wp-badge.png" \
+    fail "17-h: /etc/lightdm/lightdm-gtk-greeter.conf present and background=orionx-wp-badge.png" \
          "File missing or background line absent: $LIGHTDM_GREETER_CONF (expected background=${EXPECTED_BG}, DEC-PHASE11-028)"
 fi
 # The badge asset itself must be staged, or LightDM silently falls back to the GTK default.
 if [[ -f "$SQF$EXPECTED_BG" ]]; then
-    pass "23a-h: greeter background asset $EXPECTED_BG staged in squashfs"
+    pass "17-h: greeter background asset $EXPECTED_BG staged in squashfs"
 else
-    fail "23a-h: greeter background asset $EXPECTED_BG staged in squashfs" \
+    fail "17-h: greeter background asset $EXPECTED_BG staged in squashfs" \
          "Missing — stage_application_content rsync of theme/wallpapers/ did not ship the badge"
 fi
 
@@ -1272,26 +1293,26 @@ fi
 HOOK_SOURCE="$REPO_ROOT/iso/config/hooks/live/0800-orionx-branding.hook.chroot"
 
 if [[ -f "$HOOK_SOURCE" ]]; then
-    pass "23a-i: 0800-orionx-branding.hook.chroot present in source tree (iso/config/hooks/live/)"
+    pass "17-i: 0800-orionx-branding.hook.chroot present in source tree (iso/config/hooks/live/)"
 else
-    fail "23a-i: 0800-orionx-branding.hook.chroot present in source tree" \
+    fail "17-i: 0800-orionx-branding.hook.chroot present in source tree" \
          "Missing: $HOOK_SOURCE"
 fi
 
 # Also verify the hook contains the critical activation command
 if [[ -f "$HOOK_SOURCE" ]] && \
    grep -q "plymouth-set-default-theme -R orionx-phoenix" "$HOOK_SOURCE"; then
-    pass "23a-i(ii): hook contains plymouth-set-default-theme -R orionx-phoenix"
+    pass "17-i(ii): hook contains plymouth-set-default-theme -R orionx-phoenix"
 else
-    fail "23a-i(ii): hook contains plymouth-set-default-theme -R orionx-phoenix" \
+    fail "17-i(ii): hook contains plymouth-set-default-theme -R orionx-phoenix" \
          "Activation command absent from $HOOK_SOURCE"
 fi
 
 # Verify hook carries @decision annotation referencing DEC-PHASE11-010
 if [[ -f "$HOOK_SOURCE" ]] && grep -q "DEC-PHASE11-010" "$HOOK_SOURCE"; then
-    pass "23a-i(iii): hook carries @decision DEC-PHASE11-010 annotation"
+    pass "17-i(iii): hook carries @decision DEC-PHASE11-010 annotation"
 else
-    fail "23a-i(iii): hook carries @decision DEC-PHASE11-010 annotation" \
+    fail "17-i(iii): hook carries @decision DEC-PHASE11-010 annotation" \
          "@decision DEC-PHASE11-010 not found in $HOOK_SOURCE"
 fi
 
@@ -1485,9 +1506,9 @@ section "19. W11-9b: Desktop identity assets (section 23b)"
 CYBERDECK_THEME_DIR="$SQF/usr/share/themes/Orion-X-Cyberdeck"
 
 if [[ -f "$CYBERDECK_THEME_DIR/index.theme" ]]; then
-    pass "23b-a: /usr/share/themes/Orion-X-Cyberdeck/index.theme present in squashfs"
+    pass "19-a: /usr/share/themes/Orion-X-Cyberdeck/index.theme present in squashfs"
 else
-    fail "23b-a: /usr/share/themes/Orion-X-Cyberdeck/index.theme present in squashfs" \
+    fail "19-a: /usr/share/themes/Orion-X-Cyberdeck/index.theme present in squashfs" \
          "GTK theme index.theme missing — check includes.chroot staging of Orion-X-Cyberdeck"
 fi
 
@@ -1497,17 +1518,17 @@ fi
 CYBERDECK_GTK_CSS="$CYBERDECK_THEME_DIR/gtk-3.0/gtk.css"
 
 if [[ -f "$CYBERDECK_GTK_CSS" ]]; then
-    pass "23b-b: /usr/share/themes/Orion-X-Cyberdeck/gtk-3.0/gtk.css present in squashfs"
+    pass "19-b: /usr/share/themes/Orion-X-Cyberdeck/gtk-3.0/gtk.css present in squashfs"
     if grep -q "#FF5722" "$CYBERDECK_GTK_CSS" 2>/dev/null; then
-        pass "23b-b: gtk.css contains Phoenix accent color #FF5722 (DEC-PHASE11-010)"
+        pass "19-b: gtk.css contains Phoenix accent color #FF5722 (DEC-PHASE11-010)"
     else
-        fail "23b-b: gtk.css contains Phoenix accent color #FF5722" \
+        fail "19-b: gtk.css contains Phoenix accent color #FF5722" \
              "#FF5722 not found in $CYBERDECK_GTK_CSS — accent override not applied"
     fi
 else
-    fail "23b-b: /usr/share/themes/Orion-X-Cyberdeck/gtk-3.0/gtk.css present in squashfs" \
+    fail "19-b: /usr/share/themes/Orion-X-Cyberdeck/gtk-3.0/gtk.css present in squashfs" \
          "gtk.css missing — GTK3 theme incomplete"
-    fail "23b-b: gtk.css contains Phoenix accent color #FF5722" \
+    fail "19-b: gtk.css contains Phoenix accent color #FF5722" \
          "gtk.css file missing — cannot check accent"
 fi
 
@@ -1515,9 +1536,9 @@ fi
 # 23b-c: xfwm4/themerc present in squashfs
 # ---------------------------------------------------------------------------
 if [[ -f "$CYBERDECK_THEME_DIR/xfwm4/themerc" ]]; then
-    pass "23b-c: /usr/share/themes/Orion-X-Cyberdeck/xfwm4/themerc present in squashfs"
+    pass "19-c: /usr/share/themes/Orion-X-Cyberdeck/xfwm4/themerc present in squashfs"
 else
-    fail "23b-c: /usr/share/themes/Orion-X-Cyberdeck/xfwm4/themerc present in squashfs" \
+    fail "19-c: /usr/share/themes/Orion-X-Cyberdeck/xfwm4/themerc present in squashfs" \
          "xfwm4/themerc missing — XFWM4 window decoration colors not staged"
 fi
 
@@ -1527,17 +1548,17 @@ fi
 ORIONX_ICONS_THEME="$SQF/usr/share/icons/Orion-X-Icons/index.theme"
 
 if [[ -f "$ORIONX_ICONS_THEME" ]]; then
-    pass "23b-d: /usr/share/icons/Orion-X-Icons/index.theme present in squashfs"
+    pass "19-d: /usr/share/icons/Orion-X-Icons/index.theme present in squashfs"
     if grep -q "^Inherits=" "$ORIONX_ICONS_THEME" 2>/dev/null; then
-        pass "23b-d: Orion-X-Icons/index.theme contains Inherits= line (inheritance chain present)"
+        pass "19-d: Orion-X-Icons/index.theme contains Inherits= line (inheritance chain present)"
     else
-        fail "23b-d: Orion-X-Icons/index.theme contains Inherits= line" \
+        fail "19-d: Orion-X-Icons/index.theme contains Inherits= line" \
              "Inherits= line missing from $ORIONX_ICONS_THEME — icon fallback chain broken"
     fi
 else
-    fail "23b-d: /usr/share/icons/Orion-X-Icons/index.theme present in squashfs" \
+    fail "19-d: /usr/share/icons/Orion-X-Icons/index.theme present in squashfs" \
          "Icon theme index.theme missing — check includes.chroot staging of Orion-X-Icons"
-    fail "23b-d: Orion-X-Icons/index.theme contains Inherits= line" \
+    fail "19-d: Orion-X-Icons/index.theme contains Inherits= line" \
          "File missing — cannot check"
 fi
 
@@ -1547,17 +1568,17 @@ fi
 ORIONX_CURSOR_THEME="$SQF/usr/share/icons/Orion-X-Cursor/index.theme"
 
 if [[ -f "$ORIONX_CURSOR_THEME" ]]; then
-    pass "23b-e: /usr/share/icons/Orion-X-Cursor/index.theme present in squashfs"
+    pass "19-e: /usr/share/icons/Orion-X-Cursor/index.theme present in squashfs"
     if grep -q "Inherits=Adwaita" "$ORIONX_CURSOR_THEME" 2>/dev/null; then
-        pass "23b-e: Orion-X-Cursor/index.theme contains Inherits=Adwaita (cursor fallback)"
+        pass "19-e: Orion-X-Cursor/index.theme contains Inherits=Adwaita (cursor fallback)"
     else
-        fail "23b-e: Orion-X-Cursor/index.theme contains Inherits=Adwaita" \
+        fail "19-e: Orion-X-Cursor/index.theme contains Inherits=Adwaita" \
              "Inherits=Adwaita not found in $ORIONX_CURSOR_THEME"
     fi
 else
-    fail "23b-e: /usr/share/icons/Orion-X-Cursor/index.theme present in squashfs" \
+    fail "19-e: /usr/share/icons/Orion-X-Cursor/index.theme present in squashfs" \
          "Cursor theme index.theme missing — check includes.chroot staging of Orion-X-Cursor"
-    fail "23b-e: Orion-X-Cursor/index.theme contains Inherits=Adwaita" \
+    fail "19-e: Orion-X-Cursor/index.theme contains Inherits=Adwaita" \
          "File missing — cannot check"
 fi
 
@@ -1575,17 +1596,17 @@ if [[ -f "$DPKG_STATUS" ]] && grep -q "^Package: fonts-iosevka" "$DPKG_STATUS" 2
     IOSEVKA_PKG=1
 fi
 if [[ "$IOSEVKA_FILES" -eq 0 && "$IOSEVKA_PKG" -eq 0 ]]; then
-    pass "23b-f: Iosevka absent from /usr/share/fonts and dpkg (not in trixie — DEC-PHASE11-031, #85)"
+    pass "19-f: Iosevka absent from /usr/share/fonts and dpkg (not in trixie — DEC-PHASE11-031, #85)"
 else
-    fail "23b-f: Iosevka absent from /usr/share/fonts and dpkg" \
+    fail "19-f: Iosevka absent from /usr/share/fonts and dpkg" \
          "files=$IOSEVKA_FILES pkg=$IOSEVKA_PKG — Iosevka is not a Debian trixie package; where did it come from? (DEC-PHASE11-031, #85)"
 fi
 # || true: zero matches is the desired state (DEC-PHASE9-014 pipefail guard)
 IOSEVKA_VALUE_REFS=$(grep -rhE '(FontName|font-name|title_font)[^#]*Iosevka' "$SQF/etc/skel/.config" "$SQF/etc/lightdm/lightdm-gtk-greeter.conf" 2>/dev/null | grep -vE '^[[:space:]]*#' | wc -l | tr -d ' ' || true)
 if [[ "$IOSEVKA_VALUE_REFS" -eq 0 ]]; then
-    pass "23b-f: no shipped font config value names Iosevka (skel xfce4 + greeter conf — DEC-PHASE11-031)"
+    pass "19-f: no shipped font config value names Iosevka (skel xfce4 + greeter conf — DEC-PHASE11-031)"
 else
-    fail "23b-f: no shipped font config value names Iosevka" \
+    fail "19-f: no shipped font config value names Iosevka" \
          "$IOSEVKA_VALUE_REFS config value(s) still select Iosevka — would render as an unreadable fallback (DEC-PHASE11-031)"
 fi
 
@@ -1597,19 +1618,19 @@ fi
 # Hack is the only purpose-built monospace font on the ISO (DEC-PHASE11-031).
 HACK_COUNT=$(find "$SQF/usr/share/fonts/truetype/hack" -type f -iname 'Hack-*.ttf' 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$HACK_COUNT" -ge 1 ]]; then
-    pass "23b-g: Hack font files present at /usr/share/fonts/truetype/hack/ ($HACK_COUNT files, DEC-PHASE11-031)"
+    pass "19-g: Hack font files present at /usr/share/fonts/truetype/hack/ ($HACK_COUNT files, DEC-PHASE11-031)"
 else
     # Fallback: check dpkg status for fonts-hack-otf or fonts-hack
     HACK_PKG_FOUND=0
     for hack_pkg in fonts-hack-otf fonts-hack fonts-hack-ttf; do
         if [[ -f "$DPKG_STATUS" ]] && grep -q "^Package: ${hack_pkg}$" "$DPKG_STATUS" 2>/dev/null; then
             HACK_PKG_FOUND=1
-            pass "23b-g: Hack font package installed in squashfs dpkg ($hack_pkg, DEC-PHASE11-013)"
+            pass "19-g: Hack font package installed in squashfs dpkg ($hack_pkg, DEC-PHASE11-013)"
             break
         fi
     done
     if [[ "$HACK_PKG_FOUND" -eq 0 ]]; then
-        fail "23b-g: at least one Hack font file present under /usr/share/fonts/" \
+        fail "19-g: at least one Hack font file present under /usr/share/fonts/" \
              "No hack* files found and no fonts-hack* package in dpkg — check orionx.list.chroot"
     fi
 fi
@@ -1621,17 +1642,17 @@ SKEL_XFCONF="$SQF/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml"
 SKEL_DESKTOP_XML="$SKEL_XFCONF/xfce4-desktop.xml"
 
 if [[ -f "$SKEL_DESKTOP_XML" ]]; then
-    pass "23b-h: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml present (R6 fix — skel authority DEC-PHASE11-014)"
+    pass "19-h: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml present (R6 fix — skel authority DEC-PHASE11-014)"
     if grep -q "orionx-phoenix-wallpaper.png" "$SKEL_DESKTOP_XML" 2>/dev/null; then
-        pass "23b-h: xfce4-desktop.xml (skel) references orionx-phoenix-wallpaper.png (DEC-PHASE9-002 preserved)"
+        pass "19-h: xfce4-desktop.xml (skel) references orionx-phoenix-wallpaper.png (DEC-PHASE9-002 preserved)"
     else
-        fail "23b-h: xfce4-desktop.xml (skel) references orionx-phoenix-wallpaper.png" \
+        fail "19-h: xfce4-desktop.xml (skel) references orionx-phoenix-wallpaper.png" \
              "Wallpaper path missing from $SKEL_DESKTOP_XML — R6 fix may be incomplete"
     fi
 else
-    fail "23b-h: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml present in squashfs" \
+    fail "19-h: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml present in squashfs" \
          "Missing: $SKEL_DESKTOP_XML — 0100-create-user.hook.chroot must write xfce4-desktop.xml to /etc/skel/"
-    fail "23b-h: xfce4-desktop.xml (skel) references orionx-phoenix-wallpaper.png" \
+    fail "19-h: xfce4-desktop.xml (skel) references orionx-phoenix-wallpaper.png" \
          "File missing — cannot check"
 fi
 
@@ -1641,26 +1662,26 @@ fi
 SKEL_XSETTINGS="$SKEL_XFCONF/xsettings.xml"
 
 if [[ -f "$SKEL_XSETTINGS" ]]; then
-    pass "23b-i: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml present (DEC-PHASE11-014)"
+    pass "19-i: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml present (DEC-PHASE11-014)"
     if grep -q 'value="Orion-X-Cyberdeck"' "$SKEL_XSETTINGS" 2>/dev/null; then
-        pass "23b-i: xsettings.xml contains ThemeName=Orion-X-Cyberdeck (DEC-PHASE11-010)"
+        pass "19-i: xsettings.xml contains ThemeName=Orion-X-Cyberdeck (DEC-PHASE11-010)"
     else
-        fail "23b-i: xsettings.xml contains ThemeName=Orion-X-Cyberdeck" \
+        fail "19-i: xsettings.xml contains ThemeName=Orion-X-Cyberdeck" \
              "ThemeName not found or value != Orion-X-Cyberdeck in $SKEL_XSETTINGS"
     fi
     # hooks/normal/0100-create-user.hook.chroot: <property name="MonospaceFontName" ... value="Hack 11"/> (DEC-PHASE11-031)
     if grep -qE '<property name="MonospaceFontName" type="string" value="Hack 11"/>' "$SKEL_XSETTINGS" 2>/dev/null; then
-        pass "23b-i: xsettings.xml contains MonospaceFontName=Hack 11 (DEC-PHASE11-031)"
+        pass "19-i: xsettings.xml contains MonospaceFontName=Hack 11 (DEC-PHASE11-031)"
     else
-        fail "23b-i: xsettings.xml contains MonospaceFontName=Hack 11" \
+        fail "19-i: xsettings.xml contains MonospaceFontName=Hack 11" \
              "MonospaceFontName=\"Hack 11\" not found in $SKEL_XSETTINGS — hook 0100 font wiring regressed (DEC-PHASE11-031)"
     fi
 else
-    fail "23b-i: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml present in squashfs" \
+    fail "19-i: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml present in squashfs" \
          "Missing: $SKEL_XSETTINGS — 0100-create-user.hook.chroot must write xsettings.xml to /etc/skel/"
-    fail "23b-i: xsettings.xml contains ThemeName=Orion-X-Cyberdeck" \
+    fail "19-i: xsettings.xml contains ThemeName=Orion-X-Cyberdeck" \
          "File missing — cannot check"
-    fail "23b-i: xsettings.xml contains MonospaceFontName=Hack 11" \
+    fail "19-i: xsettings.xml contains MonospaceFontName=Hack 11" \
          "File missing — cannot check"
 fi
 
@@ -1672,17 +1693,17 @@ fi
 SKEL_TERMINALRC="$SQF/etc/skel/.config/xfce4/terminal/terminalrc"
 
 if [[ -f "$SKEL_TERMINALRC" ]]; then
-    pass "23b-j: /etc/skel/.config/xfce4/terminal/terminalrc present in squashfs (DEC-PHASE11-014)"
+    pass "19-j: /etc/skel/.config/xfce4/terminal/terminalrc present in squashfs (DEC-PHASE11-014)"
     if grep -qE "^FontName=Hack 12$" "$SKEL_TERMINALRC" 2>/dev/null; then
-        pass "23b-j: terminalrc contains FontName=Hack 12 (DEC-PHASE11-031)"
+        pass "19-j: terminalrc contains FontName=Hack 12 (DEC-PHASE11-031)"
     else
-        fail "23b-j: terminalrc contains FontName=Hack 12" \
+        fail "19-j: terminalrc contains FontName=Hack 12" \
              "Got: $(grep '^FontName=' "$SKEL_TERMINALRC" || echo '<no FontName line>') — check hook 0100 terminalrc block (DEC-PHASE11-031)"
     fi
 else
-    fail "23b-j: /etc/skel/.config/xfce4/terminal/terminalrc present in squashfs" \
+    fail "19-j: /etc/skel/.config/xfce4/terminal/terminalrc present in squashfs" \
          "Missing: $SKEL_TERMINALRC — 0100-create-user.hook.chroot must write terminalrc to /etc/skel/"
-    fail "23b-j: terminalrc contains FontName=Hack 12" \
+    fail "19-j: terminalrc contains FontName=Hack 12" \
          "File missing — cannot check"
 fi
 
@@ -1695,9 +1716,9 @@ fi
 # Note: We check the directory itself, not any subdirectory, because live-config
 # might create /home/orionx-operator/ at boot (not present in the chroot squashfs).
 if [[ ! -d "$SQF/home/orionx" ]]; then
-    pass "23b-k: /home/orionx/ does NOT exist in squashfs (DEC-PHASE11-014 dead-authority retired)"
+    pass "19-k: /home/orionx/ does NOT exist in squashfs (DEC-PHASE11-014 dead-authority retired)"
 else
-    fail "23b-k: /home/orionx/ does NOT exist in squashfs" \
+    fail "19-k: /home/orionx/ does NOT exist in squashfs" \
          "/home/orionx/ found in squashfs — 0100-create-user.hook.chroot still writing to dead-authority /home/orionx/. R6 fix incomplete. DEC-PHASE11-014 requires removal of chroot-time user creation + redirect to /etc/skel/"
 fi
 
@@ -1708,13 +1729,13 @@ LIGHTDM_AUTOLOGIN="$SQF/etc/lightdm/lightdm.conf.d/10-orionx-autologin.conf"
 
 if [[ -f "$LIGHTDM_AUTOLOGIN" ]]; then
     if grep -q "autologin-user=orionx-operator" "$LIGHTDM_AUTOLOGIN" 2>/dev/null; then
-        pass "23b-l: 10-orionx-autologin.conf contains autologin-user=orionx-operator (DEC-PHASE11-012 alignment)"
+        pass "19-l: 10-orionx-autologin.conf contains autologin-user=orionx-operator (DEC-PHASE11-012 alignment)"
     else
-        fail "23b-l: 10-orionx-autologin.conf contains autologin-user=orionx-operator" \
+        fail "19-l: 10-orionx-autologin.conf contains autologin-user=orionx-operator" \
              "autologin-user=orionx-operator not found — check T6 update. Old value 'orionx' would mismatch live-config identity"
     fi
 else
-    fail "23b-l: /etc/lightdm/lightdm.conf.d/10-orionx-autologin.conf present for autologin-user check" \
+    fail "19-l: /etc/lightdm/lightdm.conf.d/10-orionx-autologin.conf present for autologin-user check" \
          "File missing from squashfs — check includes.chroot staging"
 fi
 
@@ -1724,39 +1745,39 @@ fi
 LIGHTDM_GREETER_CONF_SQF="$SQF/etc/lightdm/lightdm-gtk-greeter.conf"
 
 if [[ -f "$LIGHTDM_GREETER_CONF_SQF" ]]; then
-    pass "23b-m: /etc/lightdm/lightdm-gtk-greeter.conf present in squashfs"
+    pass "19-m: /etc/lightdm/lightdm-gtk-greeter.conf present in squashfs"
     if grep -q "theme-name=Orion-X-Cyberdeck" "$LIGHTDM_GREETER_CONF_SQF" 2>/dev/null; then
-        pass "23b-m: lightdm-gtk-greeter.conf contains theme-name=Orion-X-Cyberdeck (DEC-PHASE11-010)"
+        pass "19-m: lightdm-gtk-greeter.conf contains theme-name=Orion-X-Cyberdeck (DEC-PHASE11-010)"
     else
-        fail "23b-m: lightdm-gtk-greeter.conf contains theme-name=Orion-X-Cyberdeck" \
+        fail "19-m: lightdm-gtk-greeter.conf contains theme-name=Orion-X-Cyberdeck" \
              "theme-name=Orion-X-Cyberdeck not found — check T7 greeter conf upgrade"
     fi
     if grep -q "icon-theme-name=Orion-X-Icons" "$LIGHTDM_GREETER_CONF_SQF" 2>/dev/null; then
-        pass "23b-m: lightdm-gtk-greeter.conf contains icon-theme-name=Orion-X-Icons (DEC-PHASE11-010)"
+        pass "19-m: lightdm-gtk-greeter.conf contains icon-theme-name=Orion-X-Icons (DEC-PHASE11-010)"
     else
-        fail "23b-m: lightdm-gtk-greeter.conf contains icon-theme-name=Orion-X-Icons" \
+        fail "19-m: lightdm-gtk-greeter.conf contains icon-theme-name=Orion-X-Icons" \
              "icon-theme-name=Orion-X-Icons not found — check T7 greeter conf upgrade"
     fi
     # iso/config/includes.chroot/etc/lightdm/lightdm-gtk-greeter.conf: font-name=Hack 11 (DEC-PHASE11-031)
     if grep -qE "^font-name=Hack 11$" "$LIGHTDM_GREETER_CONF_SQF" 2>/dev/null; then
-        pass "23b-m: lightdm-gtk-greeter.conf contains font-name=Hack 11 (DEC-PHASE11-031)"
+        pass "19-m: lightdm-gtk-greeter.conf contains font-name=Hack 11 (DEC-PHASE11-031)"
     else
-        fail "23b-m: lightdm-gtk-greeter.conf contains font-name=Hack 11" \
+        fail "19-m: lightdm-gtk-greeter.conf contains font-name=Hack 11" \
              "Got: $(grep '^font-name=' "$LIGHTDM_GREETER_CONF_SQF" || echo '<no font-name line>') — Iosevka is not installable; Hack is the shipped mono font (DEC-PHASE11-031)"
     fi
     # Greeter background is the badge artwork (DEC-PHASE11-028) — a separate state
     # domain from the desktop wallpaper, each with exactly one authority.
     if grep -qE "^background=/opt/orionx/theme/wallpapers/orionx-wp-badge\.png$" \
              "$LIGHTDM_GREETER_CONF_SQF" 2>/dev/null; then
-        pass "23b-m: lightdm-gtk-greeter.conf background= points to orionx-wp-badge.png (DEC-PHASE11-028)"
+        pass "19-m: lightdm-gtk-greeter.conf background= points to orionx-wp-badge.png (DEC-PHASE11-028)"
     else
-        fail "23b-m: lightdm-gtk-greeter.conf background= points to orionx-wp-badge.png" \
+        fail "19-m: lightdm-gtk-greeter.conf background= points to orionx-wp-badge.png" \
              "Got: $(grep '^background=' "$LIGHTDM_GREETER_CONF_SQF" || echo '<no background line>') — greeter authority is orionx-wp-badge.png (DEC-PHASE11-028)"
     fi
 else
-    fail "23b-m: /etc/lightdm/lightdm-gtk-greeter.conf present in squashfs" \
+    fail "19-m: /etc/lightdm/lightdm-gtk-greeter.conf present in squashfs" \
          "File missing — check includes.chroot staging"
-    fail "23b-m: lightdm-gtk-greeter.conf theme/icon/font checks" \
+    fail "19-m: lightdm-gtk-greeter.conf theme/icon/font checks" \
          "File missing — cannot check"
 fi
 
@@ -1770,9 +1791,9 @@ fi
 VENDOR_FONT_IN_SKEL=$(grep -rE "FontName=.*[Jj]et[Bb]rains|MonospaceFontName=.*[Jj]et[Bb]rains" \
     "$SQF/etc/skel" 2>/dev/null | wc -l | tr -d ' ' || true)
 if [[ "$VENDOR_FONT_IN_SKEL" -eq 0 ]]; then
-    pass "23b-bonus: no vendor-font FontName= references in /etc/skel/ xfce4 configs (DEC-PHASE11-013 enforced)"
+    pass "19-bonus: no vendor-font FontName= references in /etc/skel/ xfce4 configs (DEC-PHASE11-013 enforced)"
 else
-    fail "23b-bonus: no vendor-font FontName= references in /etc/skel/ xfce4 configs" \
+    fail "19-bonus: no vendor-font FontName= references in /etc/skel/ xfce4 configs" \
          "Found $VENDOR_FONT_IN_SKEL vendor-font config line(s) in /etc/skel/ — DEC-PHASE11-013 violation (community fonts only)"
 fi
 
@@ -1782,9 +1803,9 @@ if [[ -f "$HOOK_0100_SRC" ]]; then
     VENDOR_FONT_IN_0100=$(grep -cE "FontName=.*[Jj]et[Bb]rains|MonospaceFontName=.*[Jj]et[Bb]rains|fonts-[Jj]et[Bb]rains" \
         "$HOOK_0100_SRC" 2>/dev/null || true)
     if [[ "$VENDOR_FONT_IN_0100" -eq 0 ]]; then
-        pass "23b-bonus: no vendor-font references in 0100-create-user.hook.chroot source (DEC-PHASE11-013)"
+        pass "19-bonus: no vendor-font references in 0100-create-user.hook.chroot source (DEC-PHASE11-013)"
     else
-        fail "23b-bonus: no vendor-font references in 0100-create-user.hook.chroot source" \
+        fail "19-bonus: no vendor-font references in 0100-create-user.hook.chroot source" \
              "Found $VENDOR_FONT_IN_0100 vendor-font reference(s) in the hook — remove them (DEC-PHASE11-013)"
     fi
 fi
@@ -1794,9 +1815,9 @@ PKG_LIST="$REPO_ROOT/iso/config/package-lists/orionx.list.chroot"
 if [[ -f "$PKG_LIST" ]]; then
     VENDOR_FONT_IN_PKGS=$(grep -cE "^fonts-[Jj]et[Bb]rains" "$PKG_LIST" 2>/dev/null || true)
     if [[ "$VENDOR_FONT_IN_PKGS" -eq 0 ]]; then
-        pass "23b-bonus: no vendor-font packages in orionx.list.chroot (DEC-PHASE11-013)"
+        pass "19-bonus: no vendor-font packages in orionx.list.chroot (DEC-PHASE11-013)"
     else
-        fail "23b-bonus: no vendor-font packages in orionx.list.chroot" \
+        fail "19-bonus: no vendor-font packages in orionx.list.chroot" \
              "Found $VENDOR_FONT_IN_PKGS vendor-font package line(s) — DEC-PHASE11-013 violation"
     fi
 fi
@@ -1831,9 +1852,9 @@ section "20. W11-9b iter-2: xfwm4 window decoration theme (section 23c)"
 SKEL_XFWM4="$SQF/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml"
 
 if [[ -f "$SKEL_XFWM4" ]]; then
-    pass "23c-a: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml present (DEC-PHASE11-010 window decoration)"
+    pass "20-a: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml present (DEC-PHASE11-010 window decoration)"
 else
-    fail "23c-a: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml present" \
+    fail "20-a: /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml present" \
          "Missing: $SKEL_XFWM4 — 0100-create-user.hook.chroot must write xfwm4.xml to /etc/skel/"
 fi
 
@@ -1841,9 +1862,9 @@ fi
 # 23c-b: xfwm4.xml contains theme=Orion-X-Cyberdeck
 # ---------------------------------------------------------------------------
 if [[ -f "$SKEL_XFWM4" ]] && grep -q 'value="Orion-X-Cyberdeck"' "$SKEL_XFWM4" 2>/dev/null; then
-    pass "23c-b: xfwm4.xml contains theme=Orion-X-Cyberdeck (DEC-PHASE11-010 window decoration theme)"
+    pass "20-b: xfwm4.xml contains theme=Orion-X-Cyberdeck (DEC-PHASE11-010 window decoration theme)"
 else
-    fail "23c-b: xfwm4.xml contains theme=Orion-X-Cyberdeck" \
+    fail "20-b: xfwm4.xml contains theme=Orion-X-Cyberdeck" \
          "theme=Orion-X-Cyberdeck not found in $SKEL_XFWM4 — xfwm4 will fall back to XFCE default decorations"
 fi
 
@@ -1853,9 +1874,9 @@ fi
 # (DEC-PHASE11-031 — was "Iosevka Bold 10", which never rendered).
 # ---------------------------------------------------------------------------
 if [[ -f "$SKEL_XFWM4" ]] && grep -qE '<property name="title_font" type="string" value="Sans Bold 10"/>' "$SKEL_XFWM4" 2>/dev/null; then
-    pass "23c-c: xfwm4.xml contains title_font=Sans Bold 10 (DEC-PHASE11-031)"
+    pass "20-c: xfwm4.xml contains title_font=Sans Bold 10 (DEC-PHASE11-031)"
 else
-    fail "23c-c: xfwm4.xml contains title_font=Sans Bold 10" \
+    fail "20-c: xfwm4.xml contains title_font=Sans Bold 10" \
          "Got: $(grep -o 'name="title_font"[^/]*' "$SKEL_XFWM4" 2>/dev/null || echo '<no title_font>') — check hook 0100 xfwm4.xml block (DEC-PHASE11-031)"
 fi
 
@@ -1952,14 +1973,11 @@ if [[ -f "$CAPA_BIN" ]]; then
              "0500 hook should create ln -sf /opt/orionx/venv/re/bin/capa /usr/bin/capa when capa is installed"
     fi
 else
-    # capa is installed by 0500 hook which is soft-fail when network unavailable.
-    # Record a note rather than a hard fail, so builds without network connectivity
-    # (e.g. air-gap CI runs) are not blocked by this assertion.
-    echo "  NOTE: 21d: /opt/orionx/venv/re/bin/capa not found — capa venv may not have been installed"
-    echo "        (0500 hook soft-fails when network is unavailable during build; not a hard failure)"
-    # Still register as a pass for the overall count to avoid blocking CI on
-    # network-less build environments where the soft-fail is the expected outcome.
-    pass "21d: capa venv check: soft-fail expected when network unavailable at build time (informational only)"
+    # DEC-PHASE12-119: missing evidence is a FAIL. capa is README-promised and
+    # its 0500 install is hard-fail (DEC-PHASE11-018), so an image without it
+    # was not built correctly; this used to record a PASS.
+    fail "21d: /opt/orionx/venv/re/bin/capa installed" \
+         "capa venv absent from the squashfs — the README promises capa (0500 is hard-fail)"
 fi
 
 # ===========================================================================
@@ -2151,12 +2169,9 @@ MATRIX_COMMANDER_BIN="$SQF/opt/orionx/venv/comms/bin/matrix-commander"
 if [[ -f "$MATRIX_COMMANDER_BIN" ]]; then
     pass "23a: /opt/orionx/venv/comms/bin/matrix-commander installed (W11-5 Layer A, DEC-PHASE11-006)"
 else
-    # matrix-commander is installed by 0500 hook which is soft-fail when network
-    # unavailable. Record a note rather than a hard fail so builds without network
-    # connectivity (e.g. air-gap CI runs) are not blocked by this assertion.
-    echo "  NOTE: 23a: /opt/orionx/venv/comms/bin/matrix-commander not found — venv install"
-    echo "        may not have run (0500 hook soft-fails when network is unavailable; not a hard failure)"
-    pass "23a: matrix-commander venv check: soft-fail expected when network unavailable at build time (informational only)"
+    # DEC-PHASE12-119: missing evidence is a FAIL (README promises matrix-commander).
+    fail "23a: /opt/orionx/venv/comms/bin/matrix-commander installed" \
+         "matrix-commander venv absent from the squashfs (0500 is hard-fail)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -2206,8 +2221,8 @@ if [[ -f "$MATRIX_COMMANDER_BIN" ]]; then
              "0500 hook should create ln -sf /opt/orionx/venv/comms/bin/matrix-commander /usr/local/bin/matrix-commander when venv is installed"
     fi
 else
-    echo "  NOTE: 23d: /usr/local/bin/matrix-commander symlink check skipped (venv not installed — soft-fail)"
-    pass "23d: matrix-commander symlink check: skipped (venv not installed; soft-fail per DEC-PHASE11-006)"
+    fail "23d: /usr/local/bin/matrix-commander symlink present" \
+         "cannot exist: the matrix-commander venv is absent (see 23a) (DEC-PHASE12-119)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -2418,12 +2433,9 @@ if [[ -f "$INSTALL_CLAMAV_SQF" ]]; then
              "Executable bit not set on staged copy — check includes.chroot or live-build permissions"
     fi
 else
-    # squashfs check is informational when ISO is not available; the source-tree
-    # check above is the hard gate. Squashfs absence may mean the ISO was not
-    # built after the W11-7 commit.
-    echo "  NOTE: 25b: /opt/orionx/optional/install-clamav.sh not found in squashfs"
-    echo "        (ISO may not have been rebuilt after W11-7 commit — source-tree check is authoritative)"
-    pass "25b: squashfs check skipped (ISO not rebuilt since W11-7; source-tree assertions are authoritative)"
+    # DEC-PHASE12-119: this is an ISO gate; the image is the authority, not the source tree.
+    fail "25b: /opt/orionx/optional/install-clamav.sh present in squashfs" \
+         "installer absent from the image (README promises the optional ClamAV installer)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -2438,8 +2450,8 @@ if [[ -f "$DPKG_STATUS" ]]; then
         pass "25c: clamav absent from squashfs dpkg database (W11-7 -350 MB, DEC-PHASE11-009)"
     fi
 else
-    echo "  NOTE: 25c: dpkg/status not available (squashfs not extracted or ISO not built)"
-    pass "25c: clamav dpkg check skipped (dpkg/status unavailable — ISO may not have been rebuilt)"
+    fail "25c: clamav absent from squashfs dpkg database" \
+         "var/lib/dpkg/status missing from the squashfs — absence cannot be proven (DEC-PHASE12-119)"
 fi
 
 # ===========================================================================
@@ -2516,9 +2528,8 @@ if [[ -f "$COMMON_LIB_SRC" ]]; then
     if [[ -f "$COMMON_LIB_SQF" ]]; then
         pass "26a: lib/orionx-installer-common.sh present in squashfs (staged via includes.chroot)"
     else
-        echo "  NOTE: 26a: lib/orionx-installer-common.sh not found in squashfs"
-        echo "        (ISO may not have been rebuilt after W11-8 commit — source-tree check is authoritative)"
-        pass "26a: squashfs check skipped (ISO not rebuilt since W11-8; source-tree assertions are authoritative)"
+        fail "26a: lib/orionx-installer-common.sh present in squashfs" \
+             "shared installer library absent from the image; every optional installer would fail (DEC-PHASE12-119)"
     fi
 else
     fail "26a: lib/orionx-installer-common.sh present in source tree" \
@@ -2618,8 +2629,7 @@ for stub in install-ghidra.sh install-element.sh install-floss.sh install-trid.s
                      "Executable bit not set on staged copy — check includes.chroot permissions"
             fi
         else
-            echo "  NOTE: 26c: $stub not found in squashfs (ISO may not have been rebuilt)"
-            pass "26c: $stub squashfs check skipped (source-tree assertions are authoritative)"
+            fail "26c: $stub present in squashfs" "installer absent from the image (DEC-PHASE12-119)"
         fi
     else
         fail "26c: $stub present in source tree" \
@@ -3004,499 +3014,99 @@ if [[ -d "$SQF/etc/skel" ]]; then
     if [[ -d "$SQF/etc/skel/Analysis" ]]; then
         pass "28f(sqf): /etc/skel/Analysis/ directory present in squashfs (0200 hook ran, P0-003)"
     else
-        # Squashfs check is informational if the ISO predates this fix.
-        echo "  NOTE: 28f(sqf): /etc/skel/Analysis/ not found in squashfs"
-        echo "        (ISO may not have been rebuilt after P0-003 fix — source-tree checks 28d/28e/28f are authoritative)"
-        pass "28f(sqf): /etc/skel/Analysis/ squashfs check skipped (ISO not rebuilt since P0-003 fix; source assertions are authoritative)"
+        fail "28f(sqf): /etc/skel/Analysis/ directory present in squashfs" \
+             "0200 hook outcome missing from the image (DEC-PHASE12-119)"
     fi
 else
-    pass "28f(sqf): /etc/skel/Analysis/ squashfs check skipped (squashfs not extracted)"
+    fail "28f(sqf): /etc/skel present in squashfs" "squashfs has no /etc/skel — extraction failed or the image is broken (DEC-PHASE12-119)"
 fi
 
 # ===========================================================================
-# 29. QA P2/P3 Hotfix follow-up (2026-07-22) — sample honesty, @decision
-#     annotations, Plymouth initramfs verification
+# 29-33 read the IMAGE (DEC-PHASE12-119, release-tests F-06).
 #
-# @decision DEC-PHASE11-017 dependency
-# @title P2-002 sample honesty: _SYNTHETIC suffix + README
-# @status accepted
-# @rationale tmp/QA_AUDIT_2026-07-21.md P2-002: operators could mistake
-#   the randomly-generated placeholder in create_memory_sample() for real
-#   forensic data. Renamed to mini_sample_SYNTHETIC.raw and co-located a
-#   README.txt that explicitly labels the file as synthetic. These
-#   source-tree assertions catch regressions without requiring a full ISO
-#   rebuild.
-#
-# @decision DEC-PHASE11-014 dependency (P3-001)
-# @title P3-001 toggle-theme.sh DEC-PHASE11-014 annotation
-# @status accepted
-# @rationale toggle-theme.sh operates on the live session seeded from
-#   /etc/skel/. A missing annotation caused reviewers to miss that a
-#   change to this script also requires a change to 0100-create-user.hook.
-#   DEC-PHASE11-014 is now explicitly cited in the script header.
-#
-# @decision DEC-PHASE11-018
-# @title P3-002 Plymouth initramfs verification: build-time fail-loud gate
-# @status accepted
-# @rationale The operator-reported "Plymouth Phoenix splash did NOT paint"
-#   on hardware was caused by a silent initramfs regeneration failure.
-#   0800-orionx-branding.hook.chroot now calls lsinitramfs and aborts the
-#   build (exit 1) if the theme is absent from the initrd. This section
-#   asserts the check mechanism and its DEC annotation are present in the
-#   hook source.
+# These five sections used to grep the source tree (29: 3 $REPO_ROOT refs,
+# 0 $SQF; 32: 10 vs 1 ...) — the class that let section 32 pass 15/15 on a
+# broken ISO. Each now asserts the same fix as it landed in the squashfs. The
+# source-only checks they carried (annotations, git mode bits, build-script
+# text) moved to tests/unit/test_source_invariants.sh, where source checks
+# belong.
 # ===========================================================================
-section "29. QA P2/P3 Hotfix follow-up (2026-07-22) — sample honesty, @decision annotations, Plymouth initramfs verification"
+section "29. QA P2/P3 hotfix follow-up, as shipped — sample honesty, Plymouth theme in the initrd"
 
-DOWNLOAD_SAMPLES="$REPO_ROOT/scripts/download-samples.sh"
-TOGGLE_THEME="$REPO_ROOT/scripts/toggle-theme.sh"
-HOOK_0800="$REPO_ROOT/iso/config/hooks/live/0800-orionx-branding.hook.chroot"
-
-# ---------------------------------------------------------------------------
-# 29a. P2-002: mini_sample_SYNTHETIC.raw filename present in download-samples.sh
-# ---------------------------------------------------------------------------
-if [[ -f "$DOWNLOAD_SAMPLES" ]] && grep -q 'mini_sample_SYNTHETIC\.raw' "$DOWNLOAD_SAMPLES" 2>/dev/null; then
-    pass "29a: mini_sample_SYNTHETIC.raw filename present in download-samples.sh (P2-002 rename, DEC-PHASE11-017)"
+DL_SQF="$SQF/opt/orionx/scripts/download-samples.sh"
+if [[ -x "$DL_SQF" ]] && grep -q 'mini_sample_SYNTHETIC\.raw' "$DL_SQF" && grep -q 'SYNTHETIC PLACEHOLDER' "$DL_SQF"; then
+    pass "29a: shipped download-samples.sh names the sample _SYNTHETIC and writes the placeholder README (P2-002)"
 else
-    fail "29a: mini_sample_SYNTHETIC.raw filename present in download-samples.sh" \
-         "_SYNTHETIC suffix not found in $DOWNLOAD_SAMPLES — honesty rename incomplete (P2-002)"
+    fail "29a: shipped download-samples.sh honesty rename" "missing, not executable, or without _SYNTHETIC/README text in the image"
 fi
-
-# ---------------------------------------------------------------------------
-# 29b. P2-002: SYNTHETIC PLACEHOLDER README content present in download-samples.sh
-# ---------------------------------------------------------------------------
-if [[ -f "$DOWNLOAD_SAMPLES" ]] && grep -q 'SYNTHETIC PLACEHOLDER' "$DOWNLOAD_SAMPLES" 2>/dev/null; then
-    pass "29b: SYNTHETIC PLACEHOLDER README content present in download-samples.sh (P2-002 honesty README, DEC-PHASE11-017)"
-else
-    fail "29b: SYNTHETIC PLACEHOLDER README content present in download-samples.sh" \
-         "README text absent from $DOWNLOAD_SAMPLES — operators won't see honesty warning (P2-002)"
-fi
-
-# ---------------------------------------------------------------------------
-# 29c. P3-001: DEC-PHASE11-014 annotation present in toggle-theme.sh
-# ---------------------------------------------------------------------------
-if [[ -f "$TOGGLE_THEME" ]] && grep -q 'DEC-PHASE11-014' "$TOGGLE_THEME" 2>/dev/null; then
-    pass "29c: DEC-PHASE11-014 annotation present in toggle-theme.sh (P3-001, skel dependency documented)"
-else
-    fail "29c: DEC-PHASE11-014 annotation present in toggle-theme.sh" \
-         "DEC-PHASE11-014 not cited in $TOGGLE_THEME — reviewers cannot see the /etc/skel/ dependency (P3-001)"
-fi
-
-# ---------------------------------------------------------------------------
-# 29d. P3-002: lsinitramfs check present in 0800-orionx-branding.hook.chroot
-# ---------------------------------------------------------------------------
-if [[ -f "$HOOK_0800" ]] && grep -q 'lsinitramfs' "$HOOK_0800" 2>/dev/null; then
-    pass "29d: lsinitramfs Plymouth initramfs verification present in 0800 hook (P3-002, DEC-PHASE11-018)"
-else
-    fail "29d: lsinitramfs Plymouth initramfs verification present in 0800 hook" \
-         "lsinitramfs check absent from $HOOK_0800 — silent initramfs failure remains undetected (P3-002)"
-fi
-
-# ---------------------------------------------------------------------------
-# 29e. P3-002: DEC-PHASE11-018 annotation present in 0800-orionx-branding.hook.chroot
-# ---------------------------------------------------------------------------
-if [[ -f "$HOOK_0800" ]] && grep -q 'DEC-PHASE11-018' "$HOOK_0800" 2>/dev/null; then
-    pass "29e: DEC-PHASE11-018 annotation present in 0800-orionx-branding.hook.chroot (P3-002 decision documented)"
-else
-    fail "29e: DEC-PHASE11-018 annotation present in 0800-orionx-branding.hook.chroot" \
-         "DEC-PHASE11-018 not cited in $HOOK_0800 — @decision annotation missing (P3-002)"
-fi
-
-# ===========================================================================
-# 30. orionx-imager macOS SD-reader detection fix (DEC-PHASE11-IMAGER-001, #77)
-#
-# @decision DEC-PHASE11-IMAGER-001
-# @title Enumerate all disks, filter on RemovableMedia/Ejectable per-disk
-# @status active
-# @rationale `diskutil list external` excludes built-in card readers even when
-#   a removable SD card is inserted (macOS classifies the reader as internal/
-#   physical). The fix drops the `external` arg and adds per-disk
-#   RemovableMedia/Ejectable filtering via `diskutil info -plist <disk>`.
-#   These assertions verify the change is present in the source tree without
-#   requiring a full ISO rebuild or macOS hardware.
-# ===========================================================================
-section "30. orionx-imager macOS SD-reader detection fix (DEC-PHASE11-IMAGER-001, #77)"
-
-DEVICES_PY="$REPO_ROOT/scripts/orionx-imager/lib/devices.py"
-
-# ---------------------------------------------------------------------------
-# 30a. `external` argument removed from diskutil list call
-# ---------------------------------------------------------------------------
-if [[ -f "$DEVICES_PY" ]] && \
-   grep -qE '"diskutil", "list", "-plist"\]|"diskutil", "list", "-plist",$' "$DEVICES_PY" 2>/dev/null; then
-    pass "30a: diskutil list -plist called without 'external' arg (DEC-PHASE11-IMAGER-001)"
-else
-    fail "30a: diskutil list -plist called without 'external' arg" \
-         "Expected ['diskutil', 'list', '-plist'] (no 'external') in $DEVICES_PY"
-fi
-
-# ---------------------------------------------------------------------------
-# 30b. Negative guard: 'external' argument must NOT be present
-# ---------------------------------------------------------------------------
-if [[ -f "$DEVICES_PY" ]] && \
-   ! grep -q '"diskutil", "list", "-plist", "external"' "$DEVICES_PY" 2>/dev/null; then
-    pass "30b: 'diskutil list -plist external' call absent (removed by DEC-PHASE11-IMAGER-001)"
-else
-    fail "30b: 'diskutil list -plist external' call absent" \
-         "Found the old 'external' arg still in $DEVICES_PY — issue #77 fix not applied"
-fi
-
-# ---------------------------------------------------------------------------
-# 30c. @decision annotation present
-# ---------------------------------------------------------------------------
-if [[ -f "$DEVICES_PY" ]] && grep -q 'DEC-PHASE11-IMAGER-001' "$DEVICES_PY" 2>/dev/null; then
-    pass "30c: DEC-PHASE11-IMAGER-001 decision annotation present in devices.py"
-else
-    fail "30c: DEC-PHASE11-IMAGER-001 decision annotation present in devices.py" \
-         "Decision annotation missing from $DEVICES_PY"
-fi
-
-# ---------------------------------------------------------------------------
-# 30d. RemovableMedia per-disk filter present
-# ---------------------------------------------------------------------------
-if [[ -f "$DEVICES_PY" ]] && grep -q 'RemovableMedia' "$DEVICES_PY" 2>/dev/null; then
-    pass "30d: RemovableMedia per-disk filter present in devices.py (DEC-PHASE11-IMAGER-001)"
-else
-    fail "30d: RemovableMedia per-disk filter present in devices.py" \
-         "RemovableMedia key not found in $DEVICES_PY — per-disk filter not implemented"
-fi
-
-# ---------------------------------------------------------------------------
-# 30e. Ejectable per-disk filter present
-# ---------------------------------------------------------------------------
-if [[ -f "$DEVICES_PY" ]] && grep -q 'Ejectable' "$DEVICES_PY" 2>/dev/null; then
-    pass "30e: Ejectable per-disk filter present in devices.py (DEC-PHASE11-IMAGER-001)"
-else
-    fail "30e: Ejectable per-disk filter present in devices.py" \
-         "Ejectable key not found in $DEVICES_PY — per-disk filter incomplete"
-fi
-
-# ===========================================================================
-# 31. macOS Docker auto-wrap + git-derived version default (build-iso.sh)
-#
-# @decision DEC-PHASE11-MACOS-BUILD-001
-# @title macOS host auto-wraps in debian:bullseye-slim Docker
-# @status active
-# @rationale These source-tree assertions verify the macOS Docker auto-wrap
-#   and git-derived version changes without requiring a full ISO build or
-#   Docker/macOS hardware. They prove the implementation is present and
-#   consistent with the CI release.yml pattern.
-# ===========================================================================
-section "31. macOS Docker auto-wrap + git-derived version (DEC-PHASE11-MACOS-BUILD-001)"
-
-BUILD_SH="$REPO_ROOT/scripts/build-iso.sh"
-
-# ---------------------------------------------------------------------------
-# 31a. Darwin detection present
-# ---------------------------------------------------------------------------
-if grep -q 'uname -s.*Darwin\|Darwin.*uname' "$BUILD_SH" 2>/dev/null || \
-   grep -q '"Darwin"' "$BUILD_SH" 2>/dev/null; then
-    pass "31a: build-iso.sh detects Darwin host (DEC-PHASE11-MACOS-BUILD-001)"
-else
-    fail "31a: build-iso.sh detects Darwin host" \
-         "Expected Darwin uname check in $BUILD_SH"
-fi
-
-# ---------------------------------------------------------------------------
-# 31b. ORIONX_BUILD_IN_DOCKER recursion guard present
-# ---------------------------------------------------------------------------
-if grep -q 'ORIONX_BUILD_IN_DOCKER' "$BUILD_SH" 2>/dev/null; then
-    pass "31b: build-iso.sh has ORIONX_BUILD_IN_DOCKER recursion guard"
-else
-    fail "31b: build-iso.sh has ORIONX_BUILD_IN_DOCKER recursion guard" \
-         "ORIONX_BUILD_IN_DOCKER guard not found in $BUILD_SH"
-fi
-
-# ---------------------------------------------------------------------------
-# 31c. debian:bullseye-slim used (matches release.yml)
-# ---------------------------------------------------------------------------
-if grep -q 'debian:bullseye' "$BUILD_SH" 2>/dev/null; then
-    pass "31c: build-iso.sh uses debian:bullseye (matches release.yml)"
-else
-    fail "31c: build-iso.sh uses debian:bullseye (matches release.yml)" \
-         "debian:bullseye not found in $BUILD_SH — Docker image must match CI"
-fi
-
-# ---------------------------------------------------------------------------
-# 31d. Stale hardcoded default v2.0.0-rc9 removed
-# ---------------------------------------------------------------------------
-if ! grep -qF 'ORIONX_VERSION:-v2.0.0-rc9' "$BUILD_SH" 2>/dev/null; then
-    pass "31d: build-iso.sh no longer hardcodes stale default v2.0.0-rc9"
-else
-    fail "31d: build-iso.sh no longer hardcodes stale default v2.0.0-rc9" \
-         "Found ORIONX_VERSION:-v2.0.0-rc9 still present in $BUILD_SH — issue #75 not fixed"
-fi
-
-# ---------------------------------------------------------------------------
-# 31e. git describe used for version derivation
-# ---------------------------------------------------------------------------
-if grep -q 'git describe --tags' "$BUILD_SH" 2>/dev/null; then
-    pass "31e: build-iso.sh derives default version from git describe --tags"
-else
-    fail "31e: build-iso.sh derives default version from git describe --tags" \
-         "git describe --tags not found in $BUILD_SH — version default not git-derived"
-fi
-
-# ---------------------------------------------------------------------------
-# 31f. DEC-PHASE11-MACOS-BUILD-001 annotation present
-# ---------------------------------------------------------------------------
-if grep -q 'DEC-PHASE11-MACOS-BUILD-001' "$BUILD_SH" 2>/dev/null; then
-    pass "31f: DEC-PHASE11-MACOS-BUILD-001 annotation present in build-iso.sh"
-else
-    fail "31f: DEC-PHASE11-MACOS-BUILD-001 annotation present in build-iso.sh" \
-         "Decision annotation missing from $BUILD_SH"
-fi
-
-# ---------------------------------------------------------------------------
-# 31g. DEC-PHASE11-VERSION-DEFAULT-001 annotation present
-# ---------------------------------------------------------------------------
-if grep -q 'DEC-PHASE11-VERSION-DEFAULT-001' "$BUILD_SH" 2>/dev/null; then
-    pass "31g: DEC-PHASE11-VERSION-DEFAULT-001 annotation present in build-iso.sh"
-else
-    fail "31g: DEC-PHASE11-VERSION-DEFAULT-001 annotation present in build-iso.sh" \
-         "Decision annotation missing from $BUILD_SH"
-fi
-
-# ---------------------------------------------------------------------------
-# 31h. Makefile iso-build no longer errors on non-Linux
-# ---------------------------------------------------------------------------
-if ! grep -qE 'uname.*!=.*Linux|uname.*!=.*"Linux"' "$REPO_ROOT/Makefile" 2>/dev/null; then
-    pass "31h: Makefile iso-build no longer errors on non-Linux hosts"
-else
-    fail "31h: Makefile iso-build no longer errors on non-Linux hosts" \
-         "Found uname != Linux check still in Makefile — macOS block not removed"
-fi
-
-# ===========================================================================
-# 32. Phase 11 W11-13 Runtime Cascade Fix — content-presence assertions
-#
-# @decision DEC-PHASE11-016 DEC-PHASE11-017 DEC-PHASE11-018 DEC-PHASE11-019
-# @title W11-13 seven-fix bundle: source-tree assertions for all AC1-AC11 checks
-# @status active
-# @rationale These source-tree assertions verify the seven W11-13 runtime cascade
-#   fixes are present and consistent without requiring a full ISO build. They
-#   mirror the Layer A acceptance criteria (AC1-AC11) from the Evaluation Contract
-#   at tmp/eval-wi-phase11-runtime-cascade-fix.json.
-# ===========================================================================
-section "32. Phase 11 W11-13 Runtime Cascade Fix (DEC-PHASE11-016..019)"
-
-# ---------------------------------------------------------------------------
-# 32a. AC1 — --exclude='security/' removed from build-iso.sh stage_application_content
-# ---------------------------------------------------------------------------
-if ! grep -qF -- "--exclude='security/'" "$REPO_ROOT/scripts/build-iso.sh" 2>/dev/null; then
-    pass "32a: --exclude='security/' removed from build-iso.sh stage_application_content (AC1)"
-else
-    fail "32a: --exclude='security/' removed from build-iso.sh stage_application_content (AC1)" \
-         "Found --exclude='security/' still present in scripts/build-iso.sh — P0 fix T1 not applied"
-fi
-
-# ---------------------------------------------------------------------------
-# 32b. AC2 — LogsDirectory=orionx in nebula-integrity-check.service
-# ---------------------------------------------------------------------------
-NEBULA_SVC="$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/nebula-integrity-check.service"
-if grep -q 'LogsDirectory=orionx' "$NEBULA_SVC" 2>/dev/null; then
-    pass "32b: LogsDirectory=orionx present in nebula-integrity-check.service (AC2)"
-else
-    fail "32b: LogsDirectory=orionx present in nebula-integrity-check.service (AC2)" \
-         "LogsDirectory=orionx not found in $NEBULA_SVC — 209/STDOUT fix T2 not applied"
-fi
-
-# ---------------------------------------------------------------------------
-# 32c. AC3 — XDG autostart .desktop present and references Phoenix wallpaper
-# ---------------------------------------------------------------------------
-WALLPAPER_DESKTOP="$REPO_ROOT/iso/config/includes.chroot/etc/xdg/autostart/orionx-wallpaper.desktop"
-if [[ -f "$WALLPAPER_DESKTOP" ]]; then
-    pass "32c: orionx-wallpaper.desktop exists (AC3)"
-else
-    fail "32c: orionx-wallpaper.desktop exists (AC3)" \
-         "File not found: $WALLPAPER_DESKTOP — XDG autostart fix T3 not applied"
-fi
-
-# DEC-PHASE12-004: the autostart entry no longer inlines the xfconf-query calls;
-# it execs /opt/orionx/scripts/set-wallpaper.sh, whose default argument is the
-# Phoenix wallpaper path (scripts/set-wallpaper.sh line ~23). Assert the wire in
-# both halves: the .desktop Exec, and the script's reference to the wallpaper —
-# checking the shipped squashfs copy of the script, with the repo copy as the
-# authority the squashfs is staged from.
-if grep -qE '^Exec=/opt/orionx/scripts/set-wallpaper\.sh' "$WALLPAPER_DESKTOP" 2>/dev/null; then
-    pass "32c2: orionx-wallpaper.desktop Exec=/opt/orionx/scripts/set-wallpaper.sh (DEC-PHASE12-004)"
-else
-    fail "32c2: orionx-wallpaper.desktop Exec=/opt/orionx/scripts/set-wallpaper.sh (DEC-PHASE12-004)" \
-         "Got: $(grep '^Exec=' "$WALLPAPER_DESKTOP" 2>/dev/null || echo '<no Exec line>')"
-fi
-SET_WALLPAPER_SQF="$SQF/opt/orionx/scripts/set-wallpaper.sh"
-SET_WALLPAPER_SRC="$REPO_ROOT/scripts/set-wallpaper.sh"
-if [[ -x "$SET_WALLPAPER_SQF" ]] && grep -q 'orionx-phoenix-wallpaper.png' "$SET_WALLPAPER_SQF" 2>/dev/null; then
-    pass "32c2: /opt/orionx/scripts/set-wallpaper.sh shipped + executable and references orionx-phoenix-wallpaper.png (AC3)"
-else
-    fail "32c2: /opt/orionx/scripts/set-wallpaper.sh shipped + executable and references orionx-phoenix-wallpaper.png (AC3)" \
-         "Shipped script missing, not executable, or does not name the Phoenix wallpaper — the autostart Exec would be a dead wire"
-fi
-if grep -q 'orionx-phoenix-wallpaper.png' "$SET_WALLPAPER_SRC" 2>/dev/null; then
-    pass "32c2: scripts/set-wallpaper.sh (repo authority) references orionx-phoenix-wallpaper.png"
-else
-    fail "32c2: scripts/set-wallpaper.sh (repo authority) references orionx-phoenix-wallpaper.png" \
-         "orionx-phoenix-wallpaper.png not found in $SET_WALLPAPER_SRC"
-fi
-
-if grep -q 'OnlyShowIn=XFCE' "$WALLPAPER_DESKTOP" 2>/dev/null; then
-    pass "32c3: orionx-wallpaper.desktop has OnlyShowIn=XFCE (AC3)"
-else
-    fail "32c3: orionx-wallpaper.desktop has OnlyShowIn=XFCE (AC3)" \
-         "OnlyShowIn=XFCE not found in $WALLPAPER_DESKTOP"
-fi
-
-# ---------------------------------------------------------------------------
-# 32d. AC4 — Three ORIONX_GIT_* env vars plumbed into docker run in build-iso.sh
-# ---------------------------------------------------------------------------
-BUILD_SH="$REPO_ROOT/scripts/build-iso.sh"
-GIT_ENV_COUNT=$(grep -cE -- '-e ORIONX_GIT_SHA|-e ORIONX_GIT_TITLE|-e ORIONX_PHASE_11_SLICES' "$BUILD_SH" 2>/dev/null || echo 0)
-if [[ "$GIT_ENV_COUNT" -ge 3 ]]; then
-    pass "32d: Three ORIONX_GIT_* env vars plumbed into docker run (AC4)"
-else
-    fail "32d: Three ORIONX_GIT_* env vars plumbed into docker run (AC4)" \
-         "Expected >=3 matches for ORIONX_GIT_SHA|ORIONX_GIT_TITLE|ORIONX_PHASE_11_SLICES in $BUILD_SH, got: $GIT_ENV_COUNT"
-fi
-
-# ---------------------------------------------------------------------------
-# 32e. AC5 — hook 0500 hard-fail lines for capa + matrix-commander
-# ---------------------------------------------------------------------------
-HOOK_0500="$REPO_ROOT/iso/config/hooks/live/0500-install-external-tools.hook.chroot"
-FATAL_COUNT=$(grep -cE 'FATAL:.*(matrix-commander|capa)' "$HOOK_0500" 2>/dev/null || echo 0)
-if [[ "$FATAL_COUNT" -ge 2 ]]; then
-    pass "32e: hook 0500 has FATAL hard-fail for capa + matrix-commander (AC5)"
-else
-    fail "32e: hook 0500 has FATAL hard-fail for capa + matrix-commander (AC5)" \
-         "Expected >=2 FATAL lines in $HOOK_0500, got: $FATAL_COUNT — T5 not applied"
-fi
-
-# ---------------------------------------------------------------------------
-# 32f. AC6 — git, python3-pip, firefox-esr in package list
-# ---------------------------------------------------------------------------
-PKG_LIST="$REPO_ROOT/iso/config/package-lists/orionx.list.chroot"
-PKG_COUNT=$(grep -cE '^(git|python3-pip|firefox-esr)$' "$PKG_LIST" 2>/dev/null || echo 0)
-if [[ "$PKG_COUNT" -ge 3 ]]; then
-    pass "32f: git + python3-pip + firefox-esr in base package list (AC6)"
-else
-    fail "32f: git + python3-pip + firefox-esr in base package list (AC6)" \
-         "Expected 3 bare package lines in $PKG_LIST, got: $PKG_COUNT — T6 not applied"
-fi
-
-# ---------------------------------------------------------------------------
-# 32g. AC7 — wizard writes wg0.conf + mesh-private.key filenames
-# ---------------------------------------------------------------------------
-WIZARD="$REPO_ROOT/scripts/security/first-boot-wizard.sh"
-WG_PATHS=$(grep -cE 'wg0\.conf|mesh-private\.key' "$WIZARD" 2>/dev/null || echo 0)
-if [[ "$WG_PATHS" -ge 2 ]]; then
-    pass "32g: wizard references wg0.conf + mesh-private.key (AC7)"
-else
-    fail "32g: wizard references wg0.conf + mesh-private.key (AC7)" \
-         "Expected >=2 matches for wg0.conf|mesh-private.key in $WIZARD, got: $WG_PATHS — T1b not applied"
-fi
-
-# ---------------------------------------------------------------------------
-# 32h. AC8 — wizard writes authorized_keys + SSH admin one-shot
-# ---------------------------------------------------------------------------
-AUTH_COUNT=$(grep -cE 'authorized_keys|SSH admin one-shot' "$WIZARD" 2>/dev/null || echo 0)
-if [[ "$AUTH_COUNT" -ge 2 ]]; then
-    pass "32h: wizard references authorized_keys + SSH admin one-shot (AC8)"
-else
-    fail "32h: wizard references authorized_keys + SSH admin one-shot (AC8)" \
-         "Expected >=2 matches for authorized_keys|SSH admin one-shot in $WIZARD, got: $AUTH_COUNT — T7 not applied"
-fi
-
-# ---------------------------------------------------------------------------
-# 32i. AC9 — /etc/motd.d/orionx-ssh-admin + /etc/issue.d/orionx-ssh-admin.issue present
-# ---------------------------------------------------------------------------
-MOTD_FILE="$REPO_ROOT/iso/config/includes.chroot/etc/motd.d/orionx-ssh-admin"
-ISSUE_FILE="$REPO_ROOT/iso/config/includes.chroot/etc/issue.d/orionx-ssh-admin.issue"
-if [[ -f "$MOTD_FILE" ]]; then
-    pass "32i: /etc/motd.d/orionx-ssh-admin placeholder present (AC9)"
-else
-    fail "32i: /etc/motd.d/orionx-ssh-admin placeholder present (AC9)" \
-         "File not found: $MOTD_FILE — T7 not applied"
-fi
-if [[ -f "$ISSUE_FILE" ]]; then
-    pass "32i2: /etc/issue.d/orionx-ssh-admin.issue placeholder present (AC9)"
-else
-    fail "32i2: /etc/issue.d/orionx-ssh-admin.issue placeholder present (AC9)" \
-         "File not found: $ISSUE_FILE — T7 not applied"
-fi
-
-# ---------------------------------------------------------------------------
-# 32j. AC12 — bash -n syntax check on wizard and build-iso.sh
-# ---------------------------------------------------------------------------
-set +e
-_wiz_syntax=$(bash -n "$WIZARD" 2>&1)
-_wiz_rc=$?
-set -e
-if [[ $_wiz_rc -eq 0 ]]; then
-    pass "32j: first-boot-wizard.sh passes bash -n syntax check (AC12)"
-else
-    fail "32j: first-boot-wizard.sh passes bash -n syntax check (AC12)" \
-         "$_wiz_syntax"
-fi
-
-set +e
-_build_syntax=$(bash -n "$BUILD_SH" 2>&1)
-_build_rc=$?
-set -e
-if [[ $_build_rc -eq 0 ]]; then
-    pass "32j2: build-iso.sh passes bash -n syntax check (AC12)"
-else
-    fail "32j2: build-iso.sh passes bash -n syntax check (AC12)" \
-         "$_build_syntax"
-fi
-
-set +e
-_hook_syntax=$(bash -n "$HOOK_0500" 2>&1)
-_hook_rc=$?
-set -e
-if [[ $_hook_rc -eq 0 ]]; then
-    pass "32j3: hook 0500 passes bash -n syntax check (AC12)"
-else
-    fail "32j3: hook 0500 passes bash -n syntax check (AC12)" \
-         "$_hook_syntax"
-fi
-
-section "33. iso/auto/config execute bit — #82 root cause fix"
-
-# Restored after W11-13: T8 reused section number 32 (and sub-check IDs 32a/32b)
-# for the runtime-cascade assertions, overwriting the original #82 guards that
-# had shipped in e13f1cd. The #82 code fix (tracked mode 100755) was never lost,
-# but its regression guard was. Renumbered to 33 because 32 is now W11-13's.
-
-# §33a: git tracked mode must be 100755
-# git ls-files -s prints "<mode> <hash> <stage>\t<path>"; awk extracts mode.
-#
-# This assertion reads git metadata, not the ISO, so it can only run where the
-# repo is a real checkout with git available. In a minimal test container —
-# or against a source tree copied without .git — it must SKIP: reporting
-# "<not tracked>" as a FAIL would invent a defect out of a missing tool. The
-# command substitution is also guarded with `|| true`, because an absent git
-# exits 127 and would otherwise abort the whole suite here (every later
-# section silently unreported).
-if ! command -v git >/dev/null 2>&1; then
-    skip "33a: iso/auto/config has execute bit in git tracked mode" \
-         "git not available — assertion reads git index metadata, not the ISO"
-elif ! git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
-    skip "33a: iso/auto/config has execute bit in git tracked mode" \
-         "$REPO_ROOT is not a git checkout — assertion reads git index metadata, not the ISO"
-else
-    TRACKED_MODE="$(git -C "$REPO_ROOT" ls-files -s iso/auto/config 2>/dev/null | awk '{print $1}' || true)"
-    if [[ "$TRACKED_MODE" == "100755" ]]; then
-        pass "33a: iso/auto/config has execute bit in git tracked mode (100755 — #82 root cause fix)"
+_initrd="$(find "$SQF/boot" -maxdepth 1 -name 'initrd.img-*' 2>/dev/null | head -1)"
+if [[ -z "$_initrd" ]]; then
+    fail "29b: initrd present in the image" "no /boot/initrd.img-* in the squashfs"
+elif command -v lsinitramfs >/dev/null 2>&1; then
+    if lsinitramfs "$_initrd" 2>/dev/null | grep -q 'plymouth/themes/orionx-phoenix'; then
+        pass "29b: Plymouth orionx-phoenix theme is inside the shipped initrd"
     else
-        fail "33a: iso/auto/config has execute bit in git tracked mode" \
-             "Got: '${TRACKED_MODE:-<not tracked>}' — expected 100755; run: git update-index --chmod=+x iso/auto/config"
+        fail "29b: Plymouth theme inside the initrd" "lsinitramfs $(basename "$_initrd") has no plymouth/themes/orionx-phoenix"
     fi
+else
+    skip "29b: Plymouth theme inside the initrd" "lsinitramfs not installed on this host (initramfs-tools-core)"
 fi
 
-# §33b: working-tree copy must be executable
-if [[ -x "$REPO_ROOT/iso/auto/config" ]]; then
-    pass "33b: iso/auto/config is executable in working tree"
+section "30. orionx-imager SD-reader detection, as shipped (DEC-PHASE11-IMAGER-001, #77)"
+DEVICES_SQF="$SQF/opt/orionx/scripts/orionx-imager/lib/devices.py"
+if [[ -f "$DEVICES_SQF" ]] && grep -q 'RemovableMedia' "$DEVICES_SQF" && grep -q 'Ejectable' "$DEVICES_SQF" \
+   && ! grep -q '"diskutil", "list", "-plist", "external"' "$DEVICES_SQF"; then
+    pass "30a: shipped devices.py filters per disk on RemovableMedia/Ejectable and no longer lists 'external' only"
 else
-    fail "33b: iso/auto/config is executable in working tree" \
-         "File not executable: $REPO_ROOT/iso/auto/config — lb config will fail with Permission denied"
+    fail "30a: shipped orionx-imager devices.py has the #77 fix" "missing, or still 'diskutil list -plist external'"
+fi
+
+section "31. Build identity baked into the image (/etc/orionx-version)"
+OV="$SQF/etc/orionx-version"
+_ov() { sed -n "s/^$1=//p" "$OV" 2>/dev/null | head -1; }
+if [[ -f "$OV" ]]; then
+    _isov="$(_ov ISO_VERSION)"; _sha="$(_ov GIT_HEAD_SHA)"
+    if [[ -n "$_isov" && "$_isov" != dev-unknown && "$_isov" != unknown ]]; then
+        pass "31a: ISO_VERSION=$_isov"
+    else fail "31a: ISO_VERSION set" "got '${_isov:-<empty>}'"; fi
+    if [[ "$_sha" =~ ^[0-9a-f]{7,40}$ ]]; then pass "31b: GIT_HEAD_SHA=$_sha (not 'unknown')"
+    else fail "31b: GIT_HEAD_SHA recorded" "got '${_sha:-<empty>}' — DEC-PHASE11-020 build-env hand-off broken"; fi
+    if [[ -n "${ORIONX_EXPECT_VERSION:-}" ]]; then
+        [[ "$_isov" == "$ORIONX_EXPECT_VERSION" ]] && pass "31c: ISO_VERSION equals the expected release $ORIONX_EXPECT_VERSION" \
+            || fail "31c: ISO_VERSION equals $ORIONX_EXPECT_VERSION" "image says '$_isov' (release-process §4.3)"
+    fi
+else
+    fail "31a: /etc/orionx-version present" "no version manifest in the image"
+fi
+
+section "32. W11-13 runtime cascade fixes, as shipped (DEC-PHASE11-016..019)"
+if [[ -x "$SQF/opt/orionx/scripts/security/first-boot-wizard.sh" ]]; then
+    pass "32a: scripts/security/ is staged (first-boot-wizard.sh ships executable; AC1)"
+else fail "32a: first-boot-wizard.sh in the image" "scripts/security/ not staged (AC1)"; fi
+_nic="$(sqf_resolve /usr/lib/systemd/system/nebula-integrity-check.service 2>/dev/null || true)"
+if [[ -n "$_nic" ]] && grep -q '^LogsDirectory=orionx' "$SQF$_nic"; then
+    pass "32b: installed nebula-integrity-check.service has LogsDirectory=orionx (AC2)"
+else fail "32b: nebula-integrity-check.service LogsDirectory=orionx" "unit missing or without LogsDirectory in the image"; fi
+WD="$SQF/etc/xdg/autostart/orionx-wallpaper.desktop"
+if grep -qE '^Exec=/opt/orionx/scripts/set-wallpaper\.sh' "$WD" 2>/dev/null && grep -q 'OnlyShowIn=XFCE' "$WD" \
+   && [[ -x "$SQF/opt/orionx/scripts/set-wallpaper.sh" ]] && grep -q 'orionx-phoenix-wallpaper.png' "$SQF/opt/orionx/scripts/set-wallpaper.sh"; then
+    pass "32c: wallpaper autostart -> shipped set-wallpaper.sh -> Phoenix wallpaper (AC3, DEC-PHASE12-004)"
+else fail "32c: wallpaper autostart wire in the image" "desktop entry, script, or wallpaper reference missing"; fi
+for _p in git python3-pip firefox-esr; do
+    [[ "$(dpkg_state "$_p")" == "install ok installed" ]] && pass "32d: dpkg: $_p installed (AC6)" || fail "32d: dpkg: $_p installed (AC6)" "not installed in the image"
+done
+for _f in /etc/motd.d/orionx-ssh-admin /etc/issue.d/orionx-ssh-admin.issue; do
+    [[ -e "$SQF$_f" ]] && pass "32e: $_f ships (AC9)" || fail "32e: $_f ships (AC9)" "missing from the image"
+done
+
+section "33. ISO volume identity matches the baked version"
+_volid="$(xorriso -indev "$ISO_PATH" -pvd_info 2>/dev/null | sed -n "s/^Volume Id *: *//p" | head -1)"
+if [[ -z "$_volid" ]]; then
+    fail "33a: ISO volume id readable" "xorriso -pvd_info reported no Volume Id"
+elif [[ -n "${_isov:-}" && "$_volid" == "OrionX-${_isov:0:25}"* ]]; then
+    pass "33a: volume id '$_volid' carries ISO_VERSION $_isov"
+else
+    fail "33a: volume id carries ISO_VERSION" "volume id '$_volid' vs ISO_VERSION '${_isov:-<unset>}'"
 fi
 
 section "34. W11-14 runtime-operational assertions (OUTCOMES in the ISO, not strings in source)"
@@ -3809,6 +3419,11 @@ else
     fail "36e: suricata_capture.py staged beside orionx-postured" "postured would ImportError at start"
 fi
 
+section "37. Release promises: README tools + rc5-rc9 deck fixes, in the image (DEC-PHASE12-119)"
+# shellcheck source=tests/integration/lib/release-promises.sh
+. "$SCRIPT_DIR/lib/release-promises.sh"
+assert_release_promises
+
 # ===========================================================================
 # Summary
 # ===========================================================================
@@ -3820,6 +3435,11 @@ echo "==========================================="
 
 if [[ $FAIL -gt 0 ]]; then
     echo "${RED}FAIL${NC}: Content presence verification failed — $FAIL assertion(s) failed"
+    exit 1
+fi
+# DEC-PHASE12-119: a release gate may not pass on evidence it did not gather.
+if [[ "${ORIONX_RELEASE_GATE:-0}" == "1" && $SKIP -gt 0 ]]; then
+    echo "${RED}FAIL${NC}: ORIONX_RELEASE_GATE=1 and $SKIP check(s) were SKIPPED — install the missing tools and re-run"
     exit 1
 fi
 echo "${GREEN}PASS${NC}: Content presence verified — $PASS assertions passed, $SKIP skipped"

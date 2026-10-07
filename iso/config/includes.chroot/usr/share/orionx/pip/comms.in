@@ -1,0 +1,44 @@
+# matrix-commander venv /opt/orionx/venv/comms. The rc9 closure (log line 8277)
+# MINUS argparse, asyncio and uuid: matrix-commander declares these stdlib module
+# names as PyPI dependencies, and the PyPI packages of those names are obsolete
+# backports whose modules shadow the standard library (packages-build P2-4).
+# The venv is installed --no-deps, so they are simply not installed. datetime
+# stays: PyPI "datetime" is Zope DateTime (module DateTime), not a shadow.
+Pillow==12.3.0
+aiofiles==25.1.0
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.4
+aiohttp-socks==0.12.0
+aiosignal==1.4.0
+async-timeout==5.0.1
+atomicwrites==1.4.1
+attrs==26.1.0
+cachetools==7.2.1
+datetime==6.0
+emoji==2.16.0
+frozenlist==1.8.0
+h11==0.16.0
+h2==4.4.1
+hpack==4.2.0
+hyperframe==6.1.0
+idna==3.20
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+markdown==3.11
+matrix-commander==8.0.6
+matrix-nio==0.26.0
+multidict==6.9.1
+notify2==0.3.1
+peewee==3.19.0
+propcache==0.5.4
+pycryptodome==3.24.0
+python-socks==3.1.1
+python_magic==0.4.27
+pytz==2026.5
+pyxdg==0.28
+referencing==0.37.0
+rpds-py==2026.9.1
+unpaddedbase64==2.1.0
+vodozemac==0.10.0
+yarl==1.25.1
+zope.interface==8.6

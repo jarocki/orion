@@ -31,21 +31,50 @@ lint-python: ## Lint Python scripts with ruff (or flake8 fallback)
 	else \
 		echo "No Python linter found, running py_compile only"; \
 	fi
-	@for f in $(PYTHON_SCRIPTS); do python3 -m py_compile "$$f" && echo "  $$f: OK"; done
+	@# Syntax check via ast.parse, not py_compile: py_compile ignores
+	@# PYTHONDONTWRITEBYTECODE and litters scripts/**/__pycache__ (release-tests F-23).
+	@for f in $(PYTHON_SCRIPTS); do python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$$f" && echo "  $$f: OK" || exit 1; done
 
-test-unit-bash: ## Run bash unit tests
+# ---------------------------------------------------------------------------
+# @decision DEC-PHASE12-110
+# @title Unit gates run every suite and fail on any failure (no soft-fail)
+# @status accepted
+# @rationale test-unit-python used to end in `2>/dev/null || echo "No Python
+#   unit tests found yet"`, so 12 failing pytest tests produced exit 0 in
+#   `make test-unit`, CI's Lint & Test, and the `iso-build` prerequisite
+#   (packages-build P1-2, release-tests F-01, issue #11). test-unit-bash
+#   stopped at the first failing suite (`|| exit 1`), hiding every later
+#   failure and skipping the Python suite (P2-6, F-16). Now: every bash suite
+#   runs, failures are listed at the end, the Python suite always runs, and
+#   the target exits non-zero if anything failed. pytest exit 5 ("no tests
+#   collected") is a failure too: an empty suite is not a passing one.
+# ---------------------------------------------------------------------------
+test-unit-bash: ## Run every bash unit suite; list all failures; non-zero if any failed
 	@echo "=== Bash Unit Tests ==="
-	@for f in tests/unit/test_*.sh; do \
+	@fails=""; n=0; \
+	for f in tests/unit/test_*.sh; do \
 		[ -f "$$f" ] || continue; \
+		n=$$((n + 1)); \
 		echo "  Running $$f ..."; \
-		bash "$$f" || exit 1; \
-	done
+		bash "$$f" || fails="$$fails $$f"; \
+	done; \
+	if [ -n "$$fails" ]; then \
+		echo "=== Bash unit suites FAILED ($$(echo $$fails | wc -w | tr -d ' ') of $$n):"; \
+		for f in $$fails; do echo "  FAIL $$f"; done; \
+		exit 1; \
+	fi; \
+	echo "=== Bash unit suites: all $$n passed ==="
 
-test-unit-python: ## Run Python unit tests
+test-unit-python: ## Run Python unit tests (hard-fail)
 	@echo "=== Python Unit Tests ==="
-	python3 -m pytest tests/unit/ -v --tb=short 2>/dev/null || echo "No Python unit tests found yet"
+	PYTHONDONTWRITEBYTECODE=1 python3 -m pytest tests/unit/ -q --tb=short -p no:cacheprovider
 
-test-unit: test-unit-bash test-unit-python ## Run all unit tests (bash + python)
+test-unit: ## Run all unit tests (bash + python); both always run
+	@rc=0; \
+	$(MAKE) --no-print-directory test-unit-bash || rc=1; \
+	$(MAKE) --no-print-directory test-unit-python || rc=1; \
+	if [ $$rc -ne 0 ]; then echo "=== make test-unit: FAILED (see the failures listed above) ==="; fi; \
+	exit $$rc
 
 test-integration: ## Run integration tests
 	@echo "=== Integration Tests ==="
@@ -100,7 +129,17 @@ iso-build: test-unit ## Build ISO image; auto-wraps in Docker on macOS
 lynis: ## Run Lynis security audit
 	bash scripts/run-lynis.sh --threshold 75
 
-clean: ## Clean build artifacts
-	rm -rf output/ iso/cache/ iso/build/
-	find . -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
-	find . -name '*.pyc' -delete 2>/dev/null || true
+# @decision DEC-PHASE12-110 (clean)
+# `make clean` used to `rm -rf output/`, which destroys every release-candidate
+# ISO (non-reproducible artifacts: rc9 had to stay until it booted on the deck;
+# packages-build P2-8). clean now removes only regenerable build state; ISOs
+# go only with an explicit CLEAN_ISOS=1.
+clean: ## Clean build artifacts (keeps output/*.iso unless CLEAN_ISOS=1)
+	rm -rf iso/cache/ iso/build/
+	find . -name '__pycache__' -type d -not -path './.git/*' -exec rm -rf {} + 2>/dev/null || true
+	find . -name '*.pyc' -not -path './.git/*' -delete 2>/dev/null || true
+	@if [ "$(CLEAN_ISOS)" = "1" ]; then \
+		echo "CLEAN_ISOS=1: removing output/"; rm -rf output/; \
+	elif ls output/*.iso >/dev/null 2>&1; then \
+		echo "Kept $$(ls output/*.iso | wc -l | tr -d ' ') ISO(s) in output/ (CLEAN_ISOS=1 removes them)"; \
+	fi

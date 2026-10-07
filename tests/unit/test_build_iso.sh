@@ -103,6 +103,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Docker shim (T42): this suite must never reach the real Docker daemon, and so
+# can never touch the shared orionx-lb-work build volume. Any docker call is
+# recorded and fails; T42 asserts the log stayed empty.
+DOCKER_SHIM_DIR="$SCRATCH/shim"
+DOCKER_SHIM_LOG="$SCRATCH/docker-calls.log"
+mkdir -p "$DOCKER_SHIM_DIR"; : > "$DOCKER_SHIM_LOG"
+printf '#!/bin/sh\necho "docker $*" >> "%s"\nexit 97\n' "$DOCKER_SHIM_LOG" > "$DOCKER_SHIM_DIR/docker"
+chmod +x "$DOCKER_SHIM_DIR/docker"
+export PATH="$DOCKER_SHIM_DIR:$PATH"
+
 # Helper: build a fake repo root with iso/ present (lowercase)
 make_fake_repo() {
     local root="$1"
@@ -1416,6 +1426,121 @@ else
 fi
 rm -rf "$_t37_tmp"
 
+echo ""
+
+# ---------------------------------------------------------------------------
+# T38-T42: library functions, exercised by SOURCING build-iso.sh with
+# ORIONX_BUILD_ISO_LIB_ONLY=1 (DEC-PHASE12-111..114). Behavioural: canned
+# inputs in scratch dirs, real functions, observed outcomes.
+# ---------------------------------------------------------------------------
+_lib() {  # run a snippet with the build-iso.sh library loaded
+    ( ORIONX_BUILD_ISO_LIB_ONLY=1; export ORIONX_BUILD_ISO_LIB_ONLY
+      # shellcheck disable=SC1090
+      . "$BUILD_SCRIPT"; eval "$1" )
+}
+_mkiso() {  # <dir> <version> [content]
+    local n="orionx-phoenix-edition-$2.iso"
+    printf '%s' "${3:-iso-$2}" > "$1/$n"
+    (cd "$1" && { command -v sha256sum >/dev/null && sha256sum "$n" || shasum -a 256 "$n"; } > "$n.sha256")
+}
+
+echo "[T38] publish_built_iso: exact name, success only, verified (DEC-PHASE12-111)"
+_t38="$SCRATCH/t38"; mkdir -p "$_t38/src" "$_t38/dst"
+_mkiso "$_t38/src" v9.0.0-rc1
+_mkiso "$_t38/src" v8.0.0-rc6          # a stale ISO from an earlier build
+_mkiso "$_t38/src" v9.0.0-rc2
+if _lib 'publish_built_iso "'"$_t38/src"'" "'"$_t38/dst"'" v9.0.0-rc2 1' >/dev/null 2>&1; then
+    fail "T38.a: failed build (rc=1) reported publish success"
+else
+    pass "T38.a: failed build (rc=1) returns non-zero"
+fi
+[[ -z "$(ls -A "$_t38/dst")" ]] && pass "T38.b: failed build copies NOTHING to the host" \
+    || fail "T38.b: failed build copied: $(ls "$_t38/dst")"
+_t38_out="$(_lib 'publish_built_iso "'"$_t38/src"'" "'"$_t38/dst"'" v9.0.0-rc2 0' 2>&1)" \
+    && pass "T38.c: successful build publishes" || fail "T38.c: publish failed: $_t38_out"
+[[ "$(ls "$_t38/dst" | tr '\n' ' ')" == "orionx-phoenix-edition-v9.0.0-rc2.iso orionx-phoenix-edition-v9.0.0-rc2.iso.sha256 " ]] \
+    && pass "T38.d: only this version's ISO + sidecar reach the host (stale rc1/rc6 stay behind)" \
+    || fail "T38.d: host got: $(ls "$_t38/dst" | tr '\n' ' ')"
+rm -f "$_t38/dst"/*
+printf 'tampered' > "$_t38/src/orionx-phoenix-edition-v9.0.0-rc1.iso"
+_lib 'publish_built_iso "'"$_t38/src"'" "'"$_t38/dst"'" v9.0.0-rc1 0' >/dev/null 2>&1 \
+    && fail "T38.e: ISO not matching its sidecar was published" \
+    || pass "T38.e: ISO not matching its sidecar is refused"
+[[ -z "$(ls -A "$_t38/dst")" ]] && pass "T38.f: refused ISO is not copied" || fail "T38.f: copied anyway"
+_lib 'publish_built_iso "'"$_t38/src"'" "'"$_t38/dst"'" v7.7.7 0' >/dev/null 2>&1 \
+    && fail "T38.g: rc=0 with no ISO reported success" || pass "T38.g: rc=0 but no ISO of that name is a failure"
+_t38_wrap="$(sed -n '/bash -c .$/,/-- "\$@"/p' "$BUILD_SCRIPT")"
+contains "T38.h: wrapper container step publishes through publish_built_iso" 'publish_built_iso /build/output /host-output "$ORIONX_VERSION" "$rc"' "$_t38_wrap"
+not_contains "T38.i: wrapper no longer globs output/*.iso to the host" 'cp -a /build/output/*.iso' "$_t38_wrap"
+echo ""
+
+echo "[T39] check_no_stale_skips: fail on reused stages (DEC-PHASE12-113)"
+_t39="$SCRATCH/t39"; mkdir -p "$_t39"
+printf 'P: Begin\nW: Skipping bootstrap, already done\nW: Skipping bootstrap_cache, already done\nP: Executing hook 0500\n' > "$_t39/fresh.log"
+printf 'W: Skipping bootstrap, already done\nW: Skipping chroot_hooks, already done\nW: Skipping binary_iso, already done\n' > "$_t39/stale.log"
+_lib 'check_no_stale_skips "'"$_t39/fresh.log"'"' >/dev/null 2>&1 && pass "T39.a: bootstrap-only skips are allowed" \
+    || fail "T39.a: bootstrap-only log rejected"
+_t39_out="$(_lib 'check_no_stale_skips "'"$_t39/stale.log"'"' 2>&1)" && fail "T39.b: stale chroot_hooks/binary_iso skips accepted" \
+    || pass "T39.b: stale chroot/binary skips fail the build"
+contains "T39.c: the error names the stale stage" "Skipping chroot_hooks, already done" "$_t39_out"
+_lib 'check_no_stale_skips "'"$_t39/absent.log"'"' >/dev/null 2>&1 && fail "T39.d: missing log accepted" \
+    || pass "T39.d: a missing lb log is a failure (freshness unproven)"
+contains "T39.e: build_iso tees lb build and checks it" 'check_no_stale_skips "$lb_log" || exit 1' "$SCRIPT_CONTENT"
+echo ""
+
+echo "[T40] release identity needs its CHANGELOG section (DEC-PHASE12-114)"
+_t40="$SCRATCH/t40"; mkdir -p "$_t40/scripts/release"
+cp "$REPO_ROOT/scripts/release/extract-release-notes.sh" "$_t40/scripts/release/"
+printf '# Changelog\n\n## [v9.1.0-rc1] — 2026-01-01\n\n- notes\n\n## [v9.0.0] — 2025\n\n- old\n' > "$_t40/CHANGELOG.md"
+for v in v9.1.0 v9.1.0-rc2 v3.0.0; do
+    _lib 'require_release_changelog '"$v"' "'"$_t40"'"' >/dev/null 2>&1 \
+        && fail "T40.a: release $v without a CHANGELOG section was allowed" \
+        || pass "T40.a: release $v without a CHANGELOG section is refused"
+done
+for v in v9.1.0-rc1 v9.0.0; do
+    _lib 'require_release_changelog '"$v"' "'"$_t40"'"' >/dev/null 2>&1 \
+        && pass "T40.b: release $v with its section is allowed" || fail "T40.b: $v refused despite its section"
+done
+for v in v9.1.0-rc1-3-gabc1234 v9.1.0-dirty dev-unknown v99.0.0-test v3.0.0-env; do
+    _lib 'require_release_changelog '"$v"' "'"$_t40/nowhere"'"' >/dev/null 2>&1 \
+        && pass "T40.c: development version $v is not gated" || fail "T40.c: dev version $v refused"
+done
+printf '# Changelog\n\n## [v9.2.0]\n\n## [v9.1.0]\n\n- x\n' > "$_t40/CHANGELOG.md"
+_lib 'require_release_changelog v9.2.0 "'"$_t40"'"' >/dev/null 2>&1 \
+    && fail "T40.d: an EMPTY section was accepted" || pass "T40.d: an empty section is refused"
+FAKE_REPO_REL="$SCRATCH/repo_rel"; make_fake_repo "$FAKE_REPO_REL"
+_t40_out="$( (cd "$FAKE_REPO_REL" && ORIONX_VERSION=v3.0.0 bash scripts/build-iso.sh --dry-run) 2>&1 )" \
+    && fail "T40.e: --dry-run of v3.0.0 with no CHANGELOG passed" || pass "T40.e: build-iso.sh refuses v3.0.0 without its CHANGELOG section"
+contains "T40.f: refusal says why" "DEC-PHASE12-114" "$_t40_out"
+echo ""
+
+echo "[T41] patch_live_build: --allow-remove-essential only in Remove_packages (DEC-PHASE12-112)"
+_t41="$SCRATCH/t41"; mkdir -p "$_t41"
+# Fixtures carry the exact lines of live-build 1:20250505+deb13u1 (trixie).
+printf '%s\n' '				find "${DIRECTORY}" -name "*.deb" -print0 | xargs -0 --no-run-if-empty cp -fl -t chroot/var/cache/apt/archives' > "$_t41/cache.sh"
+printf '%s\n' '			apt|apt-get)' '				Chroot chroot "apt-get remove --auto-remove --purge ${APT_OPTIONS} ${PACKAGES}"' > "$_t41/packages.sh"
+printf '%s\n' '	APT_OPTIONS="${APT_OPTIONS:---yes -o Acquire::Retries=5}"' > "$_t41/configuration.sh"
+_lib 'patch_live_build "'"$_t41"'"' >/dev/null 2>&1 && pass "T41.a: patch applies to trixie live-build text" || fail "T41.a: patch failed"
+grep -q 'cp -fl' "$_t41/cache.sh" && fail "T41.b: cp -fl survived" || pass "T41.b: cp -fl -> cp -f"
+grep -qF 'apt-get remove --auto-remove --purge --allow-remove-essential ${APT_OPTIONS} ${PACKAGES}' "$_t41/packages.sh" \
+    && pass "T41.c: Remove_packages carries --allow-remove-essential" || fail "T41.c: Remove_packages not patched"
+grep -q -- '--allow-remove-essential' "$_t41/configuration.sh" && fail "T41.d: APT_OPTIONS default armed" \
+    || pass "T41.d: APT_OPTIONS default stays without --allow-remove-essential"
+_lib 'patch_live_build "'"$_t41"'"' >/dev/null 2>&1 && [[ "$(grep -o -- '--allow-remove-essential' "$_t41/packages.sh" | wc -l | tr -d ' ')" == "1" ]] \
+    && pass "T41.e: patch is idempotent" || fail "T41.e: second run failed or duplicated the flag"
+printf '%s\n' 'Chroot chroot "apt-get purge ${APT_OPTIONS} ${PACKAGES}"' > "$_t41/packages.sh"
+_lib 'patch_live_build "'"$_t41"'"' >/dev/null 2>&1 && fail "T41.f: drifted live-build accepted" \
+    || pass "T41.f: a live-build whose Remove_packages text drifted fails loudly"
+not_contains "T41.g: wrapper APT_OPTIONS no longer carries --allow-remove-essential" \
+    'APT_OPTIONS="--yes -o Acquire::Retries=5 --allow-remove-essential' "$SCRIPT_CONTENT"
+echo ""
+
+echo "[T42] the test run never reached Docker"
+if [[ -s "$DOCKER_SHIM_LOG" ]]; then
+    fail "T42: build-iso.sh invoked docker during the unit tests: $(cat "$DOCKER_SHIM_LOG")"
+else
+    pass "T42: no docker command was issued (the orionx-lb-work volume is untouchable from this suite)"
+fi
 echo ""
 
 # ---------------------------------------------------------------------------

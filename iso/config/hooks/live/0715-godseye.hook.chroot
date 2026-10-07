@@ -55,6 +55,7 @@ need "$ROOT/HOSTS.txt"        "the host inventory an operator reads before openi
 need "$ROOT/PROVENANCE.txt"   "upstream commit pin and the two recorded edits"
 need "$ROOT/MANIFEST.sha256"  "per-file checksums of the vendored bundle"
 need "$ROOT/LICENSE.godseye"  "Apache-2.0 text for the vendored build"
+need "$ROOT/LICENSE.cesium"   "CesiumJS licence + third-party notices (DEC-PHASE12-124)"
 need "$ROOT/app/index.html"   "the GODSEYE application itself"
 need "$ROOT/app/cesium/Cesium.js" "the CesiumJS runtime the globe is built on"
 need "$APPS/orionx-godseye.desktop" "menu entry"

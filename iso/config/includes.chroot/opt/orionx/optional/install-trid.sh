@@ -52,6 +52,12 @@ orionx_log_info "  Mission: triage — identify unknown file types by binary sig
 TRID_DEST="/opt/orionx/trid"
 TRID_BIN_URL="https://mark0.net/download/trid_linux_64.zip"
 TRID_DEF_URL="https://mark0.net/download/triddefs.zip"
+# DEC-PHASE12-122: the vendor serves only "latest" under fixed names, so these
+# pins are the files as downloaded 2026-10-07 (431,726 and 2,783,928 bytes).
+# When mark0.net updates either file the install REFUSES (fail closed); review
+# the new file and update the pin. There is no vendor signature to verify.
+TRID_BIN_SHA256="3fb9ccfed650123f7bb5fc5a93ccbfcbc6ff98876cc659c8958c03a582467aa9"
+TRID_DEF_SHA256="c8cce7d9c9b3d0ed44d3df0b424d50d616710f5777f7781c6a7bec78b092015f"
 
 orionx_log_info "Downloading TrID binary..."
 orionx_apt_install unzip
@@ -60,14 +66,14 @@ mkdir -p "$TRID_DEST"
 
 # Download and extract the TrID binary (bare zip — no top-level directory)
 local_bin="$(mktemp)"
-wget -q -O "$local_bin" "$TRID_BIN_URL"
+orionx_download_verified "$TRID_BIN_URL" "$local_bin" "$TRID_BIN_SHA256"
 unzip -q -o "$local_bin" -d "$TRID_DEST"
 rm -f "$local_bin"
 
 # Download and extract the TrID definitions
 orionx_log_info "Downloading TrID definitions (triddefs.zip)..."
 local_def="$(mktemp)"
-wget -q -O "$local_def" "$TRID_DEF_URL"
+orionx_download_verified "$TRID_DEF_URL" "$local_def" "$TRID_DEF_SHA256"
 unzip -q -o "$local_def" -d "$TRID_DEST"
 rm -f "$local_def"
 

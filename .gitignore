@@ -1,6 +1,9 @@
 # Build artifacts
 iso/cache/
 iso/build/
+# live-build writes chroot listings (chroot.files, chroot.packages.*) next to
+# the config; a 12.9 MB iso/chroot.files was once committed by accident.
+iso/chroot.*
 output/
 *.iso
 *.img
@@ -17,6 +20,10 @@ tmp/
 /logs/
 # Exception: synthetic sample logs needed for Phase 5 parser testing
 !data/samples/logs/synthetic-syslog.log
+# Exception: Zeek parser fixtures (synthetic capture; tests/fixtures/zeek/README.md).
+# They were ignored by *.log, so test_zeek_pcap.sh passed only on the machine
+# that generated them and failed 5 assertions in every clean checkout.
+!tests/fixtures/zeek/*.log
 
 # Keys and sensitive data
 *.key
@@ -56,6 +63,7 @@ analysis_results/
 # Use archive/* (not archive/) so git enters the directory and the negation works
 archive/*
 !archive/INVENTORY.md
+!archive/README.md
 
 # Build-time-staged application content (single-authority: source is repo root)
 # stage_application_content() rsyncs these from repo root at ISO build time.
@@ -73,6 +81,16 @@ archive/*
 iso/config/includes.chroot/opt/orionx/*
 !iso/config/includes.chroot/opt/orionx/optional/
 !iso/config/includes.chroot/opt/orionx/osint/
+# Placeholder READMEs + the YARA lockfile are written here directly (no staging
+# step owns comms/ re/ yara/ nebula/mcp-servers/), so they are their own
+# source of truth and stay trackable. nebula/models/ is staged by
+# stage_nebula_model() and stays ignored. (release-tests F-28)
+!iso/config/includes.chroot/opt/orionx/comms/
+!iso/config/includes.chroot/opt/orionx/re/
+!iso/config/includes.chroot/opt/orionx/yara/
+!iso/config/includes.chroot/opt/orionx/nebula/
+iso/config/includes.chroot/opt/orionx/nebula/*
+!iso/config/includes.chroot/opt/orionx/nebula/mcp-servers/
 iso/config/includes.chroot/usr/share/doc/orionx/
 
 # Session-local scratch (never committed; appeared as "7 uncommitted" noise

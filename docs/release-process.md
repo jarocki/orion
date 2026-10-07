@@ -4,6 +4,10 @@ Tag-triggered release pipeline for Orion-X Phoenix Edition. This document is
 the operator-facing companion to `.github/workflows/release.yml` (built per
 DEC-PHASE8-002) and the `scripts/release/extract-release-notes.sh` helper.
 
+The release asset set (split parts, checksums, signatures, reassembly text and
+release body) is produced by one script, `scripts/release/stage-split-release.sh`
+(DEC-PHASE12-115), which both CI and the manual path call.
+
 The pipeline is intentionally split into two halves:
 
 1. **Automated half (CI)** — build, checksum, sign, upload a **DRAFT** GitHub
@@ -17,15 +21,21 @@ The `DRAFT` boundary is non-negotiable. CI never publishes a release on its own.
 
 ## 0. Which path is the authority
 
-Two things decide how a tag becomes a release:
+Every Trixie-line image is over 2 GiB (v2.2.0-beta 3.09 GB, v2.2.0-rc9
+3.13 GB) and GitHub rejects release assets over 2 GiB, so the ISO is always
+published as parts. Both paths below publish the same asset set, because both
+run `scripts/release/stage-split-release.sh`:
 
-| Image size | Authority for the published assets | What `release.yml` contributes |
+| Path | When | Asset set |
 |---|---|---|
-| ≤ 2 GB | CI draft (§3) → operator verifies and publishes (§4) | Builds, checksums, signs, drafts |
-| > 2 GB (every Trixie-line image so far: v2.2.0-beta is 3.09 GB) | **Manual split-part publish from the build host (§10)** | Build check only — GitHub rejects release assets over 2 GB, so its draft cannot carry the ISO |
+| CI draft (§3) → operator verifies and publishes (§4) | Default for a pushed `v*` tag | `*.iso.part-*` (190 MiB), `SHA256SUMS(.asc)`, `SHA512SUMS(.asc)`, `REASSEMBLE.txt`; body = CHANGELOG section + download/verify instructions |
+| Manual staging from the build host (§10) | CI cannot build or upload (runner budget, outage), or the ISO was built and gated on the build host | Identical, staged locally and uploaded with `gh` |
 
-In both cases CI produces a **DRAFT only**; a human publishes. The `DRAFT`
-boundary is non-negotiable.
+Use one path per tag. If both ran, delete the draft you will not publish
+(§6.1) so its parts cannot be mixed with the other set, whose ISO hash
+differs.
+
+In both cases a human publishes. The `DRAFT` boundary is non-negotiable.
 
 ## 1. Prerequisites
 
@@ -39,9 +49,13 @@ Before tagging:
 - **CI on that head:** `lint.yml` and `e2e-test.yml` green. `qemu-test.yml`
   (which, like `release.yml`, now builds in `debian:trixie-slim`) must have
   produced an ISO and passed the content-presence gate and the BIOS+UEFI boot
-  test; W7-4-B/W7-5/W7-6 are `continue-on-error` and informative. If the
-  runner budget prevents a full run, say so in the release notes rather than
-  skipping silently.
+  test; W7-4-B/W7-5/W7-6 are `continue-on-error` and informative. All three
+  workflows trigger on pushes and PRs to `release/**` as well as `develop`
+  (DEC-PHASE12-123). For a head that has not been pushed, run the same gates
+  locally with `scripts/release/ci-local.sh --e2e --iso <iso> --build-log
+  <log>` and quote its summary (and the host tool versions it prints) in the
+  release notes. If the runner budget prevents a full run, say so in the
+  release notes rather than skipping silently.
 - **All documentation fixes have landed** — the ISO bakes `README.md` and
   `docs/` into `/usr/share/doc/orionx/`; the beta carried a pre-beta README.
 - **Version literals bumped.** `scripts/build-iso.sh` has no version literal
@@ -82,13 +96,18 @@ Before tagging:
   If the signing step fails, provision the secrets. Do not re-add
   `continue-on-error` to get a release out.
 - **`CHANGELOG.md` is updated** with a section for the version you are about
-  to tag. The section heading must match one of:
+  to tag, including its *Known issues* list. The section heading must match
+  one of:
   - `## [2.2.0] — <date or status>`
   - `## [v2.2.0] — <date or status>`
 
   `extract-release-notes.sh` matches both forms (anything after the closing
-  `]` is free text). If no section is found, the release body falls back to
-  `"See CHANGELOG.md for full release history."`
+  `]` is free text) and ends the section at the next `## ` heading. A missing
+  or empty section is an error, not an empty body (DEC-PHASE12-114):
+  `build-iso.sh` refuses to build a release-looking version
+  (`vX.Y.Z`, `vX.Y.Z-rcN`, `-betaN`, `-alphaN`) without it, and
+  `stage-split-release.sh` refuses to stage it. Check before tagging:
+  `bash scripts/release/extract-release-notes.sh <tag>`.
 
 ---
 
@@ -112,67 +131,58 @@ git push origin v2.2.0-rc1
 ```
 
 Tag push triggers `.github/workflows/release.yml`. The workflow auto-flags
-`prerelease: true` when the tag contains `-rc`, `-beta` or `-alpha`. For a
-> 2 GB image, treat the CI run as a build check and publish per §10; delete
-the CI draft (`gh release delete <tag>` — non-destructive while unpublished,
-see §6.1) before creating the manual release for the same tag.
+`prerelease: true` when the tag contains `-rc`, `-beta` or `-alpha`, and
+drafts the split-part release (§3). If you publish from the build host
+instead (§10), delete the CI draft first (`gh release delete <tag>`,
+non-destructive while unpublished, see §6.1).
 
 ---
 
-## 3. What CI does (release.yml, 8 steps)
+## 3. What CI does (release.yml)
 
 The workflow runs on `ubuntu-latest` with a 60-minute job timeout (the same
 budget as `qemu-test.yml`). Source of truth: `.github/workflows/release.yml`.
+Releases come only from `v*` tag pushes; `workflow_dispatch` is a build check
+(§7).
 
-1. **Checkout repository** — `actions/checkout@v4` with `fetch-depth: 0` so
-   `CHANGELOG.md` and git history are always available, even on shallow tag
-   triggers.
-2. **Build ISO inside `debian:trixie-slim`** — same Docker pattern as
-   `qemu-test.yml` (W7-1, issue #25). live-build detects the host distro, so
-   we run privileged inside Debian trixie (matching `iso/auto/config`'s
-   `DISTRIBUTION="trixie"`) to ensure it bootstraps from
-   `deb.debian.org/trixie` rather than the Ubuntu runner's apt sources.
-   `ORIONX_VERSION` is set from the tag name for tag pushes, so the baked
-   `/etc/orionx-version` equals the tag; for `workflow_dispatch` it is left
-   empty and `build-iso.sh` falls back to `git describe`. Output goes to
-   `output/*.iso`; build log is captured to `tmp/release-build-iso.log`.
-   Workspace ownership is `chown`ed back to the runner UID afterward.
-3. **Verify ISO artifact** — hard-fails the run if `output/` contains zero
-   ISO files. No silent success.
-4. **Generate checksums** — `sha256sum` and `sha512sum` over each
-   `output/*.iso`, written to `output/SHA256SUMS` and `output/SHA512SUMS`.
-5. **GPG sign (best-effort)** — imports the key via
-   `crazy-max/ghaction-import-gpg@v6`, then produces detached, armored
-   signatures:
-   - `output/<iso>.asc` for each ISO
-   - `output/SHA256SUMS.asc`
-   - `output/SHA512SUMS.asc`
+1. **Checkout** with `fetch-depth: 0`, so `CHANGELOG.md` and git history are
+   available on tag events.
+2. **Resolve build version.** Tag push: `ORIONX_VERSION=<tag>`. Dispatch:
+   `dev-dispatch-<run id>`, which is never release-looking.
+3. **Build ISO inside `debian:trixie-slim`**, privileged, the same pattern as
+   `qemu-test.yml` (live-build must see a Debian host). The step runs under
+   `set -o pipefail`, so a failed build cannot hide behind `tee`.
+   `build-iso.sh` refuses a release-looking version with no CHANGELOG
+   section, applies its live-build patches (DEC-PHASE12-112), and fails on a
+   stale-stage reuse (DEC-PHASE12-113). Log: `tmp/release-build-iso.log`.
+   Workspace ownership is then `chown`ed back to the runner.
+4. **Verify ISO artifact.** The exact file
+   `output/orionx-phoenix-edition-<version>.iso` and its `.sha256` must exist
+   and match. Any other ISO in `output/` is ignored.
+5. **Import the GPG key** (`crazy-max/ghaction-import-gpg@v6`). Hard-fail
+   with no `continue-on-error` (DEC-PHASE12-026): no key, no release.
+6. **Stage signed split release assets:**
+   `stage-split-release.sh output/<iso> <tag> --out output/release`. It
+   splits into 190 MiB parts, writes `SHA256SUMS` and `SHA512SUMS` (the
+   whole ISO under its published name, then every part), signs both
+   (`SHA256SUMS.asc`, `SHA512SUMS.asc`), renders `REASSEMBLE.txt` and
+   `RELEASE-NOTES.md` (the CHANGELOG section plus download and verify
+   instructions), and then proves its own output: the concatenated parts hash
+   to the ISO line, every part line verifies, both signatures verify, and no
+   file is 2 GiB or larger.
+7. **Assert every asset is under 2 GiB** (a second, independent check).
+8. **Create DRAFT GitHub Release** via `softprops/action-gh-release@v2`:
+   `draft: true` always; `prerelease` from the tag shape; `body_path:
+   output/release/RELEASE-NOTES.md`; `files:` the parts, both sums, both
+   signatures and `REASSEMBLE.txt`, with `fail_on_unmatched_files: true`.
+9. **Upload to Actions** (always): the ISO and sidecar, the sums,
+   `REASSEMBLE.txt`, `RELEASE-NOTES.md` and the build log, as
+   `release-artifacts-<run_id>`; then a summary step lists `output/`.
 
-   `continue-on-error: true` on both import and sign steps. If the key is
-   missing or import fails, the run sets `GPG_SIGNED=false` and proceeds.
-6. **Extract release notes** — runs `scripts/release/extract-release-notes.sh
-   "${GITHUB_REF_NAME}"`, which parses `CHANGELOG.md` for the matching
-   `## [<version>]` section and writes it to `tmp/release-notes.md`. Falls
-   back to a static "See CHANGELOG.md" line if no section matches.
-7. **Create DRAFT GitHub Release** via `softprops/action-gh-release@v2`:
-   - `draft: true` — **always**, regardless of tag shape.
-   - `prerelease: true` — auto-flagged when the tag contains `-rc`, `-beta`
-     or `-alpha`.
-   - `body_path: tmp/release-notes.md`
-   - `files:` glob uploads `output/*.iso`, both `SHA*SUMS`, and any `*.asc`
-     that exist. `fail_on_unmatched_files: false` so a skipped GPG step does
-     not break the release. **An ISO over 2 GB is rejected by GitHub at this
-     step** — the draft then holds only the checksum files, which is why the
-     split-part path (§10) is the authority for such images.
-8. **Upload artifacts to Actions + emit summary** — `actions/upload-artifact@v4`
-   always runs (`if: always()`), bundling the ISO, checksums, signatures, the
-   build log, and the release notes under
-   `release-artifacts-<run_id>`. A final shell step prints a Release Pipeline
-   Summary with the tag, GPG signing state, and `output/` listing.
-
-Expected wall-clock: the ISO build alone now exceeds the 10–15 min it took
-before the model import/consolidation step (0510) — budget the full 60-minute
-job and read the Actions timing of the last green run for a current number.
+Expected wall-clock: the ISO build alone exceeds the 10–15 min it took
+before the model import/consolidation step (0510); the rc9 build took 35 min
+on the macOS host. Read the Actions timing of the last green run for a
+current number.
 
 ---
 
@@ -194,27 +204,27 @@ Download the draft assets (`gh release download v2.2.0-rc1 -D tmp/release-v2.2.0
 or via the UI — never into `/tmp/`) and run, from the download directory:
 
 ```bash
-# Checksum verification — both must report "OK" for every artifact line.
+# Reassemble exactly as a downloader will (REASSEMBLE.txt has the same recipe).
+cat orionx-phoenix-edition-<tag>.iso.part-* > orionx-phoenix-edition-<tag>.iso
+
+# Checksum verification: every line (the ISO and each part) must report OK.
 sha256sum -c SHA256SUMS
 sha512sum -c SHA512SUMS
 
-# GPG signature verification (only if .asc files are present)
+# Signature verification.
 gpg --verify SHA256SUMS.asc SHA256SUMS
 gpg --verify SHA512SUMS.asc SHA512SUMS
-# And for each ISO:
-gpg --verify orionx-phoenix-edition-<version>.iso.asc orionx-phoenix-edition-<version>.iso
 ```
 
 `gpg --verify` exits 0 and prints `Good signature from "..."` on success.
-Any other outcome is a stop-the-line event.
+Any other outcome is a stop-the-line event. The checksum manifests cover the
+whole ISO and every part, so signing them signs the release; there is no
+separate signature over the multi-GB ISO.
 
-If `.asc` files are missing because the GPG key was not provisioned at CI
-time, either:
-- provision `secrets.GPG_PRIVATE_KEY` / `secrets.GPG_PASSPHRASE` and re-run
-  the workflow via `workflow_dispatch`, then upload the new `.asc` files to
-  the draft; or
-- sign the artifacts locally and attach the resulting `.asc` files via
-  `gh release upload v2.2.0-rc1 <files>`.
+A draft without `.asc` files cannot exist: the import and staging steps are
+hard-fail. If they failed, provision `secrets.GPG_PRIVATE_KEY` and
+`secrets.GPG_PASSPHRASE` and re-run the tag build; do not sign by hand into
+a CI draft.
 
 ### 4.3. Assert the image's identity matches the tag
 
@@ -238,9 +248,9 @@ Both must pass. A mismatch means rebuilding from the tagged commit (or with
 
 - Release notes (the rendered Markdown body) match the `CHANGELOG.md`
   section, including its *Known issues* list.
-- Asset list contains, at minimum: ISO (or `.iso.part-*` + `REASSEMBLE.txt`),
-  `SHA256SUMS`, `SHA512SUMS` where CI produced it. If GPG signing was
-  expected, `.asc` siblings for each.
+- Asset list contains exactly: every `.iso.part-*` named in `SHA256SUMS`,
+  `SHA256SUMS`, `SHA256SUMS.asc`, `SHA512SUMS`, `SHA512SUMS.asc`,
+  `REASSEMBLE.txt`. Byte sizes match (`gh release view <tag> --json assets`).
 - The guided-demo assets referenced from the release notes
   (`docs/media/orionx-guided-demo-<tag>.{mp4,vtt,-poster.png,-transcript.md}`)
   are either attached to the release or linked to their `docs/media/` paths
@@ -277,12 +287,11 @@ When the beta has soaked and its *Known issues* are closed:
    git tag -a v2.2.0 -m "Orion-X Phoenix Edition v2.2.0"
    git push origin v2.2.0
    ```
-5. **Build and publish.** `release.yml` fires and produces a DRAFT with
-   `prerelease: false` (the tag has no `-rc`/`-beta`/`-alpha`). If the image
-   is under 2 GB, repeat §4. If it is over 2 GB — expected for v2.2.0, since
-   the model is still inside the ISO — build on the build host with
-   `ORIONX_VERSION=v2.2.0` exported, run §4.3 against the output, and publish
-   per §10; delete the CI draft first.
+5. **Build and publish.** `release.yml` fires and produces a split-part DRAFT
+   with `prerelease: false` (the tag has no `-rc`/`-beta`/`-alpha`); repeat
+   §4. To publish from the build host instead, build with
+   `ORIONX_VERSION=<tag>` exported, run §4.3 against the output, and stage
+   and upload per §10; delete the CI draft first.
 
 ---
 
@@ -295,15 +304,15 @@ The rollback path depends on whether the release has been **published**.
 The draft is operator-private; rolling it back is non-destructive:
 
 ```bash
-gh release delete v2.1.0-rc1            # deletes the draft + uploaded assets
+gh release delete <tag>                 # deletes the draft + uploaded assets
 # Note: the underlying git tag is NOT deleted by `release delete`.
 ```
 
 To also remove the tag (when the tagged commit itself was wrong):
 
 ```bash
-git tag -d v2.1.0-rc1                   # local
-git push origin :refs/tags/v2.1.0-rc1   # remote
+git tag -d <tag>                        # local
+git push origin :refs/tags/<tag>        # remote
 ```
 
 ### 6.2. Post-publish retraction
@@ -323,27 +332,19 @@ DEC-PHASE7-008, retraction is an explicit user-decision boundary:
 
 ## 7. Dry-run mode
 
-`release.yml` supports `workflow_dispatch` with a `dry_run` boolean input,
-for validating pipeline changes without producing a public artifact:
+`workflow_dispatch` runs `release.yml` as a **build check**: it builds the
+ISO under the development version `dev-dispatch-<run id>`, verifies it, and
+uploads it to the run's Actions artifacts. It never stages, signs or drafts
+a release (those steps are `if: startsWith(github.ref, 'refs/tags/v')`).
 
-UI: **Actions → Release Pipeline → Run workflow** → set `dry_run: true`.
+CLI: `gh workflow run release.yml --ref <branch>`
 
-CLI: `gh workflow run release.yml -f dry_run=true`
+To rehearse the release asset set without publishing, stage it locally from
+any ISO with `--unsigned` (never publish such a set):
 
-Behavior:
-
-- Steps 1–6 run normally (build, verify, checksum, sign, extract notes).
-- Step 7 (Create DRAFT GitHub Release) is **skipped** — the `if:` clause
-  requires `github.event_name == 'push'` or `github.event.inputs.dry_run ==
-  'false'`.
-- Step 8 (Upload to Actions) still runs, so all artifacts are downloadable
-  from the workflow run page for inspection.
-
-Use a dry run when:
-- changing live-build configuration that may affect the ISO contents
-- adjusting the GPG signing flow
-- verifying `CHANGELOG.md` section parsing for a new version string
-- validating runner image or apt mirror changes
+```bash
+bash scripts/release/stage-split-release.sh output/<iso> <tag> --out tmp/release-<tag>-dry --unsigned
+```
 
 ---
 
@@ -351,12 +352,16 @@ Use a dry run when:
 
 - **Code:**
   - `.github/workflows/release.yml` — the pipeline itself
-  - `scripts/release/extract-release-notes.sh` — release-notes parser
+  - `scripts/release/extract-release-notes.sh` — release-notes parser (fails on a missing section)
+  - `scripts/release/stage-split-release.sh` — the release asset set (parts, sums, signatures, notes)
+  - `scripts/release/ci-local.sh` — the CI gates, run locally
   - `CHANGELOG.md` — single source of truth for release notes
 - **Decisions (see MASTER_PLAN.md → Decision Log):**
   - `DEC-PHASE8-002` — release artifact pipeline rationale (Docker-in-CI for
-    live-build, DRAFT-mode mandatory, GPG `continue-on-error` until key
-    provisioned)
+    live-build, DRAFT-mode mandatory)
+  - `DEC-PHASE12-026` — GPG signing is hard-fail (the earlier
+    `continue-on-error` is gone)
+  - `DEC-PHASE12-114` / `-115` — release identity gate; split-part asset set
   - `DEC-PHASE7-005` — `approve` gate convention (operator owns publish flip)
   - `DEC-PHASE7-008` — destructive git actions require explicit user
     adjudication (applies to published-release retraction)
@@ -384,50 +389,45 @@ Each sub-slice: full planner -> implementer -> reviewer -> guardian:land chain.
 Keeps the mainline W11-N Evaluation Contract stable; hotfix items don't drift
 the DEC.
 
-## 10. Manual publish from the macOS build host (>2 GB ISOs)
+## 10. Manual publish from the macOS build host
 
 Used for `v2.1.0-bullseye-rain` (6.62 GB, 4 parts) and `v2.2.0-beta`
-(3.09 GB, 3 parts). This is the path that actually shipped both releases;
-`release.yml` (§3) still builds inside `debian:bullseye-slim` and has not been
-updated for the Trixie line, so it is **not** the authority for these tags.
-Cancel its run if it fires on the tag push (it cannot be allowed to attach a
-CI-built ISO whose hash differs from `SHA256SUMS`).
-
-GitHub rejects release assets larger than 2 GB, so the ISO is split.
+(3.09 GB, 7 parts). Use it when the ISO that passed the gates was built on the
+build host, or when CI cannot build or upload. It publishes the same asset
+set as CI (§0), staged by the same script; only the upload is manual.
 
 ```bash
-# 1. Stage from the verified build (SHA already checked against the .sha256)
-R=tmp/release-<tag>; mkdir -p "$R"
-cp output/orionx-phoenix-edition-<build>.iso "$R/orionx-phoenix-edition-<tag>.iso"
-cd "$R"
+# 0. Build with the tag's identity, then run §4.3 on output/<iso>.
+ORIONX_VERSION=<tag> bash scripts/build-iso.sh
 
-# 2. Split into <2 GB parts. 1000 MiB keeps each upload under ~6 minutes on a
-#    ~3 MB/s uplink; the host's memory-pressure reaper kills long background
-#    uploads, so parts are uploaded one at a time in the foreground.
-split -b 1000m orionx-phoenix-edition-<tag>.iso orionx-phoenix-edition-<tag>.iso.part-
-shasum -a 256 orionx-phoenix-edition-<tag>.iso orionx-phoenix-edition-<tag>.iso.part-* > SHA256SUMS
-cat orionx-phoenix-edition-<tag>.iso.part-* | shasum -a 256   # must equal the ISO line
+# 1. Stage, split (190 MiB parts, see §10.1), checksum, sign with the release
+#    key from your local keyring, render REASSEMBLE.txt + RELEASE-NOTES.md,
+#    and self-verify. Refuses a tag with no CHANGELOG section, an ISO that
+#    fails its .sha256, or a signing failure.
+bash scripts/release/stage-split-release.sh output/orionx-phoenix-edition-<tag>.iso <tag> \
+    --out tmp/release-<tag>
+R=tmp/release-<tag>
 
-# 3. Write REASSEMBLE.txt (cat / copy /b instructions + the ISO SHA) and the
-#    release notes (from the CHANGELOG section for the tag).
-
-# 4. Tag the commit the ISO was built from, push branch + tag.
+# 2. Tag the commit the ISO was built from, push branch + tag.
 git tag -a <tag> -m "Orion-X Phoenix Edition <tag>" <commit>
 git push origin <branch> <tag>
 
-# 5. Create the release (pre-release for beta/rc), then upload serially.
-gh release create <tag> --prerelease --title "<title>" --notes-file release-notes.md \
-    SHA256SUMS REASSEMBLE.txt
-for p in orionx-phoenix-edition-<tag>.iso.part-*; do
-    gh release upload <tag> --clobber "$p"
+# 3. Create the release as a DRAFT (pre-release for beta/rc), then upload
+#    serially, in the foreground, one file per command.
+gh release create <tag> --draft --prerelease --title "<title>" --notes-file "$R/RELEASE-NOTES.md" \
+    "$R/SHA256SUMS" "$R/SHA256SUMS.asc" "$R/SHA512SUMS" "$R/SHA512SUMS.asc" "$R/REASSEMBLE.txt"
+for p in "$R"/orionx-phoenix-edition-<tag>.iso.part-*; do
+    caffeinate -i gh release upload <tag> --clobber "$p"
 done
 
-# 6. Verify: asset names + byte sizes match `ls -l`; download one part and
-#    compare against SHA256SUMS.
+# 4. Verify: every asset is state "uploaded" with the local byte size, then
+#    run §4.2 on a fresh download before flipping the draft (§4.5).
 gh release view <tag> --json assets --jq '.assets[]|[.name,.size]|@tsv'
+ls -l "$R"
 ```
 
-Never publish a bare `.part-*` set without `SHA256SUMS` and `REASSEMBLE.txt`.
+Never publish a bare `.part-*` set without `SHA256SUMS`, its `.asc` and
+`REASSEMBLE.txt`.
 
 ### 10.1 Lessons from v2.2.0-beta (2026-09-16 → 09-19)
 

@@ -53,22 +53,68 @@ grep -q 'OnUnitActiveSec=10s' "$U/orionx-mesh-status.timer" && pass "timer every
 grep -q '"orionx-mesh-status.timer"' "$ROOT/iso/config/hooks/live/0615-install-systemd-units.hook.chroot" && grep -q '"orionx-mesh-status.service"' "$ROOT/iso/config/hooks/live/0615-install-systemd-units.hook.chroot" && pass "0615 installs + autostarts the snapshot timer" || fail "0615" "units not listed"
 grep -qE '^d /run/orionx ' "$ROOT/iso/config/includes.chroot/usr/lib/tmpfiles.d/orionx.conf" && pass "/run/orionx guaranteed by tmpfiles" || fail "tmpfiles" "no /run/orionx"
 
-echo "[threshold file under /var/lib/suricata]"
-grep -q 'THRESHOLD_FILE = Path("/var/lib/suricata/orionx-threshold.config")' "$ROOT/scripts/awareness/tuning_lib.py" && pass "tuning_lib writes under /var/lib/suricata" || fail "tuning path" "still /etc"
+echo "[threshold file under /var/lib/suricata — executed, not grepped (F-13)]"
+# The writer's path (tuning_lib.THRESHOLD_FILE) must be the file the shipped
+# Suricata config loads, and the text the writer generates must be threshold
+# syntax Suricata accepts for a suppress rule.
+TH_OUT="$(cd "$ROOT/scripts/awareness" && PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT/iso/config/includes.chroot/etc/suricata/orionx.yaml" <<'PY' 2>&1
+import re, sys, time
+import tuning_lib as T
+yaml_line = [l for l in open(sys.argv[1]) if l.startswith("threshold-file:")]
+assert len(yaml_line) == 1, "orionx.yaml must name exactly one threshold-file"
+loaded = yaml_line[0].split(":", 1)[1].strip()
+assert str(T.THRESHOLD_FILE) == loaded, f"writer writes {T.THRESHOLD_FILE}, Suricata loads {loaded}"
+assert str(T.THRESHOLD_FILE).startswith("/var/lib/suricata/"), "postured is ProtectSystem=strict; /etc is read-only to it"
+now = time.time()
+r = T.make_rule("suricata", "tune", sid=2010935, src_ip="10.0.0.9", now=now)
+txt = T.suricata_threshold_text([r], now)
+rules = [l for l in txt.splitlines() if l and not l.startswith("#")]
+assert len(rules) == 1 and re.match(r"^suppress gen_id 1, sig_id 2010935, track by_src, ip 10\.0\.0\.9\b", rules[0]), rules
+print("ok", loaded)
+PY
+)"
+[[ "$TH_OUT" == ok* ]] && pass "tuning_lib writes the file orionx.yaml loads, under /var/lib/suricata, in suppress syntax" || fail "threshold writer vs loader" "$TH_OUT"
 [[ -f "$ROOT/iso/config/includes.chroot/var/lib/suricata/orionx-threshold.config" && ! -f "$ROOT/iso/config/includes.chroot/etc/suricata/orionx-threshold.config" ]] && pass "shipped threshold file moved (one location)" || fail "threshold file location" "both or neither present"
 
-echo "[Synapse venv paths]"
+echo "[Synapse venv paths — the installer probe, executed against a fake venv]"
 S="$ROOT/scripts/setup-matrix.sh"
-grep -q 'synapse_present()' "$S" && grep -q 'SYNAPSE_VENV="/opt/venvs/matrix-synapse"' "$S" && grep -q '"$SYNAPSE_VENV/bin/synapse_homeserver"' "$S" && pass "installer probes the venv binary (not only PATH)" || fail "synapse probe" "missing"
+PROBE="$TMP/probe.sh"
+{ echo 'set -u'; grep -E '^SYNAPSE_VENV=' "$S"; sed -n '/^synapse_present() {/,/^}/p' "$S"; } > "$PROBE"
+if grep -q '^synapse_present() {' "$PROBE"; then
+    mkdir -p "$TMP/venv/bin"; printf '#!/bin/sh\n' > "$TMP/venv/bin/synapse_homeserver"; chmod +x "$TMP/venv/bin/synapse_homeserver"
+    ( PATH=/usr/bin:/bin; . "$PROBE"; SYNAPSE_VENV="$TMP/venv"; synapse_present ) && pass "synapse_present finds the venv binary (not only PATH)" || fail "synapse probe" "venv binary not detected"
+    ( PATH=/usr/bin:/bin; . "$PROBE"; SYNAPSE_VENV="$TMP/novenv"; synapse_present ) && fail "synapse probe" "reported present with no venv and nothing on PATH" || pass "synapse_present is false with no venv and nothing on PATH"
+else
+    fail "synapse probe" "synapse_present() not found in setup-matrix.sh"
+fi
 grep -q '"\$SYNAPSE_PY" -m synapse.app.homeserver' "$S" && ! grep -qE '^\s*python3 -m synapse\.app\.homeserver' "$S" && pass "installer generates config with the venv python" || fail "generate-config python" "still system python3"
-grep -q 'ExecStart=/opt/venvs/matrix-synapse/bin/python -m synapse.app.homeserver' "$U/matrix-synapse-orionx.service" && pass "unit runs the venv python" || fail "unit ExecStart" "still /usr/bin/python3"
-grep -q 'wg0.conf' "$U/matrix-synapse-orionx.service" | grep -v '^#' >/dev/null && fail "stale wg0.conf pre-check removed" "still present" || pass "stale wg0.conf pre-check removed (DEC-PHASE12-041)"
+# Synapse unit authority (lead ruling, QA round 1): the package's
+# matrix-synapse.service is the authority and matrix-synapse-orionx.service is
+# being retired (group B1). Whichever ships, no live line may reference
+# wg0.conf, and any ExecStart must use the venv python.
+SU="$U/matrix-synapse-orionx.service"
+if [[ -f "$SU" ]]; then
+    grep -q 'ExecStart=/opt/venvs/matrix-synapse/bin/python -m synapse.app.homeserver' "$SU" && pass "unit runs the venv python" || fail "unit ExecStart" "still /usr/bin/python3"
+    # F-12: this used to be `grep -q … | grep -v '^#'`, which can never fail
+    # (grep -q prints nothing). Filter comments FIRST, then look.
+    grep -v '^[[:space:]]*#' "$SU" | grep -q 'wg0.conf' && fail "stale wg0.conf pre-check removed" "a non-comment line still references wg0.conf" || pass "no non-comment wg0.conf line in the unit (DEC-PHASE12-041)"
+else
+    pass "matrix-synapse-orionx.service retired (package unit is the authority)"
+fi
+for d in "$ROOT"/iso/config/includes.chroot/etc/systemd/system/matrix-synapse.service.d/*.conf; do
+    [[ -f "$d" ]] || continue
+    bad="$(grep -E '^ExecStart=.+' "$d" | grep -v '^ExecStart=/opt/venvs/matrix-synapse/bin/python' || true)"
+    [[ -z "$bad" ]] && pass "drop-in ${d##*/}: ExecStart uses the venv python" || fail "drop-in ${d##*/}" "$bad"
+    grep -v '^[[:space:]]*#' "$d" | grep -q 'wg0.conf' && fail "drop-in ${d##*/}" "references wg0.conf" || pass "drop-in ${d##*/}: no wg0.conf"
+done
 grep -q '/opt/venvs/matrix-synapse/bin/synapse_homeserver' "$ROOT/scripts/control_center/sections/comms.py" && pass "Comms installed-probe follows the venv path" || fail "comms probe" "missing"
 grep -q 'once it is active, clients will connect to' "$ROOT/scripts/control_center/sections/comms.py" && pass "Comms does not imply a running server when inactive" || fail "comms wording" "missing"
 
 echo "[keyring]"
 grep -qE '^gnome-keyring$' "$ROOT/iso/config/package-lists/orionx.list.chroot" && pass "gnome-keyring on the image (DEC-PHASE12-061)" || fail "gnome-keyring" "not in package list"
 grep -q 'Use no encryption' "$ROOT/docs/User_Guide.md" && pass "User Guide explains Element's keyring prompt" || fail "guide" "missing"
-for d in 059 060 061; do grep -rq "DEC-PHASE12-$d" "$ROOT/scripts" "$ROOT/iso/config" && pass "DEC-PHASE12-$d annotated" || fail "DEC-PHASE12-$d" "not annotated"; done
+# Annotation presence is bookkeeping, not behaviour; counted separately (F-13).
+ANN=0; for d in 059 060 061; do grep -rq "DEC-PHASE12-$d" "$ROOT/scripts" "$ROOT/iso/config" && ANN=$((ANN+1)); done
+echo "  (annotations present: $ANN/3 — not counted as behavioural passes)"
 echo "==========================================="; echo "Results: $PASS passed, $FAIL failed"; echo "==========================================="
 [[ $FAIL -eq 0 ]]

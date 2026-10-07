@@ -15,12 +15,23 @@ Tests verify:
 Production sequence: An incident responder boots Orion-X, opens a terminal,
 and runs `orionx-mesh status` to check if a mesh is active, then
 `orionx-mesh join` to create or join one. These tests exercise that
-real-world sequence: help → status (inactive) → join (stub) → unknown cmd.
+real-world sequence: help → status (inactive) → join → unknown cmd.
+
+@decision DEC-PHASE12-110
+@title Mesh CLI tests run in a path sandbox and assert join's real behaviour
+@status accepted
+@rationale join/leave stopped being stubs long ago; four tests still asserted
+  "not yet implemented" and failed, which `make test-unit` hid (P1-2/F-01).
+  join now really generates keys, so every CLI run here gets its own temp
+  MESH_* paths (state, keys, PSK, log, pid, snapshot) — on a root Linux CI
+  runner the defaults would write real keys into /etc/wireguard. join is
+  exercised with stub `wg`/`ip` binaries that fail, and must fail loudly.
 """
 
 import os
 import stat
 import subprocess
+import tempfile
 
 import pytest
 
@@ -41,23 +52,49 @@ def _shellcheck_binary():
     return None
 
 
-def _run_cli(*args, env_override=None):
+def _run_cli(*args, env_override=None, failing_wireguard=False):
     """Run the CLI script with bash (bypasses root check via ORIONX_SKIP_ROOT_CHECK).
 
     We run with bash explicitly so we don't need the script to be on PATH.
     We set ORIONX_SKIP_ROOT_CHECK=1 so tests can run as non-root user.
+    Every mesh path is redirected into a fresh temp dir (DEC-PHASE12-110), so
+    no run can read or write /etc/wireguard, /run or /var/log on the host.
+    failing_wireguard=True puts stub `wg` and `ip` first on PATH that exit 1,
+    which is the state of any host without WireGuard tools.
     """
+    sandbox = tempfile.mkdtemp(prefix="mesh-cli-")
     env = os.environ.copy()
     env["ORIONX_SKIP_ROOT_CHECK"] = "1"
+    env.update({
+        "MESH_STATE_FILE": os.path.join(sandbox, "state"),
+        "MESH_PRIVATE_KEY": os.path.join(sandbox, "mesh-private.key"),
+        "MESH_PSK_FILE": os.path.join(sandbox, "mesh-psk"),
+        "MESH_LOG_FILE": os.path.join(sandbox, "mesh.log"),
+        "MESH_DISCOVER_PID_FILE": os.path.join(sandbox, "discover.pid"),
+        "MESH_SNAPSHOT_FILE": os.path.join(sandbox, "mesh-status.json"),
+        "MESH_EVENT_CLI": "/nonexistent",
+    })
+    if failing_wireguard:
+        stub_bin = os.path.join(sandbox, "bin")
+        os.mkdir(stub_bin)
+        for tool in ("wg", "ip"):
+            path = os.path.join(stub_bin, tool)
+            with open(path, "w") as f:
+                f.write("#!/bin/sh\necho \"stub %s: not available\" >&2\nexit 1\n" % tool)
+            os.chmod(path, 0o755)
+        env["PATH"] = stub_bin + os.pathsep + env.get("PATH", "")
     if env_override:
         env.update(env_override)
-    result = subprocess.run(
-        ["bash", CLI_SCRIPT] + list(args),
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=WORKTREE,
-    )
+    try:
+        result = subprocess.run(
+            ["bash", CLI_SCRIPT] + list(args),
+            capture_output=True,
+            text=True,
+            env=env,
+            cwd=WORKTREE,
+        )
+    finally:
+        subprocess.run(["rm", "-rf", sandbox], check=False)
     return result
 
 
@@ -246,21 +283,21 @@ class TestSubcommandRouting:
             f"Expected 'inactive' in status output, got: {result.stdout}"
         )
 
-    def test_join_stub(self):
-        """'orionx-mesh join' must print stub message and exit 0."""
-        result = _run_cli("join")
-        assert result.returncode == 0
-        assert "not yet implemented" in result.stdout.lower(), (
-            f"Expected stub message, got: {result.stdout}"
+    def test_join_fails_loudly_without_wireguard(self):
+        """'orionx-mesh join' is implemented: with no working wg it must exit non-zero."""
+        result = _run_cli("join", failing_wireguard=True)
+        combined = result.stdout + result.stderr
+        assert result.returncode != 0, (
+            f"join reported success with no WireGuard tools: {combined}"
         )
+        assert "not yet implemented" not in combined.lower()
+        assert "Unknown command" not in combined
 
-    def test_leave_stub(self):
-        """'orionx-mesh leave' must print stub message and exit 0."""
+    def test_leave_when_not_in_mesh(self):
+        """'orionx-mesh leave' with no mesh says so and exits 0 (nothing to undo)."""
         result = _run_cli("leave")
-        assert result.returncode == 0
-        assert "not yet implemented" in result.stdout.lower(), (
-            f"Expected stub message, got: {result.stdout}"
-        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "not in a mesh" in (result.stdout + result.stderr).lower()
 
     def test_peers_not_in_mesh(self):
         """'orionx-mesh peers' with no mesh must exit non-zero."""
@@ -361,7 +398,8 @@ class TestRootCheck:
 class TestProductionSequence:
     """Test the actual production sequence an incident responder follows.
 
-    Sequence: check status (inactive) → try help → join (stub) → status again.
+    Sequence: check status (inactive) → try help → join (no WireGuard on the
+    test host, so it must fail loudly) → status again (still inactive).
     This exercises the common workflow where a responder boots up, checks
     mesh state, reads help, then attempts to join.
     """
@@ -378,13 +416,11 @@ class TestProductionSequence:
         assert r2.returncode == 0
         assert "join" in r2.stdout
 
-        # Step 3: Responder tries to join mesh
-        r3 = _run_cli("join")
-        assert r3.returncode == 0
-        # For now it's a stub
-        assert "not yet implemented" in r3.stdout.lower()
+        # Step 3: Responder tries to join mesh on a host without WireGuard
+        r3 = _run_cli("join", failing_wireguard=True)
+        assert r3.returncode != 0, r3.stdout + r3.stderr
 
-        # Step 4: Check status again (still inactive since join is stub)
+        # Step 4: Check status again (still inactive: the join failed)
         r4 = _run_cli("status")
         assert r4.returncode == 0
         assert "inactive" in r4.stdout.lower()
@@ -397,6 +433,6 @@ class TestProductionSequence:
         combined = r1.stdout + r1.stderr
         assert "Usage:" in combined
 
-        # Step 2: Corrects to proper command
-        r2 = _run_cli("join")
-        assert r2.returncode == 0
+        # Step 2: Corrects to proper command; it is routed (not a usage error)
+        r2 = _run_cli("join", failing_wireguard=True)
+        assert "Unknown command" not in r2.stdout + r2.stderr

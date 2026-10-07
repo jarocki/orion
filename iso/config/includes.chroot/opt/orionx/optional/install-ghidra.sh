@@ -57,9 +57,11 @@ GHIDRA_VERSION="11.0.1"
 GHIDRA_DATE="20240130"
 GHIDRA_ZIP_URL="https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_${GHIDRA_VERSION}_build/ghidra_${GHIDRA_VERSION}_PUBLIC_${GHIDRA_DATE}.zip"
 GHIDRA_DEST="/opt/ghidra"
+# Published by the NSA in the Ghidra_11.0.1_build release notes (DEC-PHASE12-122).
+GHIDRA_ZIP_SHA256="a0bc9450aa3a231096b13a823c66311b9f84cb9cec4624393221cfed40ef6924"
 
 orionx_log_info "Downloading Ghidra ${GHIDRA_VERSION}..."
-orionx_wget_extract "$GHIDRA_ZIP_URL" "$GHIDRA_DEST"
+orionx_wget_extract "$GHIDRA_ZIP_URL" "$GHIDRA_DEST" "$GHIDRA_ZIP_SHA256"
 
 # ---------------------------------------------------------------------------
 # PATH symlink

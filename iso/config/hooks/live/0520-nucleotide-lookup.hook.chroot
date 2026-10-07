@@ -17,39 +17,81 @@
 #   abort the ISO; the CLI still works with any user-supplied lookup, and
 #   orionx-nucleotide-watch says exactly what is missing. Timeboxed so a hung
 #   clone cannot stall the build.
+#
+# @decision DEC-PHASE12-118
+# @title Pinned nuclei-templates commit; a failed build ships nothing and says so
+# @status accepted
+# @rationale The clone took whatever HEAD was that day (security F22), and the
+#   steps ran as `{ clone; build; printf BUILD_INFO; echo; } || { rm lookup; }`:
+#   errexit is suspended inside the group and only the LAST command (an echo)
+#   decides the branch, so a failed clone still ran the build, BUILD_INFO
+#   claimed `built=<now>`, and the fallback's rm never ran (shell P2-2). Now
+#   build_lookup() returns on the first failing step; the templates are fetched
+#   at NUCLEI_TEMPLATES_COMMIT (the commit rc9 shipped) and the checkout is
+#   verified to BE that commit; lookup.json must be non-empty JSON; BUILD_INFO
+#   is written last, only after that check, and records the pin. On any
+#   failure every output is removed, a SOFT-FAIL line is logged, and the
+#   release content-presence gate fails an image without lookup.json.
+#   To move the pin: pick a commit, rebuild, and check `nucleotide lookup`.
 set -euo pipefail
 
-echo "=== nucleotide: building Nuclei lookup table (DEC-PHASE12-012) ==="
+LAUNCHER="${LAUNCHER:-/opt/orionx/scripts/nucleotide/nucleotide-cli}"
+OUT_DIR="${OUT_DIR:-/opt/orionx/nucleotide}"
+CACHE_DIR="${CACHE_DIR:-/tmp/nuclei-templates-cache}"
+REPO="${REPO:-https://github.com/projectdiscovery/nuclei-templates}"
+NUCLEI_TEMPLATES_COMMIT="4907f7865cd95540bee7ba9c8919273edcefe4df"   # rc9 (2026-10-07)
 
-LAUNCHER="/opt/orionx/scripts/nucleotide/nucleotide-cli"
-OUT_DIR="/opt/orionx/nucleotide"
-CACHE_DIR="/tmp/nuclei-templates-cache"
-REPO="https://github.com/projectdiscovery/nuclei-templates"
+fetch_templates() {  # shallow fetch of exactly the pinned commit
+    rm -rf "$CACHE_DIR"
+    git init -q "$CACHE_DIR" || return 1
+    git -C "$CACHE_DIR" remote add origin "$REPO" || return 1
+    timeout 600 git -C "$CACHE_DIR" fetch --quiet --depth 1 origin "$NUCLEI_TEMPLATES_COMMIT" || return 1
+    git -C "$CACHE_DIR" checkout --quiet FETCH_HEAD || return 1
+    local got
+    got="$(git -C "$CACHE_DIR" rev-parse HEAD)" || return 1
+    if [[ "$got" != "$NUCLEI_TEMPLATES_COMMIT" ]]; then
+        echo "nuclei-templates checkout is $got, pin is $NUCLEI_TEMPLATES_COMMIT" >&2
+        return 1
+    fi
+}
 
-if [ ! -x "$LAUNCHER" ]; then
-    echo "WARNING: nucleotide launcher missing at $LAUNCHER — skipping lookup build" >&2
-    exit 0
-fi
-
-mkdir -p "$OUT_DIR"
-{
+build_lookup() {
+    fetch_templates || return 1
     # --templates-dir avoids nucleotide's own fetch path; we control depth/timeout.
-    timeout 600 git clone --depth 1 --quiet "$REPO" "$CACHE_DIR"
     timeout 900 "$LAUNCHER" build \
         --templates-dir "$CACHE_DIR" \
         --out "$OUT_DIR/lookup.json" \
         --snort-out-dir "$OUT_DIR/snort" \
-        --min-len 6
+        --min-len 6 || return 1
+    [[ -s "$OUT_DIR/lookup.json" ]] || { echo "lookup.json missing or empty" >&2; return 1; }
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d else 1)' "$OUT_DIR/lookup.json" \
+        || { echo "lookup.json is not a non-empty JSON document" >&2; return 1; }
     printf 'built=%s\ntemplates_repo=%s\ntemplates_commit=%s\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$REPO" \
-        "$(git -C "$CACHE_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)" \
-        > "$OUT_DIR/BUILD_INFO"
-    echo "nucleotide lookup built: $(du -sh "$OUT_DIR/lookup.json" | cut -f1) lookup.json, $(find "$OUT_DIR/snort" -type f | wc -l) rule files"
-} || {
-    echo "WARNING: nucleotide lookup build failed (network/GitHub?) — shipping without a prebuilt table." >&2
-    echo "         Operators can run: nucleotide build --out $OUT_DIR/lookup.json  (when online)" >&2
-    rm -f "$OUT_DIR/lookup.json"
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$REPO" "$NUCLEI_TEMPLATES_COMMIT" \
+        > "$OUT_DIR/BUILD_INFO" || return 1
 }
+
+if [[ "${ORIONX_0520_LIB_ONLY:-}" == "1" ]]; then
+    # shellcheck disable=SC2317  # reachable when sourced
+    return 0 2>/dev/null || exit 0
+fi
+
+echo "=== nucleotide: building Nuclei lookup table (DEC-PHASE12-012/118) ==="
+
+if [ ! -x "$LAUNCHER" ]; then
+    echo "SOFT-FAIL: nucleotide launcher missing at $LAUNCHER — no lookup table built" >&2
+    exit 0
+fi
+
+mkdir -p "$OUT_DIR"
+if build_lookup; then
+    echo "nucleotide lookup built at templates $NUCLEI_TEMPLATES_COMMIT: $(du -sh "$OUT_DIR/lookup.json" | cut -f1) lookup.json, $(find "$OUT_DIR/snort" -type f | wc -l) rule files"
+else
+    echo "WARNING: nucleotide lookup build failed (network/GitHub?) — shipping without a prebuilt table." >&2
+    echo "SOFT-FAIL: nucleotide lookup.json absent; the release content-presence gate will fail this image." >&2
+    echo "         Operators can run: nucleotide build --out $OUT_DIR/lookup.json  (when online)" >&2
+    rm -rf "$OUT_DIR/lookup.json" "$OUT_DIR/snort" "$OUT_DIR/BUILD_INFO"
+fi
 
 # Never ship the 100 MB template clone.
 rm -rf "$CACHE_DIR"
