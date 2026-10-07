@@ -132,6 +132,17 @@ good = "Port scan from 192.168.4.77, 900 distinct ports in 11 seconds."
 acc, why = rs.validate_line(good, EV)
 check(acc == good, f"a faithful model sentence is ACCEPTED ({why})")
 
+# QA round 1 P2-9: rstrip("'s") stripped a CHARACTER SET, so "address" became
+# "addre" and every word ending in s was rejected. Words ending in s, and a
+# possessive, must survive the validator when the event really says them.
+EV_S = {"ts": 1.0, "severity": "warning", "source": "suricata", "category": "ids",
+        "message": "suspicious process access from address 10.0.0.5, class trojan, deck pass",
+        "detail": {"src_ip": "10.0.0.5"}}
+for text in ("Suspicious process access from address 10.0.0.5.",
+             "Class trojan from address 10.0.0.5, the deck's pass."):
+    acc, why = rs.validate_line(text, EV_S)
+    check(acc == text, f"words ending in s / possessives are ACCEPTED: {text!r} ({why})")
+
 # speakable() shapes to a boundary and never cuts mid-word (reference deck 2026-10-05)
 _long = "Critical. " + " ".join(["signature ET POLICY something long"] * 30)
 _s = rs.speakable(_long)

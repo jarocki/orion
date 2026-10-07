@@ -335,7 +335,10 @@ def validate_line(text: str | None, event: dict[str, Any]) -> tuple[str | None, 
 
     allowed_words = facts["words"] | _GENERIC_LEXICON
     for word in _WORD_RE.findall(stripped):
-        w = word.lower().rstrip("'s").rstrip("'")
+        # A possessive SUFFIX ('s or a bare trailing '), never a character set:
+        # rstrip("'s") turned "address" into "addre" and rejected every word
+        # ending in s (QA round 1 python P2-9).
+        w = re.sub(r"'s?$", "", word.lower())
         if w in allowed_words:
             continue
         if w.endswith("s") and w[:-1] in allowed_words:
