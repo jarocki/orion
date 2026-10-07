@@ -156,7 +156,7 @@ ev2 = cl.parse_event(json.dumps({"ts":1.0,"severity":"warning","source":"s","cat
 ck(len(ev2["message"]) == 500, f"parse_event keeps the message whole for the drill-down ({len(ev2['message'])} chars; was clipped to 160)")
 ck_src = (root/"scripts/cockpit/orionx-cockpit").read_text()
 ck('ev["message"][:96]' not in ck_src, "drill-down no longer clips the message to 96 chars")
-ck("textwrap.wrap(ev[\"message\"]" in ck_src, "drill-down wraps the whole message")
+ck("L.drill_rows(ev" in ck_src, "drill-down rows come from cockpit_lib.drill_rows (wrapped, never cut; tested in test_cockpit_honesty)")
 ck(cl.parse_event(json.dumps({"ts":1.0,"message":"m"}))["detail"] == {},
    "event without detail parses to an empty dict, not None")
 ck(cl.parse_event('{"detail":"not-a-dict","ts":1}')["detail"] == {},

@@ -576,8 +576,107 @@ def tune_event(ev: dict[str, Any], mode: str) -> tuple[bool, str]:
         r = subprocess.run(args, capture_output=True, text=True, timeout=6.0, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         return False, f"orionx-tune failed: {exc}"
-    out = " ".join((r.stdout or r.stderr or "").split())
+    out = tune_message((r.stdout or "") + "\n" + (r.stderr or ""))
     return r.returncode == 0, out or f"orionx-tune exit {r.returncode}"
+
+
+def tune_message(text: str) -> str:
+    """orionx-tune's own lines, the reboot verdict FIRST (UX-10 / python.md P2-1).
+
+    The lines used to be joined into one string and cut at 160 chars; the
+    'survives reboot' verdict — the point of DEC-PHASE12-050 — started at
+    char ~134 and was the part that got cut. Lines are kept, not joined.
+    """
+    lines = [" ".join(ln.split()) for ln in (text or "").splitlines() if ln.strip()]
+    first = [ln for ln in lines if ln.lower().startswith("survives reboot")]
+    return "\n".join(first + [ln for ln in lines if ln not in first])
+
+
+# ---------------------------------------------------------------------------
+# LIVE layout and text fitting (DEC-PHASE12-073) — pure, so the 1366x768
+# reference deck can be proven in CI, not eyeballed.
+# ---------------------------------------------------------------------------
+# @decision DEC-PHASE12-073
+# @title The LIVE tab is laid out by a pure function and every string is fitted to its box
+# @status accepted
+# @rationale ux.md UX-10/16..23: at 1366x768 the window was taller than the
+#   screen, SYSTEMS labels fell 13 px below their panel, stream messages were
+#   clipped mid-word at ~63 chars with no ellipsis, the header hostname could
+#   overdraw the posture badge, the drill-down cut values at 74 chars, faded
+#   rows fell to ~2.4:1 contrast and severity was colour-only. live_layout()
+#   gives SYSTEMS a floor and lets the gauge absorb the rest; ellipsize()
+#   measures with the real font (the caller passes cairo's text_extents); the
+#   minimum font size is MIN_FONT; fade never drops below FADE_FLOOR; every
+#   row carries a severity word.
+MIN_FONT = 11.0
+FADE_FLOOR = 0.6
+SEVERITY_TAG = {"info": "INFO", "notice": "NOTE", "warning": "WARN", "critical": "CRIT"}
+SYSTEMS_MIN_H = 90
+
+
+def live_layout(W: float, H: float, pad: int = 16, header_h: int = 58,
+                deck_h: int = 118) -> dict[str, tuple[float, float, float, float]]:
+    """Panel rectangles (x, y, w, h) for a W x H drawing area."""
+    body_y = header_h + pad
+    body_h = max(0, H - header_h - pad * 2)
+    left_w = int(W * 0.58) - pad
+    out = {
+        "header": (0, 0, W, header_h),
+        "events": (pad, body_y, left_w, max(0, body_h - deck_h - pad)),
+        "deck": (pad, body_y + body_h - deck_h, left_w, deck_h),
+    }
+    rx = pad + left_w + pad
+    rw = W - rx - pad
+    avail = max(0, body_h - pad * 3)
+    a_h = int(avail * 0.30)
+    n_h = int(avail * 0.18)
+    s_h = max(SYSTEMS_MIN_H, int(avail * 0.17))
+    g_h = max(0, avail - a_h - n_h - s_h)
+    y = body_y
+    for name, h in (("actions", a_h), ("gauge", g_h), ("net", n_h), ("systems", s_h)):
+        out[name] = (rx, y, rw, h)
+        y += h + pad
+    return out
+
+
+def ellipsize(text: str, max_w: float, measure) -> str:
+    """Longest prefix of `text` (+ '…') whose measured width fits `max_w`."""
+    if measure(text) <= max_w:
+        return text
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if measure(text[:mid].rstrip() + "…") <= max_w:
+            lo = mid
+        else:
+            hi = mid - 1
+    return (text[:lo].rstrip() + "…") if lo else ""
+
+
+def fade_for(age: float) -> float:
+    """Row brightness by age; never below FADE_FLOOR (age is in its own column)."""
+    return max(FADE_FLOOR, 1.0 - min(max(age, 0.0), 600.0) / 800.0)
+
+
+def drill_rows(ev: dict[str, Any], chars: int) -> list[tuple[str, str]]:
+    """Every (label, text) row of the drill-down, values wrapped — never cut (UX-19)."""
+    import textwrap  # noqa: PLC0415
+    chars = max(20, int(chars))
+    rows: list[tuple[str, str]] = []
+    for i, line in enumerate(textwrap.wrap(str(ev.get("message", "")), width=chars + 18) or [""]):
+        rows.append(("message" if i == 0 else "", line))
+    d = ev.get("detail") or {}
+    order = ["src_ip", "dest_ip", "signature", "sid", "technique", "scan_kind",
+             "distinct_ports", "window_seconds", "protocols", "latest_dport",
+             "detector", "evidence", "triggering_rule", "ports_seen"]
+    for k in [k for k in order if k in d] + [k for k in sorted(d) if k not in order]:
+        v = d[k]
+        label = "full evidence" if k == "_full" else k.replace("_", " ")
+        if isinstance(v, list):
+            v = ", ".join(str(i) for i in v)
+        for i, part in enumerate(textwrap.wrap(str(v), width=chars, break_long_words=True) or [""]):
+            rows.append((label if i == 0 else "", part))
+    return rows
 
 
 def approve_action(action_id: str) -> tuple[bool, str]:

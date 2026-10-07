@@ -16,7 +16,7 @@ grep -q 'os.execv(exe, \[exe, "--tab", tab\])' "$CC/app.py" && pass "run_app lau
 grep -q '"tools", "Orion Tools"' "$CC/app.py" && pass "IR Tools is Orion Tools" || fail "rename" "label not Orion Tools"
 grep -q 'from control_center import app as CC' "$CK" && grep -q 'CC.append_sections(self.nb)' "$CK" && pass "the Cockpit builds its tabs from app.SECTIONS" || fail "cockpit tabs" "not wired"
 grep -q 'CCUX.set_notifier(self.toast_bar.notify)' "$CK" && pass "sections toast through the Cockpit's toast bar" || fail "toast" "not wired"
-grep -q 'if not on_live and name != "F11":' "$CK" && pass "LIVE keys do not fire on GTK tabs" || fail "key routing" "missing"
+grep -q 'if not on_live:' "$CK" && pass "LIVE keys do not fire on GTK tabs (behaviour: test_cockpit_gtk.sh)" || fail "key routing" "missing"
 grep -q 'choices=CC.TAB_KEYS' "$CK" && pass "--tab accepts exactly the authority's keys" || fail "--tab" "missing"
 HOOK="$ROOT/iso/config/hooks/live/0700-orionx-setup.hook.chroot"
 grep -q 'Exec=/usr/bin/orionx-cockpit --tab network' "$HOOK" && pass "menu entry (written by the 0700 hook) opens the Cockpit tabs" || fail "desktop" "hook Exec not updated"

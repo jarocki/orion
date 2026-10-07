@@ -62,8 +62,10 @@ The window carries three "works like magic" affordances added in W11-15:
 from __future__ import annotations
 
 import os
+import time
 import shutil
 import sys
+from pathlib import Path
 
 import gi
 
@@ -194,34 +196,68 @@ def append_sections(notebook: Gtk.Notebook) -> dict[str, int]:
     return pages
 
 
-class ToastBar(Gtk.Revealer):
-    """The single toast sink every section reports through (helpers.ux.set_notifier)."""
+TOAST_LOG = Path.home() / ".cache" / "orionx" / "cockpit.log"
 
-    def __init__(self) -> None:
+
+class ToastBar(Gtk.Revealer):
+    """The single toast sink for the whole Cockpit, LIVE included (helpers.ux.set_notifier).
+
+    @decision DEC-PHASE12-074
+    @title One toast system: wrapped, selectable, errors stay until dismissed, every message logged
+    @status accepted
+    @rationale ux.md UX-37 / UX-10. LIVE drew its own amber Cairo toast (one
+      line, cut at 160 chars, drawn past its 620 px box) while the tabs used
+      this bar; both vanished after 6 s, so an error toast could not be
+      re-read. Now LIVE reports here too. The label wraps (multi-line
+      outcomes such as orionx-tune's, reboot verdict first), errors stay up
+      until dismissed or replaced, and every message is appended to
+      ~/.cache/orionx/cockpit.log with a timestamp so it can be found again.
+    """
+
+    def __init__(self, log_path: Path | None = None) -> None:
         super().__init__()
+        self.log_path = log_path or TOAST_LOG
         self._label = Gtk.Label(label="")
         self._label.set_halign(Gtk.Align.START)
+        self._label.set_xalign(0.0)
         self._label.set_line_wrap(True)
         self._label.set_selectable(True)
         self._label.get_style_context().add_class("orionx-toast")
-        holder = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        close = Gtk.Button(label="✕")
+        close.set_relief(Gtk.ReliefStyle.NONE)
+        close.set_tooltip_text(f"Dismiss — every message is also in {self.log_path}")
+        close.connect("clicked", lambda _b: self._hide())
+        holder = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         holder.set_border_width(6)
         holder.pack_start(self._label, True, True, 0)
+        holder.pack_start(close, False, False, 0)
         self.set_transition_type(Gtk.RevealerTransitionType.SLIDE_UP)
         self.add(holder)
         self.set_reveal_child(False)
         self._timer = 0
 
+    def _log(self, message: str, level: str) -> None:
+        try:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.log_path.open("a", encoding="utf-8") as fh:
+                fh.write(f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {level.upper():5} {message}\n")
+        except OSError as exc:
+            print(f"orionx-cockpit: cannot log toast to {self.log_path}: {exc}", file=sys.stderr)
+
     def notify(self, message: str, level: str) -> None:
+        level = level if level in ("ok", "error", "info") else "info"
+        self._log(message, level)
         self._label.set_text(message)
         ctx = self._label.get_style_context()
         for cls in ("ok", "error", "info"):
             ctx.remove_class(cls)
-        ctx.add_class(level if level in ("ok", "error", "info") else "info")
+        ctx.add_class(level)
         self.set_reveal_child(True)
         if self._timer:
             GLib.source_remove(self._timer)
-        self._timer = GLib.timeout_add_seconds(6, self._hide)
+            self._timer = 0
+        if level != "error":
+            self._timer = GLib.timeout_add_seconds(8, self._hide)
 
     def _hide(self) -> bool:
         self.set_reveal_child(False)
@@ -247,7 +283,7 @@ def run_app(argv: list[str] | None = None) -> int:
         print(f"orionx-control-center: unknown tab {tab!r}; one of {', '.join(TAB_KEYS)}", file=sys.stderr)
         return 2
     exe = shutil.which("orionx-cockpit") or str(
-        __import__("pathlib").Path(__file__).resolve().parents[1] / "cockpit" / "orionx-cockpit")
+        Path(__file__).resolve().parents[1] / "cockpit" / "orionx-cockpit")
     if not os.path.exists(exe):
         print("orionx-control-center: orionx-cockpit is not installed; the tabs live there now "
               "(DEC-PHASE12-053). Remedy: check /opt/orionx/scripts/cockpit/orionx-cockpit", file=sys.stderr)

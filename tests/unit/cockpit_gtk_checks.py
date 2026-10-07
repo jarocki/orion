@@ -41,9 +41,21 @@ def ck(cond: bool, msg: str) -> None:
 def pump(seconds: float = 0.3) -> None:
     end = time.time() + seconds
     while time.time() < end:
-        while Gtk.events_pending():
+        # Bounded by the clock too: under emulation the 160 ms LIVE redraw can
+        # keep an event pending forever, and an unbounded inner loop hung.
+        while Gtk.events_pending() and time.time() < end:
             Gtk.main_iteration_do(False)
         time.sleep(0.01)
+
+
+def wait_for(cond, timeout: float = 10.0) -> bool:
+    """Pump until cond() is true (emulated amd64 is slow; fixed sleeps flaked)."""
+    end = time.time() + timeout
+    while time.time() < end:
+        if cond():
+            return True
+        pump(0.1)
+    return bool(cond())
 
 
 def stub(name: str, body: str) -> None:
@@ -104,25 +116,25 @@ print("[awareness: R.A.I.N. test reports the real outcome (UX-12)]")
 stub("orionx-rain", 'echo "paplay: no audio device" >&2; exit 3')
 n0 = len(TOASTS)
 aw._on_rain_test(None)
-pump(1.5)
+wait_for(lambda: any("exit 3" in m for _l, m in TOASTS[n0:]))
 msgs = [m for _l, m in TOASTS[n0:]]
 ck(any("✗ R.A.I.N. test failed (exit 3): paplay: no audio device" in m for m in msgs), f"failed test says so with the error ({msgs})")
 ck(not any("played" in m and "✗" not in m for m in msgs[1:]), "no success toast after a failure")
 stub("orionx-rain", "exit 0")
 n0 = len(TOASTS)
 aw._on_rain_test(None)
-pump(1.5)
+wait_for(lambda: any("exit 0" in m for _l, m in TOASTS[n0:]))
 ck(any("exit 0" in m for _l, m in TOASTS[n0:]), "exit 0 is reported as exit 0, with the next step if nothing was heard")
 (BIN / "orionx-rain").unlink()
 n0 = len(TOASTS)
 aw._on_rain_test(None)
-pump(1.5)
+wait_for(lambda: any("not installed" in m for _l, m in TOASTS[n0:]))
 ck(any("not installed" in m for _l, m in TOASTS[n0:]), "missing orionx-rain -> 'not installed'")
 
 print("[awareness: R.A.I.N. settings go through rain_lib and toast (UX-13)]")
 n0 = len(TOASTS)
 aw._rain_vol.set_value(40)
-pump(1.0)
+wait_for(lambda: any("volume 40%" in m for _l, m in TOASTS[n0:]))
 saved = (cfg_dir / "rain.json").read_text()
 ck('"volume": 0.4' in saved, "volume saved through rain_lib.save_config")
 ck(any("volume 40%" in m and "survives reboot:" in m for _l, m in TOASTS[n0:]), f"change toasts the setting + reboot truth ({TOASTS[n0:]})")
@@ -187,7 +199,7 @@ live = [p for p in Poller.instances if p.owner is cw.da]
 ck(live and all(p.runs >= 1 for p in live), "LIVE probes ran while LIVE is visible")
 mesh_page = cw._pages["mesh"]
 cw.nb.set_current_page(mesh_page)
-pump(1.0)
+wait_for(lambda: all(p.runs >= 1 for p in Poller.instances if p.visible() and p.owner is not cw.da), 5.0)
 mesh_pollers = [p for p in Poller.instances if p.visible() and p.owner is not cw.da]
 ck(mesh_pollers and all(p.runs >= 1 for p in mesh_pollers), "switching to Mesh collects immediately")
 runs_live = sum(p.runs for p in live)
@@ -207,6 +219,109 @@ for w in walk(cw):
         if any(r in t for r in retired):
             seen.append(t)
 ck(not seen, f"no retired names in any label, button or tooltip ({seen[:3]})")
+
+print("[LIVE at the 1366x768 reference deck (UX-10/16..23)]")
+import cairo  # noqa: E402
+
+cw.nb.set_current_page(0)
+cw.unmaximize()
+cw.resize(1366, 701)            # 768 - 30 px panel - ~37 px title bar
+pump(1.0)
+W, H = cw.da.get_allocated_width(), cw.da.get_allocated_height()
+print(f"  (LIVE drawing area at a 1366x701 window: {W}x{H})")
+ck(W >= 1100 and H >= 600, f"LIVE gets {W}x{H}")
+cw.vitals = {"hostname": "incident-2026-10-07-site-b-laptop-03-with-an-even-longer-name", "primary_ipv4": "10.200.113.17",
+             "interfaces": [{"iface": "wlan0", "ipv4": ["10.200.113.17/24"]}], "gateway": "10.200.113.1",
+             "gateway_dev": "wlan0", "uptime_s": 4000, "cpu_pct": 37.0, "load": (0.5, 0.4, 0.3), "cpu_count": 4,
+             "mem": {"used_pct": 61.0, "total_kib": 8000000, "available_kib": 3000000},
+             "disk": {"used_pct": 40.0, "free_bytes": 9 * 1024 ** 3, "path": "/"}}
+cw.posture, cw.posture_status = "1", {}
+cw.heal = {"readable": True, "chain_ok": True, "pending": [{"id": "p1", "action": "block_ip", "target": "10.0.0.5", "proposed_ts": time.time()}],
+           "active": [{"id": "a1", "action": "kill_process", "target": "4242", "applied_ts": time.time(), "expires_ts": time.time() + 600}]}
+cw.systems = {"NEBULA": True, "FIREWALL": False, "MESH": None, "R.A.I.N.": True}
+long = "ET SCAN Potential SSH Scan OUTBOUND from 192.168.4.57 to 203.0.113.9 port 22 — repeated 41 times in 60 s by the same source"
+for i, sev in enumerate(("info", "notice", "warning", "critical") * 6):
+    cw.tail.events.append({"ts": time.time() - i * 90, "severity": sev, "source": "suricata", "category": "ids",
+                           "message": long, "id": "", "detail": {"src_ip": "192.168.4.57", "sid": 2210000,
+                                                                 "signature": "S" * 3000, "ports_seen": list(range(60))}})
+drawn: list = []
+orig_text = cw._text
+
+
+def rec_text(cr, x, y, s, size=12.0, color=None, bold=False, align="left", glow=0.0, max_w=None):
+    kw = {"bold": bold, "align": align, "glow": glow, "max_w": max_w}
+    if color is not None:
+        kw["color"] = color
+    adv = orig_text(cr, x, y, s, size, **kw)
+    shown = cw._fit(cr, s, size, max_w, bold) if max_w is not None else s
+    left = x - (adv if align == "right" else adv / 2 if align == "center" else 0)
+    drawn.append((left, y, adv, size, max_w, shown))
+    return adv
+
+
+cw._text = rec_text
+surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)
+cw.sel = 2
+err = None
+try:
+    cw._draw(cw.da, cairo.Context(surf))
+    n_first = len(drawn)
+    surf.write_to_png(os.environ.get("ORIONX_GTK_PNG", str(WORK / "live.png")).replace(".png", "-stream.png"))
+    cw.drill = True
+    cw._draw(cw.da, cairo.Context(surf))
+    surf.write_to_png(os.environ.get("ORIONX_GTK_PNG") or str(WORK / "live.png"))
+except Exception as exc:  # noqa: BLE001
+    err = exc
+cw._text = orig_text
+ck(err is None, f"LIVE renders with long hostname, messages, pending action and drill-down open ({err})")
+lay = CK.L.live_layout(W, H)
+sx, sy, sw, sh = lay["systems"]
+sys_texts = [d for d in drawn if sx <= d[0] <= sx + sw and sy <= d[1] <= sy + sh + 30]
+ck(sys_texts and all(d[1] <= sy + sh - 4 for d in sys_texts), f"SYSTEMS words sit inside their panel (bottom {sy + sh}; lowest baseline {max(d[1] for d in sys_texts) if sys_texts else None})")
+ck(all(d[3] >= 11 or d[3] == 0 for d in drawn), f"no text below 11 px (min {min(d[3] for d in drawn)})")
+fitted = [d for d in drawn if d[4] is not None]
+ck(fitted and all(d[2] <= d[4] + 0.5 for d in fitted), f"every fitted string fits its width ({len(fitted)} strings)")
+who = [d for d in drawn if d[5].startswith("incident-")]
+ck(who and who[0][5].endswith("…") and who[0][0] + who[0][2] < W - 16 - 180 - 300 - 16, "long hostname ellipsised before the posture badge")
+stream = [d for d in drawn[:n_first] if d[5].startswith("ET SCAN")]
+ck(stream and all(d[5].endswith("…") for d in stream), "stream messages end with an ellipsis, not a mid-word clip")
+ck(any(d[5] == "CRIT" for d in drawn) and any(d[5] == "INFO" for d in drawn), "severity words drawn in the stream")
+ck(any("rows 1" in d[5] for d in drawn), "drill-down pages long detail (rows x–y of n)")
+toasts_before = len(TOASTS)
+cw._say("survives reboot: NO — test\nsquelched: sid 1", "ok")
+ck(cw.toast_bar.get_reveal_child() and "survives reboot" in cw.toast_bar._label.get_text(), "LIVE outcomes use the shared, wrapping ToastBar")
+ck((HOME / ".cache" / "orionx" / "cockpit.log").read_text().count("survives reboot: NO — test") == 1, "toasts are logged to ~/.cache/orionx/cockpit.log")
+cw.toast_bar.notify("✗ boom", "error")
+pump(9.0)
+ck(cw.toast_bar.get_reveal_child(), "an error toast is still up after 9 s (dismiss with ✕)")
+_ = toasts_before
+
+print("[keys: Ctrl+PgUp/PgDn reach GTK, Alt+N picks a tab, a stray q/Esc does not quit (UX-20, UX-47)]")
+from gi.repository import Gdk  # noqa: E402
+
+quits: list = []
+CK.Gtk.main_quit = lambda *a: quits.append(1)
+
+
+class _Key:
+    def __init__(self, name: str, state=0):
+        self.keyval = Gdk.keyval_from_name(name)
+        self.state = Gdk.ModifierType(state)
+
+
+C_, A_ = int(Gdk.ModifierType.CONTROL_MASK), int(Gdk.ModifierType.MOD1_MASK)
+cw.toast_bar.set_reveal_child(False)
+cw.drill = False
+cw.nb.set_current_page(0)
+ck(cw._on_key(None, _Key("Page_Down", C_)) is False, "Ctrl+PgDn on LIVE is left to the notebook")
+ck(cw._on_key(None, _Key("3", A_)) is True and cw.nb.get_current_page() == 2, "Alt+3 opens the third tab")
+ck(cw._on_key(None, _Key("s")) is False, "'s' on a GTK tab is not swallowed")
+cw.nb.set_current_page(0)
+cw._on_key(None, _Key("q"))
+cw._on_key(None, _Key("Escape"))
+ck(not quits, "plain q and Esc do not quit the live view")
+cw._on_key(None, _Key("q", C_))
+ck(len(quits) == 1, "Ctrl+Q quits")
 
 print(f"Results: {PASS} passed, {FAIL} failed", flush=True)
 os._exit(1 if FAIL else 0)   # skip GTK teardown: it can hang under Xvfb

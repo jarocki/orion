@@ -72,6 +72,46 @@ ck(v["state"] == "pending", "a status written before the request does not confir
 PY
 then pass "posture verdict matrix"; else fail "posture verdict" "see above"; fi
 
+echo "[LIVE layout + text fitting (DEC-PHASE12-073)]"
+if python3 - "$ROOT" <<'PY'
+import sys, pathlib
+root = pathlib.Path(sys.argv[1]); sys.path.insert(0, str(root/"scripts/cockpit"))
+import cockpit_lib as L
+def ck(c, m):
+    print(("  ok   " if c else "  FAIL ") + m)
+    if not c: raise SystemExit(1)
+# Reference deck: 1366x768, 30 px panel, ~37 px title bar -> ~701 px window;
+# minus the left tab strip the LIVE drawing area measured under Xvfb is in
+# the GTK suite. Prove the layout for a range around it.
+for W, H in ((1236, 695), (1180, 640), (1366, 768), (1024, 600)):
+    lay = L.live_layout(W, H)
+    inside = all(x >= 0 and y >= 0 and x + w <= W and y + h <= H for x, y, w, h in lay.values())
+    rects = [v for k, v in lay.items() if k != "header"]
+    overlap = any(a is not b and a[0] < b[0] + b[2] and b[0] < a[0] + a[2] and a[1] < b[1] + b[3] and b[1] < a[1] + a[3]
+                  for a in rects for b in rects)
+    ck(inside and not overlap and lay["systems"][3] >= L.SYSTEMS_MIN_H,
+       f"{W}x{H}: panels inside, no overlap, SYSTEMS {lay['systems'][3]} px >= {L.SYSTEMS_MIN_H}")
+m = lambda t: 7.0 * len(t)          # a fixed-pitch stand-in for cairo text_extents
+s = L.ellipsize("ET SCAN Nmap SYN scan 10.0.0.5 -> 10.0.0.12 from a very long signature", 140, m)
+ck(m(s) <= 140 and s.endswith("…"), f"ellipsize fits and marks the cut: {s!r}")
+ck(L.ellipsize("short", 140, m) == "short", "short text untouched")
+ck(L.fade_for(0) == 1.0 and L.fade_for(3600) == L.FADE_FLOOR == 0.6, "fade floor 0.6 (was 0.35, ~2.4:1 contrast)")
+ck(L.SEVERITY_TAG == {"info": "INFO", "notice": "NOTE", "warning": "WARN", "critical": "CRIT"}, "severity word per row")
+out = ("squelched: sid 2210000 (ET SCAN Potential SSH Scan OUTBOUND) from 192.168.4.57 for 59 min [12ff24ec6d]\n"
+       "rules active: 3\nsurvives reboot: NO — no /run/live/persistence directory — this boot has no persistence volume. "
+       "The rule lasts until this deck reboots; set up persistence (User Guide §3) to keep it.\n")
+msg = L.tune_message(out)
+ck(msg.splitlines()[0].startswith("survives reboot: NO") and len(msg.splitlines()) == 3 and "[12ff24ec6d]" in msg,
+   "orionx-tune lines kept, reboot verdict first, nothing cut (UX-10, P2-1)")
+ev = {"message": "m " * 200, "detail": {"signature": "S" * 300, "ports_seen": list(range(40)), "src_ip": "10.0.0.9"}}
+rows = L.drill_rows(ev, 60)
+joined = "".join(t for _l, t in rows)
+ck("S" * 300 in joined.replace(" ", "") and "39" in joined and all(len(t) <= 78 for _l, t in rows),
+   f"drill-down rows carry every char of a 300-char signature and all 40 ports, wrapped ({len(rows)} rows) (UX-19)")
+ck([l for l, _t in rows if l][:3] == ["message", "src ip", "signature"], "operator-first field order kept")
+PY
+then pass "LIVE layout fits the reference deck; text is fitted, never clipped mid-word"; else fail "LIVE layout" "see above"; fi
+
 echo "==========================================="
 echo "Results: $PASS passed, $FAIL failed"
 echo "==========================================="
