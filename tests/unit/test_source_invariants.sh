@@ -61,5 +61,149 @@ else
 fi
 [[ -x "$REPO_ROOT/iso/auto/config" ]] && pass "33b: working-tree copy executable" || fail "33b" "not executable"
 
+echo "[hooks-applied static checks, moved from the ISO log gate (F-15d)]"
+HOOK_0700="$REPO_ROOT/iso/config/hooks/live/0700-orionx-setup.hook.chroot"
+# ---------------------------------------------------------------------------
+# rc4 broken-basics: assert .desktop entries use xfce4-terminal, not lxterminal
+# These checks are static (no build log needed) — they validate the hook file
+# content directly. They do NOT require a built ISO.
+# ---------------------------------------------------------------------------
+echo "--- rc4 static checks: .desktop Exec strings in 0700 hook ---"
+echo ""
+
+HOOK_0700="$REPO_ROOT/iso/config/hooks/live/0700-orionx-setup.hook.chroot"
+if [[ -f "$HOOK_0700" ]]; then
+    # Must have xfce4-terminal in Exec lines
+    if grep -q "xfce4-terminal" "$HOOK_0700"; then
+        pass "rc4: 0700 hook uses xfce4-terminal in .desktop Exec lines"
+    else
+        fail "rc4: 0700 hook uses xfce4-terminal in .desktop Exec lines"
+    fi
+    # Must have zero FUNCTIONAL lxterminal references.
+    # Filter comments first so @decision documentation that mentions lxterminal
+    # (explaining that xfce4-terminal replaced it) does not trigger a false fail.
+    # Matches the approach in tests/unit/test_orionx_setup_hook_unit.sh.
+    LXTERM_COUNT="$(grep -v '^\s*#' "$HOOK_0700" | grep -c "lxterminal" || true)"
+    if [[ "$LXTERM_COUNT" -eq 0 ]]; then
+        pass "rc4: 0700 hook has zero functional lxterminal references"
+    else
+        fail "rc4: 0700 hook has zero functional lxterminal references" \
+             "Found $LXTERM_COUNT functional reference(s) — switch all Exec lines to xfce4-terminal"
+    fi
+    # Must have the one-click mesh launcher
+    if grep -q "orionx-start-mesh.desktop" "$HOOK_0700"; then
+        pass "rc4: 0700 hook creates orionx-start-mesh.desktop one-click launcher"
+    else
+        fail "rc4: 0700 hook creates orionx-start-mesh.desktop one-click launcher"
+    fi
+else
+    skip "rc4: 0700 hook static checks" "hook file not found: $HOOK_0700"
+fi
+
+# nm-applet autostart: network-manager-gnome ships /etc/xdg/autostart/nm-applet.desktop
+# In the source tree (includes.chroot), this file should NOT be present (the
+# package itself installs it at build time). Verify the package is in the list.
+PKG_LIST="$REPO_ROOT/iso/config/package-lists/orionx.list.chroot"
+if [[ -f "$PKG_LIST" ]]; then
+    if grep -q "^network-manager-gnome$" "$PKG_LIST"; then
+        pass "rc4: network-manager-gnome in package list (ships nm-applet autostart)"
+    else
+        fail "rc4: network-manager-gnome in package list (ships nm-applet autostart)"
+    fi
+    if grep -q "^network-manager$" "$PKG_LIST"; then
+        pass "rc4: network-manager in package list"
+    else
+        fail "rc4: network-manager in package list"
+    fi
+    if grep -q "^wpasupplicant$" "$PKG_LIST"; then
+        pass "rc4: wpasupplicant in package list"
+    else
+        fail "rc4: wpasupplicant in package list"
+    fi
+    if grep -q "^iw$" "$PKG_LIST"; then
+        pass "rc4: iw in package list"
+    else
+        fail "rc4: iw in package list"
+    fi
+else
+    skip "rc4: package list checks" "package list not found: $PKG_LIST"
+fi
+
+echo ""
+
+# ---------------------------------------------------------------------------
+# rc5 W9-2 static checks: orionx-control-center .desktop + symlink in 0700 hook
+#
+# @decision DEC-PHASE10-005
+# @title Control Center ships ahead of Phase 10 Nebula AI; hook wiring
+#        is asserted here as a static gate that does not require a built ISO.
+# @status accepted
+# @rationale The 0700 hook is the single authority for /usr/bin symlinks
+#   (0700_hook_path_symlinks_authority) and .desktop launchers
+#   (0700_hook_desktop_launcher_authority). These checks confirm both wires
+#   are present in the hook source so a future refactor cannot silently
+#   remove them. DEC-PHASE9-006 invariant: no lxterminal in any Exec line
+#   of the orionx-control-center .desktop (GTK app, no terminal wrapper).
+#   Comment-filtering matches the approach in the rc4 static checks above:
+#   `grep -v '^\s*#' | grep -c lxterminal` so @decision documentation that
+#   mentions lxterminal does not false-positive.
+# ---------------------------------------------------------------------------
+echo "--- rc5 W9-2 static checks: orionx-control-center hook wiring ---"
+echo ""
+
+if [[ -f "$HOOK_0700" ]]; then
+    # (a) .desktop launcher present: /usr/share/applications/orionx-control-center.desktop
+    if grep -q "orionx-control-center.desktop" "$HOOK_0700"; then
+        pass "W9-2: 0700 hook creates /usr/share/applications/orionx-control-center.desktop"
+    else
+        fail "W9-2: 0700 hook creates /usr/share/applications/orionx-control-center.desktop"
+    fi
+
+    # (b) .desktop Exec line is NOT lxterminal (DEC-PHASE9-006 invariant).
+    #     Filter comment lines first to avoid false-positives from @decision
+    #     documentation that mentions lxterminal for historical context.
+    LXTERM_CONTROL="$(grep -v '^\s*#' "$HOOK_0700" | grep -c "lxterminal" || true)"
+    if [[ "$LXTERM_CONTROL" -eq 0 ]]; then
+        pass "W9-2: orionx-control-center .desktop does NOT use lxterminal (DEC-PHASE9-006)"
+    else
+        fail "W9-2: orionx-control-center .desktop does NOT use lxterminal" \
+             "Found $LXTERM_CONTROL functional lxterminal reference(s) — DEC-PHASE9-006 violated"
+    fi
+
+    # (c) Exec line for orionx-control-center.desktop uses absolute path
+    # DEC-PHASE12-053: the entry opens the Orion Cockpit on a tab (still a direct GTK binary).
+    if grep -q "Exec=/usr/bin/orionx-cockpit --tab network" "$HOOK_0700" 2>/dev/null; then
+        pass "W9-2: orionx-control-center.desktop Exec opens the Cockpit tabs directly (DEC-PHASE12-053, DEC-PHASE9-006)"
+    else
+        fail "W9-2: orionx-control-center.desktop Exec=/usr/bin/orionx-cockpit --tab network" \
+             "0700 hook must emit the Cockpit-tab Exec in the .desktop block (the tabs live in the Cockpit now)"
+    fi
+
+    # (d) /usr/bin/orionx-control-center symlink entry present in SCRIPT_MAP
+    if grep -q '"orionx-control-center"' "$HOOK_0700" 2>/dev/null; then
+        pass "W9-2: orionx-control-center present in SCRIPT_MAP symlink loop"
+    else
+        fail "W9-2: orionx-control-center present in SCRIPT_MAP symlink loop" \
+             "0700 hook SCRIPT_MAP must include orionx-control-center → /opt/orionx/scripts/control_center/"
+    fi
+
+    # (e) .desktop file staged in includes.chroot (source-tree presence check)
+    # DEC-PHASE12-053: the 0700 hook is the ONLY writer of this file. rc7 shipped a
+    # stale entry because a static copy here was edited while the hook's heredoc
+    # overwrote it at build time. A static copy must NOT exist.
+    DESKTOP_SRC="$REPO_ROOT/iso/config/includes.chroot/usr/share/applications/orionx-control-center.desktop"
+    if [[ ! -f "$DESKTOP_SRC" ]]; then
+        pass "W9-2: no static orionx-control-center.desktop beside the 0700 heredoc (one writer)"
+    else
+        fail "W9-2: no static orionx-control-center.desktop beside the 0700 heredoc" \
+             "a static copy exists and the hook overwrites it at build time — delete it (DEC-PHASE12-053)"
+    fi
+else
+    skip "W9-2: orionx-control-center hook wiring checks" "hook file not found: $HOOK_0700"
+fi
+
+echo ""
+
+
 echo; echo "Results: $PASS passed, $FAIL failed, $SKIP skipped"
 [[ $FAIL -eq 0 ]]
