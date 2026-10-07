@@ -282,7 +282,7 @@ class Cockpit(Gtk.Window):
             self._say("nothing awaiting approval")
             return
         rec = pend[self.heal_sel % len(pend)]
-        ok, msg = L.approve_action(str(rec.get("action_id", "")))
+        ok, msg = L.approve_action(str(rec.get("id", "")))
         self._say(msg)
         # Re-read rather than assume it worked: the engine is the authority on
         # whether the action actually moved out of pending.
@@ -559,22 +559,25 @@ class Cockpit(Gtk.Window):
         if not self.heal.get("readable", False):
             # Never render an empty list here: "no pending actions" and "I
             # could not look" must not look the same on a defensive dashboard.
-            self._text(cr, cx + 8, cy + 20, "state unknown \u2014 " + (self.heal.get("reason") or "cannot read chain"),
+            self._text(cr, cx + 8, cy + 20, "state unknown \u2014 " + (self.heal.get("reason") or "no snapshot"),
                        11, L.AMBER)
-            self._text(cr, cx + 8, cy + 38, "run: sudo orionx-heal status", 10, L.DIM)
+            self._text(cr, cx + 8, cy + 38, "check: systemctl status orionx-heald  \u00b7  sudo orionx-heal status", 11, L.DIM)
             cr.restore()
             return
 
         ry = cy + 18
+        if self.heal.get("chain_ok") is False:
+            self._text(cr, cx + 8, ry, "\u26a0 audit chain does not verify \u2014 sudo orionx-heal verify", 11, L.RED, bold=True)
+            ry += 18
         if pend:
             rec = pend[self.heal_sel % len(pend)]
             self._text(cr, cx + 8, ry, f"AWAITING APPROVAL  ({len(pend)})", 11, L.RED, bold=True)
             ry += 20
             self._text(cr, cx + 8, ry,
-                       f"{rec.get('playbook','?')} \u2192 {str(rec.get('target','?'))[:28]}", 12,
+                       f"{rec.get('action','?')} \u2192 {str(rec.get('target','?'))[:28]}", 12,
                        (0.95, 0.95, 0.95))
             ry += 17
-            self._text(cr, cx + 8, ry, f"id {str(rec.get('action_id',''))[:16]}", 10, L.DIM)
+            self._text(cr, cx + 8, ry, f"id {str(rec.get('id',''))[:16]}", 11, L.DIM)
             ry += 22
             bw, bh = 104.0, 26.0
             bx, by = cx + 8, ry
@@ -596,10 +599,13 @@ class Cockpit(Gtk.Window):
         if act:
             self._text(cr, cx + 8, ry, f"IN FORCE  ({len(act)})", 11, L.AMBER, bold=True)
             ry += 18
+            now = time.time()
             for rec in act[:3]:
+                exp = rec.get("expires_ts")
+                left = f"  (reverts in {L.fmt_age(exp - now)})" if exp and exp > now else ""
                 self._text(cr, cx + 8, ry,
-                           f"\u2022 {rec.get('playbook','?')} \u2192 {str(rec.get('target','?'))[:26]}",
-                           10.5, (0.85, 0.85, 0.85))
+                           f"\u2022 {rec.get('action','?')} \u2192 {str(rec.get('target','?'))[:26]}{left}",
+                           11, (0.85, 0.85, 0.85))
                 ry += 15
         cr.restore()
 

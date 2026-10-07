@@ -123,6 +123,14 @@ class EventTail:
         self._fh = None
         self._inode = -1
         self._pos = 0
+        # @decision DEC-PHASE12-066
+        # @title A bus line read before its writer finished is completed, not dropped
+        # @status accepted
+        # @rationale python.md P1-6: readline() can return a line with no
+        #   trailing newline while a writer is mid-append; it failed to parse,
+        #   _pos moved past it, and that event never reached the stream. Such
+        #   a fragment is held here and prefixed to the next read.
+        self._partial = ""
 
     def _open(self) -> bool:
         try:
@@ -137,9 +145,12 @@ class EventTail:
         self._inode = st.st_ino
         # Backfill the last N events, then continue from EOF.
         try:
-            tail = fh.readlines()[-self._backfill:] if self._backfill else []
+            lines = fh.readlines()
         except OSError:
-            tail = []
+            lines = []
+        if lines and not lines[-1].endswith("\n"):
+            self._partial = lines.pop()
+        tail = lines[-self._backfill:] if self._backfill else []
         for ln in tail:
             ev = parse_event(ln)
             if ev:
@@ -158,6 +169,7 @@ class EventTail:
                 self._fh.close()
                 self._fh = None
                 self._backfill = 0
+                self._partial = ""
                 if not self._open():
                     return []
         except OSError:
@@ -168,6 +180,10 @@ class EventTail:
                 line = self._fh.readline()
                 if not line:
                     break
+                if not line.endswith("\n"):
+                    self._partial += line      # writer is mid-line: finish it next poll
+                    break
+                line, self._partial = self._partial + line, ""
                 ev = parse_event(line)
                 if ev:
                     new.append(ev)
@@ -424,14 +440,83 @@ __all__ = [
 # while the Cockpit, the thing the operator is actually watching, showed
 # nothing about it. These readers put that state on the dashboard.
 #
-# Reading is best-effort and never raises: the Cockpit runs as the operator and
-# the chain lives under /var/lib/orionx/healing, so a permission failure is
-# expected and must degrade to "unknown", never to a crash or a false "no
-# pending actions" — claiming there is nothing to approve when there is would
-# be the worst possible lie for this panel to tell.
+# Reading is best-effort and never raises. The chain itself is root:0600, so
+# the Cockpit reads heald's world-readable snapshot (DEC-PHASE12-065).
 # ---------------------------------------------------------------------------
 
-HEAL_CHAIN = Path("/var/lib/orionx/healing/chain.jsonl")
+# @decision DEC-PHASE12-065
+# @title The Cockpit reads healing state ONLY from heald's published snapshot
+# @status accepted
+# @rationale QA round 1 (python.md P1-1, P1-2). The Cockpit replayed the
+#   root:0600 hash chain itself. It could never open it as orionx-operator, and
+#   when it could (tests) it matched `status == "active"`, a value the engine
+#   never writes (it writes kind="applied"), so IN FORCE stayed empty while the
+#   deck was blocking a host. A second replay of the chain is a second
+#   authority. orionx-heald (root) now publishes /run/orionx/healing-status.json
+#   (0644, atomic) from the engine's own replay; that is the only thing read
+#   here. A missing, corrupt or stale (>30 s) snapshot is "state unknown —
+#   orionx-heald not publishing", never an empty list: "nothing pending" and "I
+#   could not look" must not look the same on a defensive dashboard.
+HEAL_STATUS = Path("/run/orionx/healing-status.json")
+HEAL_STALE_AFTER = 30.0
+
+
+def _f(v: Any) -> float | None:
+    try:
+        return None if v is None or isinstance(v, bool) else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _heal_rec(r: Any, ts_key: str) -> dict[str, Any] | None:
+    if not isinstance(r, dict) or not str(r.get("id", "")).strip():
+        return None
+    out = {"id": str(r["id"]), "action": str(r.get("action", "?")),
+           "target": str(r.get("target", "?")), ts_key: _f(r.get(ts_key))}
+    if ts_key == "applied_ts":
+        out["expires_ts"] = _f(r.get("expires_ts"))
+    return out
+
+
+def healing_actions(path: Path = HEAL_STATUS, now: float | None = None,
+                    stale_after: float = HEAL_STALE_AFTER) -> dict[str, Any]:
+    """Healing state from orionx-heald's snapshot. Never raises.
+
+    Returns {'readable', 'pending', 'active', 'reason', 'age', 'chain_ok'}.
+    `readable` False means the panel must say "state unknown — <reason>".
+    """
+    now = time.time() if now is None else now
+    out: dict[str, Any] = {"readable": False, "pending": [], "active": [],
+                           "reason": "", "age": None, "chain_ok": None}
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        out["reason"] = f"orionx-heald not publishing ({path} missing)"
+        return out
+    except OSError as exc:
+        out["reason"] = f"orionx-heald snapshot unreadable ({exc.strerror or exc})"
+        return out
+    except ValueError:
+        out["reason"] = "orionx-heald snapshot is not valid JSON"
+        return out
+    if not isinstance(data, dict) or _f(data.get("ts")) is None:
+        out["reason"] = "orionx-heald snapshot has no timestamp"
+        return out
+    age = max(0.0, now - float(data["ts"]))
+    out["age"] = age
+    out["chain_ok"] = data.get("chain_ok") if isinstance(data.get("chain_ok"), bool) else None
+    if age > stale_after:
+        out["reason"] = f"orionx-heald not publishing (snapshot {age:.0f} s old)"
+        return out
+    if data.get("error"):
+        out["reason"] = f"orionx-heald reports: {str(data['error'])[:100]}"
+        return out
+    pend = [x for x in (_heal_rec(r, "proposed_ts") for r in data.get("pending") or []) if x]
+    act = [x for x in (_heal_rec(r, "applied_ts") for r in data.get("in_force") or []) if x]
+    pend.sort(key=lambda r: r["proposed_ts"] or 0.0, reverse=True)
+    act.sort(key=lambda r: r["applied_ts"] or 0.0, reverse=True)
+    out.update(readable=True, pending=pend, active=act)
+    return out
 
 
 def _heal_cli(args: list[str], timeout: float = 4.0) -> tuple[int, str]:
@@ -440,56 +525,10 @@ def _heal_cli(args: list[str], timeout: float = 4.0) -> tuple[int, str]:
         r = subprocess.run(["orionx-heal", *args], capture_output=True,
                            text=True, timeout=timeout, check=False)
         return r.returncode, (r.stdout or "") + (r.stderr or "")
-    except (OSError, subprocess.SubprocessError):
+    except FileNotFoundError:
         return 127, ""
-
-
-def healing_actions(chain: Path = HEAL_CHAIN) -> dict[str, Any]:
-    """Current healing state: {'readable': bool, 'pending': [...], 'active': [...]}.
-
-    `readable` False means we could not read the chain — the panel must say so
-    rather than render an empty list that looks like "nothing happening".
-    """
-    out: dict[str, Any] = {"readable": False, "pending": [], "active": [], "reason": ""}
-    try:
-        raw = Path(chain).read_text(encoding="utf-8")
-    except PermissionError:
-        out["reason"] = "chain not readable as this user"
-        return out
-    except OSError:
-        out["reason"] = "no healing chain yet"
-        out["readable"] = True          # absent chain genuinely means no actions
-        return out
-
-    state: dict[str, dict[str, Any]] = {}
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            e = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(e, dict):
-            continue
-        aid = str(e.get("action_id", ""))
-        if not aid:
-            continue
-        rec = state.setdefault(aid, {})
-        rec["action_id"] = aid
-        for k in ("playbook", "target", "level", "status", "kind", "ts", "expires_at", "reason"):
-            if k in e:
-                rec[k] = e[k]
-    out["readable"] = True
-    for rec in state.values():
-        st = str(rec.get("status") or rec.get("kind") or "")
-        if st == "pending":
-            out["pending"].append(rec)
-        elif st == "active":
-            out["active"].append(rec)
-    out["pending"].sort(key=lambda r: float(r.get("ts") or 0), reverse=True)
-    out["active"].sort(key=lambda r: float(r.get("ts") or 0), reverse=True)
-    return out
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, str(exc)
 
 
 def tune_args(ev: dict[str, Any], mode: str) -> list[str] | None:
