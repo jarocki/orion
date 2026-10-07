@@ -11,7 +11,8 @@
 #   SOFT-FAIL, so a build whose network or repo hiccupped produces an ISO with
 #   no Zeek and no error the operator ever sees.
 #
-#   That is not hypothetical. `grep -c zeek iso/chroot.files` on the
+#   That is not hypothetical. `grep -c zeek iso/chroot.files` (a build listing,
+#   untracked since QA round 1; see `git show f7c75ec:iso/chroot.files`) on the
 #   2026-09-27 image listing returns 0: the shipped ISO has no /opt/zeek at
 #   all, while iso/config/hooks/live/0700-orionx-setup.hook.chroot cheerfully
 #   skips the /usr/bin/zeek symlink and scripts/artifact-analyzer.py keeps
