@@ -246,6 +246,43 @@ if ! declare -F orionx_require_root >/dev/null; then
     }
 fi
 
+# @decision DEC-PHASE12-102 (amended, B2 handoff / security F11)
+# @title Third-party apt keys are fingerprint-pinned and scoped with signed-by
+# @status accepted
+# @rationale Both keys were fetched over HTTPS and trusted unchecked, so a
+#   TLS-intercepting proxy on a hostile network (or a compromised CDN) could
+#   substitute key and repo and have packages installed as root. Same pattern
+#   as B2's Zeek fix (0500): fetch to a temp file, compare the PRIMARY key
+#   fingerprint (gpg --show-keys) with the pin, refuse on mismatch, install
+#   into its own keyring, reference it only from that repo's signed-by=.
+#   Pins read from the live keys 2026-10-07 (both rsa4096, expire 2033-03-13).
+MATRIX_KEY_URL="https://packages.matrix.org/debian/matrix-org-archive-keyring.gpg"
+MATRIX_KEY_FPR="AAF9AE843A7584B5A3E4CD2BCF45A512DE2DA058"
+MATRIX_KEYRING="${ORIONX_MATRIX_KEYRING:-/usr/share/keyrings/matrix-org-archive-keyring.gpg}"
+ELEMENT_KEY_URL="https://packages.element.io/debian/element-io-archive-keyring.gpg"
+ELEMENT_KEY_FPR="12D4CD600C2240A9F4A82071D7B0B66941D01538"
+ELEMENT_KEYRING="${ORIONX_ELEMENT_KEYRING:-/usr/share/keyrings/element-io-archive-keyring.gpg}"
+APT_SOURCES_DIR="${ORIONX_APT_SOURCES_DIR:-/etc/apt/sources.list.d}"
+
+# fetch_pinned_keyring <url> <fingerprint> <keyring>
+fetch_pinned_keyring() {
+    local url="$1" pin="$2" keyring="$3" tmp actual
+    tmp="$(mktemp)"
+    if ! wget -qO "$tmp" "$url"; then
+        rm -f "$tmp"; log "ERROR: could not download the signing key $url"; return 1
+    fi
+    actual="$(gpg --show-keys --with-colons "$tmp" 2>/dev/null | awk -F: '$1=="fpr" {print $10; exit}')"
+    if [[ "$actual" != "$pin" ]]; then
+        rm -f "$tmp"
+        log "ERROR: KEY FINGERPRINT MISMATCH for $url: expected $pin, got ${actual:-none}. Refusing to trust it (a proxy or mirror may be substituting packages)."
+        return 1
+    fi
+    mkdir -p "$(dirname "$keyring")"
+    install -m 0644 "$tmp" "$keyring" || { rm -f "$tmp"; return 1; }
+    rm -f "$tmp"
+    log "Signing key verified ($pin) -> $keyring"
+}
+
 preflight() {
     [[ "$DRY_RUN" == "1" ]] && return 0
     if [[ "${ORIONX_SKIP_ROOT_CHECK:-0}" != "1" ]]; then
@@ -276,8 +313,8 @@ check_requirements() {
         log "Element client not found. Installing..."
 
         # Add Element repository (keyrings pattern — apt-key add is deprecated since Debian Bullseye)
-        wget -O /usr/share/keyrings/element-io-archive-keyring.gpg https://packages.element.io/debian/element-io-archive-keyring.gpg
-        echo "deb [signed-by=/usr/share/keyrings/element-io-archive-keyring.gpg] https://packages.element.io/debian/ default main" > /etc/apt/sources.list.d/element-io.list
+        fetch_pinned_keyring "$ELEMENT_KEY_URL" "$ELEMENT_KEY_FPR" "$ELEMENT_KEYRING" || exit 1
+        echo "deb [signed-by=$ELEMENT_KEYRING] https://packages.element.io/debian/ default main" > "$APT_SOURCES_DIR/element-io.list"
         apt-get update
         apt-get install -y element-desktop
 
@@ -293,8 +330,8 @@ check_requirements() {
 
         apt-get update
         apt-get install -y lsb-release wget apt-transport-https
-        wget -O /usr/share/keyrings/matrix-org-archive-keyring.gpg https://packages.matrix.org/debian/matrix-org-archive-keyring.gpg
-        echo "deb [signed-by=/usr/share/keyrings/matrix-org-archive-keyring.gpg] https://packages.matrix.org/debian/ $(lsb_release -cs) main" > /etc/apt/sources.list.d/matrix-org.list
+        fetch_pinned_keyring "$MATRIX_KEY_URL" "$MATRIX_KEY_FPR" "$MATRIX_KEYRING" || exit 1
+        echo "deb [signed-by=$MATRIX_KEYRING] https://packages.matrix.org/debian/ $(lsb_release -cs) main" > "$APT_SOURCES_DIR/matrix-org.list"
         apt-get update
         # The package asks for the server name via debconf and writes it to
         # conf.d/server_name.yaml; preseed it so the install is non-interactive.

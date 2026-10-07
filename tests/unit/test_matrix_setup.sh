@@ -415,6 +415,39 @@ if [[ "$EUID" -ne 0 ]]; then
 else
     skip "root preflight" "running as root"
 fi
+section "F11: signing keys are fingerprint-pinned"
+: > "$MX/calls"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$MX/bin/getent"
+# wget writes a dummy key; gpg reports whatever fingerprint $FAKE_FPR says.
+printf '#!/usr/bin/env bash\nwhile [[ $# -gt 0 ]]; do [[ "$1" == -qO ]] && { echo key > "$2"; shift; }; shift; done\nexit 0\n' > "$MX/bin/wget"
+printf '#!/usr/bin/env bash\necho "fpr:::::::::${FAKE_FPR}:"\n' > "$MX/bin/gpg"
+cat > "$MX/bin/apt-get" <<'STUBEOF'
+#!/usr/bin/env bash
+echo "apt-get $*" >> "$MX/calls"
+[[ "$*" == *"install -y element-desktop"* ]] && { printf '#!/bin/sh\nexit 0\n' > "$MX/bin/element-desktop"; chmod +x "$MX/bin/element-desktop"; }
+exit 0
+STUBEOF
+chmod +x "$MX/bin/"*
+printf '#!/usr/bin/env bash\nexit 0\n' > "$MX/bin/synapse_homeserver"; chmod +x "$MX/bin/synapse_homeserver"
+mkdir -p "$MX/apt" "$MX/keys"
+rk() { env FAKE_FPR="$1" ORIONX_APT_SOURCES_DIR="$MX/apt" ORIONX_ELEMENT_KEYRING="$MX/keys/element.gpg" ORIONX_MATRIX_KEYRING="$MX/keys/matrix.gpg" \
+         PATH="$MX/bin:$PATH" ORIONX_SKIP_ROOT_CHECK=1 ORIONX_MATRIX_LOGFILE="$MX/setup.log" ORIONX_MATRIX_CLIENT_DIR="$MX/element" \
+         ORIONX_MATRIX_DESKTOP_FILE="$MX/d.desktop" bash "$MATRIX_SCRIPT" --mode client --homeserver-url https://x.example --user-id '@a:x' </dev/null 2>&1; }
+rm -f "$MX/bin/element-desktop"
+rc=0; out="$(rk DEADBEEF)" || rc=$?
+if [[ $rc -ne 0 && "$out" == *"FINGERPRINT MISMATCH"* ]] && ! grep -q 'install -y element-desktop' "$MX/calls"; then
+    pass "a substituted Element key is refused before apt installs anything"
+else
+    fail "fingerprint mismatch refused" "rc=$rc $(tail -2 <<< "$out")"
+fi
+if [[ -e "$MX/keys/element.gpg" ]]; then fail "a refused key is not installed"; else pass "a refused key is not installed"; fi
+rm -f "$MX/bin/element-desktop"; : > "$MX/calls"
+rc=0; out="$(rk 12D4CD600C2240A9F4A82071D7B0B66941D01538)" || rc=$?
+if [[ $rc -eq 0 && -f "$MX/keys/element.gpg" ]] && grep -q "signed-by=$MX/keys/element.gpg" "$MX/apt/element-io.list"; then
+    pass "the pinned Element key is installed and scoped with signed-by"
+else
+    fail "pinned key accepted + signed-by" "rc=$rc $(tail -2 <<< "$out")"
+fi
 rm -rf "$MX"
 
 # ===========================================================================
