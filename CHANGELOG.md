@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.2.0-rc9] — in progress
+
+From the rc8 boot on the reference deck (2026-10-06/07). Not in rc8.
+
+### Fixed
+
+- **The Mesh tab said "not joined" while wg0 was up** (DEC-PHASE12-059). It ran
+  `sudo orionx-mesh status` and `sudo wg show wg0 dump` from a GUI with no
+  terminal, got nothing, and drew dashes — while Awareness, reading sysfs,
+  said "wg0 up (mesh joined)". Privilege now sits with the authority: the mesh
+  publishes `/run/orionx/mesh-status.json` as root (`orionx-mesh snapshot`,
+  every 10 s from `orionx-mesh-status.timer` while wg0 exists, and immediately
+  on join and leave); the tab reads that file and the kernel's own byte
+  counters, unprivileged. Join and leave now also publish to the event bus,
+  so the tab's History is no longer empty by omission.
+- **"tuning: cannot write /etc/suricata/orionx-threshold.config"** on the bus.
+  `orionx-postured` runs with `ProtectSystem=strict` and may write only
+  `/run/orionx`, `/var/lib/suricata` and `/var/lib/orionx`; the derived
+  threshold file now lives at `/var/lib/suricata/orionx-threshold.config` and
+  `orionx.yaml` points there. (Verified separately with `suricata -T` that the
+  rc8 configuration itself was valid: the "REJECTED its configuration" event
+  on the deck was the boot-time race before the Wi-Fi interface existed.)
+- **"Set up as server" failed right after apt installed Synapse**
+  (DEC-PHASE12-060). `matrix-synapse-py3` is a dh-virtualenv package: it links
+  `synctl` and `register_new_matrix_user` into `/usr/bin` but not
+  `synapse_homeserver`, and the system `python3` has no `synapse` module. The
+  installer checked `command -v synapse_homeserver` and ran
+  `python3 -m synapse.app.homeserver`; both fail on a correct install. It now
+  probes `/opt/venvs/matrix-synapse/bin/synapse_homeserver` and runs the venv's
+  python; the shipped unit does the same, and its `ExecStartPre` that looked
+  for `/etc/wireguard/wg0.conf` — a file this image never creates — is gone.
+  The Comms tab's "installed" probe follows, and it says "once it is active,
+  clients will connect to …" instead of implying a running server.
+- **Element: "No encryption support … keyring gnome_libsecret"**
+  (DEC-PHASE12-061). The live session ran no Secret Service; `gnome-keyring`
+  is now on the image. The autologin session has no password to unlock a
+  keyring with, so Element may still ask once — documented.
+
+### Notes from the deck
+
+- "Zeek is installed … but no log directory" is accurate: the tier plan's
+  "zeek start" starts the *log ingest*; nothing on the image runs Zeek itself.
+  That is a slice of its own (a managed `zeek -i <iface>` unit alongside
+  Suricata's capture config) and is not fixed here.
+
 ## [v2.2.0-rc8] — 2026-10-06 (release candidate; internal build, not published)
 
 From the rc6/rc7 boots on the reference deck (2026-10-06).

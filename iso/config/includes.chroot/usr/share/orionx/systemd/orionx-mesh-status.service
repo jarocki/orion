@@ -1,0 +1,29 @@
+[Unit]
+# @decision DEC-PHASE12-059
+# @title The mesh publishes its own status snapshot; nothing in the desktop needs sudo to read it
+# @status accepted
+# @rationale On rc8 the Cockpit's Mesh tab said "not joined" while wg0 was up:
+#   it ran `sudo orionx-mesh status` and `sudo wg show wg0 dump` from a GUI with
+#   no terminal, got nothing, and drew dashes. Privilege belongs where the
+#   authority is. This oneshot (root, CAP_NET_ADMIN for `wg show`) writes
+#   /run/orionx/mesh-status.json every 10 s while wg0 exists; join and leave
+#   write it immediately. The Cockpit reads the file — same pattern as
+#   /run/orionx/posture-status.json.
+Description=Orion-X Mesh status snapshot (oneshot)
+After=network.target
+ConditionPathExists=/sys/class/net/wg0
+
+[Service]
+Type=oneshot
+ExecStart=/opt/orionx/scripts/mesh/orionx-mesh snapshot
+StandardOutput=journal
+StandardError=journal
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run/orionx
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_OVERRIDE
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK

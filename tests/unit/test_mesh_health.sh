@@ -901,8 +901,8 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "--- Systemd Unit Files ---"
 
-SERVICE_FILE="$REPO_ROOT/systemd/orionx-mesh-health.service"
-TIMER_FILE="$REPO_ROOT/systemd/orionx-mesh-health.timer"
+SERVICE_FILE="$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/orionx-mesh-health.service"
+TIMER_FILE="$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/orionx-mesh-health.timer"
 
 assert_file_exists "health service unit exists" "$SERVICE_FILE"
 assert_file_exists "health timer unit exists" "$TIMER_FILE"

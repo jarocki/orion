@@ -88,6 +88,10 @@ mesh_join() {
 
     # --- 7. Write state file ---
     mesh_state_write "$MESH_IFACE" "$vpn_ip" "$mode" "$pubkey"
+    # DEC-PHASE12-059: the Cockpit learns about it now, not at the next timer tick,
+    # and the bus records it (the Mesh tab's History reads these).
+    mesh_snapshot_write 2>/dev/null || true
+    mesh_emit info service "joined the mesh as $vpn_ip on $MESH_IFACE ($mode mode)" 2>/dev/null || true
 
     # --- 8. Print success message ---
     echo "Mesh joined successfully."

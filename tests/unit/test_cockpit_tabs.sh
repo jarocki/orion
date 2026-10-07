@@ -76,7 +76,7 @@ PY
 then pass "mesh/comms/tools/spark/vitals pure helpers"; else fail "pure helper assertions" "see output above"; fi
 
 echo "[wiring]"
-grep -q 'sudo", "wg", "show", M.MESH_IFACE, "dump"' "$CC/sections/mesh.py" && pass "Mesh tab reads wg dump" || fail "mesh dump" "missing"
+grep -q 'M.load_snapshot()' "$CC/sections/mesh.py" && ! grep -qE 'run_stdout\(|from \.\.helpers\.subprocess_runner' "$CC/sections/mesh.py" && pass "Mesh tab reads the root-written snapshot; no privileged reads (DEC-PHASE12-059; Start/Stop/Peers still open a sudo terminal)" || fail "mesh snapshot" "tab still reads status via sudo or does not read the snapshot"
 grep -q 'M.read_history()' "$CC/sections/mesh.py" && pass "Mesh tab reads bus history" || fail "mesh history" "missing"
 grep -q 'C.client_states(' "$CC/sections/comms.py" && grep -q 'Gtk.Button(label="Install")' "$CC/sections/comms.py" && pass "Comms offers Install for absent clients" || fail "comms install" "missing"
 grep -q '"Next hop", _next_hop' "$CC/sections/awareness.py" && grep -q '"DNS", _dns' "$CC/sections/awareness.py" && grep -q '"Firewall address", _firewall_addr' "$CC/sections/awareness.py" && pass "Awareness rows: firewall address, next hop, DNS" || fail "awareness rows" "missing"

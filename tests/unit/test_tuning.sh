@@ -81,8 +81,9 @@ grep -q 'd\["origin"\] = "self"' "$PD" && pass "deck-sourced alerts get origin=s
 grep -q 'ruleset-reload-nonblocking' "$PD" && grep -q 'tuning_lib.THRESHOLD_FILE' "$PD" && pass "derived threshold file written + ruleset reload over the socket" || fail "derived surface" "missing"
 grep -q 'self._refresh_tuning(now)' "$PD" && pass "tuning re-read every loop pass" || fail "loop refresh" "missing"
 python3 -m py_compile "$PD" 2>/dev/null && pass "postured compiles" || fail "postured compiles" "syntax error"
-grep -q '^threshold-file: /etc/suricata/orionx-threshold.config' "$ROOT/iso/config/includes.chroot/etc/suricata/orionx.yaml" && pass "orionx.yaml names the derived threshold file" || fail "orionx.yaml" "threshold-file missing"
-[[ -f "$ROOT/iso/config/includes.chroot/etc/suricata/orionx-threshold.config" ]] && pass "empty threshold file ships so Suricata starts clean" || fail "shipped threshold file" "missing"
+grep -q '^threshold-file: /var/lib/suricata/orionx-threshold.config' "$ROOT/iso/config/includes.chroot/etc/suricata/orionx.yaml" && pass "orionx.yaml names the derived threshold file under /var/lib/suricata (writable under postured's hardening)" || fail "orionx.yaml" "threshold-file missing or still under /etc"
+[[ -f "$ROOT/iso/config/includes.chroot/var/lib/suricata/orionx-threshold.config" ]] && pass "empty threshold file ships so Suricata starts clean" || fail "shipped threshold file" "missing"
+grep -q 'ReadWritePaths=.*\/var\/lib\/suricata' "$ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/orionx-postured.service" && grep -q 'THRESHOLD_FILE = Path("/var/lib/suricata/' "$ROOT/scripts/awareness/tuning_lib.py" && pass "the derived file lives where postured may write" || fail "threshold path vs hardening" "tuning_lib writes outside ReadWritePaths"
 grep -q '\["orionx-tune"\]=' "$ROOT/iso/config/hooks/live/0700-orionx-setup.hook.chroot" && pass "orionx-tune on PATH via 0700" || fail "0700 symlink" "missing"
 
 echo "[Cockpit wiring]"

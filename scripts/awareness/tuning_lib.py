@@ -38,7 +38,10 @@ from typing import Any
 SCHEMA = 1
 TUNING_RELPATH = Path(".config") / "orionx" / "tuning.json"
 DEFAULT_SQUELCH_SECONDS = 3600.0
-THRESHOLD_FILE = Path("/etc/suricata/orionx-threshold.config")
+# Under /var/lib/suricata, not /etc: orionx-postured runs with ProtectSystem=strict
+# and may write only /run/orionx, /var/lib/suricata and /var/lib/orionx. On rc8 the
+# /etc path failed every time ("tuning: cannot write …" on the bus).
+THRESHOLD_FILE = Path("/var/lib/suricata/orionx-threshold.config")
 PERSISTENCE_ROOT = Path("/run/live/persistence")
 ENGINES = ("suricata", "zeek", "any")
 MODES = ("squelch", "tune")

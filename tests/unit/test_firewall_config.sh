@@ -151,7 +151,7 @@ fi
 echo ""
 echo "=== Test Group 5: systemd Unit File ==="
 
-SYSTEMD_UNIT="systemd/orionx-firewall.service"
+SYSTEMD_UNIT="iso/config/includes.chroot/usr/share/orionx/systemd/orionx-firewall.service"   # the shipped tree; the repo-root systemd/ copy was a stale duplicate (removed 2026-10-07)
 
 assert_file_exists "$SYSTEMD_UNIT" "orionx-firewall.service exists"
 

@@ -111,6 +111,12 @@ network-manager
 # nm-applet tray icon; ships /etc/xdg/autostart/nm-applet.desktop for
 # automatic startup in XFCE and any other XDG-compliant desktop session.
 network-manager-gnome
+# gnome-keyring: a Secret Service for the live session (DEC-PHASE12-061). Without
+# it Element (Electron) opens with "No encryption support … keyring
+# gnome_libsecret" and NetworkManager cannot keep Wi-Fi secrets per user.
+# ~4.7 MB + gcr/pinentry. The autologin session has no password to unlock a
+# keyring with, so the first secret may still prompt — documented in the Guide.
+gnome-keyring
 # WPA2/WPA3 supplicant (Debian package name is wpasupplicant, not wpa_supplicant)
 wpasupplicant
 # nl80211 wireless configuration CLI (iw, not wireless-tools/iwconfig)

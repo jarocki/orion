@@ -36,6 +36,9 @@ TARGET_DIR="/lib/systemd/system"
 UNIT_FILES=(
     "orionx-mesh-health.service"
     "orionx-mesh-health.timer"
+    # DEC-PHASE12-059: mesh status snapshot the Cockpit reads without sudo.
+    "orionx-mesh-status.service"
+    "orionx-mesh-status.timer"
     "orionx-mesh-discover.service"
     "orionx-mesh-discover.timer"
     "orionx-firewall.service"
@@ -93,6 +96,7 @@ UNIT_FILES=(
 AUTOSTART_UNITS=(
     "orionx-mesh-discover.timer"
     "orionx-mesh-health.timer"
+    "orionx-mesh-status.timer"
     "orionx-firewall.service"
     "orionx-first-boot.service"
     "orionx-scanwatch.service"

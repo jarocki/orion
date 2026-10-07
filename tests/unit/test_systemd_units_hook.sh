@@ -172,6 +172,7 @@ section "Autostart array members"
 EXPECTED_AUTOSTART=(
     "orionx-mesh-discover.timer"
     "orionx-mesh-health.timer"
+    "orionx-mesh-status.timer"
     "orionx-firewall.service"
     "orionx-first-boot.service"
     # W10-1 added 2 Nebula units (DEC-PHASE10-009 integrity + DEC-PHASE11-033 runtime auto-start)
@@ -192,10 +193,10 @@ done
 # matrix + mesh-beacon removed (W11-14f offline boot); socket removed (DEC-PHASE11-033).
 AUTOSTART_BLOCK="$(awk '/^AUTOSTART_UNITS=\(/{p=1} p{print} /^\)/{if(p) p=0}' "$HOOK_FILE")"
 AUTOSTART_MEMBER_COUNT="$(grep -c '".*\.service"\|".*\.timer"\|".*\.socket"' <(echo "$AUTOSTART_BLOCK") || true)"
-if [[ "$AUTOSTART_MEMBER_COUNT" -eq 12 ]]; then
-    pass "AUTOSTART_UNITS array has exactly 12 members"
+if [[ "$AUTOSTART_MEMBER_COUNT" -eq 13 ]]; then
+    pass "AUTOSTART_UNITS array has exactly 13 members"
 else
-    fail "AUTOSTART_UNITS array has exactly 12 members" \
+    fail "AUTOSTART_UNITS array has exactly 13 members" \
          "Found $AUTOSTART_MEMBER_COUNT; expected 6"
 fi
 
@@ -233,6 +234,8 @@ section "All 9 unit files referenced"
 EXPECTED_UNITS=(
     "orionx-mesh-health.service"
     "orionx-mesh-health.timer"
+    "orionx-mesh-status.service"
+    "orionx-mesh-status.timer"
     "orionx-mesh-discover.service"
     "orionx-mesh-discover.timer"
     "orionx-firewall.service"
@@ -256,10 +259,10 @@ done
 # removed (W11-14f offline boot); nebula-runtime.socket removed (DEC-PHASE11-033).
 UNIT_FILES_BLOCK="$(awk '/^UNIT_FILES=\(/{p=1} p{print} /^\)/{if(p) p=0}' "$HOOK_FILE")"
 UNIT_FILES_COUNT="$(grep -c '".*\.service"\|".*\.timer"\|".*\.socket"' <(echo "$UNIT_FILES_BLOCK") || true)"
-if [[ "$UNIT_FILES_COUNT" -eq 16 ]]; then
-    pass "UNIT_FILES array has exactly 16 members"
+if [[ "$UNIT_FILES_COUNT" -eq 18 ]]; then
+    pass "UNIT_FILES array has exactly 18 members"
 else
-    fail "UNIT_FILES array has exactly 16 members" \
+    fail "UNIT_FILES array has exactly 18 members" \
          "Found $UNIT_FILES_COUNT; expected 9"
 fi
 

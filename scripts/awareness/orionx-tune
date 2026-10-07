@@ -114,7 +114,7 @@ def cmd_status(_args: argparse.Namespace) -> int:
     print(f"  file          : {path} ({'present' if path.exists() else 'absent'})")
     print(f"  rules         : {len(rules)} ({len(T.active_rules(rules, now))} active)")
     print(f"  {T.survives_reboot_line(present, where)}")
-    print(f"  derived       : {T.THRESHOLD_FILE} (written by orionx-postured as root)")
+    print(f"  derived       : {T.THRESHOLD_FILE} (written by orionx-postured as root; /var/lib is writable under its hardening)")
     print("  verify        : grep -c tuned_suppressed /run/orionx/posture-status.json")
     return 0
 

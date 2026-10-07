@@ -34,7 +34,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 WIZARD_SCRIPT="$REPO_ROOT/scripts/security/first-boot-wizard.sh"
-SYSTEMD_UNIT="$REPO_ROOT/systemd/orionx-first-boot.service"
+SYSTEMD_UNIT="$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/orionx-first-boot.service"
 
 # Test counters
 PASS=0

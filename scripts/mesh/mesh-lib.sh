@@ -513,3 +513,49 @@ mesh_emit() {
     mesh_log ERROR "orionx-event exited non-zero — event NOT published: [$severity/$category] $message"
     return 1
 }
+
+# --- Status snapshot (DEC-PHASE12-059) ---------------------------------------
+# Root-only inputs (`wg show dump`, the state file) -> a world-readable JSON the
+# Cockpit reads with no privilege. Written by orionx-mesh-status.timer every
+# 10 s while wg0 exists, and by join/leave the moment the state changes.
+MESH_SNAPSHOT_FILE="${MESH_SNAPSHOT_FILE:-/run/orionx/mesh-status.json}"
+
+mesh_snapshot_write() {
+    local now active iface vpn_ip mode start pub peers first tmp
+    local pubkey _psk endpoint allowed hs tx rx _ka node
+    now="$(date +%s)"
+    mkdir -p "$(dirname "$MESH_SNAPSHOT_FILE")" 2>/dev/null || true
+    active=false; iface=""; vpn_ip=""; mode=""; start=0; pub=""
+    if mesh_is_active; then
+        active=true
+        iface="$(mesh_state_read interface 2>/dev/null || true)"
+        vpn_ip="$(mesh_state_read vpn_ip 2>/dev/null || true)"
+        mode="$(mesh_state_read mode 2>/dev/null || true)"
+        start="$(mesh_state_read start_time 2>/dev/null || echo 0)"
+        pub="$(mesh_state_read pubkey 2>/dev/null || true)"
+    fi
+    [[ "$start" =~ ^[0-9]+$ ]] || start=0
+    peers="["; first=1
+    while IFS=$'\t' read -r pubkey _psk endpoint allowed hs tx rx _ka; do
+        [[ -n "$pubkey" ]] || continue
+        node="${allowed%%,*}"; node="${node%%/*}"
+        [[ "$allowed" == "(none)" ]] && node=""
+        [[ "$endpoint" == "(none)" ]] && endpoint=""
+        [[ "$hs" =~ ^[0-9]+$ ]] || hs=0
+        [[ "$tx" =~ ^[0-9]+$ ]] || tx=0
+        [[ "$rx" =~ ^[0-9]+$ ]] || rx=0
+        (( first )) || peers+=","
+        first=0
+        peers+="$(printf '{"pubkey_short":"%s","node":"%s","endpoint":"%s","handshake":%s,"rx":%s,"tx":%s}' \
+                  "${pubkey:0:10}" "$node" "$endpoint" "$hs" "$rx" "$tx")"
+    done < <(wg show "${iface:-$MESH_IFACE}" dump 2>/dev/null | tail -n +2)
+    peers+="]"
+    tmp="${MESH_SNAPSHOT_FILE}.tmp"
+    if printf '{"ts":%s,"active":%s,"interface":"%s","vpn_ip":"%s","mode":"%s","start_time":%s,"pubkey_short":"%s","peers":%s}\n' \
+            "$now" "$active" "${iface:-$MESH_IFACE}" "$vpn_ip" "$mode" "$start" "${pub:0:10}" "$peers" > "$tmp" 2>/dev/null \
+       && chmod 0644 "$tmp" 2>/dev/null && mv -f "$tmp" "$MESH_SNAPSHOT_FILE" 2>/dev/null; then
+        return 0
+    fi
+    mesh_log WARN "could not write $MESH_SNAPSHOT_FILE — the Cockpit's Mesh tab will say 'no snapshot'"
+    return 1
+}

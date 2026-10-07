@@ -153,13 +153,14 @@ def build_section() -> Gtk.Widget:
     def _refresh() -> bool:
         st = C.server_state(
             get_matrix_service_state(),
-            shutil.which("synapse_homeserver") is not None,
+            shutil.which("synapse_homeserver") is not None or os.path.exists("/opt/venvs/matrix-synapse/bin/synapse_homeserver"),
             C.HOMESERVER_YAML.exists(),
             C.ELEMENT_CFG.read_text(encoding="utf-8") if C.ELEMENT_CFG.exists() else None,
             _primary_ip())
         headline.set_text(st["headline"])
         if st["mode"] == "server":
-            detail.set_text(f"{C.SYNAPSE_UNIT}: {st['unit']}  ·  clients connect to {st['url']}")
+            verb = "clients connect to" if st["running"] else "once it is active, clients will connect to"
+            detail.set_text(f"{C.SYNAPSE_UNIT}: {st['unit']}  ·  {verb} {st['url']}")
         elif st["mode"] == "client":
             detail.set_text(f"homeserver {st['url']}  ·  configured in {C.ELEMENT_CFG}")
         else:

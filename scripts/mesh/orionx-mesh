@@ -66,6 +66,7 @@ Commands:
   status   Show mesh status
   peers    List connected peers
   leave    Leave the mesh network
+  snapshot Write /run/orionx/mesh-status.json for the Cockpit (root; run by a timer)
   help     Show this help message
 
 Options:
@@ -170,6 +171,12 @@ cmd_peers() {
 }
 
 # --- Subcommand: join ---
+# DEC-PHASE12-059: write /run/orionx/mesh-status.json (root). Run by the
+# orionx-mesh-status timer and by join/leave; the Cockpit reads it unprivileged.
+cmd_snapshot() {
+    mesh_snapshot_write
+}
+
 cmd_join() {
     # shellcheck source=mesh-join.sh disable=SC1091
     source "$SCRIPT_DIR/mesh-join.sh"
@@ -244,6 +251,9 @@ main() {
             ;;
         leave)
             cmd_leave "${SUBCOMMAND_ARGS[@]+"${SUBCOMMAND_ARGS[@]}"}"
+            ;;
+        snapshot)
+            cmd_snapshot
             ;;
         help)
             usage

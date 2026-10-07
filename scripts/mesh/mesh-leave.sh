@@ -54,6 +54,8 @@ mesh_leave() {
 
     # --- 5. Remove state file and health counters ---
     rm -f "$MESH_STATE_FILE"
+    mesh_snapshot_write 2>/dev/null || true     # DEC-PHASE12-059: snapshot now says inactive
+    mesh_emit info service "left the mesh ($MESH_IFACE removed)" 2>/dev/null || true
     rm -f /var/run/orionx-mesh-health-* 2>/dev/null
     mesh_log INFO "State file and health counters removed"
 

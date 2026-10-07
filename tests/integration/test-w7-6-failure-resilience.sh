@@ -61,7 +61,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-SYSTEMD_DIR="${REPO_ROOT}/systemd"
+# The shipped unit tree (0615 installs from here). The repo-root systemd/ copy
+# it used to read was a stale duplicate, removed 2026-10-07.
+SYSTEMD_DIR="${REPO_ROOT}/iso/config/includes.chroot/usr/share/orionx/systemd"
 
 # ---------------------------------------------------------------------------
 # Test counters — use ((VAR+=1)) to avoid set -e firing on zero-result

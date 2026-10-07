@@ -1,8 +1,11 @@
 """
 Orion Cockpit — Mesh tab: nodes, traffic, history (DEC-PHASE12-054).
 
-Data comes from `sudo wg show wg0 dump` (peers, handshakes, counters),
-`sudo orionx-mesh status` (identity) and the R.A.I.N. bus (mesh events).
+Data comes from /run/orionx/mesh-status.json — written as root by
+`orionx-mesh snapshot` every 10 s and on join/leave (DEC-PHASE12-059) — the
+kernel's own byte counters in sysfs, and the R.A.I.N. bus (mesh events). No
+sudo: on rc8 the tab ran privileged commands from a GUI, got nothing, and said
+"not joined" while wg0 was up.
 Parsing lives in helpers/mesh_data.py (pure, tested); this file draws.
 
 @decision DEC-PHASE9-019
@@ -23,7 +26,6 @@ from ..helpers import mesh_data as M  # noqa: E402
 from ..helpers import ux  # noqa: E402
 from ..helpers.spark import Spark  # noqa: E402
 from ..helpers.state_polling import add_poll  # noqa: E402
-from ..helpers.subprocess_runner import run_stdout  # noqa: E402
 
 _POLL_MS = 3000
 _DIM = "#9aa0a6"
@@ -94,30 +96,50 @@ def build_section() -> Gtk.Widget:
 
     def _refresh() -> bool:
         now = time.time()
-        st = M.parse_status(run_stdout(["sudo", "orionx-mesh", "status"], timeout=8))
-        dump = run_stdout(["sudo", "wg", "show", M.MESH_IFACE, "dump"], timeout=5)
-        peers = M.parse_wg_dump(dump, now)
-        active = st.get("active") == "active" or bool(dump.strip())
-        if not active:
+        snap = M.load_snapshot()
+        age = M.snapshot_age(snap, now)
+        wg_up = M.sysfs_bytes() is not None
+        peers = list(snap.get("peers", [])) if snap else []
+        active = bool(snap and snap.get("active"))
+        if snap is None and wg_up:
+            headline.set_text("Mesh: wg0 is up but no snapshot yet — is orionx-mesh-status.timer running? "
+                              "(sudo systemctl start orionx-mesh-status.timer)")
+        elif not active:
             headline.set_text("Mesh: not joined — press Start Mesh (or: sudo orionx-mesh join)")
         else:
             live = sum(1 for p in peers if M.peer_state(p["handshake_age"]) == "live")
-            headline.set_text(f"Mesh: active — {len(peers)} node(s) known, {live} live")
-        vals["Interface"].set_text(st.get("interface", M.MESH_IFACE if active else "—"))
-        vals["VPN IP"].set_text(st.get("vpn_ip", "—"))
-        vals["Mode"].set_text(st.get("mode", "—"))
-        vals["Uptime"].set_text(st.get("uptime", "—"))
-        vals["Health"].set_text(st.get("health", "—"))
+            stale = sum(1 for p in peers if M.peer_state(p["handshake_age"]) == "stale")
+            headline.set_text(f"Mesh: active — {len(peers)} node(s) known, {live} live"
+                              + (f", {stale} stale" if stale else "")
+                              + (f"   (snapshot {age:.0f}s old)" if age is not None else ""))
+        vals["Interface"].set_text(str(snap.get("interface") or "—") if active else "—")
+        vals["VPN IP"].set_text(str(snap.get("vpn_ip") or "—") if active else "—")
+        vals["Mode"].set_text(str(snap.get("mode") or "—") if active else "—")
+        start = float(snap.get("start_time") or 0) if active else 0.0
+        vals["Uptime"].set_text(M.fmt_age(now - start).replace(" ago", "") if start > 0 else "—")
+        if not active:
+            vals["Health"].set_text("—")
+        elif not peers:
+            vals["Health"].set_text("no peers")
+        else:
+            vals["Health"].set_text("all peers responsive" if stale == 0 else f"{stale} peer(s) stale")
         rx, tx = M.total_traffic(peers)
-        vals["Traffic"].set_text(f"rx {M.fmt_bytes(rx)} · tx {M.fmt_bytes(tx)} (all peers)")
-        if last["t"] is not None and now > last["t"]:
-            dt = now - last["t"]
-            rx_spark.push(max(0.0, (rx - last["rx"]) / dt))
-            tx_spark.push(max(0.0, (tx - last["tx"]) / dt))
-        last.update(rx=rx, tx=tx, t=now)
+        vals["Traffic"].set_text(f"rx {M.fmt_bytes(rx)} · tx {M.fmt_bytes(tx)} (all peers, from snapshot)")
+        # Sparklines from the kernel's own counters (sysfs is world-readable),
+        # so the rate is fresh every poll regardless of the snapshot cadence.
+        kb = M.sysfs_bytes()
+        if kb is not None:
+            krx, ktx = kb
+            if last["t"] is not None and now > last["t"]:
+                dt = now - last["t"]
+                rx_spark.push(max(0.0, (krx - last["rx"]) / dt))
+                tx_spark.push(max(0.0, (ktx - last["tx"]) / dt))
+            last.update(rx=krx, tx=ktx, t=now)
+        else:
+            last.update(rx=None, tx=None, t=None)
         store.clear()
         for p in peers:
-            store.append([p["node"] or p["short"], M.peer_state(p["handshake_age"]), p["endpoint"] or "—",
+            store.append([p.get("node") or p.get("short", "?"), M.peer_state(p["handshake_age"]), p.get("endpoint") or "—",
                           M.fmt_age(p["handshake_age"]), M.fmt_bytes(p["rx"]), M.fmt_bytes(p["tx"])])
         events = M.read_history()
         if events:

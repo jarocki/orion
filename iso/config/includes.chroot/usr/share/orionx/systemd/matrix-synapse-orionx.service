@@ -42,8 +42,10 @@ NotifyAccess=main
 User=matrix-synapse
 Group=matrix-synapse
 WorkingDirectory=/var/lib/matrix-synapse
-ExecStartPre=/bin/bash -c 'test -f /etc/wireguard/wg0.conf || echo "WARNING: WireGuard config missing"'
-ExecStart=/usr/bin/python3 -m synapse.app.homeserver --config-path /etc/matrix-synapse/homeserver.yaml
+# DEC-PHASE12-060: Synapse lives in the dh-virtualenv at /opt/venvs/matrix-synapse;
+# the system python3 has no `synapse` module. The former ExecStartPre looked for
+# /etc/wireguard/wg0.conf, a file this image never creates (DEC-PHASE12-041).
+ExecStart=/opt/venvs/matrix-synapse/bin/python -m synapse.app.homeserver --config-path /etc/matrix-synapse/homeserver.yaml
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal

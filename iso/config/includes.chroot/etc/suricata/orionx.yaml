@@ -76,4 +76,4 @@ unix-command:
   filename: /var/lib/suricata/orionx-command.socket
 # DEC-PHASE12-050: operator tuning. This file is DERIVED by orionx-postured
 # from ~/.config/orionx/tuning.json (`orionx-tune`); shipped empty.
-threshold-file: /etc/suricata/orionx-threshold.config
+threshold-file: /var/lib/suricata/orionx-threshold.config

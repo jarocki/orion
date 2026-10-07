@@ -73,7 +73,7 @@ assert_file_not_contains() {
 # ============================================================
 echo "=== Test Group 1: File Existence ==="
 
-UNIT_FILE="systemd/matrix-synapse-orionx.service"
+UNIT_FILE="iso/config/includes.chroot/usr/share/orionx/systemd/matrix-synapse-orionx.service"   # the shipped unit (0615 installs from here); repo-root systemd/ was a stale, differing copy
 
 assert_file_exists "$UNIT_FILE" \
     "matrix-synapse-orionx.service exists"
@@ -164,8 +164,11 @@ assert_file_contains "$UNIT_FILE" 'RestartSec=10' \
 assert_file_contains "$UNIT_FILE" 'synapse\.app\.homeserver' \
     "ExecStart references synapse.app.homeserver"
 
-assert_file_contains "$UNIT_FILE" 'ExecStartPre=.*wireguard' \
-    "ExecStartPre checks WireGuard config"
+# DEC-PHASE12-060/041: the wg0.conf pre-check is gone — this image never creates that file.
+assert_file_not_contains "$UNIT_FILE" 'ExecStartPre=.*wg0.conf' \
+    "no stale wg0.conf ExecStartPre (DEC-PHASE12-041)"
+assert_file_contains "$UNIT_FILE" 'ExecStart=/opt/venvs/matrix-synapse/bin/python -m synapse.app.homeserver' \
+    "ExecStart uses the dh-virtualenv python (system python3 has no synapse module — DEC-PHASE12-060)"
 
 assert_file_contains "$UNIT_FILE" 'StandardOutput=journal' \
     "Has StandardOutput=journal"

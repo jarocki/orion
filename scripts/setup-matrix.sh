@@ -43,6 +43,18 @@ DRY_RUN="${ORIONX_MATRIX_DRY_RUN:-0}"
 
 LOGFILE="/var/log/orionx/matrix_setup.log"
 CONFIG_DIR="/etc/matrix-synapse"
+# DEC-PHASE12-060: matrix-synapse-py3 (packages.matrix.org) is a dh-virtualenv
+# package. It links synctl/register_new_matrix_user into /usr/bin but NOT
+# synapse_homeserver, and the system python3 has no `synapse` module — so
+# `command -v synapse_homeserver` and `python3 -m synapse.app.homeserver` both
+# failed on a correctly installed deck (rc8: "Failed to install Matrix
+# Synapse" right after apt said it was the newest version).
+SYNAPSE_VENV="/opt/venvs/matrix-synapse"
+SYNAPSE_PY="$SYNAPSE_VENV/bin/python"
+[[ -x "$SYNAPSE_PY" ]] || SYNAPSE_PY="python3"
+synapse_present() {
+    [[ -x "$SYNAPSE_VENV/bin/synapse_homeserver" ]] || command -v synapse_homeserver >/dev/null 2>&1
+}
 SERVER_MODE=""
 SERVER_NAME=""
 MATRIX_USERNAME=""
@@ -214,7 +226,7 @@ check_requirements() {
     fi
 
     # Check for Synapse if server mode
-    if [[ "$SERVER_MODE" == "server" ]] && ! command -v synapse_homeserver >/dev/null 2>&1; then
+    if [[ "$SERVER_MODE" == "server" ]] && ! synapse_present; then
         log "Matrix Synapse not found. Installing..."
 
         # Add Matrix Synapse repository
@@ -225,8 +237,9 @@ check_requirements() {
         apt-get update
         apt-get install -y matrix-synapse-py3
 
-        if ! command -v synapse_homeserver >/dev/null 2>&1; then
-            log "ERROR: Failed to install Matrix Synapse. Please install it manually."
+        [[ -x "$SYNAPSE_VENV/bin/python" ]] && SYNAPSE_PY="$SYNAPSE_VENV/bin/python"
+        if ! synapse_present; then
+            log "ERROR: Failed to install Matrix Synapse (no $SYNAPSE_VENV/bin/synapse_homeserver and none on PATH). Please install it manually."
             exit 1
         fi
     fi
@@ -285,7 +298,7 @@ setup_matrix_server() {
     log "Generating Synapse configuration..."
 
     # Run the Synapse configuration generator
-    python3 -m synapse.app.homeserver \
+    "$SYNAPSE_PY" -m synapse.app.homeserver \
         --server-name "$SERVER_NAME" \
         --config-path "$CONFIG_DIR/homeserver.yaml" \
         --generate-config \
