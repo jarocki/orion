@@ -709,7 +709,7 @@ run_nebula_checks() {
     # 7b: ollama --version exits 0
     if [[ -x "/usr/local/bin/ollama" ]]; then
         local ollama_ver_exit=0
-        ollama --version 2>/dev/null || ollama_ver_exit=$?
+        ollama --version >/dev/null 2>&1 || ollama_ver_exit=$?  # stdout would corrupt --json (shell P3-1)
         if [[ $ollama_ver_exit -eq 0 ]]; then
             check_pass "$cat" "ollama --version exits 0 (binary loadable)" ""
         else
@@ -721,38 +721,38 @@ run_nebula_checks() {
             "ollama not present — skipping version check"
     fi
 
-    # 7c: model SHA-256 matches MANIFEST.sha256
-    local manifest="/opt/orionx/nebula/models/MANIFEST.sha256"
-    local model="/opt/orionx/nebula/models/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
+    # 7c: the model ollama actually loads matches MANIFEST.sha256
+    #
+    # @decision DEC-PHASE12-121
+    # @title 7c verifies the live blobs MANIFEST.sha256 names, like nebula-integrity-check
+    # @status accepted
+    # @rationale 7c hashed models/Qwen2.5-3B-Instruct-Q4_K_M.gguf, a file hook 0510
+    #   deletes by design (DEC-PHASE12-016: the weights live once, as ollama's
+    #   blobs/sha256-*), so 7c was a SKIP on every correct image and a corrupt
+    #   model was never caught here (shell P2-7). 0510 rewrites MANIFEST.sha256
+    #   to list the live blob(s) relative to the models dir; integrity.py
+    #   verifies exactly that list at boot. 7c now runs `sha256sum -c` over the
+    #   same manifest, from the same directory: PASS only when every listed file
+    #   exists and matches, FAIL naming each bad line otherwise. Reading the
+    #   0644 blobs needs no root; it takes tens of seconds on the deck.
+    local models_dir="${ORIONX_NEBULA_MODELS_DIR:-/opt/orionx/nebula/models}"
+    local manifest="$models_dir/MANIFEST.sha256"
+    local label="model blobs match MANIFEST.sha256 (what ollama loads)"
     if [[ ! -f "$manifest" ]]; then
-        check_skip "$cat" "model SHA-256 matches MANIFEST.sha256" \
-            "MANIFEST.sha256 absent — cannot verify"
-    elif [[ ! -f "$model" ]]; then
-        check_skip "$cat" "model SHA-256 matches MANIFEST.sha256" \
-            "model file absent — cannot compute SHA-256"
+        check_fail "$cat" "$label" "MANIFEST.sha256 absent at $manifest — the model cannot be verified"
+    elif grep -q "TBD-VERIFY" "$manifest"; then
+        check_fail "$cat" "$label" "manifest still has the TBD-VERIFY sentinel — no pinned hash to verify against"
+    elif [[ ! -s "$manifest" ]]; then
+        check_fail "$cat" "$label" "MANIFEST.sha256 is empty"
     else
-        # Check for trust-on-first-use sentinel
-        local manifest_content
-        manifest_content="$(cat "$manifest")"
-        if echo "$manifest_content" | grep -q "TBD-VERIFY"; then
-            check_skip "$cat" "model SHA-256 matches MANIFEST.sha256" \
-                "trust-on-first-use pending pin — manifest has TBD-VERIFY sentinel"
+        local verify_out verify_rc=0 bad nfiles
+        nfiles="$(grep -c . "$manifest")"
+        verify_out="$(cd "$models_dir" && sha256sum -c "$manifest" 2>&1)" || verify_rc=$?
+        if [[ $verify_rc -eq 0 ]]; then
+            check_pass "$cat" "$label" "$nfiles file(s) verified"
         else
-            if [[ $EUID -ne 0 ]]; then
-                check_skip "$cat" "model SHA-256 matches MANIFEST.sha256" \
-                    "SHA-256 computation may be slow without root; run as root for full check"
-            else
-                local expected_sha actual_sha
-                expected_sha="$(awk '{print $1}' "$manifest")"
-                actual_sha="$(sha256sum "$model" 2>/dev/null | awk '{print $1}')"
-                if [[ "$actual_sha" == "$expected_sha" ]]; then
-                    check_pass "$cat" "model SHA-256 matches MANIFEST.sha256" \
-                        "${actual_sha:0:16}..."
-                else
-                    check_fail "$cat" "model SHA-256 matches MANIFEST.sha256" \
-                        "expected=${expected_sha:0:16}... actual=${actual_sha:0:16}... — model may be corrupt"
-                fi
-            fi
+            bad="$(printf '%s\n' "$verify_out" | grep -v ': OK$' | head -3 | tr '\n' ';')"
+            check_fail "$cat" "$label" "sha256sum -c failed: ${bad:-exit $verify_rc} — model corrupt or missing"
         fi
     fi
 
