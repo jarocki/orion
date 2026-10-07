@@ -49,8 +49,28 @@ orionx_log_info "  Mission: defend — encrypted team communications via Matrix"
 orionx_log_info "Adding element-hq signing key..."
 orionx_apt_install apt-transport-https
 
-wget -qO /usr/share/keyrings/element-io-archive-keyring.gpg \
-    https://packages.element.io/debian/element-io-archive-keyring.gpg
+# DEC-PHASE12-122 (security F11): the key is trusted only if its primary
+# fingerprint equals this pin (riot.im packages <packages@riot.im>, checked
+# 2026-10-07 against packages.element.io), and only for this source (signed-by).
+ELEMENT_KEY_URL="https://packages.element.io/debian/element-io-archive-keyring.gpg"
+ELEMENT_KEY_FPR="12D4CD600C2240A9F4A82071D7B0B66941D01538"
+ELEMENT_KEYRING="/usr/share/keyrings/element-io-archive-keyring.gpg"
+orionx_apt_install gnupg
+element_key="$(mktemp)"
+if ! wget -q -O "$element_key" "$ELEMENT_KEY_URL"; then
+    rm -f "$element_key"; orionx_log_error "Could not download $ELEMENT_KEY_URL. Nothing was changed."; exit 1
+fi
+element_fpr="$(gpg --show-keys --with-colons "$element_key" 2>/dev/null | awk -F: '$1=="fpr" {print $10; exit}')"
+if [[ "$element_fpr" != "$ELEMENT_KEY_FPR" ]]; then
+    rm -f "$element_key"
+    orionx_log_error "SIGNING KEY FINGERPRINT MISMATCH — refusing to trust the Element repo."
+    orionx_log_error "  expected: $ELEMENT_KEY_FPR"
+    orionx_log_error "  actual:   ${element_fpr:-<none found>}"
+    exit 1
+fi
+install -m 0644 "$element_key" "$ELEMENT_KEYRING"
+rm -f "$element_key"
+orionx_log_info "Element signing key fingerprint verified: $element_fpr"
 
 orionx_log_info "Adding element-hq apt source..."
 cat > /etc/apt/sources.list.d/element-io.list <<'EOF'
