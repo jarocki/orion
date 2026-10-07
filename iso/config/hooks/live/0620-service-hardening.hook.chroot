@@ -38,6 +38,38 @@ EOF
     echo "  SSH hardened: key-only, no root, MaxAuthTries=3"
 fi
 
+# 2b. sshd installed but NOT started at boot; apt and mail do not phone out.
+#
+# @decision DEC-PHASE12-104
+# @title sshd is not enabled at boot; nothing announces the deck unprompted
+# @status accepted
+# @rationale (lead decision; security F1/F14/F25, packages-build P2-3)
+#   - ssh.service was enabled by the package, so sshd answered on :22 on
+#     whatever LAN the deck was plugged into. It stays INSTALLED (an operator
+#     may want it) but is not enabled: the operator starts it deliberately
+#     (`sudo systemctl start ssh`), and the firewall admits 22 only on wg0.
+#     The only login path is key-based for the operator account over the
+#     mesh: PermitRootLogin no, PasswordAuthentication no (above). The old
+#     wizard "one-shot root key" is gone (DEC-PHASE12-105).
+#   - apt-daily / apt-daily-upgrade contacted Debian mirrors on their own
+#     after boot (OPSEC on a hostile network): masked. The operator updates
+#     explicitly.
+#   - exim4 arrived via rkhunter's Recommends (default-mta) and ran a setuid
+#     MTA that nothing on the deck uses: masked with its timer.
+#   Mask, not purge: reversible by the operator, and package removal belongs
+#   to the trim hook (0900), which another owner maintains.
+for unit in ssh.service ssh.socket; do
+    if systemctl list-unit-files "$unit" >/dev/null 2>&1; then
+        systemctl disable "$unit" 2>/dev/null || true
+        echo "  Not started at boot: $unit (operator runs: sudo systemctl start ssh)"
+    fi
+done
+for unit in apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service \
+            exim4.service exim4-base.timer exim4-base.service; do
+    systemctl mask "$unit" 2>/dev/null || true
+    echo "  Masked: $unit"
+done
+
 # 3. Kernel sysctl hardening
 cat > /etc/sysctl.d/60-orionx-hardening.conf << 'EOF'
 # Orion-X kernel hardening
