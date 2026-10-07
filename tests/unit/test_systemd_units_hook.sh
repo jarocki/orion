@@ -193,10 +193,10 @@ done
 # matrix + mesh-beacon removed (W11-14f offline boot); socket removed (DEC-PHASE11-033).
 AUTOSTART_BLOCK="$(awk '/^AUTOSTART_UNITS=\(/{p=1} p{print} /^\)/{if(p) p=0}' "$HOOK_FILE")"
 AUTOSTART_MEMBER_COUNT="$(grep -c '".*\.service"\|".*\.timer"\|".*\.socket"' <(echo "$AUTOSTART_BLOCK") || true)"
-if [[ "$AUTOSTART_MEMBER_COUNT" -eq 13 ]]; then
-    pass "AUTOSTART_UNITS array has exactly 13 members"
+if [[ "$AUTOSTART_MEMBER_COUNT" -eq 15 ]]; then
+    pass "AUTOSTART_UNITS array has exactly 15 members (DEC-PHASE12-109 added the two VM-only probes)"
 else
-    fail "AUTOSTART_UNITS array has exactly 13 members" \
+    fail "AUTOSTART_UNITS array has exactly 15 members (DEC-PHASE12-109 added the two VM-only probes)" \
          "Found $AUTOSTART_MEMBER_COUNT; expected 6"
 fi
 
@@ -259,10 +259,10 @@ done
 # removed (W11-14f offline boot); nebula-runtime.socket removed (DEC-PHASE11-033).
 UNIT_FILES_BLOCK="$(awk '/^UNIT_FILES=\(/{p=1} p{print} /^\)/{if(p) p=0}' "$HOOK_FILE")"
 UNIT_FILES_COUNT="$(grep -c '".*\.service"\|".*\.timer"\|".*\.socket"' <(echo "$UNIT_FILES_BLOCK") || true)"
-if [[ "$UNIT_FILES_COUNT" -eq 18 ]]; then
-    pass "UNIT_FILES array has exactly 18 members"
+if [[ "$UNIT_FILES_COUNT" -eq 20 ]]; then
+    pass "UNIT_FILES array has exactly 20 members (DEC-PHASE12-109 added the two VM-only probes)"
 else
-    fail "UNIT_FILES array has exactly 18 members" \
+    fail "UNIT_FILES array has exactly 20 members (DEC-PHASE12-109 added the two VM-only probes)" \
          "Found $UNIT_FILES_COUNT; expected 9"
 fi
 

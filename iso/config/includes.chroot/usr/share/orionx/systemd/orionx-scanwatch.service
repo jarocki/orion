@@ -28,6 +28,23 @@ PrivateTmp=yes
 PrivateDevices=yes
 ReadWritePaths=/run/orionx
 RestrictAddressFamilies=AF_UNIX
+# DEC-PHASE12-108 (security F19): scanwatch ran as root with the FULL
+# capability set. It needs none: it reads the journal (`journalctl --dmesg`,
+# root-owned files, no DAC override) and appends to /run/orionx/events.jsonl
+# through orionx-event. ProtectKernelLogs is NOT set: it reads kernel
+# messages (via the journal, but keep the intent obvious).
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
 MemoryMax=64M
 StandardOutput=journal
 StandardError=journal

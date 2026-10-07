@@ -105,13 +105,22 @@ ProtectHostname=yes
 ProtectProc=invisible
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources @mount @swap @reboot @module @obsolete @cpu-emulation
+# DEC-PHASE12-107 (system P1-1): @privileged is NOT denied. dumpcap runs as
+# root, so it drops privileges itself with capset() and setres[ug]id(), which
+# are in @privileged; denying them killed every capture with 31/SYS (proven
+# under systemd 257 by the system QA: with this exact list the pcap is
+# written). @chown @clock @raw-io stay denied.
+SystemCallFilter=~@resources @mount @swap @reboot @module @obsolete @cpu-emulation @clock @raw-io @chown
 
 # --- filesystem: writable only where the evidence and the state go ----------
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-ReadWritePaths=/run/orionx /var/lib/orionx
+# DEC-PHASE12-107 (system P2-1): /var/lib/orionx is not in the image;
+# naming a missing path in ReadWritePaths fails the unit with 226/NAMESPACE.
+# StateDirectory= creates it before the namespace is built.
+StateDirectory=orionx
+ReadWritePaths=/run/orionx
 UMask=0027
 
 # --- network: listen on the wire, open no connection ------------------------
