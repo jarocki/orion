@@ -174,10 +174,22 @@ def append_sections(notebook: Gtk.Notebook) -> dict[str, int]:
     """Build every section and append it as a tab. Returns {key: page_index}."""
     pages: dict[str, int] = {}
     for key, label, icon, builder in SECTIONS:
-        widget = builder()
+        # UX-45: the tab's name is the page's title, from this one list.
+        # Sections no longer title themselves ("Situational Awareness" under
+        # an "Awareness" tab, "Comms (Matrix)" under "Comms").
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        title = Gtk.Label()
+        title.set_markup(f"<b>{GLib.markup_escape_text(label)}</b>")
+        title.set_halign(Gtk.Align.START)
+        title.set_margin_start(12)
+        title.set_margin_top(10)
+        page.pack_start(title, False, False, 0)
+        page.pack_start(builder(), True, True, 0)
         scrolled = Gtk.ScrolledWindow()
-        scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        scrolled.add(widget)
+        # Horizontal NEVER: content wraps to the window instead of hiding
+        # past the right edge on a 1366-wide screen.
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.add(page)
         pages[key] = notebook.append_page(scrolled, tab_label(label, icon))
     return pages
 

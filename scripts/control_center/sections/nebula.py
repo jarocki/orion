@@ -6,8 +6,8 @@ W10-1 replaces the W9-2 placeholder text with a dynamic status row that reads:
   - model integrity state from /run/orionx/nebula-integrity.status
   - model name + size from the manifest
 
-W10-2 implementer: replace the chat line placeholder with the GTK chat widget.
-W10-3 implementer: replace the tools line placeholder with the MCP tool-list widget.
+plus the Ask Nebula chat (W10-2) and the local MCP tool list (W10-3).
+Status and the tool list are collected in a worker thread (DEC-PHASE12-068).
 
 @decision DEC-PHASE10-005
 @title Control Center Nebula section: W10-1 activates live runtime status
@@ -38,6 +38,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk  # type: ignore[import]  # noqa: E402
 
 from ..helpers import ux  # noqa: E402
+from ..helpers.background import Poller, run_async  # noqa: E402
 
 logger = logging.getLogger("control_center.nebula")
 
@@ -74,8 +75,12 @@ def _read_nebula_status() -> dict[str, Any]:
                 timeout=5,
             )
             if result.returncode == 0 and result.stdout.strip():
-                data: dict[str, Any] = json.loads(result.stdout)
-                return data
+                data = json.loads(result.stdout)
+                # python.md P2-8: non-dict JSON used to raise AttributeError
+                # inside the GLib callback.
+                if isinstance(data, dict):
+                    return data
+                logger.warning("nebula status --json returned %s, not an object", type(data).__name__)
         except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError) as exc:
             logger.debug("nebula CLI status failed: %s", exc)
 
@@ -102,6 +107,15 @@ def _read_nebula_status() -> dict[str, Any]:
     }
 
 
+def _list_tools() -> list[str]:
+    """Worker thread: names from `nebula tools --json` (raises with the reason)."""
+    out = subprocess.run(["nebula", "tools", "--json"], capture_output=True, text=True, timeout=6)
+    if out.returncode != 0:
+        raise RuntimeError((out.stderr or out.stdout or f"exit {out.returncode}").strip().splitlines()[-1][:120])
+    data = json.loads(out.stdout)
+    return [str(t["name"]) for t in data if isinstance(t, dict) and "name" in t] if isinstance(data, list) else []
+
+
 def _format_size(size_bytes: Any) -> str:
     """Format a byte count as a human-readable string (e.g. '4.4 GB')."""
     try:
@@ -118,12 +132,6 @@ class _NebulaSectionWidget:
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.box.set_border_width(12)
 
-        # Title
-        title = Gtk.Label()
-        title.set_markup("<b>Nebula AI</b>")
-        title.set_halign(Gtk.Align.START)
-        self.box.pack_start(title, False, False, 0)
-
         # --- Runtime status row ---
         self._runtime_label = Gtk.Label(label="Runtime: checking…")
         self._runtime_label.set_halign(Gtk.Align.START)
@@ -138,8 +146,6 @@ class _NebulaSectionWidget:
         self.box.pack_start(self._integrity_label, False, False, 0)
 
         # --- Ask Nebula (chat) — W10-2 ---
-        # This IMPLEMENTS the former "coming in W10-2" chat plug-in surface
-        # (marker string retained in this comment for test_control_center.sh).
         chat_hdr = Gtk.Label()
         chat_hdr.set_markup("<b>Ask Nebula</b>  <small>— local &amp; private</small>")
         chat_hdr.set_halign(Gtk.Align.START)
@@ -177,26 +183,19 @@ class _NebulaSectionWidget:
         self._chat_started = False
 
         # --- Tools row (W10-3): local MCP tools Nebula can call ---
-        # Implements the former "coming in W10-3" tools plug-in surface
-        # (marker retained in this comment for test_control_center.sh).
-        tools_label = Gtk.Label()
+        tools_label = Gtk.Label(label="Tools: listing local MCP tools…")
         tools_label.set_halign(Gtk.Align.START)
         tools_label.set_line_wrap(True)
-        try:
-            _out = subprocess.run(
-                ["nebula", "tools", "--json"],
-                capture_output=True, text=True, timeout=6,
-            )
-            _names = [t["name"] for t in json.loads(_out.stdout)] if _out.returncode == 0 else []
-        except (OSError, subprocess.TimeoutExpired, ValueError):
-            _names = []
-        if _names:
-            tools_label.set_markup(
-                f"<b>Tools:</b> {len(_names)} local MCP tools — " + ", ".join(_names)
-            )
-        else:
-            tools_label.set_text("Tools: local MCP tools (run 'nebula tools' to list)")
         self.box.pack_start(tools_label, False, False, 0)
+
+        def _tools_done(names, err) -> None:
+            if names:
+                tools_label.set_text(f"Tools: {len(names)} local MCP tools — " + ", ".join(names))
+            else:
+                why = f" ({err})" if err else ""
+                tools_label.set_text(f"Tools: none listed{why} — run 'nebula tools' in a terminal to see why")
+        # A 6 s CLI call used to run inside the constructor (P1-5).
+        run_async(_list_tools, _tools_done)
 
         # --- Warm-up button ---
         warmup_btn = Gtk.Button(label="Warm up model")
@@ -209,34 +208,28 @@ class _NebulaSectionWidget:
         warmup_btn.connect("clicked", self._on_warmup_clicked)
         self.box.pack_start(warmup_btn, False, False, 4)
 
-        # Initial status pull + recurring poll
-        self._refresh_status()
-        GLib.timeout_add(_POLL_INTERVAL_MS, self._poll_status)
+        Poller(self.box, _POLL_INTERVAL_MS, lambda _vis: _read_nebula_status(), self._apply_status)
 
-    def _refresh_status(self) -> None:
-        """Pull current status and update labels."""
-        status = _read_nebula_status()
-
+    def _apply_status(self, status: dict | None, err) -> None:
+        """Main loop: draw the status the worker collected."""
+        if err is not None or not isinstance(status, dict):
+            self._runtime_label.set_text(f"Runtime: status unavailable ({err})")
+            return
         summary = status.get("status_summary", "Runtime: unknown")
         self._runtime_label.set_text(summary)
 
         integrity_state = status.get("integrity_state", "UNKNOWN")
         integrity_detail = status.get("integrity_detail", "")
         if integrity_state == "OK":
-            self._integrity_label.set_markup(
-                '<span foreground="green">Integrity: OK</span>'
-            )
+            # UX-30: the shared OK green (#34ff9e), not CSS "green" (3.7:1 on the dark theme).
+            self._integrity_label.set_markup('<span foreground="#34ff9e">Integrity: OK</span>')
         elif integrity_state == "FAIL":
             self._integrity_label.set_markup(
-                f'<span foreground="red">Integrity: FAIL — {integrity_detail}</span>'
+                '<span foreground="#ff6a4a">Integrity: FAIL — '
+                f'{GLib.markup_escape_text(str(integrity_detail))}</span>'
             )
         else:
             self._integrity_label.set_text(f"Integrity: {integrity_state}")
-
-    def _poll_status(self) -> bool:
-        """GLib timeout callback — refresh and reschedule."""
-        self._refresh_status()
-        return True  # True = keep the timer running
 
     def _on_warmup_clicked(self, _btn: Gtk.Button) -> None:
         """Trigger nebula warmup in a subprocess (non-blocking), with feedback."""

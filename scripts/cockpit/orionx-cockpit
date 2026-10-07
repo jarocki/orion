@@ -17,10 +17,11 @@ as animated instruments:
 Keys: F11 fullscreen · Esc / q quit.   Flags: --fullscreen, --demo (synthetic
 events so the deck comes alive with no real traffic — for demos/screenshots).
 
-No threads: GLib timers drive polling (events 0.5s, network 1s, systems 5s) and
-a ~6 fps redraw — deliberately cheap for Bay Trail hardware. All logic that is
-not drawing lives in cockpit_lib.py (dependency-free, unit-tested).
-DEC-PHASE12-007.
+GLib timers drive polling (events 0.5s, network 1s, systems 5s, vitals 2s) and
+a ~6 fps redraw. Anything that forks (systemctl, pgrep, ip, orionx-heal,
+orionx-tune) runs in a worker thread and only while LIVE is the visible tab;
+results are applied on the main loop (DEC-PHASE12-068). All logic that is not
+drawing lives in cockpit_lib.py (dependency-free, unit-tested). DEC-PHASE12-007.
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ sys.path.insert(0, str(_here.parent.parent))
 from control_center import app as CC  # noqa: E402  (DEC-PHASE12-053: the tab authority)
 from control_center.helpers import ux as CCUX  # noqa: E402
 from control_center.helpers import mesh_data as MD  # noqa: E402  (DEC-PHASE12-067)
+from control_center.helpers.background import Poller, run_async  # noqa: E402  (DEC-PHASE12-068)
 
 try:
     import gi
@@ -135,14 +137,12 @@ class Cockpit(Gtk.Window):
         GLib.timeout_add(FPS_MS, self._tick)
         GLib.timeout_add(POLL_EVENTS_MS, self._poll_events)
         GLib.timeout_add(POLL_NET_MS, self._poll_net)
-        GLib.timeout_add(POLL_SYS_MS, self._poll_sys)
-        GLib.timeout_add(POLL_VITALS_MS, self._poll_vitals)
+        self._sys_poller = Poller(self.da, POLL_SYS_MS, self._collect_sys, self._apply_sys)
+        self._vitals_poller = Poller(self.da, POLL_VITALS_MS, self._collect_vitals, self._apply_vitals)
         if demo:
             GLib.timeout_add(1400, self._demo_event)
         self._poll_events()
         self._poll_net()
-        self._poll_sys()
-        self._poll_vitals()
         if fullscreen:
             self.fullscreen()
             self._fs = True
@@ -175,29 +175,38 @@ class Cockpit(Gtk.Window):
         self.rates.push(rx, tx, time.time())
         return True
 
-    def _poll_sys(self) -> bool:
-        self.systems["NEBULA"] = L.service_active("nebula-runtime.service")
-        self.systems["FIREWALL"] = L.service_active("orionx-firewall.service")
+    def _collect_sys(self, _visible: bool) -> dict:
+        """Worker thread: every probe that forks or reads root-published state."""
+        systems = {}
+        systems["NEBULA"] = L.service_active("nebula-runtime.service")
+        systems["FIREWALL"] = L.service_active("orionx-firewall.service")
         # DEC-PHASE12-067: the snapshot verdict, as on every other surface.
         # None = unknown (stale / no snapshot), drawn amber, never as ONLINE.
         _now = time.time()
         _ms = MD.mesh_summary(MD.load_snapshot(now=_now), _now)["state"]
-        self.systems["MESH"] = {"active": True, "down": False}.get(_ms)
-        self.systems["R.A.I.N."] = L.process_running("orionx-rain")
-        self.posture = L.posture_tier()
+        systems["MESH"] = {"active": True, "down": False}.get(_ms)
+        systems["R.A.I.N."] = L.process_running("orionx-rain")
+        if self.demo:
+            systems = {"NEBULA": True, "FIREWALL": True, "MESH": True, "R.A.I.N.": True}
         # DEC-PHASE12-024: what the tier is ENFORCING, not just what it is set
         # to. Empty dict when orionx-postured is not running.
-        self.posture_status = L.posture_status()
-        self.heal = L.healing_actions()
-        if self.demo:
-            self.systems.update({"NEBULA": True, "FIREWALL": True, "MESH": True, "R.A.I.N.": True})
-        return True
+        return {"systems": systems, "posture": L.posture_tier(),
+                "posture_status": L.posture_status(), "heal": L.healing_actions()}
 
-    def _poll_vitals(self) -> bool:
-        v = V.collect(self._cpu_prev)
-        self._cpu_prev = v.get("cpu_sample")
-        self.vitals = v
-        return True
+    def _apply_sys(self, d: dict | None, err) -> None:
+        if err is not None:
+            self._say(f"\u2717 status probes failed: {err}", "error")
+            return
+        self.systems.update(d["systems"])
+        self.posture, self.posture_status, self.heal = d["posture"], d["posture_status"], d["heal"]
+
+    def _collect_vitals(self, _visible: bool) -> dict:
+        return V.collect(self._cpu_prev)
+
+    def _apply_vitals(self, v: dict | None, err) -> None:
+        if err is None and v:
+            self._cpu_prev = v.get("cpu_sample")
+            self.vitals = v
 
     def _tick(self) -> bool:
         self.pressure_shown = L.lerp(self.pressure_shown, self.pressure_target, 0.15)
@@ -287,23 +296,30 @@ class Cockpit(Gtk.Window):
             self._say("nothing awaiting approval")
             return
         rec = pend[self.heal_sel % len(pend)]
-        ok, msg = L.approve_action(str(rec.get("id", "")))
-        self._say(msg)
-        # Re-read rather than assume it worked: the engine is the authority on
-        # whether the action actually moved out of pending.
-        self.heal = L.healing_actions()
-        self.da.queue_draw()
+        aid = str(rec.get("id", ""))
+        self._say(f"approving {aid}\u2026", "info")
+
+        def _done(res, err) -> None:
+            ok, msg = res if err is None else (False, f"approval failed: {err}")
+            self._say(msg, "ok" if ok else "error")
+            # Re-read rather than assume it worked: heald's next snapshot is
+            # the authority on whether the action left pending.
+            self._sys_poller.kick()
+        run_async(lambda: L.approve_action(aid), _done)
 
     def _tune_selected(self, mode: str) -> None:
         """[s]quelch for an hour / [t]une for good, via orionx-tune (DEC-PHASE12-050)."""
         if not (0 <= self.sel < len(self._shown)):
             self._say("no event selected")
             return
-        ok, msg = L.tune_event(self._shown[self.sel], mode)
-        self._say(msg if ok else f"NOT tuned: {msg}")
-        self.da.queue_draw()
+        ev = self._shown[self.sel]
 
-    def _say(self, msg: str) -> None:
+        def _done(res, err) -> None:
+            ok, msg = res if err is None else (False, str(err))
+            self._say(msg if ok else f"NOT tuned: {msg}", "ok" if ok else "error")
+        run_async(lambda: L.tune_event(ev, mode), _done)
+
+    def _say(self, msg: str, level: str = "info") -> None:
         self.toast = msg[:160]
         self.toast_until = time.time() + 6.0
 

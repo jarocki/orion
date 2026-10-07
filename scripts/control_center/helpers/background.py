@@ -59,6 +59,8 @@ def run_async(work: Callable[[], Any], done: Callable[[Any, Optional[BaseExcepti
 class Poller:
     """Collect in a thread every `interval_ms` while `owner` is visible; apply on the main loop."""
 
+    instances: list = []     # introspection for tests/unit/cockpit_gtk_checks.py
+
     def __init__(self, owner: Any, interval_ms: int,
                  collect: Callable[[bool], Any],
                  apply: Callable[[Any, Optional[BaseException]], None],
@@ -67,6 +69,7 @@ class Poller:
         self.run_hidden = run_hidden
         self.busy = False
         self.runs = 0
+        Poller.instances.append(self)
         GLib.timeout_add(interval_ms, self._tick)
         owner.connect("map", lambda *_a: self.kick())
 

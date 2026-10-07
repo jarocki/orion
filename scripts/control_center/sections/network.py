@@ -4,8 +4,7 @@ Orion-X Control Center — Network section.
 Displays active NetworkManager connections and provides a button to launch
 nm-connection-editor (the GUI NM editor that ships with network-manager-gnome).
 
-Live data is polled every DEFAULT_POLL_MS via GLib.timeout_add so the list
-stays current without blocking the GTK main loop.
+nmcli runs in a worker thread while the tab is visible (DEC-PHASE12-068).
 
 @decision DEC-PHASE9-019
 @title Bullseye Python 3.9 + PEP-563 (from __future__ import annotations)
@@ -20,18 +19,14 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # type: ignore[import]  # noqa: E402
 
 from ..helpers import ux  # noqa: E402
-from ..helpers.state_polling import DEFAULT_POLL_MS, add_poll, get_active_connections  # noqa: E402
+from ..helpers.background import Poller  # noqa: E402
+from ..helpers.state_polling import DEFAULT_POLL_MS, get_active_connections  # noqa: E402
 
 
 def build_section() -> Gtk.Widget:
     """Return the Network section widget."""
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
     box.set_border_width(12)
-
-    title = Gtk.Label()
-    title.set_markup("<b>Network</b>")
-    title.set_halign(Gtk.Align.START)
-    box.pack_start(title, False, False, 0)
 
     status_label = Gtk.Label(label="Scanning connections…")
     status_label.set_halign(Gtk.Align.START)
@@ -41,9 +36,11 @@ def build_section() -> Gtk.Widget:
     connections_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
     box.pack_start(connections_box, True, True, 0)
 
-    def _refresh_connections() -> bool:
-        """Poll active NM connections; update the UI.  Returns True to repeat."""
-        conns = get_active_connections()
+    def _apply(conns, err) -> None:
+        """Main loop: draw what the worker found."""
+        if err is not None:
+            status_label.set_text(f"Could not list connections: {err}")
+            return
         for child in connections_box.get_children():
             connections_box.remove(child)
         if conns:
@@ -55,10 +52,8 @@ def build_section() -> Gtk.Widget:
         else:
             status_label.set_text("No active connections")
         connections_box.show_all()
-        return True  # keep polling
 
-    _refresh_connections()
-    add_poll(DEFAULT_POLL_MS, _refresh_connections)
+    Poller(box, DEFAULT_POLL_MS, lambda _vis: get_active_connections(), _apply)
 
     sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
     box.pack_start(sep, False, False, 4)

@@ -24,10 +24,9 @@
 # @title Control Center ships ahead of Phase 10 Nebula AI; placeholder
 #        sections define the plug-in surfaces for W10-1 through W10-6.
 # @status accepted
-# @rationale The Nebula ("lands in W10-1") and Auto-Healing ("lands in W10-6")
-#   placeholder texts are asserted here so the W9-2 reviewer can confirm the
-#   plug-in surfaces exist and W10-1..W10-6 implementers know exactly where to
-#   land their runtime code.
+# @rationale The W10 plug-in surfaces are implemented; the old placeholder
+#   marker assertions ("coming in W10-2/3", "lands in W10-6") were tautological
+#   (they only kept comments alive) and were removed in QA round 1 (P3-2).
 #
 # Production sequence:
 #   1. stage_application_content rsyncs scripts/ → includes.chroot/opt/orionx/scripts/
@@ -38,6 +37,7 @@
 # Usage: bash tests/unit/test_control_center.sh
 
 set -euo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -101,20 +101,23 @@ fi
 # ===========================================================================
 # 2. Python compile check on entry script and every .py in control_center/
 # ===========================================================================
-section "Python compile check (py_compile)"
+section "Python syntax check (ast.parse — writes no bytecode into scripts/)"
 
-if python3 -m py_compile "$ENTRY" 2>&1; then
-    pass "py_compile: orionx-control-center"
+# release-tests F-23: py_compile ignores PYTHONDONTWRITEBYTECODE and left
+# __pycache__ in the tree that build-iso stages into the image.
+_parse() { python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$1"; }
+if _parse "$ENTRY" 2>&1; then
+    pass "syntax: orionx-control-center"
 else
-    fail "py_compile: orionx-control-center"
+    fail "syntax: orionx-control-center"
 fi
 
 while IFS= read -r -d '' pyfile; do
     relpath="${pyfile#"$REPO_ROOT/"}"
-    if python3 -m py_compile "$pyfile" 2>&1; then
-        pass "py_compile: $relpath"
+    if _parse "$pyfile" 2>&1; then
+        pass "syntax: $relpath"
     else
-        fail "py_compile: $relpath"
+        fail "syntax: $relpath"
     fi
 done < <(find "$CC_DIR" -name "*.py" -print0 | sort -z)
 
@@ -174,37 +177,8 @@ if [[ -f "$NEBULA_PY" ]]; then
         fail "nebula.py contains live-status integration" \
              "Expected _read_nebula_status or equivalent live-status function (DEC-PHASE10-005)"
     fi
-    if grep -q "coming in W10-2" "$NEBULA_PY"; then
-        pass "nebula.py contains 'coming in W10-2' (W10-2 chat plug-in surface)"
-    else
-        fail "nebula.py contains 'coming in W10-2'" \
-             "W10-2 implementer needs this text to locate the correct section"
-    fi
-    if grep -q "coming in W10-3" "$NEBULA_PY"; then
-        pass "nebula.py contains 'coming in W10-3' (W10-3 MCP plug-in surface)"
-    else
-        fail "nebula.py contains 'coming in W10-3'" \
-             "W10-3 implementer needs this text to locate the correct section"
-    fi
 else
     fail "sections/nebula.py exists" "Not found: $NEBULA_PY"
-fi
-
-# ===========================================================================
-# 6. Auto-Healing placeholder text contains "lands in W10-6" (DEC-PHASE10-005)
-# ===========================================================================
-section "Auto-Healing placeholder text (DEC-PHASE10-005)"
-
-AUTO_PY="$CC_DIR/sections/auto_healing.py"
-if [[ -f "$AUTO_PY" ]]; then
-    if grep -q "lands in W10-6" "$AUTO_PY"; then
-        pass "auto_healing.py contains 'lands in W10-6' (W10-6 plug-in surface)"
-    else
-        fail "auto_healing.py contains 'lands in W10-6'" \
-             "W10-6 implementer needs this text to locate the correct tab"
-    fi
-else
-    fail "sections/auto_healing.py exists" "Not found: $AUTO_PY"
 fi
 
 # ===========================================================================

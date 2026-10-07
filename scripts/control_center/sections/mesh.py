@@ -25,7 +25,8 @@ from gi.repository import Gtk  # type: ignore[import]  # noqa: E402
 from ..helpers import mesh_data as M  # noqa: E402
 from ..helpers import ux  # noqa: E402
 from ..helpers.spark import Spark  # noqa: E402
-from ..helpers.state_polling import add_poll  # noqa: E402
+from ..helpers import settings_io as S  # noqa: E402
+from ..helpers.background import Poller  # noqa: E402
 
 _POLL_MS = 3000
 _DIM = "#9aa0a6"
@@ -46,11 +47,6 @@ def _kv(grid: Gtk.Grid, row: int, key: str) -> Gtk.Label:
 def build_section() -> Gtk.Widget:
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
     box.set_border_width(12)
-    title = Gtk.Label()
-    title.set_markup("<b>Mesh (WireGuard P2P)</b>")
-    title.set_halign(Gtk.Align.START)
-    box.pack_start(title, False, False, 0)
-
     headline = Gtk.Label(label="Checking mesh…")
     headline.set_halign(Gtk.Align.START)
     headline.set_line_wrap(True)
@@ -94,10 +90,19 @@ def build_section() -> Gtk.Widget:
 
     last = {"rx": None, "tx": None, "t": None}
 
-    def _refresh() -> bool:
+    def _collect(_visible: bool) -> dict:
+        """Worker thread: file reads only (snapshot, sysfs, bus tail)."""
         now = time.time()
         snap = M.load_snapshot(now=now)
-        summ = M.mesh_summary(snap, now, wg_up=M.sysfs_bytes() is not None)
+        kb = M.sysfs_bytes()
+        return {"now": now, "snap": snap, "kb": kb, "events": M.read_history(),
+                "summ": M.mesh_summary(snap, now, wg_up=kb is not None)}
+
+    def _apply(d: dict | None, err) -> None:
+        if err is not None:
+            headline.set_text(f"Mesh: could not read state: {err}")
+            return
+        now, snap, summ = d["now"], d["snap"], d["summ"]
         peers = list(snap.get("peers", [])) if snap else []
         active = bool(snap and snap.get("active"))
         stale = summ["stale_peers"]
@@ -121,7 +126,7 @@ def build_section() -> Gtk.Widget:
         vals["Traffic"].set_text(f"rx {M.fmt_bytes(rx)} · tx {M.fmt_bytes(tx)} (all peers, from snapshot)")
         # Sparklines from the kernel's own counters (sysfs is world-readable),
         # so the rate is fresh every poll regardless of the snapshot cadence.
-        kb = M.sysfs_bytes()
+        kb = d["kb"]
         if kb is not None:
             krx, ktx = kb
             if last["t"] is not None and now > last["t"]:
@@ -135,17 +140,15 @@ def build_section() -> Gtk.Widget:
         for p in peers:
             store.append([p.get("node") or p.get("short", "?"), M.peer_state(p["handshake_age"]), p.get("endpoint") or "—",
                           M.fmt_age(p["handshake_age"]), M.fmt_bytes(p["rx"]), M.fmt_bytes(p["tx"])])
-        events = M.read_history()
+        events = d["events"]
         if events:
             hist.set_text("\n".join(
                 f"{M.fmt_age(max(0.0, now - float(e.get('ts', now)))):>9}  {e.get('source','?')}/{e.get('category','')}  "
                 f"{str(e.get('message',''))[:110]}" for e in events))
         else:
             hist.set_text("no mesh events on the bus yet")
-        return True
 
-    _refresh()
-    add_poll(_POLL_MS, _refresh)
+    Poller(box, _POLL_MS, _collect, _apply)
 
     box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 4)
     btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
@@ -167,4 +170,11 @@ def build_section() -> Gtk.Widget:
     peers_btn.connect("clicked", lambda _w: ux.launch_in_terminal(
         ["sudo", "orionx-mesh", "peers"], needs="orionx-mesh", friendly="Mesh peers", title="Orion-X Mesh — peers"))
     btn_box.pack_start(peers_btn, False, False, 0)
+    # UX-27: keys, VPN address and peers live under /var/lib; say whether
+    # they outlive a reboot, as orionx-tune does for its rules.
+    reboot = Gtk.Label(label="Mesh identity and peers — " + S.reboot_line())
+    reboot.set_halign(Gtk.Align.START)
+    reboot.set_line_wrap(True)
+    reboot.set_selectable(True)
+    box.pack_start(reboot, False, False, 2)
     return box

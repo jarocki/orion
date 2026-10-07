@@ -112,6 +112,8 @@ def launch_in_terminal(
     friendly: str,
     title: Optional[str] = None,
     hold: bool = True,
+    own_process: bool = False,
+    done_note: str = "",
 ) -> bool:
     """Open *inner_argv* inside xfce4-terminal; preflight the real tool first.
 
@@ -132,6 +134,11 @@ def launch_in_terminal(
         notify(f"✗ {friendly} is not installed on this system", LEVEL_ERROR)
         return False
     argv = ["xfce4-terminal", "-T", title or friendly]
+    if own_process:
+        # xfce4-terminal is single-instance: without this a new window is
+        # created by the already-running process and inherits ITS palette
+        # (UX-24). A separate process reads terminalrc afresh.
+        argv.append("--disable-server")
     if hold:
         argv.append("--hold")
     argv.append("-x")
@@ -146,5 +153,5 @@ def launch_in_terminal(
     except OSError as exc:
         notify(f"✗ Could not launch {friendly}: {exc}", LEVEL_ERROR)
         return False
-    notify(f"✓ Opened {friendly} in a terminal", LEVEL_OK)
+    notify(f"✓ Opened {friendly} in a terminal" + (f" — {done_note}" if done_note else ""), LEVEL_OK)
     return True

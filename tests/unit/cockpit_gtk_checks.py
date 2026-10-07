@@ -153,5 +153,60 @@ if os.geteuid() != 0:
     ck(combo.get_active_text() == "autonomous", "combo reverts to what the engine will read")
 win.destroy()
 
+# ---------------------------------------------------------------- whole Cockpit
+print("[cockpit: only the visible tab polls; probes never block the main loop (P1-5)]")
+from importlib.machinery import SourceFileLoader  # noqa: E402
+
+from control_center.helpers.background import Poller  # noqa: E402
+
+CK = SourceFileLoader("orionx_cockpit", str(ROOT / "scripts/cockpit/orionx-cockpit")).load_module()
+CCAPP = sys.modules["control_center.app"]
+stub("systemctl", "sleep 3; echo inactive")      # a slow probe: must not stall the loop
+Poller.instances.clear()
+t0 = time.time()
+cw = CK.Cockpit(tab="live")
+build_s = time.time() - t0
+cw.set_default_size(1366, 701)
+cw.show_all()
+ck(build_s < 2.0, f"window built in {build_s:.2f} s with a 3 s systemctl (was serial, 30 s+ with Matrix unreachable)")
+ticks = {"n": 0}
+from gi.repository import GLib  # noqa: E402
+
+
+def _beat() -> bool:
+    ticks["n"] += 1
+    return True
+
+
+GLib.timeout_add(50, _beat)
+pump(4.0)
+ck(ticks["n"] >= 50, f"main loop kept ticking while probes ran ({ticks['n']} x 50 ms beats in 4 s)")
+hidden = [p for p in Poller.instances if not p.visible() and not p.run_hidden]
+ck(hidden and all(p.runs == 0 for p in hidden), f"{len(hidden)} hidden-tab pollers ran {sum(p.runs for p in hidden)} times")
+live = [p for p in Poller.instances if p.owner is cw.da]
+ck(live and all(p.runs >= 1 for p in live), "LIVE probes ran while LIVE is visible")
+mesh_page = cw._pages["mesh"]
+cw.nb.set_current_page(mesh_page)
+pump(1.0)
+mesh_pollers = [p for p in Poller.instances if p.visible() and p.owner is not cw.da]
+ck(mesh_pollers and all(p.runs >= 1 for p in mesh_pollers), "switching to Mesh collects immediately")
+runs_live = sum(p.runs for p in live)
+pump(5.5)
+ck(sum(p.runs for p in live) == runs_live, "LIVE probes stop while another tab is visible")
+
+print("[cockpit: one name per tab; no retired surface names on screen (UX-45)]")
+for key, label, _icon, _b in CCAPP.SECTIONS:
+    page = cw.nb.get_nth_page(cw._pages[key])
+    texts = [w.get_text() for w in walk(page) if isinstance(w, Gtk.Label)]
+    ck(texts and texts[0] == label, f"tab '{label}' content opens with its own name ({texts[:1]})")
+retired = ("Control Center", "IR Tools", "Investigation Surface", "Situational Awareness")
+seen = []
+for w in walk(cw):
+    for t in ((w.get_text() if isinstance(w, Gtk.Label) else ""), (w.get_tooltip_text() or ""),
+              (w.get_label() if isinstance(w, Gtk.Button) else "") or ""):
+        if any(r in t for r in retired):
+            seen.append(t)
+ck(not seen, f"no retired names in any label, button or tooltip ({seen[:3]})")
+
 print(f"Results: {PASS} passed, {FAIL} failed", flush=True)
 os._exit(1 if FAIL else 0)   # skip GTK teardown: it can hang under Xvfb
