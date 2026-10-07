@@ -22,6 +22,12 @@ Documentation=https://ollama.com
 # After= means: do not start ollama until integrity-check has completed.
 Requires=nebula-integrity-check.service
 After=nebula-integrity-check.service
+# DEC-PHASE12-103: ollama is advertised as AppArmor-confined. If the ollama
+# profile is not enforced, orionx-apparmor-load exits 1 and this unit does not
+# start (fail closed). A kernel without AppArmor skips that unit by condition,
+# which does not block this one.
+Requires=orionx-apparmor-load.service
+After=orionx-apparmor-load.service
 # ollama is localhost-only (DEC-006) and needs no network; do not order on
 # network.target so it is never delayed on an offline boot.
 # StartLimit hardening: if ollama truly fails, give up after 5 tries in 120s
@@ -56,6 +62,32 @@ Restart=on-failure
 RestartSec=5
 # Give ollama time to initialise (it may need to load the model on first request).
 TimeoutStartSec=120
+
+# @decision DEC-PHASE12-101
+# @title "ollama is localhost-only" is enforced here, by the kernel, not by
+#   an AppArmor rule that cannot express it
+# @status accepted
+# @rationale AppArmor network rules cannot match a peer address, so the
+#   profile's old "cannot make outbound network calls" was false while it
+#   granted inet (security F8). IPAddressDeny=any + IPAddressAllow=localhost
+#   attach a cgroup BPF filter to every socket of this unit: 127.0.0.0/8 and
+#   ::1 only, in both directions. The rest is conservative sandboxing chosen
+#   not to break what ollama writes: /root/.ollama (keypair, cache) and
+#   /var/log/orionx stay writable (ProtectSystem=full leaves /root and /var
+#   writable; /usr, /boot and /etc become read-only; ProtectHome is NOT set
+#   because it would make /root, ollama's HOME, read-only); models are only read.
+#   Not verified on a deck: check `curl -s localhost:11434/api/tags` works and
+#   `systemctl show nebula-runtime -p IPAddressDeny` lists "any".
+IPAddressDeny=any
+IPAddressAllow=localhost
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
 
 [Install]
 # Auto-started at boot via 0615 AUTOSTART_UNITS (DEC-PHASE11-033). ollama loads

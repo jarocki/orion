@@ -270,7 +270,8 @@ else
          "needs entries in BOTH UNIT_FILES and AUTOSTART_UNITS; staged-but-not-enabled loads nothing"
 fi
 
-if grep -q 'apparmor_parser -r' "$AA_UNIT" 2>/dev/null; then
+# DEC-PHASE12-103: the load loop moved from the unit into the loader script.
+if grep -q '"$PARSER" -r' "$(dirname "$AA_UNIT")/../../../lib/orionx/orionx-apparmor-load" 2>/dev/null && grep -q '/sbin/apparmor_parser' "$(dirname "$AA_UNIT")/../../../lib/orionx/orionx-apparmor-load"; then
     pass "loader replaces profiles idempotently (-r), safe beside apparmor.service"
 else
     fail "loader uses apparmor_parser -r" "non-idempotent load conflicts on an installed system"
