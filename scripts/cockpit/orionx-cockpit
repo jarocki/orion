@@ -153,8 +153,18 @@ class Cockpit(Gtk.Window):
         if fullscreen:
             self.fullscreen()
             self._fs = True
-        if tab in self._pages:
-            self.nb.set_current_page(self._pages[tab])
+        # GtkNotebook refuses to switch to a page whose child is not visible yet,
+        # and nothing is visible until main() calls show_all(); selecting here
+        # silently left every --tab launch (and the menu's "Network tab" entry)
+        # on LIVE. show_all() then select_tab() (QA round 1, lead).
+        self._initial_tab = tab
+
+    def select_tab(self, tab: str) -> bool:
+        """Switch to a tab by key; True when the notebook is now on it."""
+        if tab not in self._pages:
+            return False
+        self.nb.set_current_page(self._pages[tab])
+        return self.nb.get_current_page() == self._pages[tab]
 
     # ------------------------------------------------------------------ polling
     def _poll_events(self) -> bool:
@@ -905,6 +915,8 @@ def main(argv=None) -> int:
         print(f"orionx-cockpit: cannot open a window ({exc}). Is DISPLAY set?", file=sys.stderr)
         return 1
     win.show_all()
+    if not win.select_tab(win._initial_tab):
+        print(f"orionx-cockpit: could not open on tab {win._initial_tab!r}", file=sys.stderr)
     Gtk.main()
     return 0
 

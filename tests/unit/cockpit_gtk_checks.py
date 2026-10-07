@@ -323,5 +323,11 @@ ck(not quits, "plain q and Esc do not quit the live view")
 cw._on_key(None, _Key("q", C_))
 ck(len(quits) == 1, "Ctrl+Q quits")
 
+# --tab must land on the tab: GtkNotebook ignores set_current_page for a page
+# that is not visible yet, so selecting in __init__ left every --tab on LIVE.
+ck(cw.select_tab("mesh") and cw.nb.get_current_page() == cw._pages["mesh"], "--tab mesh lands on the Mesh tab after show_all")
+ck(cw.select_tab("live") and cw.nb.get_current_page() == 0, "and back to LIVE")
+ck(not cw.select_tab("no-such-tab"), "unknown tab key is refused, not ignored")
+
 print(f"Results: {PASS} passed, {FAIL} failed", flush=True)
 os._exit(1 if FAIL else 0)   # skip GTK teardown: it can hang under Xvfb
