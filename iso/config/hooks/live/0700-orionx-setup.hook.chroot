@@ -161,6 +161,10 @@ done
 #    --hold: keeps window open after the command exits.
 #    exec bash: provides a live shell on completion so the user can read output.
 #    No lxterminal — it is NOT installed in the Orion-X ISO.
+#    Categories=X-Orion; only, on purpose: orionx.menu merges every X-Orion
+#    entry into the Orion submenu. A registered main category (Utility;) would
+#    silence desktop-file-validate's hint but list each tool a second time
+#    under Accessories (QA round 1 docs F47: by design).
 # ---------------------------------------------------------------------------
 echo "[orionx-setup] Creating XDG desktop entries..."
 mkdir -p /usr/share/applications
