@@ -366,10 +366,6 @@ def process_running(name: str) -> bool:
         return False
 
 
-def mesh_up(sysfs: str = "/sys/class/net/wg0") -> bool:
-    return os.path.exists(sysfs)
-
-
 def posture_tier(path: Path = POSTURE_FILE) -> str:
     """Current threat-posture tier id ('0','1','2'); '0' if unset."""
     try:
@@ -425,7 +421,7 @@ __all__ = [
     "EMBER", "EMBER_DIM", "CYAN", "GREEN", "AMBER", "RED", "DIM", "BG_TOP", "BG_BOTTOM", "GRID",
     "SEVERITY_COLOR", "SEVERITY_WEIGHT", "SEVERITIES", "EVENT_LOG", "POSTURE_FILE",
     "parse_event", "EventTail", "pressure", "pressure_color", "read_net_bytes", "RateTracker",
-    "sparkline_points", "fmt_rate", "fmt_age", "service_active", "process_running", "mesh_up",
+    "sparkline_points", "fmt_rate", "fmt_age", "service_active", "process_running",
     "posture_tier", "POSTURE_LABEL", "POSTURE_STATUS_FILE", "posture_status",
     "posture_badge", "lerp", "now", "math",
 ]

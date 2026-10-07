@@ -95,26 +95,92 @@ def total_traffic(peers: list[dict[str, Any]]) -> tuple[int, int]:
     return sum(p["rx"] for p in peers), sum(p["tx"] for p in peers)
 
 
-def load_snapshot(path: Path = SNAPSHOT) -> dict[str, Any] | None:
-    """The root-written snapshot, or None (missing/corrupt). Never raises."""
+def _num(v: Any) -> float:
+    try:
+        return float(v) if v is not None and not isinstance(v, bool) else 0.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def load_snapshot(path: Path = SNAPSHOT, now: float | None = None) -> dict[str, Any] | None:
+    """The root-written snapshot, or None (missing/corrupt). Never raises.
+
+    Handshake ages are measured against `now` (the reader's clock), not the
+    snapshot's own ts: a frozen snapshot must not make old handshakes look
+    live (UX-26). Malformed peers are dropped, not raised into a GLib timer.
+    """
+    now = time.time() if now is None else now
     try:
         d = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     if not isinstance(d, dict) or "active" not in d:
         return None
-    d.setdefault("peers", [])
-    for p in d["peers"]:
-        hs = int(p.get("handshake") or 0)
-        p["handshake_age"] = None if hs <= 0 else max(0.0, float(d.get("ts", hs)) - hs)
+    peers = []
+    for p in d.get("peers") if isinstance(d.get("peers"), list) else []:
+        if not isinstance(p, dict):
+            continue
+        hs = _num(p.get("handshake"))
+        p["handshake_age"] = None if hs <= 0 else max(0.0, now - hs)
+        p["rx"], p["tx"] = int(_num(p.get("rx"))), int(_num(p.get("tx")))
         p.setdefault("short", str(p.get("pubkey_short", "")) + "…")
+        peers.append(p)
+    d["peers"] = peers
     return d
 
 
 def snapshot_age(snap: dict[str, Any] | None, now: float) -> float | None:
-    if not snap or "ts" not in snap:
+    if not snap or _num(snap.get("ts")) <= 0:
         return None
-    return max(0.0, now - float(snap["ts"]))
+    return max(0.0, now - _num(snap["ts"]))
+
+
+# @decision DEC-PHASE12-067
+# @title One mesh verdict, from the root-written snapshot, for every surface
+# @status accepted
+# @rationale UX-15/UX-26, python.md P2-4, system.md P2-4. The panel widget ran
+#   `sudo orionx-mesh status` every 5 s from genmon (no tty: it showed "—"
+#   while wg0 was up), Awareness and the LIVE LED looked at sysfs, and the
+#   Mesh tab kept saying "active" over a 10-minute-old snapshot. Four readers,
+#   three answers. Every surface now asks mesh_summary(load_snapshot()) and
+#   prints its text; past MESH_STALE_AFTER the verdict is "stale", with the
+#   age and the timer to check, and no surface calls sudo.
+MESH_STALE_AFTER = 30.0
+_TIMER_HINT = "sudo systemctl status orionx-mesh-status.timer"
+
+
+def mesh_summary(snap: dict[str, Any] | None, now: float,
+                 wg_up: bool | None = None) -> dict[str, Any]:
+    """The mesh verdict every surface prints. Pure.
+
+    state: active | stale | down | no-snapshot. `text` is the full sentence;
+    `short` fits a panel widget.
+    """
+    age = snapshot_age(snap, now)
+    out: dict[str, Any] = {"age": age, "peers": 0, "live": 0, "stale_peers": 0}
+    if snap is None or age is None:
+        up = " wg0 is up but" if wg_up else ""
+        out.update(state="no-snapshot", short="— (no snapshot)",
+                   text=f"Mesh: state unknown —{up} no snapshot at {SNAPSHOT}. "
+                        f"Is the snapshot timer running? {_TIMER_HINT}")
+        return out
+    peers = snap.get("peers") or []
+    live = sum(1 for p in peers if peer_state(p.get("handshake_age")) == "live")
+    stalep = sum(1 for p in peers if peer_state(p.get("handshake_age")) == "stale")
+    out.update(peers=len(peers), live=live, stale_peers=stalep)
+    if age > MESH_STALE_AFTER:
+        out.update(state="stale", short=f"◆ stale ({age:.0f} s)",
+                   text=f"Mesh: snapshot stale ({age:.0f} s old) — the state below may be wrong. "
+                        f"Is the snapshot timer running? {_TIMER_HINT}")
+        return out
+    if not snap.get("active"):
+        out.update(state="down", short="—",
+                   text="Mesh: not joined — press Start Mesh (or: sudo orionx-mesh join)")
+        return out
+    out.update(state="active", short=f"◆ {live} peer{'s' if live != 1 else ''}",
+               text=f"Mesh: active — {len(peers)} node(s) known, {live} live"
+                    + (f", {stalep} stale" if stalep else "") + f"   (snapshot {age:.0f} s old)")
+    return out
 
 
 def sysfs_bytes(iface: str = MESH_IFACE, root: Path = SYSFS_NET) -> tuple[int, int] | None:

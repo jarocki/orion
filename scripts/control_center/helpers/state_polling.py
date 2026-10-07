@@ -57,18 +57,5 @@ def get_active_connections() -> list[str]:
     return [line.split(":")[0] for line in raw.splitlines() if line.strip()]
 
 
-def get_mesh_status() -> dict[str, str]:
-    """Return a dict with 'peers', 'status', 'raw' from orionx-mesh status.
-
-    Falls back gracefully when the mesh binary is absent.
-    """
-    raw = run_stdout(["sudo", "orionx-mesh", "status"], timeout=8)
-    return {"raw": raw, "status": "unknown" if not raw else "ok"}
-
-
-def get_matrix_service_state() -> str:
-    """Return systemctl is-active result for matrix-synapse-orionx.service."""
-    return run_stdout(
-        ["systemctl", "is-active", "matrix-synapse-orionx.service"],
-        timeout=5,
-    ) or "inactive"
+# Mesh state: helpers/mesh_data.mesh_summary(load_snapshot()) (DEC-PHASE12-067).
+# Matrix unit state: helpers/comms_data.SYNAPSE_UNIT, read by the Comms tab.

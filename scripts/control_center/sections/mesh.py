@@ -96,22 +96,16 @@ def build_section() -> Gtk.Widget:
 
     def _refresh() -> bool:
         now = time.time()
-        snap = M.load_snapshot()
-        age = M.snapshot_age(snap, now)
-        wg_up = M.sysfs_bytes() is not None
+        snap = M.load_snapshot(now=now)
+        summ = M.mesh_summary(snap, now, wg_up=M.sysfs_bytes() is not None)
         peers = list(snap.get("peers", [])) if snap else []
         active = bool(snap and snap.get("active"))
-        if snap is None and wg_up:
-            headline.set_text("Mesh: wg0 is up but no snapshot yet — is orionx-mesh-status.timer running? "
-                              "(sudo systemctl start orionx-mesh-status.timer)")
-        elif not active:
-            headline.set_text("Mesh: not joined — press Start Mesh (or: sudo orionx-mesh join)")
-        else:
-            live = sum(1 for p in peers if M.peer_state(p["handshake_age"]) == "live")
-            stale = sum(1 for p in peers if M.peer_state(p["handshake_age"]) == "stale")
-            headline.set_text(f"Mesh: active — {len(peers)} node(s) known, {live} live"
-                              + (f", {stale} stale" if stale else "")
-                              + (f"   (snapshot {age:.0f}s old)" if age is not None else ""))
+        stale = summ["stale_peers"]
+        headline.set_text(summ["text"])
+        # A stale snapshot is shown greyed: the numbers are history, not now.
+        fresh = summ["state"] not in ("stale", "no-snapshot")
+        grid.set_sensitive(fresh)
+        tree.set_sensitive(fresh)
         vals["Interface"].set_text(str(snap.get("interface") or "—") if active else "—")
         vals["VPN IP"].set_text(str(snap.get("vpn_ip") or "—") if active else "—")
         vals["Mode"].set_text(str(snap.get("mode") or "—") if active else "—")

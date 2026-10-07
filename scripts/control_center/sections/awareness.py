@@ -38,12 +38,15 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import gi
 
 gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk  # type: ignore[import]  # noqa: E402
+
+from ..helpers import mesh_data as M  # noqa: E402
 
 # Live-health refresh cadence (ms).
 _POLL_MS = 3000
@@ -231,10 +234,11 @@ def _network_health() -> tuple[str, str]:
 
 
 def _mesh_health() -> tuple[str, str]:
-    # wg0 present = joined; absent = not joined (offline-friendly, no sudo).
-    if Path("/sys/class/net/wg0").exists():
-        return "wg0 up (mesh joined)", _GREEN
-    return "not joined", _AMBER
+    # DEC-PHASE12-067: the same snapshot verdict as the Mesh tab and the panel.
+    now = time.time()
+    s = M.mesh_summary(M.load_snapshot(now=now), now, wg_up=M.sysfs_bytes() is not None)
+    col = {"active": _GREEN, "down": _AMBER}.get(s["state"], _RED)
+    return s["text"].removeprefix("Mesh: "), col
 
 
 def _vitals() -> dict:

@@ -42,6 +42,7 @@ import deck_vitals as V  # noqa: E402  (DEC-PHASE12-049: one authority for hostn
 sys.path.insert(0, str(_here.parent.parent))
 from control_center import app as CC  # noqa: E402  (DEC-PHASE12-053: the tab authority)
 from control_center.helpers import ux as CCUX  # noqa: E402
+from control_center.helpers import mesh_data as MD  # noqa: E402  (DEC-PHASE12-067)
 
 try:
     import gi
@@ -177,7 +178,11 @@ class Cockpit(Gtk.Window):
     def _poll_sys(self) -> bool:
         self.systems["NEBULA"] = L.service_active("nebula-runtime.service")
         self.systems["FIREWALL"] = L.service_active("orionx-firewall.service")
-        self.systems["MESH"] = L.mesh_up()
+        # DEC-PHASE12-067: the snapshot verdict, as on every other surface.
+        # None = unknown (stale / no snapshot), drawn amber, never as ONLINE.
+        _now = time.time()
+        _ms = MD.mesh_summary(MD.load_snapshot(now=_now), _now)["state"]
+        self.systems["MESH"] = {"active": True, "down": False}.get(_ms)
         self.systems["R.A.I.N."] = L.process_running("orionx-rain")
         self.posture = L.posture_tier()
         # DEC-PHASE12-024: what the tier is ENFORCING, not just what it is set
@@ -835,7 +840,7 @@ class Cockpit(Gtk.Window):
         for i, (name, ok) in enumerate(items):
             lx = cx + col_w * i + col_w / 2
             ly = cy + ch * 0.42
-            col = L.GREEN if ok else L.RED
+            col = L.GREEN if ok else L.AMBER if ok is None else L.RED
             cr.set_source_rgba(*col, (0.35 if ok else 0.2) * pulse)
             cr.arc(lx, ly, 14, 0, 2 * math.pi)
             cr.fill()
@@ -843,7 +848,7 @@ class Cockpit(Gtk.Window):
             cr.arc(lx, ly, 6, 0, 2 * math.pi)
             cr.fill()
             self._text(cr, lx, ly + 30, name, 11, L.DIM if ok else col, bold=True, align="center")
-            self._text(cr, lx, ly + 44, "ONLINE" if ok else "DOWN", 9, col, align="center")
+            self._text(cr, lx, ly + 44, "ONLINE" if ok else "UNKNOWN" if ok is None else "DOWN", 9, col, align="center")
 
 
 def main(argv=None) -> int:

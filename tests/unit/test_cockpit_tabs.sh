@@ -75,8 +75,70 @@ ck(V.parse_resolv_conf("# x\nnameserver 192.168.4.1\nnameserver 1.1.1.1\nnameser
 PY
 then pass "mesh/comms/tools/spark/vitals pure helpers"; else fail "pure helper assertions" "see output above"; fi
 
+echo "[mesh: one snapshot verdict on every surface (DEC-PHASE12-067)]"
+if PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT" <<'PY'
+import sys, json, tempfile, pathlib, importlib.util
+root = pathlib.Path(sys.argv[1]); sys.path.insert(0, str(root/"scripts"))
+from control_center.helpers import mesh_data as M
+def ck(c, m):
+    print(("  ok   " if c else "  FAIL ") + m)
+    if not c: raise SystemExit(1)
+now = 2_000_000.0
+td = pathlib.Path(tempfile.mkdtemp(dir=str(root/"tmp")))
+def snap(age, active=True, peers=None):
+    p = td/f"s{age}{active}.json"
+    p.write_text(json.dumps({"ts": now - age, "active": active, "interface": "wg0", "vpn_ip": "10.0.99.7",
+                             "peers": peers if peers is not None else
+                             [{"pubkey_short": "aaaa", "node": "10.0.99.2", "handshake": now - 20 - age, "rx": 5, "tx": 6},
+                              {"pubkey_short": "bbbb", "node": "10.0.99.3", "handshake": now - 400, "rx": 1, "tx": 1}]}))
+    return p
+s = M.mesh_summary(M.load_snapshot(snap(5), now=now), now)
+ck(s["state"] == "active" and s["live"] == 1 and s["short"] == "◆ 1 peer" and "5 s old" in s["text"], f"fresh: {s['short']} / {s['text']}")
+st = M.mesh_summary(M.load_snapshot(snap(612), now=now), now)
+ck(st["state"] == "stale" and "612 s" in st["text"] and "orionx-mesh-status.timer" in st["text"] and "active" not in st["text"].split("—")[0],
+   f"stale snapshot says stale, not active: {st['text']}")
+ck(st["live"] == 0, "handshake ages measured against now: a frozen snapshot shows no live peers (UX-26)")
+ck(M.mesh_summary(M.load_snapshot(snap(3, active=False, peers=[]), now=now), now)["state"] == "down", "not joined")
+ns = M.mesh_summary(M.load_snapshot(td/"missing.json"), now, wg_up=True)
+ck(ns["state"] == "no-snapshot" and ns["short"] == "— (no snapshot)" and "wg0 is up" in ns["text"], f"no snapshot: {ns['text']}")
+bad = td/"bad.json"; bad.write_text(json.dumps({"ts": now, "active": True, "peers": [{"handshake": "x", "rx": "y"}, "junk", None]}))
+b = M.load_snapshot(bad, now=now)
+ck(b is not None and len(b["peers"]) == 1 and b["peers"][0]["handshake_age"] is None, "malformed peers neither raise nor count (P3-4)")
+spec = importlib.util.spec_from_file_location("mesh_status", root/"scripts/control_center/widgets/mesh-status.py")
+w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+out = w.render(snap(5), now=now)
+ck(out.startswith("<txt>◆ 1 peer</txt>") and "<tool>Mesh: active" in out, f"panel widget renders the snapshot: {out.splitlines()[0]}")
+ck(w.render(snap(95), now=now).startswith("<txt>◆ stale (95 s)</txt>"), "panel widget says stale past 30 s")
+ck(w.render(td/"none.json", now=now).startswith("<txt>— (no snapshot)</txt>"), "panel widget: no snapshot")
+PY
+then pass "mesh verdict: tab, Awareness, LIVE LED and panel widget share mesh_summary"; else fail "mesh verdict" "see output above"; fi
+for f in "$CC/sections/awareness.py" "$CK" "$CC/sections/mesh.py"; do grep -q "mesh_summary(" "$f" || fail "mesh verdict wired" "$f does not use mesh_summary"; done
+
+echo "[no sudo from the GUI except inside an operator-visible terminal]"
+if PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT" <<'PY'
+import ast, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+files = sorted((root/"scripts/control_center").rglob("*.py")) + [root/"scripts/cockpit/orionx-cockpit", root/"scripts/cockpit/cockpit_lib.py"]
+bad = []
+for f in files:
+    tree = ast.parse(f.read_text(), str(f))
+    parents = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.List) and n.elts and isinstance(n.elts[0], ast.Constant) and n.elts[0].value == "sudo":
+            p = parents.get(n)
+            name = ""
+            if isinstance(p, ast.Call):
+                fn = p.func
+                name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+            if name != "launch_in_terminal":
+                bad.append(f"{f.relative_to(root)}:{n.lineno}")
+print("  offenders:", bad or "none")
+raise SystemExit(1 if bad else 0)
+PY
+then pass "every sudo argv is passed straight to launch_in_terminal (system.md P2-4)"; else fail "GUI sudo" "a sudo argv runs outside a terminal"; fi
+
 echo "[wiring]"
-grep -q 'M.load_snapshot()' "$CC/sections/mesh.py" && ! grep -qE 'run_stdout\(|from \.\.helpers\.subprocess_runner' "$CC/sections/mesh.py" && pass "Mesh tab reads the root-written snapshot; no privileged reads (DEC-PHASE12-059; Start/Stop/Peers still open a sudo terminal)" || fail "mesh snapshot" "tab still reads status via sudo or does not read the snapshot"
+grep -q 'M.load_snapshot(' "$CC/sections/mesh.py" && ! grep -qE 'run_stdout\(|from \.\.helpers\.subprocess_runner' "$CC/sections/mesh.py" && pass "Mesh tab reads the root-written snapshot; no privileged reads (DEC-PHASE12-059; Start/Stop/Peers still open a sudo terminal)" || fail "mesh snapshot" "tab still reads status via sudo or does not read the snapshot"
 grep -q 'M.read_history()' "$CC/sections/mesh.py" && pass "Mesh tab reads bus history" || fail "mesh history" "missing"
 grep -q 'C.client_states(' "$CC/sections/comms.py" && grep -q 'Gtk.Button(label="Install")' "$CC/sections/comms.py" && pass "Comms offers Install for absent clients" || fail "comms install" "missing"
 grep -q '"Next hop", _next_hop' "$CC/sections/awareness.py" && grep -q '"DNS", _dns' "$CC/sections/awareness.py" && grep -q '"Firewall address", _firewall_addr' "$CC/sections/awareness.py" && pass "Awareness rows: firewall address, next hop, DNS" || fail "awareness rows" "missing"

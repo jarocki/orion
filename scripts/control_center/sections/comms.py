@@ -20,7 +20,7 @@ from gi.repository import Gtk  # type: ignore[import]  # noqa: E402
 
 from ..helpers import comms_data as C  # noqa: E402
 from ..helpers import ux  # noqa: E402
-from ..helpers.state_polling import add_poll, get_matrix_service_state  # noqa: E402
+from ..helpers.state_polling import add_poll  # noqa: E402
 from ..helpers.subprocess_runner import run_stdout  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "awareness"))
@@ -152,7 +152,7 @@ def build_section() -> Gtk.Widget:
 
     def _refresh() -> bool:
         st = C.server_state(
-            get_matrix_service_state(),
+            run_stdout(["systemctl", "is-active", C.SYNAPSE_UNIT], timeout=5) or "inactive",
             shutil.which("synapse_homeserver") is not None or os.path.exists("/opt/venvs/matrix-synapse/bin/synapse_homeserver"),
             C.HOMESERVER_YAML.exists(),
             C.ELEMENT_CFG.read_text(encoding="utf-8") if C.ELEMENT_CFG.exists() else None,
