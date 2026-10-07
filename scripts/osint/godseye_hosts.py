@@ -178,7 +178,10 @@ def main(argv: list[str] | None = None) -> int:
           "GODSEYE is not the list GODSEYE would contact.")
     print("  Remedy: python3 scripts/osint/godseye_hosts.py --write   "
           "# then classify every new name in the prose above the markers")
-    return 1 if args.check else 1
+    # A mismatch fails in EVERY mode, not only --check: a report that the
+    # host list is wrong must never exit 0 (the old `1 if check else 1` said
+    # the same thing twice; python P2-10 / RUF034).
+    return 1
 
 
 if __name__ == "__main__":
