@@ -60,8 +60,14 @@ grep -q 'THRESHOLD_FILE = Path("/var/lib/suricata/orionx-threshold.config")' "$R
 echo "[Synapse venv paths]"
 S="$ROOT/scripts/setup-matrix.sh"
 grep -q 'synapse_present()' "$S" && grep -q 'SYNAPSE_VENV="/opt/venvs/matrix-synapse"' "$S" && grep -q '"$SYNAPSE_VENV/bin/synapse_homeserver"' "$S" && pass "installer probes the venv binary (not only PATH)" || fail "synapse probe" "missing"
-grep -q '"\$SYNAPSE_PY" -m synapse.app.homeserver' "$S" && ! grep -qE '^\s*python3 -m synapse\.app\.homeserver' "$S" && pass "installer generates config with the venv python" || fail "generate-config python" "still system python3"
-grep -q 'ExecStart=/opt/venvs/matrix-synapse/bin/python -m synapse.app.homeserver' "$U/matrix-synapse-orionx.service" && pass "unit runs the venv python" || fail "unit ExecStart" "still /usr/bin/python3"
+# DEC-PHASE12-102: setup-matrix no longer runs --generate-config (the package
+# ships homeserver.yaml; setup writes conf.d/orionx.yaml). It must never run
+# Synapse with the system python3.
+! grep -qE '^\s*python3 -m synapse\.app\.homeserver' "$S" && pass "installer never runs Synapse with the system python3" || fail "system python3" "found"
+# DEC-PHASE12-102: the package unit (venv python, verified) is the only unit;
+# the Orion-X drop-in must not override its ExecStart.
+D="$ROOT/iso/config/includes.chroot/etc/systemd/system/matrix-synapse.service.d/orionx.conf"
+[[ -f "$D" ]] && ! grep -q '^ExecStart' "$D" && [[ ! -e "$U/matrix-synapse-orionx.service" ]] && pass "one Synapse unit (package), drop-in keeps its venv ExecStart" || fail "unit ExecStart" "drop-in missing or overrides ExecStart, or orionx unit back"
 grep -q 'wg0.conf' "$U/matrix-synapse-orionx.service" | grep -v '^#' >/dev/null && fail "stale wg0.conf pre-check removed" "still present" || pass "stale wg0.conf pre-check removed (DEC-PHASE12-041)"
 grep -q '/opt/venvs/matrix-synapse/bin/synapse_homeserver' "$ROOT/scripts/control_center/sections/comms.py" && pass "Comms installed-probe follows the venv path" || fail "comms probe" "missing"
 grep -q 'once it is active, clients will connect to' "$ROOT/scripts/control_center/sections/comms.py" && pass "Comms does not imply a running server when inactive" || fail "comms wording" "missing"

@@ -468,6 +468,7 @@ mesh_psk_install() {
         mesh_log ERROR "could not install $MESH_PSK_FILE"
         return 1
     fi
+    chmod 0600 "$MESH_PSK_FILE"   # born 0600 under umask 077; chmod is belt
     echo "Team PSK installed at $MESH_PSK_FILE. Peers added from now on use it; already-added peers do not (leave and rejoin)."
 }
 
