@@ -14,6 +14,7 @@
 # about what detail must NOT do as what it must.
 # ---------------------------------------------------------------------------
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
@@ -208,6 +209,28 @@ ck(t.poll() == [], "partial line not yet emitted")
 with bus.open("a") as fh: fh.write(line[20:] + "\n")
 got = t.poll()
 ck(len(got) == 1 and got[0]["message"] == "half", f"partial line completed and delivered ({len(got)} event)")
+mk = lambda m: json.dumps({"ts": 2.0, "severity": "warning", "source": "s", "category": "ids", "message": m,
+                           "auth": "hmac-sha256:abcd"}) + "\n"
+# Rotation: the old file is renamed away and a new one appears with events
+# already in it — those must be delivered, not skipped as "backfill".
+bus.rename(bus.with_name("events.jsonl.1")); bus.write_text(mk("r1") + mk("r2"))
+got = [e["message"] for e in t.poll()]
+ck(got == ["r1", "r2"], f"rotated bus read from the top ({got})")
+# Deletion: nothing to read, no crash; recreation: read from the top.
+bus.unlink()
+ck(t.poll() == [], "deleted bus -> no events, no exception")
+bus.write_text(mk("d1"))
+ck([e["message"] for e in t.poll()] == ["d1"], "recreated bus is picked up")
+# Truncation in place.
+with bus.open("a") as fh: fh.write(mk("x") * 5)
+t.poll()
+bus.write_text(mk("t1"))
+ck([e["message"] for e in t.poll()] == ["t1"], "truncated bus re-read from the top")
+ck(cl.parse_event(mk("a"))["message"] == "a", "events carrying the producers' auth HMAC field parse unchanged")
+NOWE = 3_000_000.0
+e2 = td/"err.json"; e2.write_text(json.dumps({"ts": NOWE, "chain_ok": None, "error": "chain does not verify at line 42", "in_force": [], "pending": []}))
+r = cl.healing_actions(e2, now=NOWE)
+ck(r["readable"] is False and "line 42" in r["reason"] and r["chain_ok"] is None, f"chain_ok null + error -> state unknown with heald's reason ({r['reason']})")
 
 ok_, msg = cl.approve_action("")
 ck(ok_ is False and "no action" in msg, "approving nothing is refused")

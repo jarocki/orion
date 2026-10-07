@@ -132,7 +132,7 @@ class EventTail:
         #   a fragment is held here and prefixed to the next read.
         self._partial = ""
 
-    def _open(self) -> bool:
+    def _open(self, from_start: bool = False) -> bool:
         try:
             st = self.path.stat()
         except OSError:
@@ -143,7 +143,12 @@ class EventTail:
             return False
         self._fh = fh
         self._inode = st.st_ino
-        # Backfill the last N events, then continue from EOF.
+        if from_start:
+            # A rotated/recreated/truncated bus: everything in the NEW file
+            # is unseen, so read it from the top (it used to be skipped).
+            self._pos = 0
+            return True
+        # First open: backfill the last N events, then continue from EOF.
         try:
             lines = fh.readlines()
         except OSError:
@@ -162,15 +167,16 @@ class EventTail:
         """Return events appended since the last poll (possibly empty)."""
         if self._fh is None and not self._open():
             return []
-        # Rotation / truncation: reopen from the top.
+        # Rotation / recreation / truncation: reopen and read the new file from
+        # the top. A deleted bus (stat fails) keeps the old handle until a new
+        # file appears; the poll simply returns nothing meanwhile.
         try:
             st = self.path.stat()
             if st.st_ino != self._inode or st.st_size < self._pos:
                 self._fh.close()
                 self._fh = None
-                self._backfill = 0
                 self._partial = ""
-                if not self._open():
+                if not self._open(from_start=True):
                     return []
         except OSError:
             return []
@@ -453,7 +459,7 @@ __all__ = [
 #   here. A missing, corrupt or stale (>30 s) snapshot is "state unknown —
 #   orionx-heald not publishing", never an empty list: "nothing pending" and "I
 #   could not look" must not look the same on a defensive dashboard.
-HEAL_STATUS = Path("/run/orionx/healing-status.json")
+HEAL_STATUS = Path(os.environ.get("ORIONX_HEALING_STATUS", "/run/orionx/healing-status.json"))
 HEAL_STALE_AFTER = 30.0
 
 
