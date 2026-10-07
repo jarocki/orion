@@ -235,5 +235,65 @@ VERSION_EOF" | grep '^ISO_VERSION=')"
     || fail "/etc/orionx-version fallback" "$FALLBACK (a stale literal reads like a real release)"
 
 # ---------------------------------------------------------------------------
+section "Rendered User Guide names the release the image actually is (UX-07, UX-33)"
+# ---------------------------------------------------------------------------
+H0810="$HOOKS/live/0810-render-user-guide.hook.chroot"
+GUIDE="$REPO_ROOT/docs/User_Guide.md"
+n_slots="$(grep -o '<!--orionx:release-->[^<]*<!--/orionx:release-->' "$GUIDE" | wc -l | tr -d ' ')"
+[[ "$n_slots" -ge 2 ]] && pass "User Guide marks its release string in $n_slots places (header + footer)" \
+    || fail "User Guide release slots" "found $n_slots <!--orionx:release--> slots; the header and footer need one each"
+cp "$GUIDE" "$WORK/User_Guide.md"
+printf 'ISO_VERSION=v9.9.9-test\nGIT_HEAD_SHA=abc\n' > "$WORK/orionx-version"
+if ORIONX_GUIDE_MD="$WORK/User_Guide.md" ORIONX_GUIDE_HTML="$WORK/User_Guide.html" \
+   ORIONX_VERSION_FILE="$WORK/orionx-version" bash "$H0810" > "$WORK/0810.log" 2>&1; then
+    pass "0810 renders against a scratch copy"
+else
+    fail "0810 run" "$(tail -3 "$WORK/0810.log" | tr '\n' ' ')"
+fi
+RENDERED="$(python3 - "$WORK/User_Guide.html" <<'PY'
+import re, sys
+h = open(sys.argv[1], encoding="utf-8").read()
+slots = re.findall(r"<!--orionx:release-->([^<]*)<!--/orionx:release-->", h)
+title = re.search(r"<title>([^<]*)</title>", h).group(1)
+print(f"{len(slots)}|{','.join(sorted(set(slots)))}|{title}")
+PY
+)"
+IFS='|' read -r r_n r_vals r_title <<<"$RENDERED"
+if [[ "$r_n" -ge 2 && "$r_vals" == "v9.9.9-test" ]]; then
+    pass "every release slot in the HTML carries the baked ISO_VERSION ($r_n slots)"
+else
+    fail "HTML release slots" "slots=$r_n values=$r_vals (want v9.9.9-test from the version file)"
+fi
+[[ "$r_title" == *"v9.9.9-test"* ]] && pass "HTML <title> names the release ($r_title)" \
+    || fail "HTML title" "$r_title"
+cmp -s "$GUIDE" "$WORK/User_Guide.md" && pass "the baked .md is left byte-identical to the repo (release diff gate)" \
+    || fail "0810 modified the .md" "the release check diffs the baked .md against the repository"
+
+# ---------------------------------------------------------------------------
+section "Operator docs: current release, current UI, links resolve (docs F04-F07/F11-F20/F27-F34, UX-07, release-tests F-07/F-09)"
+# ---------------------------------------------------------------------------
+# The release this branch documents. When it changes, change it here and in
+# README.md / the guide's release slots together.
+RELEASE="v3.0.0"
+DOCS_REPORT="$(python3 "$SCRIPT_DIR/lib/check_docs_current.py" "$REPO_ROOT" "$RELEASE")"
+if [[ "$DOCS_REPORT" == OK* ]]; then pass "${DOCS_REPORT#OK }"
+else while IFS= read -r l; do fail "docs" "${l#FAIL }"; done <<<"$DOCS_REPORT"; fi
+for doc in docs/User_Guide.md README.md docs/SUPPORT.md docs/orionx-imager.md docs/orionx-diag.md; do
+    TOC_REPORT="$(python3 "$SCRIPT_DIR/lib/check_toc_anchors.py" "$REPO_ROOT/$doc")"
+    if [[ "$TOC_REPORT" == OK* ]]; then pass "$doc: ${TOC_REPORT#OK } in-page links resolve (GitHub + rendered HTML)"
+    else while IFS= read -r l; do fail "$doc anchors" "${l#FAIL }"; done <<<"$TOC_REPORT"; fi
+done
+# Every docs/images file the image ships is referenced by a doc (docs F23, UX-38):
+# build-iso.sh rsyncs docs/ into /usr/share/doc/orionx/ wholesale.
+orphans=0
+for img in "$REPO_ROOT"/docs/images/*; do
+    b="$(basename "$img")"
+    if ! grep -rqF "images/$b" "$REPO_ROOT/README.md" "$REPO_ROOT/docs"/*.md; then
+        orphans=$((orphans+1)); fail "orphaned image ships in the image" "docs/images/$b is referenced by no doc"
+    fi
+done
+[[ $orphans -eq 0 ]] && pass "every docs/images file is referenced by a doc"
+
+# ---------------------------------------------------------------------------
 printf "\nResults: %d passed, %d failed\n" "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]]
