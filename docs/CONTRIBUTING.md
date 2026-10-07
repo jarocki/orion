@@ -76,8 +76,8 @@ Thank you for helping improve Orion-X Phoenix Edition!
 ## Coding norms
 
 - **No JetBrains software** — per DEC-PHASE11-013, Orion-X does not include any
-  JetBrains-branded tools or fonts. Use **Hack**, which is the only monospace
-  font the image ships. Iosevka is *not* shipped and is not scheduled: there is
+  JetBrains-branded tools or fonts. Use **Hack**, the deck's chosen monospace
+  face (DejaVu Sans Mono also ships, as a Debian dependency). Iosevka is *not* shipped and is not scheduled: there is
   no `fonts-iosevka` candidate in Debian 13 (trixie), so it cannot be pulled
   from the archive the ISO builds against (#85). Do not reference Iosevka in
   themes, `terminalrc`, `xsettings.xml`, or greeter config.

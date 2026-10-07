@@ -330,12 +330,12 @@ lightdm-gtk-greeter
 # W11-9b: Desktop identity — fonts + GTK theme deps (DEC-PHASE11-013, DEC-PHASE11-010)
 #
 # @decision DEC-PHASE11-013
-# @title W11-9b: Font pair Iosevka (OFL-1.1) + Hack (Apache-2.0)
+# @title W11-9b: Font pair Iosevka (OFL-1.1) + Hack (MIT/Expat + Bitstream Vera)
 # @status accepted
 # @rationale Operator directive 2026-07-13: community-developed fonts only;
 #   no vendor-proprietary or vendor-adjacent monospace fonts permitted per
 #   DEC-PHASE11-013. Iosevka is an OFL-1.1 monospace coding font well-suited
-#   to the terminal aesthetic. Hack is an Apache-2.0 secondary fallback
+#   to the terminal aesthetic. Hack (MIT/Expat + Bitstream Vera) is the secondary fallback
 #   (formerly Bitstream Vera). Both are community-developed with no vendor
 #   telemetry surface (rejected alternatives: vendor-adjacent fonts — see
 #   MASTER_PLAN.md DEC-PHASE11-013 row for the full rejected-list rationale).
@@ -356,7 +356,7 @@ lightdm-gtk-greeter
 # iso/config/packages.chroot/, (b) upstream Iosevka .deb from GitHub release, or
 # (c) move base image to bookworm (larger project change). Tracked as GH issue #85.
 #fonts-iosevka
-# fonts-hack-otf: Hack OTF (Apache-2.0) — secondary monospace font
+# fonts-hack-otf: Hack OTF (MIT/Expat + Bitstream Vera) — secondary monospace font
 fonts-hack-otf
 # gtk2-engines-murrine: Murrine GTK2 engine (required for Adwaita-dark GTK2 variants)
 gtk2-engines-murrine

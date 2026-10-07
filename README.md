@@ -149,7 +149,7 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 - **LightDM greeter**: Orion-X-Greeter with Phoenix backdrop
 - **XFCE GTK theme**: `Orion-X-Cyberdeck` (Adwaita-dark fork with Phoenix red-orange `#FF5722` accent)
 - **Icons**: `Orion-X-Icons` (Papirus-Dark inheritance + 6 custom SVG icons)
-- **Fonts**: **Hack** (Apache-2.0) — the only monospace font on the image, community-developed only per DEC-PHASE11-013. Iosevka is *not* shipped: no `fonts-iosevka` candidate exists in Debian 13 (#85)
+- **Fonts**: **Hack** (MIT/Expat + Bitstream Vera) is the deck's monospace face (terminals, Cockpit); DejaVu Sans Mono also ships as a Debian dependency. No JetBrains fonts, per DEC-PHASE11-013. Iosevka is *not* shipped: no `fonts-iosevka` candidate exists in Debian 13 (#85)
 - **MOTD** with ASCII wordmark on terminal login
 
 ---
@@ -380,7 +380,7 @@ carry their own licenses — see `manifest.json` for the full inventory.
 
 Key permissive dependencies:
 - Qwen2.5-3B-Instruct (Apache-2.0)
-- Hack font (Bitstream Vera / Apache-2.0)
+- Hack font (MIT/Expat + Bitstream Vera, per Debian's fonts-hack copyright)
 - ET-Open Suricata rules (BSD-2-Clause)
 - YARA rules (licensing split documented in `/opt/orionx/yara/README.md`)
 

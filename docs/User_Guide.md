@@ -1326,7 +1326,7 @@ Orion-X ships with a coherent visual identity across the boot chain and desktop:
 - **Login screen** — LightDM greeter with the Phoenix backdrop, Hack 11 font (seen only after you log out)
 - **XFCE desktop** — `Orion-X-Cyberdeck` GTK theme (Adwaita-dark fork with Phoenix red-orange `#FF5722` accent)
 - **Icons** — `Orion-X-Icons` (Papirus-Dark inheritance)
-- **Fonts** — Hack (Apache-2.0 / Bitstream Vera licence) throughout; UI monospace Hack 11
+- **Fonts** — Hack (MIT/Expat + Bitstream Vera licence) throughout; UI monospace Hack 11
 - **Terminal** — xfce4-terminal defaults to Hack 12, dark background, Phoenix accent selection
 - **MOTD** — ASCII wordmark on login
 
