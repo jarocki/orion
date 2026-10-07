@@ -64,6 +64,11 @@ ck(C.server_state("active", True, True, None, None, homeserver_text=two)["url"] 
 s = C.server_state("active", True, True, None, "192.168.4.57", homeserver_text=None, homeserver_err="not readable as this user: Permission denied")
 ck(s["url"] == "" and s["note"].startswith("URL unknown — read /etc/matrix-synapse/homeserver.yaml") and "Permission denied" in s["note"], f"unreadable config -> URL unknown ({s['note']})")
 ck(C.server_state("active", True, True, None, "x", homeserver_text="listeners: []\n")["note"].startswith("URL unknown — homeserver.yaml has no http client listener"), "no listener -> URL unknown")
+confd = "listeners:\n  - port: 8008\n    tls: false\n    type: http\n    bind_addresses: ['127.0.0.1', '10.0.99.5']\n"
+txt, src = C.effective_listener_source(confd, gen)
+ck(src == C.ORIONX_SYNAPSE_CONF and C.server_state("active", True, True, None, "192.168.4.57", homeserver_text=txt)["url"] == "http://10.0.99.5:8008", "conf.d/orionx.yaml listener (what Synapse binds) wins over homeserver.yaml")
+txt, src = C.effective_listener_source(None, gen)
+ck(src == C.HOMESERVER_YAML and txt == gen, "no conf.d listener -> homeserver.yaml")
 ck(C.SYNAPSE_UNIT == "matrix-synapse.service", "one unit constant: the package unit (lead decision, system.md P1-2)")
 s2 = C.server_state("inactive", False, False, json.dumps({"default_server_config":{"m.homeserver":{"base_url":"https://matrix.example.org"}}}), None)
 ck(s2["mode"] == "client" and s2["url"] == "https://matrix.example.org" and not s2["running"], "client mode from Element config")

@@ -69,6 +69,8 @@ def _read(path: Path) -> tuple[str | None, str]:
 def collect_state() -> dict:
     """Worker thread: every probe the tab draws from."""
     hs_text, hs_err = _read(C.HOMESERVER_YAML)
+    confd_text, _ = _read(C.ORIONX_SYNAPSE_CONF)
+    hs_text, src = C.effective_listener_source(confd_text, hs_text)
     el_text, _ = _read(C.ELEMENT_CFG)
     st = C.server_state(
         run_stdout(["systemctl", "is-active", C.SYNAPSE_UNIT], timeout=5) or "inactive",
@@ -76,6 +78,7 @@ def collect_state() -> dict:
         homeserver_text=hs_text, homeserver_err=hs_err)
     mc_desktop, _ = _read(C.MC_DESKTOP)
     clients = C.client_states(os.path.exists, lambda n: shutil.which(n) is not None)
+    st["source"] = str(src)
     return {"state": st, "clients": clients, "mc_desktop": mc_desktop or ""}
 
 
@@ -227,7 +230,7 @@ def build_section() -> Gtk.Widget:
         if st["mode"] == "server":
             if st["url"] and not st["note"]:
                 verb = "clients connect to" if st["running"] else "once it is active, clients will connect to"
-                detail.set_text(f"{C.SYNAPSE_UNIT}: {st['unit']}  ·  {verb} {st['url']}  (from {C.HOMESERVER_YAML})")
+                detail.set_text(f"{C.SYNAPSE_UNIT}: {st['unit']}  ·  {verb} {st['url']}  (from {st.get('source', C.HOMESERVER_YAML)})")
             else:
                 detail.set_text(f"{C.SYNAPSE_UNIT}: {st['unit']}  ·  {st['note']}")
         elif st["mode"] == "client":

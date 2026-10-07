@@ -24,6 +24,10 @@ from pathlib import Path
 from typing import Callable, Optional
 
 HOMESERVER_YAML = Path("/etc/matrix-synapse/homeserver.yaml")
+# setup-matrix.sh writes the deck's ONE listener here. The package unit loads
+# homeserver.yaml then conf.d/, and a later file's top-level key replaces the
+# earlier one, so when this file has `listeners:` it is what Synapse binds.
+ORIONX_SYNAPSE_CONF = Path("/etc/matrix-synapse/conf.d/orionx.yaml")
 ELEMENT_CFG = Path("/etc/element-desktop/config.json")
 MC_CREDENTIALS = Path.home() / ".config" / "matrix-commander" / "credentials.json"
 MC_DESKTOP = Path("/usr/share/applications/orionx-matrix-commander.desktop")
@@ -112,6 +116,17 @@ def parse_listeners(yaml_text: str) -> list[dict]:
         pending_list = None
         cur[k] = _scalar(v)
     return out
+
+
+def effective_listener_source(confd_text: Optional[str], hs_text: Optional[str]) -> tuple[Optional[str], Path]:
+    """(text, path) of the file whose `listeners:` Synapse actually uses. Pure.
+
+    Mirrors Synapse's merge: conf.d/orionx.yaml is loaded after homeserver.yaml
+    and its top-level `listeners` replaces the main file's (B1, QA round 1).
+    """
+    if confd_text is not None and parse_listeners(confd_text):
+        return confd_text, ORIONX_SYNAPSE_CONF
+    return hs_text, HOMESERVER_YAML
 
 
 def client_endpoint(listeners: list[dict], primary_ip: Optional[str]) -> dict:
