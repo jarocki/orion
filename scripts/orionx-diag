@@ -431,6 +431,10 @@ run_packages_checks() {
 # ---------------------------------------------------------------------------
 # Category 4: File presence
 # ---------------------------------------------------------------------------
+# The optional installers the image ships (single list for checks 4i and 10a;
+# shell P3-2: it named 6 of the 10). Keep in step with /opt/orionx/optional/.
+ORIONX_OPTIONAL_INSTALLERS=(clamav duckdb element floss geoip ghidra gomuks piper-voice trid zeek)
+
 run_files_checks() {
     local cat="files"
 
@@ -516,8 +520,8 @@ run_files_checks() {
             "/opt/orionx/optional/lib/orionx-installer-common.sh absent"
     fi
 
-    # 4i: all 6 optional installers present + executable
-    local installers=(clamav element floss ghidra gomuks trid)
+    # 4i: all ${#ORIONX_OPTIONAL_INSTALLERS[@]} optional installers present + executable
+    local installers=("${ORIONX_OPTIONAL_INSTALLERS[@]}")
     local missing_installers=()
     local inst
     for inst in "${installers[@]}"; do
@@ -527,9 +531,9 @@ run_files_checks() {
         fi
     done
     if [[ ${#missing_installers[@]} -eq 0 ]]; then
-        check_pass "$cat" "all 6 optional installers present + executable" ""
+        check_pass "$cat" "all ${#ORIONX_OPTIONAL_INSTALLERS[@]} optional installers present + executable" ""
     else
-        check_fail "$cat" "all 6 optional installers present + executable" \
+        check_fail "$cat" "all ${#ORIONX_OPTIONAL_INSTALLERS[@]} optional installers present + executable" \
             "missing or non-executable: ${missing_installers[*]}"
     fi
 
@@ -883,10 +887,10 @@ run_freshen_checks() {
 run_optional_checks() {
     local cat="optional"
 
-    local installers=(clamav element floss ghidra gomuks trid)
+    local installers=("${ORIONX_OPTIONAL_INSTALLERS[@]}")
     local common_lib="/opt/orionx/optional/lib/orionx-installer-common.sh"
 
-    # 10a: all 6 installers source orionx-installer-common.sh
+    # 10a: every installer sources orionx-installer-common.sh
     local bad_installers=()
     local inst
     for inst in "${installers[@]}"; do
@@ -901,9 +905,9 @@ run_optional_checks() {
         fi
     done
     if [[ ${#bad_installers[@]} -eq 0 ]]; then
-        check_pass "$cat" "all 6 installers source orionx-installer-common.sh" ""
+        check_pass "$cat" "all ${#ORIONX_OPTIONAL_INSTALLERS[@]} installers source orionx-installer-common.sh" ""
     else
-        check_fail "$cat" "all 6 installers source orionx-installer-common.sh" \
+        check_fail "$cat" "all ${#ORIONX_OPTIONAL_INSTALLERS[@]} installers source orionx-installer-common.sh" \
             "missing source directive: ${bad_installers[*]}"
     fi
 
