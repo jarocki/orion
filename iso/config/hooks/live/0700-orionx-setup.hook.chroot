@@ -265,6 +265,27 @@ Icon=orionx-cockpit
 Categories=X-Orion;
 DESKTOP_EOF
 
+# @decision DEC-PHASE12-128
+# @title The Cockpit gets a desktop icon and a panel launcher, derived from its menu entry
+# @status accepted
+# @rationale QA round 1 (UX-08): the Cockpit was the only primary surface with
+#   no desktop icon and no panel launcher — two menu levels deep, while GODSEYE
+#   (which refuses to open offline) had an icon. Both copies are DERIVED from
+#   the menu entry above (one source, generated surfaces — RESILIENCE rule 7),
+#   the same pattern 0710 uses for the Workbench icon. The panel's launcher
+#   plugin (id 11, seeded by hooks/normal/0100-create-user) reads its item
+#   from ~/.config/xfce4/panel/launcher-11/. The prefix variable exists only so
+#   tests/unit/test_operator_surfaces.sh can run this exact block against a
+#   scratch root; in the chroot it is empty. Rendering on the deck is unverified
+#   until the next hardware boot.
+# BEGIN derive-cockpit-surfaces
+_root="${ORIONX_CHROOT_PREFIX:-}"
+for _dst in "$_root/etc/skel/Desktop" "$_root/etc/skel/.config/xfce4/panel/launcher-11"; do
+    mkdir -p "$_dst"
+    install -m 0755 "$_root/usr/share/applications/orionx-cockpit.desktop" "$_dst/orionx-cockpit.desktop"
+done
+# END derive-cockpit-surfaces
+
 # Pivotglass — adversary-infrastructure hunting; `ap web` serves its local
 # browser cockpit on 127.0.0.1:8765 and opens it (DEC-PHASE12-013). Grouped
 # under the Orion menu.

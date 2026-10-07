@@ -117,5 +117,43 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+section "Cockpit reachable from the desktop and the panel; widgets separated (UX-08, UX-31)"
+# ---------------------------------------------------------------------------
+H0100="$HOOKS/normal/0100-create-user.hook.chroot"
+PANEL_XML="$WORK/xfce4-panel.xml"
+if heredoc_body "$H0100" /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml > "$PANEL_XML"; then
+    PANEL_REPORT="$(python3 "$SCRIPT_DIR/lib/check_panel.py" "$PANEL_XML" "$H0100" "$H0700" 2>&1)"
+    if [[ "$PANEL_REPORT" == OK* ]]; then
+        pass "${PANEL_REPORT#OK }"
+    else
+        while IFS= read -r l; do fail "panel/desktop" "${l#FAIL }"; done <<<"$PANEL_REPORT"
+    fi
+else
+    fail "0100 panel heredoc" "xfce4-panel.xml heredoc not found"
+fi
+# Execute the derivation block 0700 uses, against a scratch root, and check
+# that each derived copy is byte-identical to the menu entry and executable
+# (xfdesktop shows non-executable .desktop files as plain files).
+DERIVE="$(awk '/^# BEGIN derive-cockpit-surfaces/{f=1;next} /^# END derive-cockpit-surfaces/{f=0} f' "$H0700")"
+if [[ -n "$DERIVE" ]]; then
+    ROOTFS="$WORK/rootfs"; mkdir -p "$ROOTFS/usr/share/applications"
+    cp "$APPS_DIR/orionx-cockpit.desktop" "$ROOTFS/usr/share/applications/"
+    if ORIONX_CHROOT_PREFIX="$ROOTFS" bash -euo pipefail -c "$DERIVE" >/dev/null 2>&1; then
+        for d in etc/skel/Desktop etc/skel/.config/xfce4/panel/launcher-11; do
+            f="$ROOTFS/$d/orionx-cockpit.desktop"
+            if cmp -s "$f" "$ROOTFS/usr/share/applications/orionx-cockpit.desktop" && [[ -x "$f" ]]; then
+                pass "derived $d/orionx-cockpit.desktop == menu entry, executable"
+            else
+                fail "derived $d/orionx-cockpit.desktop" "missing, different from the menu entry, or not +x"
+            fi
+        done
+    else
+        fail "0700 derive-cockpit-surfaces block" "did not run cleanly against a scratch root"
+    fi
+else
+    fail "0700 derive-cockpit-surfaces block" "no '# BEGIN derive-cockpit-surfaces' block in 0700"
+fi
+
+# ---------------------------------------------------------------------------
 printf "\nResults: %d passed, %d failed\n" "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]]
