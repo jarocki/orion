@@ -20,6 +20,10 @@ tmp/
 /logs/
 # Exception: synthetic sample logs needed for Phase 5 parser testing
 !data/samples/logs/synthetic-syslog.log
+# Exception: Zeek parser fixtures (synthetic capture; tests/fixtures/zeek/README.md).
+# They were ignored by *.log, so test_zeek_pcap.sh passed only on the machine
+# that generated them and failed 5 assertions in every clean checkout.
+!tests/fixtures/zeek/*.log
 
 # Keys and sensitive data
 *.key

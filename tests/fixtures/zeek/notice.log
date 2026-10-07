@@ -1,0 +1,14 @@
+#separator \x09
+#set_separator	,
+#empty_field	(empty)
+#unset_field	-
+#path	notice
+#open	2026-09-28-23-02-28
+#fields	ts	uid	id.orig_h	id.orig_p	id.resp_h	id.resp_p	proto	note	msg	sub	src	dst	p	actions	suppress_for
+#types	time	string	addr	port	addr	port	enum	enum	string	string	addr	addr	port	set[enum]	interval
+1790658012.000000	Cef1KZ3zJz4iorOxm	10.0.0.9	40000	192.168.4.42	22	tcp	Scan::Port_Scan	10.0.0.9 scanned 60 ports of 192.168.4.42	-	10.0.0.9	192.168.4.42	22	Notice::ACTION_LOG	3600.000000
+1790658120.000000	CneLZ5WPgyeXYMywi	10.0.0.77	51000	192.168.4.42	22	tcp	SSH::Password_Guessing	10.0.0.77 appears to be guessing SSH passwords (seen in 30 attempts)	-	10.0.0.77	192.168.4.42	22	Notice::ACTION_LOG	3600.000000
+1790658200.000000	-	-	-	-	-	-	CaptureLoss::Too_Much_Loss	Zeek observed 41.2% packet loss	-	-	-	-	Notice::ACTION_LOG	3600.000000
+1790658300.000000	CZWgcVRRFn1rR5U6	192.168.4.42	50000	93.184.216.34	443	tcp	SSL::Weak_Key	Weak key of 512 bits in certificate	CN=example.com	192.168.4.42	93.184.216.34	443	Notice::ACTION_LOG,Notice::ACTION_ALARM	3600.000000
+1790658400.000000	-	-	-	-	-	-	Local::Custom_Policy_Hit	a notice type this daemon has never heard of	-	10.0.0.55	192.168.4.42	-	Notice::ACTION_LOG	3600.000000
+#close	2026-09-28-23-05-00

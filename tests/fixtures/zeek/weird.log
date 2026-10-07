@@ -1,0 +1,13 @@
+#separator \x09
+#set_separator	,
+#empty_field	(empty)
+#unset_field	-
+#path	weird
+#open	2026-09-28-23-02-28
+#fields	ts	uid	id.orig_h	id.orig_p	id.resp_h	id.resp_p	name	addl	notice	peer	source
+#types	time	string	addr	port	addr	port	string	string	bool	string	string
+1790658000.000000	Cef1KZ3zJz4iorOxm	10.0.0.9	40000	192.168.4.42	20	bad_TCP_checksum	-	F	zeek	TCP
+1790658100.000000	Cklu871L9bFXklArrd	192.168.4.42	50000	93.184.216.34	80	bad_TCP_checksum	-	F	zeek	TCP
+1790658100.099999	Cklu871L9bFXklArrd	192.168.4.42	50000	93.184.216.34	80	active_connection_reuse	-	F	zeek	TCP
+1790658105.099999	CstKCc3D6JwrIEiUch	192.168.4.42	50001	93.184.216.34	443	active_connection_reuse	-	F	zeek	TCP
+#close	2026-09-28-23-02-28
