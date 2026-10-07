@@ -1,8 +1,10 @@
 # Support for Orion-X Phoenix Edition
 
 Orion-X is an open-source project maintained by volunteers. Support is
-best-effort, through the GitHub issue tracker. **v2.2.0 is a beta**: reports of
-anything confusing, wrong or broken are exactly what we want.
+best-effort, through the GitHub issue tracker. Orion-X has been boot-tested on
+one reference laptop and in QEMU, so reports of anything confusing, wrong or
+broken — especially on other hardware — are exactly what we want. Open issues
+for the current release are listed under *Known issues* in the README.
 
 ## Before you ask
 
@@ -23,14 +25,14 @@ anything confusing, wrong or broken are exactly what we want.
 | Boot seems stuck with a text banner | That is the **first-boot wizard** waiting on tty1 ("the boot has PAUSED — your input is needed"). Answer the prompts, or wait 120 s per prompt for the defaults. |
 | No Wi-Fi networks | Your adapter may need firmware not on the image. Use a cable, or a USB Wi-Fi adapter with in-kernel drivers. `nmcli device` shows what was detected. |
 | Nebula AI shows "down" or "integrity FAIL" | `systemctl status nebula-integrity-check nebula-runtime` in a terminal. A FAIL means the model file does not match its checksum — re-write the stick from a verified ISO. |
-| Something worked on the reference laptop but not on yours | Please file a bug — hardware coverage is exactly what the beta needs. |
+| Something worked on the reference laptop but not on yours | Please file a bug — hardware coverage is exactly what the project needs. |
 
-## Reporting a bug or giving beta feedback
+## Reporting a bug or giving feedback
 
 Use the templates at **https://github.com/jarocki/orion/issues/new/choose**:
 
 - **Bug report** — something is broken.
-- **Beta feedback** — something is confusing, unclear, or could be better; no
+- **Feedback** — something is confusing, unclear, or could be better; no
   need for it to be "broken".
 
 What helps most (the templates ask for it):
@@ -39,7 +41,7 @@ What helps most (the templates ask for it):
 - How you made the stick (imager / dd / Rufus) and the machine you booted (make, model, UEFI or BIOS).
 - What you did, what you expected, what happened — the exact text of any error.
 - For boot problems: a photo of the screen is fine.
-- For anything after boot: the output of `orionx-diag --json` (see below).
+- For anything after boot: the output of `sudo orionx-diag --json` (see below).
 
 ### Getting `orionx-diag` output off a live system
 
@@ -47,7 +49,7 @@ The live system forgets everything at shutdown, so save the report to
 something external before you reboot:
 
 ```bash
-orionx-diag --json > /tmp/orionx-diag.json      # or without --json for a readable version
+sudo orionx-diag --json > /tmp/orionx-diag.json   # or without --json for a readable version
 # then copy /tmp/orionx-diag.json to a second USB stick, a network share,
 # or paste it into the issue.
 ```
@@ -55,9 +57,8 @@ orionx-diag --json > /tmp/orionx-diag.json      # or without --json for a readab
 `orionx-diag` reports package, file, service and integrity checks. It does
 **not** include your files, captured traffic, chat messages or passwords, but it
 does include the hostname and network interface names — remove anything you
-consider sensitive before posting. (`orionx-diag` is missing from the
-v2.2.0-beta image; that is a known beta defect and is fixed for the next build.
-Until then, `systemctl --failed` and `journalctl -b -p err` are the next best
+consider sensitive before posting. (`orionx-diag` is not on the v2.2.0-beta
+image; there, `systemctl --failed` and `journalctl -b -p err` are the next best
 things to include.)
 
 ## What Orion-X does and does not do with your data

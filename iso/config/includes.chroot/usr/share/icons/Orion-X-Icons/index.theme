@@ -11,7 +11,8 @@
 #   not explicitly overridden here falls through to Papirus-Dark's rich set.
 #   orionx-* specific icons are listed as a scalable/orionx/ directory for
 #   tool-shortcut overlays (orionx-phoenix, orionx-control-center, orionx-mesh,
-#   orionx-nebula). These are SVG placeholders for W11-9c visual polish; they
+#   orionx-nebula, and since DEC-PHASE12-127 orionx-cockpit and orionx-workbench,
+#   referenced by name from the menu entries). These began as SVG placeholders for W11-9c visual polish; they
 #   satisfy the Evaluation Contract item 3 "at least the Phoenix mark icon set
 #   present" requirement.
 #   Upstream: Papirus-Dark (GPL-3.0+, https://github.com/PapirusDevelopmentTeam/papirus-icon-theme)

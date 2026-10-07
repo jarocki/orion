@@ -44,7 +44,7 @@ Please follow the [Development Checklist](DEVELOPMENT_CHECKLIST.md) when making 
 To set up a development environment:
 
 1. Clone the repository
-2. Install required dependencies (see README.md)
+2. Install the tools the checks use: `bash`, `python3` (3.13 to match the image), `shellcheck` and `ruff` for `make lint`; Docker for `make iso-build` on macOS (see README.md, *Development*)
 3. Familiarize yourself with the ISO build system in the `iso/` directory (lower-case — `scripts/build-iso.sh` refuses an upper-case `ISO/` checkout) and its entry point `scripts/build-iso.sh`
 
 ## Testing

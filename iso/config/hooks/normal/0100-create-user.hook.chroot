@@ -331,6 +331,11 @@ EOF
 # but were displayed nowhere (net / mesh / scans / clients). Seeded in /etc/skel
 # so it only applies to fresh sessions — it cannot disturb an already-running
 # desktop. Widgets are invoked as `python3 <path>` so no +x bit is required.
+# DEC-PHASE12-128 (QA UX-08, UX-31): plugin 11 is an Orion Cockpit launcher
+# right after the menu; its item file is derived from the menu entry by
+# hooks/live/0700-orionx-setup into launcher-11/. Plugins 12-14 are transparent
+# separators so the four widgets no longer run together. New ids are appended
+# rather than renumbered: genmon-<id>.rc below is keyed on ids 4-7.
 # ---
 cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -355,11 +360,15 @@ cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml << 'EOF
       </property>
       <property name="plugin-ids" type="array">
         <value type="int" value="1"/>
+        <value type="int" value="11"/>
         <value type="int" value="2"/>
         <value type="int" value="3"/>
         <value type="int" value="4"/>
+        <value type="int" value="12"/>
         <value type="int" value="5"/>
+        <value type="int" value="13"/>
         <value type="int" value="6"/>
+        <value type="int" value="14"/>
         <value type="int" value="7"/>
         <value type="int" value="8"/>
         <value type="int" value="9"/>
@@ -371,6 +380,11 @@ cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml << 'EOF
     <property name="plugin-1" type="string" value="applicationsmenu">
       <property name="button-title" type="string" value="Orion-X"/>
       <property name="show-button-title" type="bool" value="true"/>
+    </property>
+    <property name="plugin-11" type="string" value="launcher">
+      <property name="items" type="array">
+        <value type="string" value="orionx-cockpit.desktop"/>
+      </property>
     </property>
     <property name="plugin-2" type="string" value="tasklist"/>
     <property name="plugin-3" type="string" value="separator">
@@ -396,6 +410,15 @@ cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml << 'EOF
       <property name="command" type="string" value="python3 /opt/orionx/scripts/control_center/widgets/clients-count.py"/>
       <property name="use-label" type="bool" value="false"/>
       <property name="update-period" type="uint" value="10000"/>
+    </property>
+    <property name="plugin-12" type="string" value="separator">
+      <property name="style" type="uint" value="0"/>
+    </property>
+    <property name="plugin-13" type="string" value="separator">
+      <property name="style" type="uint" value="0"/>
+    </property>
+    <property name="plugin-14" type="string" value="separator">
+      <property name="style" type="uint" value="0"/>
     </property>
     <property name="plugin-8" type="string" value="separator">
       <property name="style" type="uint" value="1"/>

@@ -1,17 +1,25 @@
-# Orion-X Phoenix Edition — guided walkthrough (v2.2.0-beta)
+# Orion-X Phoenix Edition — guided walkthrough (v3.0.0)
 #
 # Single source for the narrated demo: each scene names the visual it shows
 # and the narration spoken over it. tools/guided-demo/build.sh renders the
-# visuals from the real v2.2.0-beta image/apps, synthesises the narration,
-# and derives the MP4, the WebVTT captions and the Markdown transcript from
-# THIS file — so the three artefacts can never disagree.
+# visuals from the real image/apps, synthesises the narration, and derives
+# the MP4, the WebVTT captions and the Markdown transcript from THIS file — so
+# the three artefacts can never disagree.
 #
 # Rules for the narration (same standard as the User Guide): describe only
-# what the beta actually does; no invented metrics; say "beta" out loud.
+# what the release actually does; no invented metrics or sizes; never say
+# "air-gapped" (nothing truly is); name the version out loud.
+#
+# State (2026-10-07): this is the script for the v3.0.0 recording. The
+# published walkthrough in docs/media is still the v2.2.0-beta recording,
+# whose narration is preserved verbatim in its transcript; the README labels
+# it as such. The cc-* visuals still drive the pre-Cockpit recorder in
+# build_demo.py, which must be re-pointed at the Cockpit tabs before the
+# re-cut (QA round 1 docs F10; tracked in #99).
 
 title: "Orion-X Phoenix Edition — guided walkthrough"
-version: "v2.2.0-beta"
-release_url: "https://github.com/jarocki/orion/releases/tag/v2.2.0-beta"
+version: "v3.0.0"
+release_url: "https://github.com/jarocki/orion/releases/tag/v3.0.0"
 resolution: [1280, 720]
 fps: 24
 
@@ -20,11 +28,11 @@ scenes:
     visual: splash          # Plymouth Phoenix splash (the theme's real background)
     heading: "Boot from a stick"
     narration: >-
-      This is Orion-X Phoenix Edition, version 2.2.0 beta: a live USB cyberdeck
-      for incident responders working in networks they cannot trust. It boots
-      from a USB stick on Debian 13, runs from the stick with all changes held in
-      memory, and works fully air-gapped. Nothing is installed on, or written
-      to, the machine you are standing at.
+      This is Orion-X Phoenix Edition, version 3.0.0: a live USB cyberdeck for
+      incident responders working in networks they cannot trust. It boots from
+      a USB stick on Debian 13 and runs with all changes held in memory. It
+      works with no network at all, and makes no connection on its own. Nothing
+      is installed on, or written to, the machine you are standing at.
 
   - id: desktop
     visual: desktop         # real XFCE session: Phoenix wallpaper + branded panel + live widgets
@@ -32,33 +40,35 @@ scenes:
     narration: >-
       The desktop is XFCE, themed as a cyberdeck. The panel shows what matters
       at a glance: the mesh you are joined to, scan and intrusion events seen on
-      the event bus, and the number of hosts on the local network. Every Orion-X
-      tool lives under one Orion menu.
+      the event bus, and the number of hosts on the local network. The Cockpit
+      is one click away in the panel, and every Orion-X tool lives under one
+      Orion menu.
 
-  - id: control-center
-    visual: cc-awareness    # Control Center → Awareness section
-    heading: "Control Center"
+  - id: awareness
+    visual: cc-awareness    # Cockpit → Awareness tab (recorder still targets the old window; see header)
+    heading: "The Awareness tab"
     narration: >-
-      The Control Center is designed for your 3 a.m. self. Live health, the
-      WireGuard mesh, and the firewall are on one page. Threat posture has
-      three tiers, from passive to deception. R.A.I.N. — Real-time Audible
-      Intrusion Notification — turns detections into severity-mapped sound
-      cues, so an intrusion is heard, not just watched.
+      The Cockpit's tabs are designed for your 3 a.m. self. The Awareness tab
+      puts live health, the firewall and the network path on one page. Threat
+      posture has three tiers, from passive to deception. R.A.I.N. — Real-time
+      Audible Intrusion Notification — turns detections into severity-mapped
+      sound cues, so an intrusion is heard, not just watched.
 
   - id: nebula
-    visual: cc-nebula       # Control Center → Nebula AI section
+    visual: cc-nebula       # Cockpit → Nebula AI tab (recorder still targets the old window; see header)
     heading: "Nebula: a local copilot"
     narration: >-
       Nebula is the on-device assistant: ollama serving Qwen 2.5 3B, verified
       at boot by a SHA-256 integrity gate before it is allowed to start. It can
       reach twelve local MCP tools — pcap summaries, artifact analysis, OAST
-      decoding, nuclei-template lookups — and nothing leaves the deck.
+      decoding, nuclei-template lookups — and it never needs the internet:
+      your questions stay on the deck.
 
   - id: cockpit
     visual: cockpit         # Orion Cockpit --demo, captured as a frame sequence
     heading: "The Cockpit"
     narration: >-
-      The Cockpit is where you see and hear the cyber activity around you: a
+      The Cockpit's live tab is where you see and hear the activity around you: a
       scrolling event stream, a threat-pressure gauge that decays over time, a
       network sparkline, subsystem lights and the current posture. This feed is
       synthetic demo traffic; on a real deck it is the live event bus.
@@ -83,10 +93,10 @@ scenes:
 
   - id: release
     visual: guide           # rendered User Guide + release download page
-    heading: "Get the beta"
+    heading: "Get Orion-X"
     narration: >-
-      The full User Guide is rendered into the image and on GitHub. The beta
-      ISO is 3.09 gigabytes, published as seven parts because of GitHub's
-      two-gigabyte limit: download them, concatenate, verify the SHA-256, and
-      write the image to an eight-gigabyte stick. Beta means we want your bug
-      reports. That is Orion-X.
+      The full User Guide is rendered into the image and on GitHub. The ISO is
+      larger than GitHub's two-gigabyte file limit, so it is published in
+      parts: download them, join them, verify the SHA-256, and write the image
+      to an eight-gigabyte stick. It has been tested on one reference laptop,
+      so we want your bug reports. That is Orion-X.

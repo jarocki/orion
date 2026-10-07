@@ -7,7 +7,7 @@ This checklist outlines the tasks and best practices to follow when modifying or
 - [ ] Code follows our style guide (consistent indentation, meaningful variable names)
 - [ ] All scripts have proper error handling and logging
 - [ ] Scripts include help/usage information when run with `-h` or `--help`
-- [ ] Python code is compatible with Python 3.6+
+- [ ] Python code is compatible with Python 3.13 (Debian 13)
 - [ ] Bash scripts use `#!/bin/bash` shebang and include `set -e` for error handling
 - [ ] No debugging statements or commented-out code blocks remain
 - [ ] All user-facing documentation uses clear language (high school reading level)
@@ -25,8 +25,8 @@ This checklist outlines the tasks and best practices to follow when modifying or
 
 ## Before Release
 
-- [ ] Update version numbers in all appropriate files
-- [ ] Update `RELEASE_NOTES.md` with changes since the last version
+- [ ] Update version numbers in all appropriate files (find them with `git grep -nE 'v[0-9]+\.[0-9]+\.[0-9]+(-(beta|rc[0-9]+))?'`; the User Guide's release string is filled from `/etc/orionx-version` at build time)
+- [ ] Update `CHANGELOG.md` with changes since the last version
 - [ ] Update `manifest.json` with any new components, dependencies, or sample data
 - [ ] Verify all third-party tools and data are properly attributed and licensed
 - [ ] Test build-iso.sh on a clean system to verify build reproducibility
@@ -54,7 +54,7 @@ This checklist outlines the tasks and best practices to follow when modifying or
 
 ## Release Process
 
-- [ ] Tag the release in git using semantic versioning (e.g., v1.5.5)
+- [ ] Tag the release in git using semantic versioning (e.g., v3.0.0) — after the baked `ISO_VERSION` matches the tag (`docs/release-process.md`)
 - [ ] Generate SHA-256 hash of the release package
 - [ ] Update the download link and hash in the README
 - [ ] Create a release entry on GitHub/GitLab
@@ -71,10 +71,10 @@ This checklist outlines the tasks and best practices to follow when modifying or
 
 This checklist helps standardize the development process and is especially useful for open-source contributors who want to contribute code. Before submitting a pull request or cutting a new release, please go through the relevant sections of this checklist.
 
-## Phase 11 slice cadence
+## Slice cadence
 
-Each Phase 11 slice follows: planner (Detail Plan + EC in `MASTER_PLAN.md`) ->
-guardian:provision (worktree + lease) -> implementer -> reviewer ->
-guardian:land (merge + push). Hotfixes use the W11-Nx pattern (see
-`docs/release-process.md`). MASTER_PLAN.md carries the authoritative
-Evaluation Contract for every landed slice.
+Each slice is planned (Detail Plan + Evaluation Contract in `MASTER_PLAN.md`
+for Phase 11; inline `@decision` blocks for Phase 12 until #97 lands), built on
+its own branch or worktree, reviewed, and merged. Hotfixes use the W11-Nx
+pattern (see `docs/release-process.md`). (Phase 11 ran this through a
+guardian/lease control plane that has since been removed.)

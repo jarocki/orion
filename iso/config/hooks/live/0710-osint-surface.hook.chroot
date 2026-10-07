@@ -17,7 +17,7 @@ set -euo pipefail
 #
 #   It writes no .desktop entry from scratch either: the three entries are
 #   static files in includes.chroot/usr/share/applications/, alongside the
-#   static orionx-control-center.desktop that was already there. What it does
+#   other static entries there (orionx-matrix-commander, orionx-dj). What it does
 #   derive is the desktop-icon copy in /etc/skel/Desktop/, from the menu entry
 #   — one source in git, one derived surface, generated rather than duplicated
 #   (docs/RESILIENCE.md rule 7).
