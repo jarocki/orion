@@ -71,6 +71,107 @@ python3 "$TUNE" status | grep -q "survives reboot" && pass "status states persis
 OUTR="$(python3 "$TUNE" squelch 2>&1 || true)"; grep -q "needs a Suricata sid or a Zeek note" <<<"$OUTR" && pass "refuses an unspecific rule" || fail "unspecific rule refused" "$OUTR"
 python3 "$TUNE" squelch --sid 1 --ttl 1 >/dev/null; sleep 1.2; python3 "$TUNE" squelch --sid 2 >/dev/null 2>&1; python3 "$TUNE" list | grep -q "sid 1 " && fail "expired squelch pruned on next write" "sid 1 still listed" || pass "expired squelch pruned on next write"
 
+echo "[QA round 1: one bad rule silences nothing else; no threshold injection; trusted reads]"
+# DEC-PHASE12-080/081/082. Behavioural: runs the lib and the daemon's real
+# _refresh_tuning/_on_eve_line against a corrupt tuning file.
+if PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT/scripts/awareness" "$TMP" <<'PY'
+import sys, json, os, re, time, pathlib, io, contextlib
+sys.path.insert(0, sys.argv[1]); import tuning_lib as T
+from importlib.machinery import SourceFileLoader
+tmp = pathlib.Path(sys.argv[2]) / "qa1"; tmp.mkdir()
+def ck(c, m):
+    print(("  ok   " if c else "  FAIL ") + m)
+    if not c: raise SystemExit(1)
+now = time.time()
+good = T.make_rule("suricata", "tune", sid=2000001, now=now)
+bad_doc = {"schema": 1, "rules": [
+    {"engine": "suricata", "mode": "tune", "sid": "2210000x"},
+    {"engine": "suricata", "mode": "squelch", "sid": 2210001, "expires": "later"},
+    {"engine": "suricata", "mode": "tune", "sid": 5, "src_ip": "1.2.3.4\nsuppress gen_id 0, sig_id 0"},
+    {"engine": "suricata", "mode": "tune", "sid": 0},
+    {"engine": "suricata", "mode": "tune", "sid": True},
+    good]}
+rules, errs = T.load_rules_report(json.dumps(bad_doc))
+ck([r["id"] for r in rules] == [good["id"]] and len(errs) == 5, f"5 bad entries rejected and reported, the good one kept ({errs})")
+ck(T.suppressed_by(rules, "suricata", 2999999, None, "10.0.0.1", now) is None, "an unrelated alert is NOT suppressed and nothing raises")
+raw_bad = bad_doc["rules"][:3]
+ck(all(T.matches(r, "suricata", 2999999, None, "10.0.0.1", now) is False for r in raw_bad), "matches() is total on raw invalid rules (returns False, never raises)")
+# F4 injection payload (security.md) straight into the derived text
+inj = [{"id": "abc", "engine": "suricata", "mode": "tune", "sid": 1, "src_ip": "1.2.3.4\nsuppress gen_id 0, sig_id 0",
+        "signature": "x\nrate_filter gen_id 1, sig_id 2, track by_src, count 1, seconds 1, new_action drop, timeout 60"},
+       {"id": "def", "engine": "suricata", "mode": "tune", "sid": 7,
+        "signature": "x\nsuppress gen_id 0, sig_id 0\r\n#"}]
+txt = T.suricata_threshold_text(inj, now)
+body = [l for l in txt.splitlines() if l and not l.startswith("#")]
+ck(not any("sig_id 0," in l.split("#")[0] or "rate_filter" in l.split("#")[0] for l in body),
+   "injected directives never become threshold lines")
+pat = re.compile(r"^suppress gen_id 1, sig_id [0-9]+(, track by_src, ip [0-9a-fA-F.:/]+)?(  # [A-Za-z0-9 ._:/()\[\]@%+,=-]*)?$")
+ck(len(body) == 1 and all(pat.match(l) for l in body), f"every derived line is one well-formed suppress directive: {body}")
+try:
+    T.make_rule("suricata", "tune", sid=5, src_ip="1.2.3.4\nsuppress gen_id 0, sig_id 0"); ck(False, "make_rule must refuse a bad --src")
+except ValueError as e:
+    ck("not an IP address" in str(e), f"make_rule refuses an injected --src ({e})")
+cidr = T.make_rule("suricata", "tune", sid=9, src_ip="10.0.0.0/8", now=now)
+ck(T.suppressed_by([cidr], "suricata", 9, None, "10.1.2.3", now) is not None and T.suppressed_by([cidr], "suricata", 9, None, "11.1.2.3", now) is None, "CIDR src matches by membership")
+
+# trusted reads (F18 / P2-6)
+f = tmp / "t.json"; T.write_rules(f, [good])
+ck(T.read_trusted(f)[0] is not None, "own 0600 file is trusted")
+ck(T.read_trusted(f, uids={4242424})[1] and "owned by uid" in T.read_trusted(f, uids={4242424})[1], "a file owned by another uid is refused, with the reason")
+link = tmp / "link.json"; link.symlink_to(f)
+ck(T.read_trusted(link)[0] is None and "refused" in (T.read_trusted(link)[1] or ""), "a symlink is refused (O_NOFOLLOW)")
+gw = tmp / "gw.json"; gw.write_text(T.dump_rules([good])); os.chmod(gw, 0o666)
+ck("writable by group/other" in (T.read_trusted(gw)[1] or ""), "a group/other-writable file is refused")
+ck(T.read_trusted(tmp / "absent") == (None, None), "absent file is not an error")
+homes = tmp / "home"
+for u in ("orionx-operator", "intruder"):
+    (homes / u / ".config" / "orionx").mkdir(parents=True)
+    T.write_rules(homes / u / ".config" / "orionx" / "tuning.json", [good])
+c = T.candidates(None, homes, env={})
+ck(c == [homes / "orionx-operator" / T.TUNING_RELPATH], f"candidates = the operator's home only, not every /home/* ({c})")
+ck(T.operator_user({"ORIONX_OPERATOR_USER": "alice"}) == "alice" and T.operator_user({}) == "orionx-operator", "one operator authority: ORIONX_OPERATOR_USER, else live-config username")
+st = T.TuningState(str(link)); st.refresh(now)
+ck(st.rules == [] and st.errors and "refused" in st.errors[0], "TuningState reports a refused file instead of silently holding no rules")
+
+# the daemon: corrupt file -> warning on the bus; unrelated alert still published
+pd = SourceFileLoader("pd", sys.argv[1] + "/orionx-postured").load_module()
+ck(pd.posture_candidates(None, homes, "orionx-operator", env={}) == [homes / "orionx-operator" / pd.POSTURE_RELPATH], "posture candidates = operator home only")
+pf = homes / "orionx-operator" / pd.POSTURE_RELPATH; pf.write_text("2\n"); os.chmod(pf, 0o666)
+tier, why = pd.read_tier_report(pf)
+ck(tier == "0" and "writable by group/other" in why, f"a world-writable posture file is refused -> Tier 0 ({why})")
+tf = tmp / "corrupt.json"; tf.write_text(json.dumps(bad_doc)); os.chmod(tf, 0o600)
+args = pd.build_parser().parse_args(["--dry-run", "--no-nebula", "--posture-file", str(tmp / "none"),
+                                     "--eve", str(tmp / "eve.json"), "--canary-dir", str(tmp / "canary")])
+d = pd.PostureDaemon(args)
+d.tuning = T.TuningState(str(tf))
+seen = []
+d.emit = lambda sev, cat, msg, source="postured", detail=None: seen.append((sev, cat, source, msg))
+d._refresh_scan_sources = lambda now: None
+d._refresh_tuning(time.time())
+ck(any(s[1] == "health" and "5 entries ignored" in s[3] for s in seen), f"postured publishes the rejected entries ({[s[3][:70] for s in seen]})")
+seen.clear(); d._refresh_tuning(time.time())
+ck(not seen, "the same rejection is not re-announced every loop")
+alert = {"event_type": "alert", "src_ip": "203.0.113.9", "dest_ip": "192.168.4.2", "proto": "TCP",
+         "alert": {"signature_id": 2999999, "signature": "ET TEST unrelated", "severity": 1, "category": "x"}}
+d._on_eve_line(json.dumps(alert))
+ck(any(s[1] == "ids" and s[2] == "suricata" for s in seen), "an unrelated Suricata alert is still published with a corrupt tuning file")
+alert["alert"]["signature_id"] = 2000001
+before = d.tuned_suppressed; d._on_eve_line(json.dumps(alert))
+ck(d.tuned_suppressed == before + 1, "the valid rule in the same file still applies")
+# a raising handler is counted + logged, not swallowed
+t = pd.LogTailer(tmp / "x.log", on_line=lambda l: 1 / 0)
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    t._callback_failed(ZeroDivisionError("boom")); t._callback_failed(ZeroDivisionError("boom"))
+ck(t.callback_errors == 2 and err.getvalue().count("handler failed") == 1, "tail handler errors are counted and logged (rate-limited)")
+PY
+then pass "QA round 1 tuning hardening (P1-3, F4, F18/P2-6)"; else fail "QA round 1 tuning hardening" "see output above"; fi
+LOCKT="$TMP/locktest"; mkdir -p "$LOCKT"
+( export HOME="$LOCKT"; for i in 1 2 3 4 5 6; do python3 "$TUNE" tune --sid "$((3000000+i))" >/dev/null 2>&1 & done; wait )
+N="$(HOME="$LOCKT" python3 "$TUNE" list | grep -c 'sid 300000')"
+[[ "$N" -eq 6 ]] && pass "6 concurrent orionx-tune writes: no lost update (locked read-modify-write)" || fail "concurrent writes" "only $N of 6 rules survived"
+ls "$LOCKT/.config/orionx/" | grep -q '\.tmp$' && fail "temp files" "left behind" || pass "no temp files left behind"
+
 echo "[orionx-postured wiring]"
 PD="$ROOT/scripts/awareness/orionx-postured"
 grep -q "import tuning_lib" "$PD" && pass "postured imports tuning_lib" || fail "import" "missing"
