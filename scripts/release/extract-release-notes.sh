@@ -76,11 +76,11 @@ NOTES="$(awk -v bare="${VERSION_BARE}" -v withv="${VERSION_WITH_V}" '
       pending_blanks++
     } else {
       # Flush buffered blanks before this non-blank line
-      for (i = 0; i < pending_blanks; i++) {
+      for (i = 0; printed && i < pending_blanks; i++) {
         print ""
       }
       pending_blanks = 0
-      print
+      print; printed = 1
     }
   }
 ' "${CHANGELOG}")"

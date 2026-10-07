@@ -52,8 +52,9 @@ set -euo pipefail
 iso_filename() { printf 'orionx-phoenix-edition-%s.iso' "$1"; }
 
 _sha256_check() {  # run in the directory holding the sidecar: _sha256_check <sidecar>
-    if command -v sha256sum >/dev/null 2>&1; then sha256sum -c --quiet "$1"
-    else shasum -a 256 -c --quiet "$1"; fi
+    # No --quiet: macOS's sha256sum lacks it. Exit status is the verdict.
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum -c "$1" >/dev/null
+    else shasum -a 256 -c "$1" >/dev/null; fi
 }
 
 # ---------------------------------------------------------------------------
@@ -188,8 +189,10 @@ patch_live_build() {  # [functions_dir]
     fi
     # packages.sh: Remove_packages only.
     if ! grep -q 'apt-get remove --auto-remove --purge --allow-remove-essential' "$fdir/packages.sh"; then
+        # shellcheck disable=SC2016  # ${APT_OPTIONS} is literal live-build text
         _sedi 's|apt-get remove --auto-remove --purge \${APT_OPTIONS}|apt-get remove --auto-remove --purge --allow-remove-essential ${APT_OPTIONS}|' "$fdir/packages.sh"
     fi
+    # shellcheck disable=SC2016  # literal text
     if ! grep -q 'apt-get remove --auto-remove --purge --allow-remove-essential \${APT_OPTIONS}' "$fdir/packages.sh"; then
         echo "ERROR: Remove_packages in $fdir/packages.sh no longer matches; --allow-remove-essential not applied" >&2
         return 1
