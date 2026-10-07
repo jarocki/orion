@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition — Cyberdeck for the Good Guys
 
-**Version:** v2.2.0-rc5 — release candidate (internal build). Latest published: [v2.2.0-beta](https://github.com/jarocki/orion/releases/tag/v2.2.0-beta) ("OrionX Beta", pre-release)
+**Version:** v3.0.0 — [release page](https://github.com/jarocki/orion/releases/tag/v3.0.0). Previous published build: [v2.2.0-beta](https://github.com/jarocki/orion/releases/tag/v2.2.0-beta) (pre-release)
 **Base:** Debian 13 "trixie" live (kernel 6.12, Python 3.13, XFCE 4.20) | **Runtime:** Qwen2.5-3B-Instruct (Apache-2.0)
 **Previous line:** v2.1.0-bullseye-rain (final Debian 11 build, kept as a known-good fallback)
 
@@ -21,11 +21,13 @@ that raise active defenses as the situation demands.
 
 Mission verbs: **monitor** / **detect** / **defend** / **triage** / **timeline**.
 
-> **This is a beta.** It has been boot-tested on one reference laptop and in
-> QEMU. Expect rough edges; please report anything confusing or broken via the
+> **Tested hardware.** Orion-X has been boot-tested on one reference laptop
+> (Lenovo, Intel Bay Trail, UEFI) and in QEMU; other machines are untested, so
+> please report anything confusing or broken via the
 > [issue tracker](https://github.com/jarocki/orion/issues/new/choose). What it
-> does **not** do yet: boot Apple-silicon Macs (x86-64 only), keep your changes
-> between reboots unless you set up persistence, or update itself.
+> does **not** do: boot Apple-silicon Macs (x86-64 only), keep your changes
+> between reboots unless you set up persistence, or update itself. See
+> [Known issues](#known-issues).
 
 [![Watch the Orion-X guided walkthrough](docs/media/orionx-guided-demo-v2.2.0-beta-poster.png)](docs/media/orionx-guided-demo-v2.2.0-beta.mp4)
 
@@ -33,9 +35,12 @@ Mission verbs: **monitor** / **detect** / **defend** / **triage** / **timeline**
 **[Captions](docs/media/orionx-guided-demo-v2.2.0-beta.vtt)** ·
 **[Read the transcript](docs/media/orionx-guided-demo-v2.2.0-beta-transcript.md)**
 
-The walkthrough is recorded from the beta's own desktop and applications
-(`tools/guided-demo/`, rebuilt per release from `scenes.yaml`); the Cockpit shows
-its built-in synthetic demo feed and the narration is synthesised offline.
+The walkthrough was **recorded on v2.2.0-beta** from that image's own desktop and
+applications (`tools/guided-demo/`); the Cockpit shows its built-in synthetic
+demo feed and the narration is synthesised offline. Two things in it have
+changed since: the separate "Control Center" window it shows is now the
+Cockpit's tabs, and its "works fully air-gapped" overstates the case — Orion-X
+makes no outbound connection on its own, but nothing blocks one you start.
 
 ---
 
@@ -47,7 +52,7 @@ its built-in synthetic demo feed and the narration is synthesised offline.
 - **Port-scan detection** — `orionx-scanwatch` reads the firewall's own drop
   log and raises a Cockpit event (and an audible R.A.I.N. cue) when one host
   sweeps many ports. Runs by default, needs no rules and no network, and sends
-  no packets, so it needs no network and works at Tier 0. A wider second window also
+  no packets, so it works at Tier 0. A wider second window also
   catches timing-evasive scans such as `nmap -T2`.
 - **Suricata IDS** — lazy-start network IDS. It is **off by default and ships
   no threat rules**: enable with
@@ -62,7 +67,7 @@ its built-in synthetic demo feed and the narration is synthesised offline.
 - **Wireshark / tshark / tcpdump** — network capture and analysis
 - **binwalk**, **strings** — carving and pattern extraction
 
-**Not shipped on the Trixie (v2.2.0) image:** `radare2`, `bulk_extractor` and
+**Not shipped on the Debian 13 image:** `radare2`, `bulk_extractor` and
 `nikto` have no candidate package in Debian 13 and are not installed by any
 other route. Earlier release text listed them; that text was wrong. Ghidra is
 the supported reverse-engineering option and installs post-boot via
@@ -75,15 +80,17 @@ the supported reverse-engineering option and installs post-boot via
 - **Integrity check** — the model blob ollama loads is SHA-256-verified at every
   boot by `nebula-integrity-check.service`; on mismatch the runtime is not started
   (DEC-PHASE10-009, DEC-PHASE12-016)
-- **AppArmor confined** — `/usr/local/bin/ollama` runs under a local-only profile
-  (no outbound network; DEC-PHASE10-011)
-- **Local only** — the assistant listens on 127.0.0.1 and never sends prompts or
-  data off the deck; 12 local MCP tools (pcap/artifact analysis, OAST decoding,
-  nuclei-template lookup, service status)
+- **Listens on 127.0.0.1 only; AppArmor-confined** — `/usr/local/bin/ollama`
+  runs under an AppArmor profile that limits what it can read and write
+  (DEC-PHASE10-011). The profile does **not** block network egress: the model
+  never needs the internet and nothing on the deck sends your prompts anywhere,
+  but on a connected deck treat ollama like any other local service
+- **12 local MCP tools** — pcap/artifact analysis, OAST decoding,
+  nuclei-template lookup, service status
 
 ### Team Comms (Mesh)
 
-- **Matrix homeserver** (Synapse) over Phase 3 WireGuard mesh
+- **Matrix homeserver** (Synapse; installed over the network by `setup-matrix.sh`), reachable over the WireGuard mesh
 - **matrix-commander** — CLI Matrix client at `/opt/orionx/venv/comms/`
 - **Element desktop** — available via optional installer (see below)
 
@@ -100,6 +107,10 @@ Tools too large or freshness-sensitive for the base ISO live under
 | `install-floss.sh` | Mandiant FLOSS string extractor |
 | `install-trid.sh` | TrID file type identification |
 | `install-gomuks.sh` | Gomuks Matrix TUI client |
+| `install-zeek.sh` | Zeek network security monitor (recovery path if the build-time install failed) |
+| `install-geoip.sh` | DB-IP Lite country + ASN labels for the attack map |
+| `install-duckdb.sh` | DuckDB accelerator for `orionx-logquery` |
+| `install-piper-voice.sh` | Piper natural voice for R.A.I.N. narration |
 
 All installers share `orionx-installer-common.sh`: root check, network check,
 apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
@@ -112,7 +123,7 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
   decoys and canary files. If a tier implies IDS coverage but Suricata has no
   threat rules, the deck says so loudly rather than watching nothing in silence.
 - **Auto-healing** — `orionx-heald` executes the action classes you pre-approve
-  in the Control Center, with a real undo for each, rollback timers, and a
+  in the Cockpit's Auto-Healing tab, with a real undo for each, rollback timers, and a
   hash-chained audit ledger (`orionx-heal verify`). It fails closed: with no
   autonomy file it does nothing. It will not block your own address, loopback or
   the mesh.
@@ -125,20 +136,19 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 - **`orionx-diag`** — 46-assertion self-check across 10 categories (identity,
   version-manifest, packages, files, systemd, python, nebula, branding, freshen,
   optional). Run it as `sudo orionx-diag`.
-- `orionx-diag --json` for machine-readable output
-- `orionx-diag --category <name>` for targeted probes
+- `sudo orionx-diag --json` for machine-readable output
+- `sudo orionx-diag --category <name>` for targeted probes
 - See `docs/orionx-diag.md` for full reference.
-- **Not in v2.2.0-beta:** the tool was deleted by a build-staging bug; it ships
-  again from v2.2.0-rc5 (DEC-PHASE12-021).
+- The v2.2.0-beta image lacked the tool (a build-staging bug, DEC-PHASE12-021).
 
 ### Cyberdeck Visual Identity
 
 - **Plymouth**: Phoenix splash on boot (`orionx-phoenix` theme)
 - **GRUB / isolinux**: plain, readable text menus (the graphical GRUB theme was retired after failing on hardware — DEC-PHASE11-044; the boot identity is the Plymouth splash)
-- **Orion Cockpit**: live Cairo dashboard on the R.A.I.N. event bus (`orionx-cockpit`, ◈ COCKPIT in the Control Center); every Orion-X tool lives under the **Orion** application menu
+- **Orion Cockpit**: live Cairo dashboard on the R.A.I.N. event bus, plus tabs for network, mesh, comms, awareness, tools, Nebula AI and auto-healing (`orionx-cockpit`; desktop icon and panel launcher); every Orion-X tool lives under the **Orion** application menu
 - **LightDM greeter**: Orion-X-Greeter with Phoenix backdrop
 - **XFCE GTK theme**: `Orion-X-Cyberdeck` (Adwaita-dark fork with Phoenix red-orange `#FF5722` accent)
-- **Icons**: `Orion-X-Icons` (Papirus-Dark inheritance + 4 custom SVG icons)
+- **Icons**: `Orion-X-Icons` (Papirus-Dark inheritance + 6 custom SVG icons)
 - **Fonts**: **Hack** (Apache-2.0) — the only monospace font on the image, community-developed only per DEC-PHASE11-013. Iosevka is *not* shipped: no `fonts-iosevka` candidate exists in Debian 13 (#85)
 - **MOTD** with ASCII wordmark on terminal login
 
@@ -148,14 +158,15 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 
 ### 1. Get the ISO
 
-**OrionX Beta (v2.2.0-beta, 3.09 GB):** GitHub caps release assets at 2 GB per
-file, so the ISO is published as seven `.part-*` files (`part-aa` … `part-ag`,
-≤1000 MiB each) plus `SHA256SUMS` and `REASSEMBLE.txt` on the
-[release page](https://github.com/jarocki/orion/releases/tag/v2.2.0-beta).
+**v3.0.0 (`<v3.0.0 size — filled at release>`):** GitHub caps release assets
+at 2 GB per file, and every Debian 13 build so far has been about 3.1 GB, so
+the ISO is published as `.part-*` files (≤1000 MiB each) plus `SHA256SUMS`
+and `REASSEMBLE.txt` on the
+[release page](https://github.com/jarocki/orion/releases/tag/v3.0.0).
 Download all of them into one directory, then:
 
 ```bash
-cat orionx-phoenix-edition-v2.2.0-beta.iso.part-* > orionx-phoenix-edition-v2.2.0-beta.iso
+cat orionx-phoenix-edition-v3.0.0.iso.part-* > orionx-phoenix-edition-v3.0.0.iso
 shasum -a 256 -c SHA256SUMS      # Linux: sha256sum -c SHA256SUMS
 ```
 
@@ -175,8 +186,8 @@ Check that fingerprint against a source other than this page. A checksum on the
 same page as the download proves only that the file matches what the page says.
 
 The reassembled ISO must hash to
-`606e6179887ff7f82e9d05ed973333856c153a692d45983e16e35b12a0f0e49f`. A single
-`.part-*` file is not bootable on its own.
+`<v3.0.0 SHA-256 — filled at release>`. A single `.part-*` file is not bootable
+on its own.
 
 You need a **USB stick of 8 GB or more** (everything on it will be erased) and an
 **x86-64 PC or laptop** that can boot from USB with **Secure Boot turned off**
@@ -195,14 +206,15 @@ git clone https://github.com/jarocki/orion.git && cd orion
 # GUI
 scripts/orionx-imager/orionx-imager
 
-# CLI — the beta is a pre-release, so name its tag explicitly
+# CLI
 scripts/orionx-imager/orionx-imager-cli.sh --list-devices
-scripts/orionx-imager/orionx-imager-cli.sh --iso-release v2.2.0-beta --target /dev/disk4 --dry-run
-scripts/orionx-imager/orionx-imager-cli.sh --iso-release v2.2.0-beta --target /dev/disk4
+scripts/orionx-imager/orionx-imager-cli.sh --iso-release v3.0.0 --target /dev/disk4 --dry-run
+scripts/orionx-imager/orionx-imager-cli.sh --iso-release v3.0.0 --target /dev/disk4
 ```
 
 `--iso-release latest` means the latest *stable* release (GitHub's rule), so
-it skips betas; add `--allow-prerelease` to include them. Full reference:
+it skips pre-releases such as the v2.2.0-beta; add `--allow-prerelease` to
+include them. Full reference:
 [docs/orionx-imager.md](docs/orionx-imager.md). **Windows:** the imager does
 not run on Windows yet — reassemble the parts with `copy /b` (see
 `REASSEMBLE.txt`), check the hash with `Get-FileHash`, and write the ISO with
@@ -214,18 +226,18 @@ not run on Windows yet — reassemble the parts with `copy /b` (see
 # macOS — find the stick's disk number with `diskutil list` (NOT disk0, that is your Mac)
 diskutil list
 diskutil unmountDisk /dev/disk4
-sudo dd if=orionx-phoenix-edition-v2.2.0-beta.iso of=/dev/rdisk4 bs=4m status=progress
+sudo dd if=orionx-phoenix-edition-v3.0.0.iso of=/dev/rdisk4 bs=4m status=progress
 diskutil eject /dev/disk4
 
 # Linux — find the stick with `lsblk` (NOT sda/nvme0n1 if that is your system disk)
 lsblk
-sudo dd if=orionx-phoenix-edition-v2.2.0-beta.iso of=/dev/sdX bs=4M status=progress conv=fsync
+sudo dd if=orionx-phoenix-edition-v3.0.0.iso of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 ### 2. Boot the target machine from USB
 
 **Before you boot:** in the machine's firmware settings, turn **Secure Boot
-off** (the beta's bootloader is unsigned) and allow booting from USB. On a
+off** (the bootloader is unsigned) and allow booting from USB. On a
 Windows laptop with BitLocker, have the recovery key at hand before you change
 firmware settings — Windows may ask for it afterwards. Nothing on the internal
 disk is touched by booting Orion-X unless you mount or image it yourself.
@@ -234,25 +246,29 @@ disk is touched by booting Orion-X unless you mount or image it yourself.
 - The boot menu shows for **5 seconds**, then starts "Orion-X Live"
 - **First boot:** a short text wizard runs on the console **before** the desktop
   and asks for a hostname (default `orionx-node`), the account name (default
-  `orionx-operator`) and an optional password (blank = passwordless), and Wi-Fi
-  only if no wired network is found. Each question times out to its default
-  after 120 s, so an unattended boot still completes.
-- Then the desktop opens **automatically logged in** as that account (it has
-  `sudo` rights). If you log out, the login screen asks for the password you set
-  (or just Enter if you left it blank).
+  `orionx-operator`) and an optional password (blank keeps the default
+  password, `live`), and Wi-Fi only if no wired network is found. Each question
+  times out to its default after 120 s, so an unattended boot still completes.
+- Then the desktop opens **automatically logged in** as that account. It has
+  `sudo` rights **without a password prompt** — by design for a single-operator
+  deck, which means anything running as the operator can become root (see the
+  User Guide, §3 *The Live Account and Administrator Rights*). If you log out,
+  the login screen asks for the password you set, or `live`.
 
 ### 3. Verify the boot
 
 ```bash
-# Full self-check (run on the booted live system)
-orionx-diag
+# Full self-check (run on the booted live system; without sudo the
+# systemd and AppArmor checks are skipped)
+sudo orionx-diag
 
 # Targeted check
-orionx-diag --category identity
-orionx-diag --category nebula
+sudo orionx-diag --category identity
+sudo orionx-diag --category nebula
 ```
 
-Expected: all identity, manifest, packages, files, and systemd categories PASS.
+Expected: all identity, manifest, packages, files, and systemd categories PASS,
+and `grep ISO_VERSION= /etc/orionx-version` prints `ISO_VERSION=v3.0.0`.
 See `docs/orionx-diag.md` for interpreting results.
 
 ---
@@ -282,7 +298,7 @@ Contributor guide: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 - [orionx-imager](docs/orionx-imager.md) — Host-side USB writer reference
 - [Release Process](docs/release-process.md) — rc-cut and hotfix cadence
 - [Development Checklist](docs/DEVELOPMENT_CHECKLIST.md) — Contributor pre-commit gates
-- [Architecture Decisions](MASTER_PLAN.md) — DEC-PHASE*-xxx series is canonical
+- [Architecture Decisions](MASTER_PLAN.md) — DEC-PHASE*-xxx series is canonical (Phase 12 decisions live inline as `@decision` blocks until #97 lands)
 
 ---
 
@@ -317,18 +333,43 @@ particular), "What's on the ISO" above is authoritative.
 **Phase 12 (Trixie line, v2.2.0-beta):** base flip to Debian 13, Orion Cockpit,
 Orion menu, R.A.I.N., go-roast, nucleotide, Pivotglass, User Guide rewrite,
 image trim 6.63 GB → 3.09 GB (DEC-PHASE12-001 … -017).
-**v2.2.0-rc5:** investigation surface (CyberChef, attack map, GODSEYE globe),
+**v2.2.0-rc5:** the Orion Workbench (then called the investigation surface: CyberChef, attack map, GODSEYE globe),
 DJ Deck, R.A.I.N. spoken narration, `orionx-logquery`, Cockpit drill-down and
 APPROVE, Zeek ingest; root-cause fixes to mesh self-heal, Nebula start-up
 timeout, boot graphics, Suricata capture, AppArmor and nebula-mcp
 (DEC-PHASE12-018 … -046).
 
+Later release candidates (rc6 – rc9) folded the Control Center into the
+Cockpit's tabs, renamed the investigation surface to the Orion Workbench, and
+fixed what the reference-deck boots found; CHANGELOG.md has the detail.
+
 **Next:** move the language model out of the ISO into its own release asset so
 the ISO itself fits GitHub's 2 GB single-asset limit (~1.2 GB projected);
-imager-created persistence partition; merge `feat/trixie-migration` → `develop`;
-update `release.yml` for the Trixie build container.
+imager-created persistence partition.
 
-**ISO size:** 3.09 GB (v2.2.0-beta); target <2 GB without the bundled model.
+**ISO size:** 3.09 GB (v2.2.0-beta), 3.13 GB (rc5 – rc9 builds); target <2 GB
+without the bundled model.
+
+---
+
+## Known issues
+
+Open in v3.0.0 (each links to its tracking issue):
+
+- **The first-boot wizard's "SSH admin one-shot" credential cannot be used**
+  ([#98](https://github.com/jarocki/orion/issues/98)). The wizard prints a root
+  SSH key and password to the console, the login banner and the terminal
+  welcome text, but the image's SSH hardening sets `PermitRootLogin no`, so the
+  credential targets an account SSH will not let in. Ignore it; the User Guide
+  (§3) shows how to remove the text.
+- **`radare2` and `fonts-iosevka` are not shipped** ([#85](https://github.com/jarocki/orion/issues/85)):
+  Debian 13 has no candidate package for either. Ghidra installs post-boot via
+  `/opt/orionx/optional/install-ghidra.sh`; Hack is the monospace font.
+- **The operator account is root without a prompt** (by design; see the User
+  Guide, §3 *The Live Account and Administrator Rights*).
+- **Hardware coverage:** boot-tested on one reference laptop and in QEMU only.
+- TODO(release lead): add the items other QA groups marked needs-hardware or
+  deferred in round 1, with issue numbers.
 
 ---
 
@@ -347,10 +388,10 @@ Explicitly **not** shipped: JetBrains software (per DEC-PHASE11-013 — communit
 
 ---
 
-## Support and beta feedback
+## Support and feedback
 
 - **Report a problem:** https://github.com/jarocki/orion/issues/new/choose
-  (templates for bug reports and beta feedback tell you what to include)
+  (the bug-report and feedback templates tell you what to include)
 - [docs/SUPPORT.md](docs/SUPPORT.md) — what to try first, what to send us, and
   how to get `orionx-diag` output off a live system that forgets everything
 - [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
