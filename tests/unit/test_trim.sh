@@ -113,6 +113,15 @@ section "Hook ordering"
 ls "$REPO_ROOT/iso/config/hooks/live/" | sort | awk '/0900-trim/{t=NR} /0810-render/{r=NR} /0700-orionx/{s=NR} END{exit !(t>r && t>s)}' \
     && pass "0900-trim runs after 0700 (symlinks) and 0810 (guide render)" || fail "hook ordering" "trim must be last"
 
+section "Orphaned Qt5 (packages-build P2-9)"
+PL="$(purge_list)"
+for q in python3-pyqt5 python3-pyqt5.sip qtwayland5 qt5-gtk-platformtheme; do
+    grep -qx "$q" <<<"$PL" && pass "purge target: $q" || fail "Qt5 purge target" "$q not in PURGE_WANTED"
+done
+for keep in python3-gi python3-pyperclip python3-cmd2; do
+    grep -qx "$keep" <<<"$PL" && fail "must keep $keep" "listed for purge" || pass "$keep is not a purge target (Pivotglass/cmd2 clipboard path)"
+done
+
 printf "\n===========================================\n"
 printf "  Results: ${GREEN}%d passed${NC}, ${RED}%d failed${NC}\n" "$PASS" "$FAIL"
 printf "===========================================\n"

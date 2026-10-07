@@ -84,7 +84,7 @@
 set -e
 
 # Version authority: read from environment; scripts/build-iso.sh exports it.
-ORIONX_VERSION="${ORIONX_VERSION:-v2.0.0-rc9}"
+ORIONX_VERSION="${ORIONX_VERSION:-dev-unknown}"   # same fallback as build-iso.sh (F-30)
 
 # ISO9660 --iso-volume field is capped at 32 characters. Compose the desired
 # label and truncate defensively so long git-describe outputs
@@ -131,7 +131,7 @@ lb config noauto \
     --firmware-binary false \
     --apt-indices false \
     --apt-recommends true \
-    --debian-installer false \
+    --debian-installer none \
     --debian-installer-distribution "$DISTRIBUTION" \
     --debian-installer-gui false \
     --bootappend-live "boot=live components persistence splash console=tty0 console=ttyS0,115200n8 apparmor=1 security=apparmor live-config.username=orionx-operator live-config.hostname=orionx" \

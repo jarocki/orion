@@ -127,6 +127,14 @@ PURGE_WANTED=(
     # xfce4-screensaver only. Purging the locker means no mechanism exists;
     # xflock4 then finds no backend and locks nothing.
     light-locker
+    # Orphaned Qt5 (packages-build P2-9). In a trixie container, `apt-cache
+    # rdepends` of every Qt5 package intersected with the rc9 manifest finds
+    # only qtwayland5 (Qt5 itself) and python3-pyperclip, whose dependency is
+    # `xclip | xsel | wl-clipboard | python3-gi | python3-pyqt5` and is met by
+    # python3-gi. Wireshark is Qt6. ~60 MB. Each target still passes the
+    # simulation guard below: if the plan would remove a protected package the
+    # target is SKIPped, not forced.
+    python3-pyqt5 python3-pyqt5.sip qtwayland5 qt5-gtk-platformtheme
     # misc
     unhide.rb ruby3.3 libruby3.3 ruby
     mesa-vulkan-drivers firmware-nvidia-graphics

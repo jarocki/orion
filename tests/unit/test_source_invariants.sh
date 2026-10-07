@@ -61,6 +61,12 @@ else
 fi
 [[ -x "$REPO_ROOT/iso/auto/config" ]] && pass "33b: working-tree copy executable" || fail "33b" "not executable"
 
+echo "[iso/auto/config + package list identity (F-30, P3-3, F-03)]"
+has iso/auto/config 'ORIONX_VERSION="${ORIONX_VERSION:-dev-unknown}"' && pass "auto/config fallback is dev-unknown (matches build-iso.sh)" || fail "auto/config fallback" "not dev-unknown"
+has iso/auto/config 'v2.0.0-rc9' && fail "auto/config" "stale v2.0.0-rc9 literal" || pass "auto/config has no stale version literal"
+has iso/auto/config '--debian-installer none' && pass "auto/config uses --debian-installer none (false is deprecated)" || fail "debian-installer" "not none"
+head -1 "$REPO_ROOT/iso/config/package-lists/orionx.list.chroot" | grep -qE 'v[0-9]+\.[0-9]+' && fail "package list header" "carries a version literal" || pass "package list header is version-free"
+
 echo "[hooks-applied static checks, moved from the ISO log gate (F-15d)]"
 HOOK_0700="$REPO_ROOT/iso/config/hooks/live/0700-orionx-setup.hook.chroot"
 # ---------------------------------------------------------------------------
