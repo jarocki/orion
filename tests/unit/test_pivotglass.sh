@@ -42,7 +42,11 @@ for d in python3-cmd2 python3-rich python3-sqlalchemy python3-httpx python3-pyda
 done
 # Debian's python3-pyfiglet (+dfsg) lacks the contributed fonts the TUI needs.
 if grep -qE "^python3-pyfiglet$" "$PKGS"; then fail "python3-pyfiglet NOT from apt" "+dfsg repack lacks ansi_shadow → ap tui crashes"; else pass "python3-pyfiglet not taken from apt (dfsg font strip)"; fi
-grep -qE "pip3 install --break-system-packages --no-input stix2 pyfiglet" "$EXT" && pass "0500 hook pip-installs stix2 + pyfiglet (PEP 668 escape hatch)" || fail "stix2/pyfiglet pip step" "missing from 0500 hook"
+# DEC-PHASE12-116: stix2 + pyfiglet come from the hash-locked pivotglass set,
+# hard-fail. The live run below installs from that same lock.
+LOCK="$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/pip/pivotglass.txt"
+grep -qF "pip_locked pip3 pivotglass --break-system-packages || {" "$EXT" && pass "0500 hook installs stix2 + pyfiglet from the pivotglass lock (PEP 668 escape hatch)" || fail "stix2/pyfiglet pip step" "0500 does not use the pivotglass lock"
+grep -q '^stix2==' "$LOCK" && grep -q '^pyfiglet==' "$LOCK" && [[ "$(grep -c -- '--hash=sha256:' "$LOCK")" -ge 4 ]] && pass "pivotglass lock pins stix2 + pyfiglet with sha256 hashes" || fail "pivotglass lock" "unpinned or unhashed"
 grep -q "pyfiglet.Figlet(font='ansi_shadow')" "$EXT" && pass "0500 hook verifies stix2 import AND the ansi_shadow font" || fail "post-install verify" "no import/font check"
 grep -q "DEC-PHASE12-013" "$EXT" && pass "DEC-PHASE12-013 annotation in 0500" || fail "annotation" "missing"
 
@@ -55,10 +59,10 @@ grep -q -i "pivotglass" "$REPO_ROOT/docs/User_Guide.md" && pass "User Guide docu
 
 section "Live run on trixie / Python 3.13 (needs Docker)"
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    OUT=$(docker run --rm --platform linux/amd64 -v "$P:/opt/orionx/scripts/pivotglass:ro" -e PYTHONPYCACHEPREFIX=/tmp/pyc debian:trixie-slim bash -c '
+    OUT=$(docker run --rm --platform linux/amd64 -v "$P:/opt/orionx/scripts/pivotglass:ro" -v "$LOCK:/lock.txt:ro" -e PYTHONPYCACHEPREFIX=/tmp/pyc debian:trixie-slim bash -c '
         apt-get update -q >/dev/null 2>&1
         apt-get install -y -q --no-install-recommends python3 python3-pip python3-cmd2 python3-rich python3-sqlalchemy python3-httpx python3-pydantic python3-tomli-w python3-yaml python3-requests python3-pytz python3-simplejson python3-prompt-toolkit curl ca-certificates >/dev/null 2>&1
-        pip3 install --break-system-packages --no-input -q stix2 pyfiglet >/dev/null 2>&1
+        pip3 install --break-system-packages --no-input -q --require-hashes --no-deps -r /lock.txt >/dev/null 2>&1 && echo "LOCK-INSTALL: ok"
         ln -s /opt/orionx/scripts/pivotglass/ap /usr/bin/ap
         export HOME=/tmp/h; mkdir -p $HOME
         echo "VERSION: $(ap --version 2>&1 | head -1)"
@@ -66,6 +70,7 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
         (timeout 15 ap web >/tmp/w.log 2>&1 &)
         for i in 1 2 3 4 5 6 7 8; do sleep 1; c=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8765/ 2>/dev/null); [ "$c" = "200" ] && break; done
         echo "WEB: HTTP $c"' 2>&1)
+    printf '%s' "$OUT" | grep -q "LOCK-INSTALL: ok" && pass "the hash-locked set installs on trixie with --require-hashes --no-deps" || fail "lock install on trixie" "$(printf '%s' "$OUT" | head -c 200)"
     printf '%s' "$OUT" | grep -q "VERSION: pivotglass 1\.2\.0" && pass "ap --version runs via /usr/bin symlink on trixie ($(printf '%s' "$OUT" | grep -o 'VERSION: .*' | head -1))" || fail "ap --version on trixie" "$(printf '%s' "$OUT" | head -c 200)"
     printf '%s' "$OUT" | grep -q "WEB: HTTP 200" && pass "ap web serves the packaged static export (HTTP 200)" || fail "ap web on trixie" "$(printf '%s' "$OUT" | grep -o 'WEB: .*' | head -1)"
     # The terminal deck path must import cleanly with python3-prompt-toolkit (agent extra).
