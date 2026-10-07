@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck shell=bash
+# shellcheck shell=bash disable=SC2015  # `test && pass || fail`: pass() always returns 0
 # ---------------------------------------------------------------------------
 # test_operator_surfaces.sh — what the operator reads on the deck is true.
 #
@@ -153,6 +153,86 @@ if [[ -n "$DERIVE" ]]; then
 else
     fail "0700 derive-cockpit-surfaces block" "no '# BEGIN derive-cockpit-surfaces' block in 0700"
 fi
+
+# ---------------------------------------------------------------------------
+section "MOTD and orionx-help: one command list, every command exists (UX-32, docs F37/F38)"
+# ---------------------------------------------------------------------------
+CMDS="$INC/usr/share/orionx/orionx-commands.txt"
+MOTD_SH="$WORK/10-orionx-welcome"; HELP_SH="$WORK/orionx-help.sh"
+heredoc_body "$H0700" /etc/update-motd.d/10-orionx-welcome > "$MOTD_SH" || fail "MOTD heredoc" "not found in 0700"
+heredoc_body "$H0700" /etc/profile.d/orionx-help.sh > "$HELP_SH" || fail "orionx-help heredoc" "not found in 0700"
+if [[ -f "$CMDS" ]]; then
+    pass "command list ships at /usr/share/orionx/orionx-commands.txt"
+    # Every usage's first word (after sudo) must be something the image installs.
+    CMD_REPORT="$(python3 - "$CMDS" "$HOOKS/live" "$INC" <<'PY'
+import os, re, sys
+cmds, hookdir, inc = sys.argv[1:4]
+names = {"orionx-help"}  # the profile.d function itself
+for h in os.listdir(hookdir):
+    p = os.path.join(hookdir, h)
+    if os.path.isfile(p):
+        names |= set(re.findall(r'\["([^"]+)"\]="', open(p, encoding="utf-8", errors="replace").read()))
+for d in ("usr/bin", "usr/local/bin"):
+    if os.path.isdir(os.path.join(inc, d)):
+        names |= set(os.listdir(os.path.join(inc, d)))
+bad, n = [], 0
+for line in open(cmds, encoding="utf-8"):
+    if not line.strip() or line.startswith("#"):
+        continue
+    parts = [p.strip() for p in line.split(" :: ")]
+    if len(parts) != 3 or parts[0] not in ("quick", "help"):
+        bad.append(f"malformed line: {line.strip()}")
+        continue
+    words = parts[1].split()
+    first = words[1] if words[0] == "sudo" else words[0]
+    n += 1
+    if first not in names:
+        bad.append(f"{first} is not installed by any hook or includes.chroot")
+print("\n".join(bad) if bad else f"OK {n}")
+PY
+)"
+    if [[ "$CMD_REPORT" == OK* ]]; then pass "all ${CMD_REPORT#OK } listed commands are installed by the image"
+    else while IFS= read -r l; do fail "command list" "$l"; done <<<"$CMD_REPORT"; fi
+else
+    fail "command list" "$CMDS missing — MOTD and orionx-help each carry their own hand-written copy"
+fi
+printf 'ISO_VERSION=v9.9.9-test\nGIT_HEAD_SHA=abc\n' > "$WORK/orionx-version"
+MOTD_OUT="$(ORIONX_VERSION_FILE="$WORK/orionx-version" ORIONX_COMMANDS_FILE="$CMDS" bash "$MOTD_SH" 2>&1)"
+HELP_OUT="$(ORIONX_VERSION_FILE="$WORK/orionx-version" ORIONX_COMMANDS_FILE="$CMDS" bash -c ". '$HELP_SH'; orionx-help" 2>&1)"
+if grep -qx 'Orion-X Phoenix Edition v9.9.9-test' <<<"$MOTD_OUT"; then
+    pass "MOTD prints the release from the version file, on its own line"
+else
+    fail "MOTD version line" "no line 'Orion-X Phoenix Edition v9.9.9-test' (wordmark backslash glued it?)"
+fi
+WIDE="$(printf '%s\n%s\n' "$MOTD_OUT" "$HELP_OUT" | python3 -c 'import sys; print(sum(len(l.rstrip("\n")) > 80 for l in sys.stdin))')"
+[[ "$WIDE" == 0 ]] && pass "MOTD and orionx-help fit an 80-column console" \
+    || fail "80 columns" "$WIDE line(s) wider than 80 characters"
+NOVER_OUT="$(ORIONX_VERSION_FILE="$WORK/absent" ORIONX_COMMANDS_FILE="$CMDS" bash "$MOTD_SH" 2>&1)"
+if [[ "$NOVER_OUT" == *"unknown-build"* && "$NOVER_OUT" != *"v2.0.0"* ]]; then
+    pass "MOTD without a version file says unknown-build, not a plausible old release"
+else
+    fail "MOTD fallback" "$(head -6 <<<"$NOVER_OUT" | tail -1)"
+fi
+for want in "User_Guide.html" "orionx-cockpit" "orionx-osint" "orionx-diag"; do
+    [[ "$MOTD_OUT" == *"$want"* ]] && pass "MOTD mentions $want" || fail "MOTD mentions $want" "missing"
+done
+missing=0
+while IFS= read -r line; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    usage="$(awk -F' :: ' '{print $2}' <<<"$line")"
+    [[ "$HELP_OUT" == *"$usage"* ]] || { missing=$((missing+1)); fail "orionx-help lists" "$usage"; }
+done < "$CMDS"
+[[ $missing -eq 0 ]] && pass "orionx-help prints every command in the list"
+[[ "$HELP_OUT" == *"User_Guide.html"* ]] && pass "orionx-help points at the rendered guide" \
+    || fail "orionx-help docs pointer" "does not name User_Guide.html"
+# /etc/orionx-version fallback when the build env is missing (F38): evaluate
+# the hook's heredoc with ORIONX_VERSION unset.
+VERSION_BODY="$(awk '/^cat > \/etc\/orionx-version << VERSION_EOF/{f=1;next} /^VERSION_EOF$/{f=0} f' "$H0700")"
+FALLBACK="$(env -u ORIONX_VERSION -u ORIONX_GIT_SHA bash -c "cat <<VERSION_EOF
+$VERSION_BODY
+VERSION_EOF" | grep '^ISO_VERSION=')"
+[[ "$FALLBACK" == "ISO_VERSION=unknown-build" ]] && pass "/etc/orionx-version fallback is unknown-build" \
+    || fail "/etc/orionx-version fallback" "$FALLBACK (a stale literal reads like a real release)"
 
 # ---------------------------------------------------------------------------
 printf "\nResults: %d passed, %d failed\n" "$PASS" "$FAIL"

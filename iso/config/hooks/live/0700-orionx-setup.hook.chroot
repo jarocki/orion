@@ -330,7 +330,7 @@ else
     echo "[0700] WARNING: /etc/orionx-build-env absent — /etc/orionx-version will report defaults" >&2
 fi
 cat > /etc/orionx-version << VERSION_EOF
-ISO_VERSION=${ORIONX_VERSION:-v2.0.0-rc8}
+ISO_VERSION=${ORIONX_VERSION:-unknown-build}
 BUILD_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 GIT_HEAD_SHA=${ORIONX_GIT_SHA:-unknown}
 GIT_HEAD_TITLE=${ORIONX_GIT_TITLE:-unknown}
@@ -341,53 +341,64 @@ chmod 644 /etc/orionx-version
 # carries exactly one metadata surface (DEC-PHASE11-015 single-authority).
 rm -f /etc/orionx-build-env
 
+# @decision DEC-PHASE12-129
+# @title MOTD and orionx-help are rendered from one command list
+# @status accepted
+# @rationale QA round 1 (UX-32, docs F37) found both describing the 2.0-era
+#   toolkit: no Cockpit, Workbench, Nebula, diag, tune or wizard, and both
+#   pointing at the raw User_Guide.md. They were two hand-kept copies that had
+#   drifted from what ships. Both now read /usr/share/orionx/orionx-commands.txt
+#   (includes.chroot) at run time: "quick" lines feed the MOTD, all lines feed
+#   orionx-help. tests/unit/test_operator_surfaces.sh runs both renderers and
+#   checks every listed command is installed by the image. The ORIONX_*_FILE
+#   variables exist for that test; on the deck they are unset.
+#   The version fallback is "unknown-build" (docs F38): the old literals
+#   (v2.0.0 / v2.0.0-rc8) read like real releases when the build env was lost.
 cat > /etc/update-motd.d/10-orionx-welcome << 'MOTD_EOF'
 #!/bin/bash
-# W11-11 T2c: grep-reads the ISO_VERSION key from the KEY=VALUE manifest written
-# by the 0700 hook. Backward-compat: if /etc/orionx-version is the legacy
-# single-line format (pre-W11-11), grep returns nothing and fallback 'v2.0.0'
-# is used — MOTD continues to render (acceptable degrade on legacy image).
-ORIONX_VER="$(grep '^ISO_VERSION=' /etc/orionx-version 2>/dev/null | cut -d= -f2 || echo v2.0.0)"
-cat << EOF
+# Orion-X login banner. Release from /etc/orionx-version (written by the 0700
+# hook); commands from /usr/share/orionx/orionx-commands.txt (DEC-PHASE12-129).
+VERSION_FILE="${ORIONX_VERSION_FILE:-/etc/orionx-version}"
+COMMANDS_FILE="${ORIONX_COMMANDS_FILE:-/usr/share/orionx/orionx-commands.txt}"
+ORIONX_VER="$(grep -m1 '^ISO_VERSION=' "$VERSION_FILE" 2>/dev/null | cut -d= -f2)"
+ORIONX_VER="${ORIONX_VER:-unknown-build}"
+# Quoted heredoc: in an unquoted one the wordmark's trailing backslash joins
+# the next line, which glued the release string onto the art.
+cat << 'EOF'
   ___      _               __  __
  / _ \ _ _(_)___ _ _      \ \/ /
 | (_) | '_| / _ \ ' \      >  <
  \___/|_| |_\___/_||_|    /_/\_\
-Orion-X Phoenix Edition ${ORIONX_VER}
+EOF
+printf 'Orion-X Phoenix Edition %s\n\nQuick start:\n' "$ORIONX_VER"
+awk -F' :: ' '$1 == "quick" { printf "  %-20s %s\n", $2, $3 }' "$COMMANDS_FILE" 2>/dev/null \
+    || echo "  (command list missing: $COMMANDS_FILE)"
+cat << 'EOF'
 
-Quick start:
-  orionx-mesh       — WireGuard P2P mesh management
-  setup-matrix.sh   — Matrix/Synapse setup
-  artifact-analyzer.py — Forensic artifact analysis
-  pcap-analyzer.py  — Structured PCAP traffic analysis (STA)
-  storyboard-gen.py — Generate storyboards
-
-Type 'orionx-help' for the full command reference.
-Docs: /usr/share/doc/orionx/User_Guide.md
+Guide: /usr/share/doc/orionx/User_Guide.html (desktop: "Orion-X User Guide")
 EOF
 MOTD_EOF
 chmod 755 /etc/update-motd.d/10-orionx-welcome
 
-# Provide the orionx-help bashrc function (matches Dockerfile pattern)
+# orionx-help: every command in the shared list (DEC-PHASE12-129).
 cat > /etc/profile.d/orionx-help.sh << 'HELP_EOF'
-# Orion-X help function — available in all interactive shells
+# Orion-X help function — available in all interactive bash shells.
+# Rendered from /usr/share/orionx/orionx-commands.txt (DEC-PHASE12-129).
 orionx-help() {
+    local f="${ORIONX_COMMANDS_FILE:-/usr/share/orionx/orionx-commands.txt}"
     echo ""
-    echo "Orion-X Phoenix Edition — Command Reference"
+    echo "Orion-X Phoenix Edition — command reference"
     echo "==========================================="
-    echo "  orionx-mesh          WireGuard P2P mesh (join/leave/status/discover)"
-    echo "  setup-wireguard.sh   WireGuard interface setup"
-    echo "  setup-matrix.sh      Matrix/Synapse server setup"
-    echo "  artifact-analyzer.py Forensic artifact analysis"
-    echo "  pcap-analyzer.py     Structured PCAP traffic analysis (STA, Bejtlich method)"
-    echo "  storyboard-gen.py    Intelligence storyboard generation"
-    echo "  toggle-theme.sh      Toggle light/dark desktop theme"
-    echo "  run-lynis.sh         Run Lynis security audit"
-    echo "  download-samples.sh  Download forensic sample datasets"
+    if [ -r "$f" ]; then
+        awk -F' :: ' '/^(quick|help) :: / {
+            if (length($2) <= 26) printf "  %-26s %s\n", $2, $3
+            else printf "  %s\n  %-26s %s\n", $2, "", $3 }' "$f"
+    else
+        echo "  (command list missing: $f — see the User Guide, section 17)"
+    fi
     echo ""
-    echo "Docs:   /usr/share/doc/orionx/User_Guide.md"
-    echo "Data:   /opt/orionx/data/samples/"
-    echo "Theme:  /opt/orionx/theme/"
+    echo "Guide:  /usr/share/doc/orionx/User_Guide.html  (section 17: Command Reference)"
+    echo "Data:   ~/Analysis/ (your working copy), /opt/orionx/data/samples/ (originals)"
     echo ""
 }
 export -f orionx-help 2>/dev/null || true
