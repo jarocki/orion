@@ -90,7 +90,6 @@ PACKAGE_LIST="iso/config/package-lists/orionx.list.chroot"
 # ============================================================
 echo "=== Test Group 1: Profile File Existence ==="
 
-assert_file_exists "$SYNAPSE_PROFILE" "Synapse profile exists"
 assert_file_exists "$WIREGUARD_PROFILE" "WireGuard profile exists"
 assert_file_exists "$VOLATILITY_PROFILE" "Volatility3 profile exists"
 assert_file_exists "$BULKEXT_PROFILE" "bulk_extractor profile exists"
@@ -102,8 +101,6 @@ assert_file_exists "$TSHARK_PROFILE" "tshark profile exists"
 echo ""
 echo "=== Test Group 2: tunables/global Include ==="
 
-assert_file_contains "$SYNAPSE_PROFILE" "#include <tunables/global>" \
-    "Synapse profile includes tunables/global"
 assert_file_contains "$WIREGUARD_PROFILE" "#include <tunables/global>" \
     "WireGuard profile includes tunables/global"
 assert_file_contains "$WIREGUARD_PROFILE" "network netlink raw," \
@@ -115,23 +112,8 @@ assert_file_contains "$BULKEXT_PROFILE" "#include <tunables/global>" \
 assert_file_contains "$TSHARK_PROFILE" "#include <tunables/global>" \
     "tshark profile includes tunables/global"
 
-# ============================================================
-# Test Group 3: Synapse profile rules
-# ============================================================
-echo ""
-echo "=== Test Group 3: Synapse Profile Rules ==="
-
-assert_file_contains "$SYNAPSE_PROFILE" "/etc/matrix-synapse/.*r," \
-    "Synapse profile allows /etc/matrix-synapse read"
-assert_file_contains "$SYNAPSE_PROFILE" "deny /home/.*rw," \
-    "Synapse profile denies /home"
-assert_file_contains "$SYNAPSE_PROFILE" "network inet tcp," \
-    "Synapse profile allows inet tcp"
-assert_file_contains "$SYNAPSE_PROFILE" "/var/lib/matrix-synapse/.*rw," \
-    "Synapse profile allows /var/lib/matrix-synapse rw"
-assert_file_contains "$SYNAPSE_PROFILE" "/var/log/matrix-synapse/.*rw," \
-    "Synapse profile allows /var/log/matrix-synapse rw"
-
+# Synapse profile removed (DEC-PHASE12-102): it could not attach without
+# confining every Python program; see tests/unit/test_matrix_systemd.sh.
 # ============================================================
 # Test Group 4: WireGuard profile rules
 # ============================================================
@@ -230,8 +212,6 @@ assert_file_contains "$HOOK_FILE" "#!/usr/bin/env bash" \
 echo ""
 echo "=== Test Group 10: Decision Annotations ==="
 
-assert_file_contains "$SYNAPSE_PROFILE" "@decision DEC-SEC-002" \
-    "Synapse profile has @decision DEC-SEC-002"
 assert_file_contains "$HOOK_FILE" "@decision DEC-SEC-002" \
     "Hook has @decision DEC-SEC-002"
 

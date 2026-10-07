@@ -32,7 +32,6 @@
 #
 #   Unit                               Type      Expected Restart=
 #   ─────────────────────────────────  ────────  ────────────────────────────────
-#   matrix-synapse-orionx.service      notify    REQUIRED: on-failure|always|on-abnormal
 #   orionx-mesh-discover.service       simple    REQUIRED: on-failure|always|on-abnormal
 #   orionx-mesh-beacon.service         oneshot   NOT required (recovery-irrelevant)
 #   orionx-mesh-health.service         oneshot   NOT required (recovery-irrelevant)
@@ -42,7 +41,6 @@
 #   orionx-mesh-health.timer           timer     MUST have OnUnitActiveSec= or OnBootSec=
 #
 # Failure modes covered (from goal-contract desired_end_state):
-#   - Synapse restart:  matrix-synapse-orionx.service Restart=on-failure
 #   - Node drop:        timer cadence re-fires mesh-discover/health to re-add peers
 #   - Network flap:     timer cadence re-fires mesh-health to re-establish links
 #   - Disk full:        NOT covered — documented gap; routed to W7-6-bis/Phase 8
@@ -100,7 +98,6 @@ echo ""
 section "Pre-flight: unit file presence"
 
 EXPECTED_UNITS=(
-    "matrix-synapse-orionx.service"
     "orionx-mesh-discover.service"
     "orionx-mesh-beacon.service"
     "orionx-mesh-health.service"
@@ -144,52 +141,9 @@ get_directive() {
         || true
 }
 
-# ---------------------------------------------------------------------------
-# Assertion 1: matrix-synapse-orionx.service — Type=notify, long-running daemon
-#   MUST declare Restart= with on-failure | always | on-abnormal
-#   SHOULD declare RestartSec= (belt-and-suspenders)
-# ---------------------------------------------------------------------------
-section "matrix-synapse-orionx.service (Type=notify, long-running daemon)"
-
-UNIT_FILE="${SYSTEMD_DIR}/matrix-synapse-orionx.service"
-
-ACTUAL_TYPE="$(get_directive "${UNIT_FILE}" "Type")"
-ACTUAL_RESTART="$(get_directive "${UNIT_FILE}" "Restart")"
-ACTUAL_RESTART_SEC="$(get_directive "${UNIT_FILE}" "RestartSec")"
-
-# Assert Type= is not oneshot (it must be a long-running daemon type)
-if [[ "${ACTUAL_TYPE}" == "notify" || "${ACTUAL_TYPE}" == "simple" \
-    || "${ACTUAL_TYPE}" == "forking" || "${ACTUAL_TYPE}" == "exec" ]]; then
-    pass "matrix-synapse-orionx.service: Type=${ACTUAL_TYPE} (long-running daemon)"
-else
-    fail "matrix-synapse-orionx.service: unexpected Type=" \
-         "Got Type=${ACTUAL_TYPE:-<absent>}; expected notify/simple/forking/exec for long-running daemon"
-fi
-
-# Assert meaningful Restart= policy
-case "${ACTUAL_RESTART}" in
-    on-failure|always|on-abnormal)
-        pass "matrix-synapse-orionx.service: Restart=${ACTUAL_RESTART} (meaningful recovery policy)"
-        ;;
-    no|"")
-        fail "matrix-synapse-orionx.service: Restart= missing or 'no'" \
-             "Got Restart=${ACTUAL_RESTART:-<absent>}; Type=${ACTUAL_TYPE} daemon MUST declare Restart=on-failure|always|on-abnormal"
-        ;;
-    *)
-        fail "matrix-synapse-orionx.service: Restart= unrecognized value" \
-             "Got Restart=${ACTUAL_RESTART}; expected on-failure|always|on-abnormal"
-        ;;
-esac
-
-# RestartSec= is a belt-and-suspenders check — PASS if present, no FAIL if absent
-if [[ -n "${ACTUAL_RESTART_SEC}" ]]; then
-    pass "matrix-synapse-orionx.service: RestartSec=${ACTUAL_RESTART_SEC} (back-off configured)"
-else
-    # Only fail if Restart= is non-trivial (no point checking RestartSec if no restart)
-    if [[ "${ACTUAL_RESTART}" == "on-failure" || "${ACTUAL_RESTART}" == "always" || "${ACTUAL_RESTART}" == "on-abnormal" ]]; then
-        pass "matrix-synapse-orionx.service: RestartSec= absent (systemd default applies; not required)"
-    fi
-fi
+# Assertion 1 (matrix-synapse-orionx.service) removed: DEC-PHASE12-102 made the
+# matrix.org package unit matrix-synapse.service the only Synapse unit; it is
+# not in this repo (Restart=always in the package, verified 2026-10-07).
 
 # ---------------------------------------------------------------------------
 # Assertion 2: orionx-mesh-discover.service — Type=simple, persistent listener

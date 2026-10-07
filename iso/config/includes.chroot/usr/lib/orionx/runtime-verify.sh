@@ -119,7 +119,9 @@ assert_mesh_discover_enabled() {
 # ---------------------------------------------------------------------------
 # Assertion: matrix_synapse_state
 #
-# Checks that matrix-synapse-orionx.service is not in a broken state.
+# Checks that matrix-synapse.service is not in a broken state.
+# DEC-PHASE12-102: the package unit is the ONE Synapse unit (the Cockpit and
+# setup-matrix.sh name the same one); matrix-synapse-orionx.service is gone.
 # Accepts: not-found, inactive, active, activating — every state except one.
 # Rejects only: failed.
 #
@@ -135,7 +137,7 @@ assert_matrix_synapse_state() {
     # "failed" is the only rejected state — see the block comment above.
     local verdict="PASS"
     local svc_state
-    svc_state="$(systemctl is-active matrix-synapse-orionx.service 2>/dev/null || true)"
+    svc_state="$(systemctl is-active matrix-synapse.service 2>/dev/null || true)"
     if [[ "${svc_state}" == "failed" ]]; then
         verdict="FAIL"
     fi

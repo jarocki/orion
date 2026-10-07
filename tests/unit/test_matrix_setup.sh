@@ -218,7 +218,7 @@ section "CLI: --mode server defaults"
 # In dry-run mode, server setup should accept defaults and exit cleanly
 # We pass all required server args to avoid interactive prompts
 set +e
-output=$(run_matrix --mode server --admin-user testadmin --admin-pass testpass123)
+output=$(run_matrix --mode server --admin-user testadmin)
 rc=$?
 set -e
 if [[ $rc -eq 0 ]]; then
@@ -240,7 +240,7 @@ fi
 section "CLI: --mode server custom args"
 
 set +e
-output=$(run_matrix --mode server --server-name myserver.example --admin-user admin1 --admin-pass secret)
+output=$(run_matrix --mode server --server-name myserver.example --admin-user admin1)
 rc=$?
 set -e
 if [[ $rc -eq 0 ]]; then
@@ -261,7 +261,7 @@ fi
 section "CLI: --mode client args"
 
 set +e
-output=$(run_matrix --mode client --homeserver-url https://matrix.example.org --user-id '@test:example.org' --password secretpass)
+output=$(run_matrix --mode client --homeserver-url https://matrix.example.org --user-id '@test:example.org')
 rc=$?
 set -e
 if [[ $rc -eq 0 ]]; then
@@ -309,8 +309,8 @@ section "Production Sequence"
 # This simulates a Docker build where the script is called non-interactively
 set +e
 r1=$(run_matrix --help); rc1=$?
-_r2=$(run_matrix --mode server --server-name deploy.local --admin-user deployer --admin-pass deploy123); rc2=$?
-_r3=$(run_matrix --mode client --homeserver-url https://deploy.local:8448 --user-id '@responder:deploy.local' --password resp123); rc3=$?
+_r2=$(run_matrix --mode server --server-name deploy.local --admin-user deployer); rc2=$?
+_r3=$(run_matrix --mode client --homeserver-url https://deploy.local:8448 --user-id '@responder:deploy.local'); rc3=$?
 set -e
 
 if [[ $rc1 -eq 0 ]] && echo "$r1" | grep -q 'Usage:' \
@@ -324,13 +324,98 @@ fi
 # Failure recovery: no mode → error → retry with mode
 set +e
 r1=$(run_matrix 2>&1); rc1=$?
-_r2=$(run_matrix --mode server --admin-user admin --admin-pass pass); rc2=$?
+_r2=$(run_matrix --mode server --admin-user admin); rc2=$?
 set -e
 if [[ $rc1 -ne 0 ]] && [[ $rc2 -eq 0 ]]; then
     pass "Failure recovery: no-mode-error → retry with --mode succeeds"
 else
     fail "Failure recovery" "rc1=$rc1 rc2=$rc2"
 fi
+
+# ===========================================================================
+# DEC-PHASE12-102: a REAL (non-dry-run) server setup against stubbed system
+# commands — exercises the code that used to die with exit 141, open
+# registration and put the password on argv.
+# ===========================================================================
+section "Server mode (non-dry-run, stubbed system)"
+
+MX="$(mktemp -d)"
+mkdir -p "$MX/bin" "$MX/etc/conf.d"
+export MX
+for cmd in systemctl register_new_matrix_user apt-get wget debconf-set-selections; do
+    cat > "$MX/bin/$cmd" <<'STUBEOF'
+#!/usr/bin/env bash
+n="$(basename "$0")"
+printf '%s' "$n" >> "$MX/calls"; printf ' %q' "$@" >> "$MX/calls"; echo >> "$MX/calls"
+if [[ "$n" == register_new_matrix_user ]]; then
+    for ((i=1; i<=$#; i++)); do
+        [[ "${!i}" == --password-file ]] && { j=$((i+1)); cp "${!j}" "$MX/pw.seen"; ls -l "${!j}" > "$MX/pw.mode"; }
+    done
+fi
+exit 0
+STUBEOF
+done
+printf '#!/usr/bin/env bash\nexit 0\n' > "$MX/bin/curl"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$MX/bin/element-desktop"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$MX/bin/synapse_homeserver"
+printf '#!/usr/bin/env bash\necho "5: wg0    inet 10.0.99.5/24 scope global wg0"\n' > "$MX/bin/ip"
+chmod +x "$MX/bin/"*
+printf 'Sup3r-secret pw\n' > "$MX/pw.txt"
+
+run_real() {
+    env PATH="$MX/bin:$PATH" ORIONX_SKIP_ROOT_CHECK=1 \
+        ORIONX_MATRIX_LOGFILE="$MX/setup.log" ORIONX_MATRIX_CONFIG_DIR="$MX/etc" \
+        ORIONX_MATRIX_CLIENT_DIR="$MX/element" ORIONX_MATRIX_DESKTOP_FILE="$MX/orionx-matrix.desktop" \
+        ORIONX_INSTALLER_LIB="$REPO_ROOT/iso/config/includes.chroot/opt/orionx/optional/lib/orionx-installer-common.sh" \
+        TMPDIR="$MX" bash "$MATRIX_SCRIPT" "$@" </dev/null 2>&1
+}
+
+rc=0; out="$(run_real --mode server --server-name orionx.local --admin-user ops --admin-pass-file "$MX/pw.txt")" || rc=$?
+if [[ $rc -eq 0 ]]; then pass "server setup completes (old code died with exit 141 at the secret)"; else fail "server setup completes" "rc=$rc: $(tail -3 <<< "$out")"; fi
+CONF="$MX/etc/conf.d/orionx.yaml"
+if grep -q '^enable_registration: false$' "$CONF" 2>/dev/null; then pass "registration is closed"; else fail "registration is closed" "$(cat "$CONF" 2>/dev/null)"; fi
+if grep -Eq "bind_addresses: \['127\.0\.0\.1', '10\.0\.99\.5'\]" "$CONF" 2>/dev/null; then pass "ONE listener bound to loopback + the wg0 address"; else fail "explicit bind addresses" "$(grep bind "$CONF" 2>/dev/null)"; fi
+if [[ "$(grep -c '^  - port:' "$CONF" 2>/dev/null)" == "1" ]]; then pass "exactly one listener"; else fail "exactly one listener"; fi
+if grep -Eq '^registration_shared_secret: "[0-9a-f]{64}"$' "$CONF" 2>/dev/null; then pass "a 64-hex registration secret is written"; else fail "registration secret"; fi
+if grep -q '^systemctl enable matrix-synapse.service' "$MX/calls" && grep -q '^systemctl restart matrix-synapse.service' "$MX/calls"; then
+    pass "enables and starts the package unit matrix-synapse.service"
+else
+    fail "enables and starts matrix-synapse.service" "$(grep systemctl "$MX/calls" 2>/dev/null)"
+fi
+if grep -q 'matrix-synapse-orionx' "$MX/calls"; then fail "never touches the deleted matrix-synapse-orionx unit"; else pass "never touches the deleted matrix-synapse-orionx unit"; fi
+REG="$(grep '^register_new_matrix_user' "$MX/calls" || true)"
+if [[ -n "$REG" && "$REG" != *Sup3r* && "$REG" == *--password-file* ]]; then
+    pass "admin password reaches register_new_matrix_user via --password-file, not argv"
+else
+    fail "password never on argv" "$REG"
+fi
+if [[ "$(cat "$MX/pw.seen" 2>/dev/null)" == "Sup3r-secret pw" ]]; then pass "password file carried the password"; else fail "password file carried the password"; fi
+if grep -q '^-rw-------' "$MX/pw.mode" 2>/dev/null; then pass "password file was mode 0600"; else fail "password file mode" "$(cat "$MX/pw.mode" 2>/dev/null)"; fi
+if ls "$MX"/orionx-matrix-pw.* >/dev/null 2>&1; then fail "password temp file removed"; else pass "password temp file removed"; fi
+if grep -q 'Sup3r' "$MX/setup.log" "$CONF" 2>/dev/null; then fail "password never logged or written to config"; else pass "password never logged or written to config"; fi
+if grep -q '"base_url": "http://127.0.0.1:8008"' "$MX/element/config.json" 2>/dev/null; then pass "local Element points at the loopback listener"; else fail "local Element base_url" "$(cat "$MX/element/config.json" 2>/dev/null)"; fi
+
+rc=0; out="$(run_real --mode server --admin-user ops --admin-pass hunter2)" || rc=$?
+if [[ $rc -ne 0 && "$out" == *"--admin-pass-file"* ]]; then pass "--admin-pass on argv is refused with the alternative named"; else fail "--admin-pass refused" "rc=$rc $out"; fi
+rc=0; out="$(run_real --mode client --homeserver-url https://x.example --password hunter2)" || rc=$?
+if [[ $rc -ne 0 ]]; then pass "--password on argv is refused"; else fail "--password refused"; fi
+rc=0; out="$(run_real --mode client --homeserver-url 'https://x.example","evil":"1' --user-id '@a:x')" || rc=$?
+if [[ $rc -ne 0 && ! -f "$MX/element/config.json.bad" ]] && ! grep -q evil "$MX/element/config.json" 2>/dev/null; then pass "a URL that would break the JSON is rejected"; else fail "URL injection rejected" "rc=$rc"; fi
+
+section "UX-35: preflight before any download"
+: > "$MX/calls"
+rm -f "$MX/bin/element-desktop" "$MX/bin/synapse_homeserver"
+printf '#!/usr/bin/env bash\nexit 2\n' > "$MX/bin/getent"; chmod +x "$MX/bin/getent"
+rc=0; out="$(run_real --mode server --admin-user ops)" || rc=$?
+if [[ $rc -ne 0 && "$out" == *"unreachable"* && "$out" == *"network"* ]]; then pass "offline: one plain-language network error"; else fail "offline preflight message" "rc=$rc: $out"; fi
+if grep -q '^apt-get' "$MX/calls" 2>/dev/null; then fail "offline: apt-get is never run"; else pass "offline: apt-get is never run"; fi
+if [[ "$EUID" -ne 0 ]]; then
+    rc=0; out="$(env PATH="$MX/bin:$PATH" ORIONX_MATRIX_LOGFILE="$MX/setup.log" bash "$MATRIX_SCRIPT" --mode server </dev/null 2>&1)" || rc=$?
+    if [[ $rc -ne 0 && "$out" == *"requires root"* ]]; then pass "non-root: says it needs root, before anything else"; else fail "root preflight" "rc=$rc: $out"; fi
+else
+    skip "root preflight" "running as root"
+fi
+rm -rf "$MX"
 
 # ===========================================================================
 # Summary
