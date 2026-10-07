@@ -60,9 +60,24 @@ permanently disabled. The preflight page says so by name, layer by layer.
 An operator who wants those layers must rebuild the bundle themselves on
 their own machine with their own key. That is the correct place for it.
 
-The two edits to app/index.html
--------------------------------
+The two edits to app/index.html, and one to app/cesium/Cesium.js
+-----------------------------------------------------------------
 Everything else under app/ is byte-for-byte what `vite build` produced.
+
+  3. (app/cesium/Cesium.js, DEC-PHASE12-124) BLANKED — CesiumJS's built-in
+     default Cesium ion access token (a JWT shared by every CesiumJS install,
+     the `defaultAccessToken` literal) is replaced with "". With no
+     VITE_CESIUM_ION_TOKEN compiled in (see above), that shared token was the
+     credential any ion-backed request from the globe would carry. Blanked,
+     ion requests fail closed instead of identifying as "a CesiumJS
+     default-token client" to api.cesium.com (security F23). The globe's
+     offline layers (NaturalEarthII tiles, ellipsoid) need no token.
+     MANIFEST.sha256 pins the edited file.
+
+CesiumJS licence: LICENSE.cesium beside this file is CesiumJS 1.139.1's own
+LICENSE.md (Apache-2.0 plus its third-party notices), fetched verbatim from
+https://raw.githubusercontent.com/CesiumGS/cesium/1.139.1/LICENSE.md on
+2026-10-07. The copyright header in app/cesium/Cesium.js also ships.
 
   1. REMOVED — three <link> elements pulling Google Fonts:
          <link rel="preconnect" href="https://fonts.googleapis.com">
