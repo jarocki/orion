@@ -28,8 +28,6 @@ operator could select "autonomous" and be wrong about it during an incident.
 @rationale The operator pre-approves autonomy per action class in advance; the
   auto-healing engine never exceeds the level recorded here. This tab is the
   single authority for those levels (persisted to ~/.config/orionx/autonomy.json).
-  W10-6 populates the former "lands in W10-6" placeholder (marker retained in a
-  comment below for test_control_center.sh).
 
 @decision DEC-PHASE9-019
 @title from __future__ import annotations required in all Phase 10 Python modules
@@ -45,8 +43,11 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # type: ignore[import]  # noqa: E402
 
+from ..helpers import settings_io as S  # noqa: E402
+from ..helpers import ux  # noqa: E402
+
 # Single authority for pre-approved autonomy levels (user-writable, no sudo).
-# The auto-healing engine reads this file before every action (lands in W10-6).
+# orionx-heald reads this file before every action; a missing key is "off".
 _AUTONOMY_FILE = Path.home() / ".config" / "orionx" / "autonomy.json"
 
 _LEVELS = ["off", "propose", "confirm", "autonomous"]
@@ -63,6 +64,10 @@ _ACTION_CLASSES = [
 ]
 
 
+def _esc(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _load_autonomy() -> dict[str, str]:
     try:
         data = json.loads(_AUTONOMY_FILE.read_text(encoding="utf-8"))
@@ -73,13 +78,9 @@ def _load_autonomy() -> dict[str, str]:
     return {}
 
 
-def _save_autonomy(levels: dict[str, str]) -> bool:
-    try:
-        _AUTONOMY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _AUTONOMY_FILE.write_text(json.dumps(levels, indent=2), encoding="utf-8")
-        return True
-    except OSError:
-        return False
+def _save_autonomy(levels: dict[str, str]) -> tuple[bool, str]:
+    """Atomic: the engine must never read a half-written file (DEC-PHASE12-069)."""
+    return S.atomic_write_text(_AUTONOMY_FILE, json.dumps(levels, indent=2) + "\n")
 
 
 class _AutoHealingWidget:
@@ -88,11 +89,6 @@ class _AutoHealingWidget:
     def __init__(self) -> None:
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.box.set_border_width(12)
-
-        title = Gtk.Label()
-        title.set_markup("<b>Auto-Healing Playbooks</b>")
-        title.set_halign(Gtk.Align.START)
-        self.box.pack_start(title, False, False, 0)
 
         intro = Gtk.Label(
             label=(
@@ -111,10 +107,17 @@ class _AutoHealingWidget:
         # display and the authority disagree, materialise the full map on
         # first open so the file says exactly what the operator is looking at.
         self._levels = _load_autonomy()
-        if any(cid not in self._levels for cid, _l, _d in _ACTION_CLASSES):
-            for cid, _label, _desc in _ACTION_CLASSES:
-                self._levels.setdefault(cid, _DEFAULT_LEVEL)
-            _save_autonomy(self._levels)
+        self._materialised = ""
+        missing = [cid for cid, _l, _d in _ACTION_CLASSES if cid not in self._levels]
+        if missing:
+            for cid in missing:
+                self._levels[cid] = _DEFAULT_LEVEL
+            ok, err = _save_autonomy(self._levels)
+            # UX-11: say that the file was written on open, and whether it took.
+            self._materialised = (f"Wrote default '{_DEFAULT_LEVEL}' for {len(missing)} class(es) not yet in "
+                                  f"{_AUTONOMY_FILE} so the file matches this grid." if ok else
+                                  f"✗ Could not write defaults ({err}) — the engine treats these "
+                                  f"{len(missing)} class(es) as 'off'.")
 
         grid = Gtk.Grid()
         grid.set_column_spacing(12)
@@ -122,6 +125,7 @@ class _AutoHealingWidget:
         self.box.pack_start(grid, False, False, 6)
 
         self._combos: dict[str, Gtk.ComboBoxText] = {}
+        self._reverting = False
         for row, (cid, label, desc) in enumerate(_ACTION_CLASSES):
             name = Gtk.Label(label=label)
             name.set_halign(Gtk.Align.START)
@@ -139,11 +143,12 @@ class _AutoHealingWidget:
 
         self._status = Gtk.Label()
         self._status.set_halign(Gtk.Align.START)
+        self._status.set_line_wrap(True)
+        self._status.set_selectable(True)
         self.box.pack_start(self._status, False, False, 4)
         self._refresh_status()
 
-        # The W10-6 plug-in surface: the autonomy engine (orionx-heald,
-        # DEC-PHASE12-023) lands in W10-6 and reads exactly this file.
+        # orionx-heald (DEC-PHASE12-023) reads exactly this file.
         note = Gtk.Label()
         note.set_markup(
             "<small>These pre-approvals are the engine's authority. Live playbooks "
@@ -159,30 +164,40 @@ class _AutoHealingWidget:
 
     def _on_level_changed(self, combo: Gtk.ComboBoxText, cid: str) -> None:
         level = combo.get_active_text()
-        if level not in _LEVELS:
+        if level not in _LEVELS or self._reverting:
             return
+        prev = self._levels.get(cid, _DEFAULT_LEVEL)
         self._levels[cid] = level
-        _save_autonomy(self._levels)
+        ok, err = _save_autonomy(self._levels)
+        if not ok:
+            # Nothing changed for the engine: put the control back and say why.
+            self._levels[cid] = prev
+            self._reverting = True
+            combo.set_active(_LEVELS.index(prev))
+            self._reverting = False
+            ux.notify(f"✗ {cid} NOT changed — could not write {err}", ux.LEVEL_ERROR)
+            return
         self._refresh_status()
-        try:
-            from ..helpers import ux  # noqa: PLC0415
-            lvl_note = "⚠ autonomous" if level == "autonomous" else level
-            ux.notify(f"✓ {cid}: {lvl_note}",
-                      ux.LEVEL_INFO if level == "autonomous" else ux.LEVEL_OK)
-        except Exception:
-            pass
+        lvl_note = "⚠ autonomous — acts without asking" if level == "autonomous" else level
+        ux.notify(f"✓ {cid}: {lvl_note} · {S.reboot_line()}",
+                  ux.LEVEL_INFO if level == "autonomous" else ux.LEVEL_OK)
 
     def _refresh_status(self) -> None:
         auton = sum(1 for v in self._levels.values() if v == "autonomous")
         if auton:
-            self._status.set_markup(
-                f'<span foreground="#ffb300">{auton} class(es) set to autonomous — '
-                "these will act without asking.</span>"
-            )
+            head = (f'<span foreground="#ffb300">{auton} class(es) set to autonomous — '
+                    "these will act without asking.</span>")
         else:
-            self._status.set_markup(
-                '<span foreground="#9aa0a6">No class is fully autonomous.</span>'
-            )
+            head = '<span foreground="#9aa0a6">No class is fully autonomous.</span>'
+        # UX-11: an armed autonomy that vanishes at reboot must say so; the
+        # engine then fails closed to "off" for every class.
+        reboot = S.reboot_line()
+        col = "#9aa0a6" if reboot.startswith("survives reboot: YES") else "#ff6a4a"
+        tail = "" if col == "#9aa0a6" else " After a reboot the engine treats every class as 'off'."
+        lines = [head, f'<span foreground="{col}">{_esc(reboot)}.{tail}</span>']
+        if self._materialised:
+            lines.append(f'<span foreground="#9aa0a6">{_esc(self._materialised)}</span>')
+        self._status.set_markup("\n".join(lines))
 
 
 def build_section() -> Gtk.Widget:

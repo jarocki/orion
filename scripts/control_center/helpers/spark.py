@@ -44,7 +44,7 @@ if _GTK:
         """A sparkline with a caption: `label  <latest>`."""
 
         def __init__(self, label: str, fmt: Callable[[float], str], color=(1.0, 0.42, 0.07),
-                     maxlen: int = 90, vmax: Optional[float] = None, height: int = 46) -> None:
+                     maxlen: int = 90, vmax: Optional[float] = None, height: int = 48) -> None:
             super().__init__()
             self.label, self.fmt, self.color, self.vmax = label, fmt, color, vmax
             self.values: Deque[float] = deque(maxlen=maxlen)
@@ -75,7 +75,7 @@ if _GTK:
             latest = self.fmt(self.values[-1]) if self.values else "—"
             cr.set_source_rgba(0.6, 0.63, 0.66, 1.0)
             cr.select_font_face("Hack")
-            cr.set_font_size(10)
+            cr.set_font_size(11)   # UX-22: the deck-wide 11 px floor
             cr.move_to(4, h - 4)
             cr.show_text(f"{self.label}  {latest}")
             return True

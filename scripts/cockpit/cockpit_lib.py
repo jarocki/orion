@@ -123,8 +123,16 @@ class EventTail:
         self._fh = None
         self._inode = -1
         self._pos = 0
+        # @decision DEC-PHASE12-066
+        # @title A bus line read before its writer finished is completed, not dropped
+        # @status accepted
+        # @rationale python.md P1-6: readline() can return a line with no
+        #   trailing newline while a writer is mid-append; it failed to parse,
+        #   _pos moved past it, and that event never reached the stream. Such
+        #   a fragment is held here and prefixed to the next read.
+        self._partial = ""
 
-    def _open(self) -> bool:
+    def _open(self, from_start: bool = False) -> bool:
         try:
             st = self.path.stat()
         except OSError:
@@ -135,11 +143,19 @@ class EventTail:
             return False
         self._fh = fh
         self._inode = st.st_ino
-        # Backfill the last N events, then continue from EOF.
+        if from_start:
+            # A rotated/recreated/truncated bus: everything in the NEW file
+            # is unseen, so read it from the top (it used to be skipped).
+            self._pos = 0
+            return True
+        # First open: backfill the last N events, then continue from EOF.
         try:
-            tail = fh.readlines()[-self._backfill:] if self._backfill else []
+            lines = fh.readlines()
         except OSError:
-            tail = []
+            lines = []
+        if lines and not lines[-1].endswith("\n"):
+            self._partial = lines.pop()
+        tail = lines[-self._backfill:] if self._backfill else []
         for ln in tail:
             ev = parse_event(ln)
             if ev:
@@ -151,14 +167,16 @@ class EventTail:
         """Return events appended since the last poll (possibly empty)."""
         if self._fh is None and not self._open():
             return []
-        # Rotation / truncation: reopen from the top.
+        # Rotation / recreation / truncation: reopen and read the new file from
+        # the top. A deleted bus (stat fails) keeps the old handle until a new
+        # file appears; the poll simply returns nothing meanwhile.
         try:
             st = self.path.stat()
             if st.st_ino != self._inode or st.st_size < self._pos:
                 self._fh.close()
                 self._fh = None
-                self._backfill = 0
-                if not self._open():
+                self._partial = ""
+                if not self._open(from_start=True):
                     return []
         except OSError:
             return []
@@ -168,6 +186,10 @@ class EventTail:
                 line = self._fh.readline()
                 if not line:
                     break
+                if not line.endswith("\n"):
+                    self._partial += line      # writer is mid-line: finish it next poll
+                    break
+                line, self._partial = self._partial + line, ""
                 ev = parse_event(line)
                 if ev:
                     new.append(ev)
@@ -350,10 +372,6 @@ def process_running(name: str) -> bool:
         return False
 
 
-def mesh_up(sysfs: str = "/sys/class/net/wg0") -> bool:
-    return os.path.exists(sysfs)
-
-
 def posture_tier(path: Path = POSTURE_FILE) -> str:
     """Current threat-posture tier id ('0','1','2'); '0' if unset."""
     try:
@@ -409,7 +427,7 @@ __all__ = [
     "EMBER", "EMBER_DIM", "CYAN", "GREEN", "AMBER", "RED", "DIM", "BG_TOP", "BG_BOTTOM", "GRID",
     "SEVERITY_COLOR", "SEVERITY_WEIGHT", "SEVERITIES", "EVENT_LOG", "POSTURE_FILE",
     "parse_event", "EventTail", "pressure", "pressure_color", "read_net_bytes", "RateTracker",
-    "sparkline_points", "fmt_rate", "fmt_age", "service_active", "process_running", "mesh_up",
+    "sparkline_points", "fmt_rate", "fmt_age", "service_active", "process_running",
     "posture_tier", "POSTURE_LABEL", "POSTURE_STATUS_FILE", "posture_status",
     "posture_badge", "lerp", "now", "math",
 ]
@@ -424,14 +442,83 @@ __all__ = [
 # while the Cockpit, the thing the operator is actually watching, showed
 # nothing about it. These readers put that state on the dashboard.
 #
-# Reading is best-effort and never raises: the Cockpit runs as the operator and
-# the chain lives under /var/lib/orionx/healing, so a permission failure is
-# expected and must degrade to "unknown", never to a crash or a false "no
-# pending actions" — claiming there is nothing to approve when there is would
-# be the worst possible lie for this panel to tell.
+# Reading is best-effort and never raises. The chain itself is root:0600, so
+# the Cockpit reads heald's world-readable snapshot (DEC-PHASE12-065).
 # ---------------------------------------------------------------------------
 
-HEAL_CHAIN = Path("/var/lib/orionx/healing/chain.jsonl")
+# @decision DEC-PHASE12-065
+# @title The Cockpit reads healing state ONLY from heald's published snapshot
+# @status accepted
+# @rationale QA round 1 (python.md P1-1, P1-2). The Cockpit replayed the
+#   root:0600 hash chain itself. It could never open it as orionx-operator, and
+#   when it could (tests) it matched `status == "active"`, a value the engine
+#   never writes (it writes kind="applied"), so IN FORCE stayed empty while the
+#   deck was blocking a host. A second replay of the chain is a second
+#   authority. orionx-heald (root) now publishes /run/orionx/healing-status.json
+#   (0644, atomic) from the engine's own replay; that is the only thing read
+#   here. A missing, corrupt or stale (>30 s) snapshot is "state unknown —
+#   orionx-heald not publishing", never an empty list: "nothing pending" and "I
+#   could not look" must not look the same on a defensive dashboard.
+HEAL_STATUS = Path(os.environ.get("ORIONX_HEALING_STATUS", "/run/orionx/healing-status.json"))
+HEAL_STALE_AFTER = 30.0
+
+
+def _f(v: Any) -> float | None:
+    try:
+        return None if v is None or isinstance(v, bool) else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _heal_rec(r: Any, ts_key: str) -> dict[str, Any] | None:
+    if not isinstance(r, dict) or not str(r.get("id", "")).strip():
+        return None
+    out = {"id": str(r["id"]), "action": str(r.get("action", "?")),
+           "target": str(r.get("target", "?")), ts_key: _f(r.get(ts_key))}
+    if ts_key == "applied_ts":
+        out["expires_ts"] = _f(r.get("expires_ts"))
+    return out
+
+
+def healing_actions(path: Path = HEAL_STATUS, now: float | None = None,
+                    stale_after: float = HEAL_STALE_AFTER) -> dict[str, Any]:
+    """Healing state from orionx-heald's snapshot. Never raises.
+
+    Returns {'readable', 'pending', 'active', 'reason', 'age', 'chain_ok'}.
+    `readable` False means the panel must say "state unknown — <reason>".
+    """
+    now = time.time() if now is None else now
+    out: dict[str, Any] = {"readable": False, "pending": [], "active": [],
+                           "reason": "", "age": None, "chain_ok": None}
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        out["reason"] = f"orionx-heald not publishing ({path} missing)"
+        return out
+    except OSError as exc:
+        out["reason"] = f"orionx-heald snapshot unreadable ({exc.strerror or exc})"
+        return out
+    except ValueError:
+        out["reason"] = "orionx-heald snapshot is not valid JSON"
+        return out
+    if not isinstance(data, dict) or _f(data.get("ts")) is None:
+        out["reason"] = "orionx-heald snapshot has no timestamp"
+        return out
+    age = max(0.0, now - float(data["ts"]))
+    out["age"] = age
+    out["chain_ok"] = data.get("chain_ok") if isinstance(data.get("chain_ok"), bool) else None
+    if age > stale_after:
+        out["reason"] = f"orionx-heald not publishing (snapshot {age:.0f} s old)"
+        return out
+    if data.get("error"):
+        out["reason"] = f"orionx-heald reports: {str(data['error'])[:100]}"
+        return out
+    pend = [x for x in (_heal_rec(r, "proposed_ts") for r in data.get("pending") or []) if x]
+    act = [x for x in (_heal_rec(r, "applied_ts") for r in data.get("in_force") or []) if x]
+    pend.sort(key=lambda r: r["proposed_ts"] or 0.0, reverse=True)
+    act.sort(key=lambda r: r["applied_ts"] or 0.0, reverse=True)
+    out.update(readable=True, pending=pend, active=act)
+    return out
 
 
 def _heal_cli(args: list[str], timeout: float = 4.0) -> tuple[int, str]:
@@ -440,56 +527,10 @@ def _heal_cli(args: list[str], timeout: float = 4.0) -> tuple[int, str]:
         r = subprocess.run(["orionx-heal", *args], capture_output=True,
                            text=True, timeout=timeout, check=False)
         return r.returncode, (r.stdout or "") + (r.stderr or "")
-    except (OSError, subprocess.SubprocessError):
+    except FileNotFoundError:
         return 127, ""
-
-
-def healing_actions(chain: Path = HEAL_CHAIN) -> dict[str, Any]:
-    """Current healing state: {'readable': bool, 'pending': [...], 'active': [...]}.
-
-    `readable` False means we could not read the chain — the panel must say so
-    rather than render an empty list that looks like "nothing happening".
-    """
-    out: dict[str, Any] = {"readable": False, "pending": [], "active": [], "reason": ""}
-    try:
-        raw = Path(chain).read_text(encoding="utf-8")
-    except PermissionError:
-        out["reason"] = "chain not readable as this user"
-        return out
-    except OSError:
-        out["reason"] = "no healing chain yet"
-        out["readable"] = True          # absent chain genuinely means no actions
-        return out
-
-    state: dict[str, dict[str, Any]] = {}
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            e = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(e, dict):
-            continue
-        aid = str(e.get("action_id", ""))
-        if not aid:
-            continue
-        rec = state.setdefault(aid, {})
-        rec["action_id"] = aid
-        for k in ("playbook", "target", "level", "status", "kind", "ts", "expires_at", "reason"):
-            if k in e:
-                rec[k] = e[k]
-    out["readable"] = True
-    for rec in state.values():
-        st = str(rec.get("status") or rec.get("kind") or "")
-        if st == "pending":
-            out["pending"].append(rec)
-        elif st == "active":
-            out["active"].append(rec)
-    out["pending"].sort(key=lambda r: float(r.get("ts") or 0), reverse=True)
-    out["active"].sort(key=lambda r: float(r.get("ts") or 0), reverse=True)
-    return out
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, str(exc)
 
 
 def tune_args(ev: dict[str, Any], mode: str) -> list[str] | None:
@@ -535,8 +576,107 @@ def tune_event(ev: dict[str, Any], mode: str) -> tuple[bool, str]:
         r = subprocess.run(args, capture_output=True, text=True, timeout=6.0, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         return False, f"orionx-tune failed: {exc}"
-    out = " ".join((r.stdout or r.stderr or "").split())
+    out = tune_message((r.stdout or "") + "\n" + (r.stderr or ""))
     return r.returncode == 0, out or f"orionx-tune exit {r.returncode}"
+
+
+def tune_message(text: str) -> str:
+    """orionx-tune's own lines, the reboot verdict FIRST (UX-10 / python.md P2-1).
+
+    The lines used to be joined into one string and cut at 160 chars; the
+    'survives reboot' verdict — the point of DEC-PHASE12-050 — started at
+    char ~134 and was the part that got cut. Lines are kept, not joined.
+    """
+    lines = [" ".join(ln.split()) for ln in (text or "").splitlines() if ln.strip()]
+    first = [ln for ln in lines if ln.lower().startswith("survives reboot")]
+    return "\n".join(first + [ln for ln in lines if ln not in first])
+
+
+# ---------------------------------------------------------------------------
+# LIVE layout and text fitting (DEC-PHASE12-073) — pure, so the 1366x768
+# reference deck can be proven in CI, not eyeballed.
+# ---------------------------------------------------------------------------
+# @decision DEC-PHASE12-073
+# @title The LIVE tab is laid out by a pure function and every string is fitted to its box
+# @status accepted
+# @rationale ux.md UX-10/16..23: at 1366x768 the window was taller than the
+#   screen, SYSTEMS labels fell 13 px below their panel, stream messages were
+#   clipped mid-word at ~63 chars with no ellipsis, the header hostname could
+#   overdraw the posture badge, the drill-down cut values at 74 chars, faded
+#   rows fell to ~2.4:1 contrast and severity was colour-only. live_layout()
+#   gives SYSTEMS a floor and lets the gauge absorb the rest; ellipsize()
+#   measures with the real font (the caller passes cairo's text_extents); the
+#   minimum font size is MIN_FONT; fade never drops below FADE_FLOOR; every
+#   row carries a severity word.
+MIN_FONT = 11.0
+FADE_FLOOR = 0.6
+SEVERITY_TAG = {"info": "INFO", "notice": "NOTE", "warning": "WARN", "critical": "CRIT"}
+SYSTEMS_MIN_H = 90
+
+
+def live_layout(W: float, H: float, pad: int = 16, header_h: int = 58,
+                deck_h: int = 118) -> dict[str, tuple[float, float, float, float]]:
+    """Panel rectangles (x, y, w, h) for a W x H drawing area."""
+    body_y = header_h + pad
+    body_h = max(0, H - header_h - pad * 2)
+    left_w = int(W * 0.58) - pad
+    out = {
+        "header": (0, 0, W, header_h),
+        "events": (pad, body_y, left_w, max(0, body_h - deck_h - pad)),
+        "deck": (pad, body_y + body_h - deck_h, left_w, deck_h),
+    }
+    rx = pad + left_w + pad
+    rw = W - rx - pad
+    avail = max(0, body_h - pad * 3)
+    a_h = int(avail * 0.30)
+    n_h = int(avail * 0.18)
+    s_h = max(SYSTEMS_MIN_H, int(avail * 0.17))
+    g_h = max(0, avail - a_h - n_h - s_h)
+    y = body_y
+    for name, h in (("actions", a_h), ("gauge", g_h), ("net", n_h), ("systems", s_h)):
+        out[name] = (rx, y, rw, h)
+        y += h + pad
+    return out
+
+
+def ellipsize(text: str, max_w: float, measure) -> str:
+    """Longest prefix of `text` (+ '…') whose measured width fits `max_w`."""
+    if measure(text) <= max_w:
+        return text
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if measure(text[:mid].rstrip() + "…") <= max_w:
+            lo = mid
+        else:
+            hi = mid - 1
+    return (text[:lo].rstrip() + "…") if lo else ""
+
+
+def fade_for(age: float) -> float:
+    """Row brightness by age; never below FADE_FLOOR (age is in its own column)."""
+    return max(FADE_FLOOR, 1.0 - min(max(age, 0.0), 600.0) / 800.0)
+
+
+def drill_rows(ev: dict[str, Any], chars: int) -> list[tuple[str, str]]:
+    """Every (label, text) row of the drill-down, values wrapped — never cut (UX-19)."""
+    import textwrap  # noqa: PLC0415
+    chars = max(20, int(chars))
+    rows: list[tuple[str, str]] = []
+    for i, line in enumerate(textwrap.wrap(str(ev.get("message", "")), width=chars + 18) or [""]):
+        rows.append(("message" if i == 0 else "", line))
+    d = ev.get("detail") or {}
+    order = ["src_ip", "dest_ip", "signature", "sid", "technique", "scan_kind",
+             "distinct_ports", "window_seconds", "protocols", "latest_dport",
+             "detector", "evidence", "triggering_rule", "ports_seen"]
+    for k in [k for k in order if k in d] + [k for k in sorted(d) if k not in order]:
+        v = d[k]
+        label = "full evidence" if k == "_full" else k.replace("_", " ")
+        if isinstance(v, list):
+            v = ", ".join(str(i) for i in v)
+        for i, part in enumerate(textwrap.wrap(str(v), width=chars, break_long_words=True) or [""]):
+            rows.append((label if i == 0 else "", part))
+    return rows
 
 
 def approve_action(action_id: str) -> tuple[bool, str]:

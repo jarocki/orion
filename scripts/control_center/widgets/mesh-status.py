@@ -2,10 +2,20 @@
 """
 Orion-X XFCE panel widget — mesh status (xfce4-genmon-plugin format).
 
-Outputs a single line to stdout on each invocation:
-  "🔗 3p"  — mesh running, 3 peers visible
-  "🔗 0p"  — mesh interface up but no peers
-  "—"      — mesh not running or orionx-mesh not on PATH
+Reads the root-written snapshot /run/orionx/mesh-status.json through
+helpers/mesh_data (DEC-PHASE12-067) and prints that verdict:
+  "◆ 3 peers"        — mesh joined, 3 peers with a live handshake
+  "◆ stale (95 s)"   — the snapshot stopped updating; the count is not trusted
+  "— (no snapshot)"  — orionx-mesh-status.timer is not writing one
+  "—"                — mesh not joined
+
+No sudo: genmon has no tty, and the rc8/rc9 panel showed "—" while wg0 was
+up because `sudo orionx-mesh status` failed silently every 5 s.
+
+@decision DEC-PHASE12-067
+@title One mesh verdict, from the root-written snapshot, for every surface
+@status accepted
+@rationale See helpers/mesh_data.py.
 
 @decision DEC-PHASE9-019
 @title Bullseye Python 3.9 + PEP-563 (from __future__ import annotations)
@@ -14,38 +24,25 @@ Outputs a single line to stdout on each invocation:
 """
 from __future__ import annotations
 
-import subprocess
+import os
 import sys
+import time
+
+# realpath: genmon may call us through a symlink (same rule as the launcher).
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
+from control_center.helpers import mesh_data as M  # noqa: E402
 
 
-def _get_peer_count() -> int | None:
-    """Return WireGuard peer count from orionx-mesh status, or None if unavailable."""
-    try:
-        result = subprocess.run(
-            ["sudo", "orionx-mesh", "status"],
-            capture_output=True,
-            text=True,
-            timeout=8,
-        )
-        if result.returncode != 0 or not result.stdout.strip():
-            return None
-        # Count "peer:" lines in wg show output embedded in status output.
-        peer_count = sum(
-            1 for line in result.stdout.splitlines() if line.strip().startswith("peer:")
-        )
-        return peer_count
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return None
+def render(snap_path=M.SNAPSHOT, now: float | None = None) -> str:
+    """The genmon markup for this snapshot. Pure apart from reading the file."""
+    now = time.time() if now is None else now
+    s = M.mesh_summary(M.load_snapshot(snap_path, now=now), now,
+                       wg_up=M.sysfs_bytes() is not None)
+    return f"<txt>{s['short']}</txt>\n<tool>{s['text']}</tool>"
 
 
 def main() -> None:
-    count = _get_peer_count()
-    if count is None:
-        print("<txt>—</txt>")  # em-dash — mesh not running (genmon <txt> markup)
-    else:
-        # ◆ (U+25C6, Geometric Shapes) renders in the panel font; the 🔗 emoji
-        # rendered as a missing-glyph box (no emoji font on the deck; DEC-PHASE12-005).
-        print(f"<txt>◆ {count}p</txt>")  # ◆ Np (genmon <txt> markup)
+    print(render())
 
 
 if __name__ == "__main__":

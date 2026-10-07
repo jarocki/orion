@@ -14,13 +14,17 @@ as animated instruments:
     │                                          │  SYSTEMS  LEDs          │
     └──────────────────────────────────────────┴─────────────────────────┘
 
-Keys: F11 fullscreen · Esc / q quit.   Flags: --fullscreen, --demo (synthetic
-events so the deck comes alive with no real traffic — for demos/screenshots).
+Keys (LIVE): Up/Down select · Enter detail · s/t squelch/tune in detail ·
+PgUp/PgDn scroll (in detail: page) · a approve · Esc close detail / leave
+fullscreen · F11 fullscreen · Alt+1..8 tabs · Ctrl+Q quit (UX-47: a stray q
+or Esc no longer closes the live view). Ctrl+PgUp/PgDn switch tabs (GTK).
+Flags: --fullscreen, --demo (synthetic events, for demos/screenshots).
 
-No threads: GLib timers drive polling (events 0.5s, network 1s, systems 5s) and
-a ~6 fps redraw — deliberately cheap for Bay Trail hardware. All logic that is
-not drawing lives in cockpit_lib.py (dependency-free, unit-tested).
-DEC-PHASE12-007.
+GLib timers drive polling (events 0.5s, network 1s, systems 5s, vitals 2s) and
+a ~6 fps redraw. Anything that forks (systemctl, pgrep, ip, orionx-heal,
+orionx-tune) runs in a worker thread and only while LIVE is the visible tab;
+results are applied on the main loop (DEC-PHASE12-068). All logic that is not
+drawing lives in cockpit_lib.py (dependency-free, unit-tested). DEC-PHASE12-007.
 """
 
 from __future__ import annotations
@@ -42,6 +46,8 @@ import deck_vitals as V  # noqa: E402  (DEC-PHASE12-049: one authority for hostn
 sys.path.insert(0, str(_here.parent.parent))
 from control_center import app as CC  # noqa: E402  (DEC-PHASE12-053: the tab authority)
 from control_center.helpers import ux as CCUX  # noqa: E402
+from control_center.helpers import mesh_data as MD  # noqa: E402  (DEC-PHASE12-067)
+from control_center.helpers.background import Poller, run_async  # noqa: E402  (DEC-PHASE12-068)
 
 try:
     import gi
@@ -77,7 +83,12 @@ _DEMO_MSGS = [
 class Cockpit(Gtk.Window):
     def __init__(self, fullscreen: bool = False, demo: bool = False, tab: str = "live") -> None:
         super().__init__(title="Orion Cockpit")
-        self.set_default_size(1280, 760)
+        # UX-17: 760 px was taller than a 1366x768 deck minus panel and title
+        # bar (~701 px). Open maximised; the default only applies when the
+        # operator un-maximises.
+        self.set_default_size(1280, 680)
+        if not fullscreen:
+            self.maximize()
         try:
             self.set_icon_from_file(ICON)
         except Exception:
@@ -124,8 +135,7 @@ class Cockpit(Gtk.Window):
         self.drill = False             # detail overlay open
         self.heal: dict = {"readable": False, "pending": [], "active": [], "reason": ""}
         self.heal_sel = 0
-        self.toast = ""                # transient outcome line
-        self.toast_until = 0.0
+        self.drill_scroll = 0          # first drill-down row shown
         self._approve_rect: tuple[float, float, float, float] | None = None
         self._close_rect: tuple[float, float, float, float] | None = None
         self._shown: list = []         # events as last drawn, so keys and clicks agree
@@ -134,14 +144,12 @@ class Cockpit(Gtk.Window):
         GLib.timeout_add(FPS_MS, self._tick)
         GLib.timeout_add(POLL_EVENTS_MS, self._poll_events)
         GLib.timeout_add(POLL_NET_MS, self._poll_net)
-        GLib.timeout_add(POLL_SYS_MS, self._poll_sys)
-        GLib.timeout_add(POLL_VITALS_MS, self._poll_vitals)
+        self._sys_poller = Poller(self.da, POLL_SYS_MS, self._collect_sys, self._apply_sys)
+        self._vitals_poller = Poller(self.da, POLL_VITALS_MS, self._collect_vitals, self._apply_vitals)
         if demo:
             GLib.timeout_add(1400, self._demo_event)
         self._poll_events()
         self._poll_net()
-        self._poll_sys()
-        self._poll_vitals()
         if fullscreen:
             self.fullscreen()
             self._fs = True
@@ -174,59 +182,83 @@ class Cockpit(Gtk.Window):
         self.rates.push(rx, tx, time.time())
         return True
 
-    def _poll_sys(self) -> bool:
-        self.systems["NEBULA"] = L.service_active("nebula-runtime.service")
-        self.systems["FIREWALL"] = L.service_active("orionx-firewall.service")
-        self.systems["MESH"] = L.mesh_up()
-        self.systems["R.A.I.N."] = L.process_running("orionx-rain")
-        self.posture = L.posture_tier()
+    def _collect_sys(self, _visible: bool) -> dict:
+        """Worker thread: every probe that forks or reads root-published state."""
+        systems = {}
+        systems["NEBULA"] = L.service_active("nebula-runtime.service")
+        systems["FIREWALL"] = L.service_active("orionx-firewall.service")
+        # DEC-PHASE12-067: the snapshot verdict, as on every other surface.
+        # None = unknown (stale / no snapshot), drawn amber, never as ONLINE.
+        _now = time.time()
+        _ms = MD.mesh_summary(MD.load_snapshot(now=_now), _now)["state"]
+        systems["MESH"] = {"active": True, "down": False}.get(_ms)
+        systems["R.A.I.N."] = L.process_running("orionx-rain")
+        if self.demo:
+            systems = {"NEBULA": True, "FIREWALL": True, "MESH": True, "R.A.I.N.": True}
         # DEC-PHASE12-024: what the tier is ENFORCING, not just what it is set
         # to. Empty dict when orionx-postured is not running.
-        self.posture_status = L.posture_status()
-        self.heal = L.healing_actions()
-        if self.demo:
-            self.systems.update({"NEBULA": True, "FIREWALL": True, "MESH": True, "R.A.I.N.": True})
-        return True
+        return {"systems": systems, "posture": L.posture_tier(),
+                "posture_status": L.posture_status(), "heal": L.healing_actions()}
 
-    def _poll_vitals(self) -> bool:
-        v = V.collect(self._cpu_prev)
-        self._cpu_prev = v.get("cpu_sample")
-        self.vitals = v
-        return True
+    def _apply_sys(self, d: dict | None, err) -> None:
+        if err is not None:
+            self._say(f"\u2717 status probes failed: {err}", "error")
+            return
+        self.systems.update(d["systems"])
+        self.posture, self.posture_status, self.heal = d["posture"], d["posture_status"], d["heal"]
+
+    def _collect_vitals(self, _visible: bool) -> dict:
+        return V.collect(self._cpu_prev)
+
+    def _apply_vitals(self, v: dict | None, err) -> None:
+        if err is None and v:
+            self._cpu_prev = v.get("cpu_sample")
+            self.vitals = v
 
     def _tick(self) -> bool:
         self.pressure_shown = L.lerp(self.pressure_shown, self.pressure_target, 0.15)
         self.flash = max(0.0, self.flash - 0.07)
-        self.da.queue_draw()
+        if self.da.get_mapped():
+            self.da.queue_draw()
         return True
 
     def _on_key(self, _w, ev) -> bool:
         name = Gdk.keyval_name(ev.keyval) or ""
+        ctrl = bool(ev.state & Gdk.ModifierType.CONTROL_MASK)
+        alt = bool(ev.state & Gdk.ModifierType.MOD1_MASK)
+        if ctrl and name in ("q", "Q"):
+            Gtk.main_quit()
+            return True
+        if alt and name.isdigit() and 1 <= int(name) <= self.nb.get_n_pages():
+            self.nb.set_current_page(int(name) - 1)      # UX-20: a key route to every tab
+            return True
+        if ctrl:
+            return False   # Ctrl+PgUp/PgDn etc. belong to GTK (tab switching)
         on_live = self.nb.get_current_page() == self._pages.get("live", 0)
-        if not on_live and name != "F11":
-            return False   # GTK tabs own their keys; 'q'/'s'/'t' must not fire inside a text field
-        if name == "F11":
+        if name == "F11" or (name == "Escape" and self._fs and not (on_live and self.drill)):
             if self._fs:
                 self.unfullscreen()
             else:
                 self.fullscreen()
             self._fs = not self._fs
             return True
+        if not on_live:
+            return False   # GTK tabs own their keys; 's'/'t' must not fire inside a text field
         if name == "Escape":
-            # Escape backs out of the overlay first; only then does it quit.
-            # Quitting the dashboard because the operator dismissed a detail
-            # view would be its own small betrayal.
             if self.drill:
                 self.drill = False
                 self.da.queue_draw()
-                return True
-            Gtk.main_quit()
             return True
-        if self.drill and name in ("s", "t"):
-            self._tune_selected("squelch" if name == "s" else "tune")
-            return True
-        if name == "q":
-            Gtk.main_quit()
+        if self.drill:
+            if name in ("s", "t"):
+                self._tune_selected("squelch" if name == "s" else "tune")
+            elif name in ("Page_Down", "Next", "Down", "j"):
+                self.drill_scroll += 8 if name in ("Page_Down", "Next") else 1
+            elif name in ("Page_Up", "Prior", "Up", "k"):
+                self.drill_scroll = max(0, self.drill_scroll - (8 if name in ("Page_Up", "Prior") else 1))
+            elif name in ("Return", "KP_Enter"):
+                self.drill = False
+            self.da.queue_draw()
             return True
 
         if name in ("Page_Up", "Prior"):
@@ -252,7 +284,7 @@ class Cockpit(Gtk.Window):
             self.da.queue_draw()
             return True
         if name in ("Return", "KP_Enter") and 0 <= self.sel < n:
-            self.drill = not self.drill
+            self.drill, self.drill_scroll = True, 0
             self.da.queue_draw()
             return True
         if name in ("Tab", "Right", "Left") and self.heal["pending"]:
@@ -282,25 +314,33 @@ class Cockpit(Gtk.Window):
             self._say("nothing awaiting approval")
             return
         rec = pend[self.heal_sel % len(pend)]
-        ok, msg = L.approve_action(str(rec.get("action_id", "")))
-        self._say(msg)
-        # Re-read rather than assume it worked: the engine is the authority on
-        # whether the action actually moved out of pending.
-        self.heal = L.healing_actions()
-        self.da.queue_draw()
+        aid = str(rec.get("id", ""))
+        self._say(f"approving {aid}\u2026", "info")
+
+        def _done(res, err) -> None:
+            ok, msg = res if err is None else (False, f"approval failed: {err}")
+            self._say(msg, "ok" if ok else "error")
+            # Re-read rather than assume it worked: heald's next snapshot is
+            # the authority on whether the action left pending.
+            self._sys_poller.kick()
+        run_async(lambda: L.approve_action(aid), _done)
 
     def _tune_selected(self, mode: str) -> None:
         """[s]quelch for an hour / [t]une for good, via orionx-tune (DEC-PHASE12-050)."""
         if not (0 <= self.sel < len(self._shown)):
             self._say("no event selected")
             return
-        ok, msg = L.tune_event(self._shown[self.sel], mode)
-        self._say(msg if ok else f"NOT tuned: {msg}")
-        self.da.queue_draw()
+        ev = self._shown[self.sel]
 
-    def _say(self, msg: str) -> None:
-        self.toast = msg[:160]
-        self.toast_until = time.time() + 6.0
+        def _done(res, err) -> None:
+            ok, msg = res if err is None else (False, str(err))
+            self._say(msg if ok else f"NOT tuned: {msg}", "ok" if ok else "error")
+        run_async(lambda: L.tune_event(ev, mode), _done)
+
+    def _say(self, msg: str, level: str = "info") -> None:
+        """UX-37: one toast system. LIVE outcomes go to the same ToastBar as the
+        tabs (wraps, selectable, errors stay until dismissed, logged)."""
+        self.toast_bar.notify(msg, level)
 
     def _on_click(self, _w, ev) -> bool:
         if self.drill:
@@ -319,7 +359,7 @@ class Cockpit(Gtk.Window):
             if ry <= ev.y <= ry + rh:
                 self.sel = i
                 if getattr(ev, "type", None) is not None and int(ev.type) == int(Gdk.EventType._2BUTTON_PRESS):
-                    self.drill = True
+                    self.drill, self.drill_scroll = True, 0
                 self.da.queue_draw()
                 return True
         return False
@@ -329,49 +369,26 @@ class Cockpit(Gtk.Window):
         W = da.get_allocated_width()
         H = da.get_allocated_height()
         self._background(cr, W, H)
-
-        pad = 16
-        header_h = 58
-        self._header(cr, W, header_h)
-
-        body_y = header_h + pad
-        body_h = H - header_h - pad * 2
-        left_w = int(W * 0.58) - pad
-        d_h = 118   # DECK band: identity + vitals, under the stream (DEC-PHASE12-049)
-        self._events_panel(cr, pad, body_y, left_w, body_h - d_h - pad)
-        self._deck_panel(cr, pad, body_y + body_h - d_h, left_w, d_h)
-
-        rx = pad + left_w + pad
-        rw = W - rx - pad
-        # Actions get their own band. It is deliberately above the fold on the
-        # right rather than tucked at the bottom: a pending APPROVE is the most
-        # time-critical thing this dashboard can show.
-        a_h = int(body_h * 0.26)
-        g_h = int(body_h * 0.32)
-        n_h = int(body_h * 0.22)
-        s_h = body_h - a_h - g_h - n_h - pad * 3
-        self._actions_panel(cr, rx, body_y, rw, a_h)
-        self._gauge_panel(cr, rx, body_y + a_h + pad, rw, g_h)
-        self._net_panel(cr, rx, body_y + a_h + g_h + pad * 2, rw, n_h)
-        self._systems_panel(cr, rx, body_y + a_h + g_h + n_h + pad * 3, rw, s_h)
+        lay = L.live_layout(W, H)
+        self._header(cr, W, lay["header"][3])
+        # Every panel is clipped to its own rectangle (UX-17): nothing a panel
+        # draws can land on its neighbour or below the window.
+        for name, fn in (("events", self._events_panel), ("deck", self._deck_panel),
+                         ("actions", self._actions_panel), ("gauge", self._gauge_panel),
+                         ("net", self._net_panel), ("systems", self._systems_panel)):
+            x, y, w, h = lay[name]
+            if w <= 0 or h <= 0:
+                continue
+            cr.save()
+            cr.rectangle(x - 2, y - 2, w + 4, h + 4)
+            cr.clip()
+            fn(cr, x, y, w, h)
+            cr.restore()
 
         if self.flash > 0.0:  # visual twin of the R.A.I.N. cue
             cr.set_source_rgba(*L.RED, 0.16 * self.flash)
             cr.rectangle(0, 0, W, H)
             cr.fill()
-
-        if self.toast and time.time() < self.toast_until:
-            tw = min(W - 2 * pad, 620.0)
-            tx = (W - tw) / 2
-            ty = H - 52.0
-            cr.set_source_rgba(0.05, 0.06, 0.07, 0.95)
-            self._rrect(cr, tx, ty, tw, 30.0, 6.0)
-            cr.fill()
-            cr.set_source_rgba(*L.AMBER, 0.85)
-            cr.set_line_width(1.0)
-            self._rrect(cr, tx, ty, tw, 30.0, 6.0)
-            cr.stroke()
-            self._text(cr, tx + tw / 2, ty + 20, self.toast, 11, L.AMBER, align="center")
 
         # Overlay last so it sits above every panel.
         if self.drill:
@@ -379,10 +396,25 @@ class Cockpit(Gtk.Window):
         return False
 
     # --- primitives ---
-    def _text(self, cr, x, y, s, size=12.0, color=L.DIM, bold=False, align="left", glow=0.0):
+    def _font(self, cr, size, bold=False):
         cr.select_font_face(FONT, cairo.FONT_SLANT_NORMAL,
                             cairo.FONT_WEIGHT_BOLD if bold else cairo.FONT_WEIGHT_NORMAL)
-        cr.set_font_size(size)
+        cr.set_font_size(max(L.MIN_FONT, size))     # UX-22: nothing below 11 px
+
+    def _fit(self, cr, s, size, max_w, bold=False) -> str:
+        """`s` ellipsised to fit `max_w` px in this font, measured by cairo."""
+        self._font(cr, size, bold)
+        return L.ellipsize(str(s).translate(self._NO_GLYPH), max_w, lambda t: cr.text_extents(t).x_advance)
+
+    # Hack (the panel font) has no glyph for these; cairo's toy text API does
+    # not fall back, so they rendered as empty boxes (headless render, QA r1).
+    _NO_GLYPH = str.maketrans({"\u26a0": "!", "\u2715": "X", "\u2717": "x", "\u2713": "+"})
+
+    def _text(self, cr, x, y, s, size=12.0, color=L.DIM, bold=False, align="left", glow=0.0, max_w=None):
+        s = str(s).translate(self._NO_GLYPH)
+        if max_w is not None:
+            s = self._fit(cr, s, size, max_w, bold)
+        self._font(cr, size, bold)
         ext = cr.text_extents(s)
         if align == "right":
             x -= ext.x_advance
@@ -397,6 +429,10 @@ class Cockpit(Gtk.Window):
         cr.move_to(x, y)
         cr.set_source_rgb(*color)
         cr.show_text(s)
+        # show_text leaves a current point; without this the next cr.arc()
+        # drew a stray line from the end of the text (the gauge's diagonal
+        # streak in the headless render).
+        cr.new_path()
         return ext.x_advance
 
     @staticmethod
@@ -465,8 +501,6 @@ class Cockpit(Gtk.Window):
         self._text(cr, 22 + 118, 38, "//  COCKPIT", 16, L.DIM)
         v = self.vitals or {}
         who = " \u00b7 ".join(s for s in (v.get("hostname"), v.get("primary_ipv4")) if s)
-        if who:
-            self._text(cr, 22 + 118 + 150, 38, who, 13, L.DIM)
         # posture badge — DEC-PHASE12-024: a tier that cannot detect says so.
         label, badge_state = L.posture_badge(self.posture, self.posture_status)
         col = {"0": L.GREEN, "1": L.AMBER, "2": L.RED}.get(self.posture, L.GREEN)
@@ -474,6 +508,9 @@ class Cockpit(Gtk.Window):
             col = L.RED
         bw = 300 if badge_state != "ok" else 220
         bx = W - 16 - 180 - bw - 16
+        if who:
+            # UX-18: measured and ellipsised so it can never overdraw the badge.
+            self._text(cr, 22 + 118 + 150, 38, who, 13, L.DIM, max_w=bx - 8 - (22 + 118 + 150))
         self._rrect(cr, bx, 14, bw, 30, 6)
         cr.set_source_rgba(*col, 0.12)
         cr.fill_preserve()
@@ -486,12 +523,12 @@ class Cockpit(Gtk.Window):
 
     # --- event stream ---
     def _events_panel(self, cr, x, y, w, h):
-        cx, cy, cw, ch = self._panel(cr, x, y, w, h, "EVENT STREAM  ·  /run/orionx/events.jsonl")
+        cx, cy, cw, ch = self._panel(cr, x, y, w, h, "EVENT STREAM  \u00b7  /run/orionx/events.jsonl")
         cr.save()
         cr.rectangle(cx, cy, cw, ch)
         cr.clip()
         row_h = 22
-        rows = int(ch // row_h)
+        rows = max(0, int(ch // row_h))
         # Scrollback. self.scroll counts rows back from the newest event; 0
         # keeps the panel live. Clamped here rather than in the key handler so
         # it can never point past the buffer after events age out.
@@ -507,35 +544,39 @@ class Cockpit(Gtk.Window):
         self._row_rects = []
         now = time.time()
         if not events:
-            self._text(cr, cx + cw / 2, cy + ch / 2, "— no events yet — publish one with: orionx-event -s warning 'hello'  —",
-                       12, L.DIM, align="center")
+            # UX-43: an info event, so the hint does not sound R.A.I.N.
+            self._text(cr, cx + cw / 2, cy + ch / 2, "\u2014 no events yet \u2014 publish one with: orionx-event -s info 'hello' \u2014",
+                       12, L.DIM, align="center", max_w=cw - 8)
+        # Columns: dot | age | SEV word (UX-23) | source/category | message.
+        x_age, x_sev, x_src, x_msg = cx + 20, cx + 54, cx + 98, cx + 250
         for i, ev in enumerate(events):
             ry = cy + i * row_h + 16
             self._row_rects.append((ry - 16, row_h))
+            hint_w = 0.0
             if i == self.sel:
                 cr.set_source_rgba(*L.AMBER, 0.14)
                 cr.rectangle(cx, ry - 16, cw, row_h)
                 cr.fill()
                 if ev.get("detail"):
-                    self._text(cr, cx + cw - 6, ry, "\u21b5 detail", 9.5, L.AMBER, align="right")
+                    hint_w = self._text(cr, cx + cw - 6, ry, "\u21b5 detail", 11, L.AMBER, align="right") + 12
             age = now - ev["ts"] if ev["ts"] else 0
-            fade = max(0.35, 1.0 - min(age, 600) / 800.0)
+            fade = L.fade_for(age)                       # UX-21: floor 0.6
             col = L.SEVERITY_COLOR.get(ev["severity"], L.DIM)
-            # severity dot with glow (fresh = brighter)
             cr.set_source_rgba(*col, 0.25 * fade)
             cr.arc(cx + 8, ry - 4, 6, 0, 2 * math.pi)
             cr.fill()
             cr.set_source_rgba(*col, fade)
             cr.arc(cx + 8, ry - 4, 3.2, 0, 2 * math.pi)
             cr.fill()
-            cr.set_source_rgba(*L.DIM, fade)
-            self._text(cr, cx + 22, ry, f"{L.fmt_age(age):>3}", 11, tuple(c * fade for c in L.DIM))
+            self._text(cr, x_age, ry, f"{L.fmt_age(age):>3}", 11, tuple(c * fade for c in L.DIM))
+            self._text(cr, x_sev, ry, L.SEVERITY_TAG.get(ev["severity"], "NOTE"), 11, tuple(c * fade for c in col), bold=True)
             tag = "SELF " if (ev.get("detail") or {}).get("origin") == "self" else ""
-            self._text(cr, cx + 58, ry, f"{tag}{ev['source']}/{ev['category']}", 11, tuple(c * fade for c in col), bold=True)
-            msg = ev["message"]
-            if len(msg) > 160:
-                msg = msg[:159] + "\u2026"   # the stream clips; the drill-down shows it whole
-            self._text(cr, cx + 230, ry, msg, 11.5, tuple(c * fade for c in (0.9, 0.9, 0.9)))
+            self._text(cr, x_src, ry, f"{tag}{ev['source']}/{ev['category']}", 11, tuple(c * fade for c in col),
+                       bold=True, max_w=x_msg - x_src - 8)
+            # UX-16: fitted to the room actually left, with an ellipsis; the
+            # drill-down shows it whole.
+            self._text(cr, x_msg, ry, ev["message"], 11.5, tuple(c * fade for c in (0.9, 0.9, 0.9)),
+                       max_w=max(0.0, cx + cw - x_msg - hint_w - 6))
         cr.restore()
 
     # --- defensive / deceptive actions + APPROVE (DEC-PHASE12-029) ---
@@ -559,23 +600,24 @@ class Cockpit(Gtk.Window):
         if not self.heal.get("readable", False):
             # Never render an empty list here: "no pending actions" and "I
             # could not look" must not look the same on a defensive dashboard.
-            self._text(cr, cx + 8, cy + 20, "state unknown \u2014 " + (self.heal.get("reason") or "cannot read chain"),
+            self._text(cr, cx + 8, cy + 20, "state unknown \u2014 " + (self.heal.get("reason") or "no snapshot"),
                        11, L.AMBER)
-            self._text(cr, cx + 8, cy + 38, "run: sudo orionx-heal status", 10, L.DIM)
+            self._text(cr, cx + 8, cy + 38, "check: systemctl status orionx-heald  \u00b7  sudo orionx-heal status", 11, L.DIM)
             cr.restore()
             return
 
         ry = cy + 18
+        if self.heal.get("chain_ok") is False:
+            self._text(cr, cx + 8, ry, "\u26a0 audit chain does not verify \u2014 sudo orionx-heal verify", 11, L.RED, bold=True)
+            ry += 18
         if pend:
             rec = pend[self.heal_sel % len(pend)]
             self._text(cr, cx + 8, ry, f"AWAITING APPROVAL  ({len(pend)})", 11, L.RED, bold=True)
             ry += 20
             self._text(cr, cx + 8, ry,
-                       f"{rec.get('playbook','?')} \u2192 {str(rec.get('target','?'))[:28]}", 12,
-                       (0.95, 0.95, 0.95))
-            ry += 17
-            self._text(cr, cx + 8, ry, f"id {str(rec.get('action_id',''))[:16]}", 10, L.DIM)
-            ry += 22
+                       f"{rec.get('action','?')} \u2192 {rec.get('target','?')}", 12,
+                       (0.95, 0.95, 0.95), max_w=cw - 16)
+            ry += 12
             bw, bh = 104.0, 26.0
             bx, by = cx + 8, ry
             cr.set_source_rgba(*L.RED, 0.22)
@@ -587,19 +629,33 @@ class Cockpit(Gtk.Window):
             cr.stroke()
             self._text(cr, bx + bw / 2, by + 17, "APPROVE?", 11.5, L.RED, bold=True, align="center")
             self._approve_rect = (bx, by, bw, bh)
-            self._text(cr, bx + bw + 10, by + 17, "[a]  Tab: next", 10, L.DIM)
-            ry += bh + 10
+            self._text(cr, bx + bw + 10, by + 17, f"[a]  Tab: next  \u00b7  id {rec.get('id','')}", 11, L.DIM,
+                       max_w=cw - bw - 26)
+            ry += bh + 20
         else:
             self._text(cr, cx + 8, ry, "nothing awaiting approval", 11, L.DIM)
             ry += 20
 
         if act:
-            self._text(cr, cx + 8, ry, f"IN FORCE  ({len(act)})", 11, L.AMBER, bold=True)
-            ry += 18
-            for rec in act[:3]:
-                self._text(cr, cx + 8, ry,
-                           f"\u2022 {rec.get('playbook','?')} \u2192 {str(rec.get('target','?'))[:26]}",
-                           10.5, (0.85, 0.85, 0.85))
+            # The first action shares the header line, so IN FORCE is never
+            # pushed off the panel by a pending approval; the rest fill the
+            # remaining rows, and what does not fit is counted, not dropped.
+            now = time.time()
+
+            def _line(rec):
+                exp = rec.get("expires_ts")
+                left = f"  (reverts in {L.fmt_age(exp - now)})" if exp and exp > now else ""
+                return f"{rec.get('action','?')} \u2192 {rec.get('target','?')}{left}"
+            hw = self._text(cr, cx + 8, ry, f"IN FORCE ({len(act)}): ", 11, L.AMBER, bold=True)
+            self._text(cr, cx + 8 + hw, ry, _line(act[0]), 11, (0.85, 0.85, 0.85), max_w=cw - 16 - hw)
+            ry += 15
+            rest = act[1:]
+            fit = max(0, int((cy + ch - ry + 4) // 15))
+            for i, rec in enumerate(rest[:fit]):
+                more = len(rest) - fit
+                txt = (f"+{more + 1} more \u2014 sudo orionx-heal status" if i == fit - 1 and more > 0
+                       else "\u2022 " + _line(rec))
+                self._text(cr, cx + 8, ry, txt, 11, (0.85, 0.85, 0.85), max_w=cw - 16)
                 ry += 15
         cr.restore()
 
@@ -607,16 +663,16 @@ class Cockpit(Gtk.Window):
     def _drill_overlay(self, cr, W, H):
         """The answer to "why did that fire?" — source, signature, evidence.
 
-        Everything shown here comes from the event's structured detail
-        (DEC-PHASE12-029). An event without detail says so plainly instead of
-        rendering an empty box that looks like a broken panel.
+        Everything comes from the event's structured detail (DEC-PHASE12-029),
+        wrapped to the overlay width and paged with PgUp/PgDn (UX-19): nothing
+        is cut. An event without detail says so plainly.
         """
         if not (0 <= self.sel < len(self._shown)):
             return
         ev = self._shown[self.sel]
         pad = 40.0
-        w = min(760.0, W - pad * 2)
-        h = min(430.0, H - pad * 2)
+        w = min(820.0, W - pad * 2)
+        h = min(470.0, H - pad * 2)
         x = (W - w) / 2
         y = (H - h) / 2
         cr.set_source_rgba(0, 0, 0, 0.72)
@@ -630,11 +686,12 @@ class Cockpit(Gtk.Window):
         cr.set_line_width(1.4)
         self._rrect(cr, x, y, w, h, 10.0)
         cr.stroke()
+        cr.save()
+        cr.rectangle(x, y, w, h)
+        cr.clip()
 
         self._text(cr, x + 18, y + 28, "EVENT DETAIL", 12, col, bold=True)
-        # A clickable [X]. "Esc to close" is not discoverable with a mouse in
-        # hand, and an operator who cannot dismiss a modal will not trust the
-        # dashboard — reported from hardware.
+        # A clickable [X]; "Esc" alone is not discoverable with a mouse.
         bx, by, bs = x + w - 34.0, y + 14.0, 22.0
         cr.set_source_rgba(*col, 0.18)
         self._rrect(cr, bx, by, bs, bs, 4.0)
@@ -645,51 +702,44 @@ class Cockpit(Gtk.Window):
         cr.stroke()
         self._text(cr, bx + bs / 2, by + 16, "\u2715", 12, col, bold=True, align="center")
         self._close_rect = (bx, by, bs, bs)
-        self._text(cr, x + w - 44, y + 28, "Esc", 10, L.DIM, align="right")
-        if L.tune_args(ev, "squelch") is not None:
-            self._text(cr, x + 18, y + h - 14,
-                       "[s] squelch this signature for 1 h    [t] tune it off and keep it   \u2014 "
-                       "the outcome says whether it survives a reboot", 10, L.AMBER)
-        elif (ev.get("detail") or {}).get("origin") == "self":
-            self._text(cr, x + 18, y + h - 14, "SELF: this deck's own traffic", 10, L.AMBER)
-        self._text(cr, x + 18, y + 52,
-                   f"{ev['severity'].upper()}  {ev['source']}/{ev['category']}", 11, col)
-        # The whole message, wrapped. It used to be clipped to 96 characters
-        # here — in the one view whose purpose is to show everything.
-        chars = max(40, int((w - 36) / (11.5 * 0.56)))
-        lines = textwrap.wrap(ev["message"], width=chars) or [""]
-        if len(lines) > 5:
-            lines = lines[:5]
-            lines[-1] = lines[-1][: max(0, chars - 1)] + "\u2026"
-        for n, line in enumerate(lines):
-            self._text(cr, x + 18, y + 72 + 16 * n, line, 11.5, (0.93, 0.93, 0.93))
+        self._text(cr, x + w - 44, y + 28, "Esc", 11, L.DIM, align="right")
+        self._text(cr, x + 18, y + 50,
+                   f"{ev['severity'].upper()}  {ev['source']}/{ev['category']}",
+                   11, col, max_w=w - 36)
 
-        d = ev.get("detail") or {}
-        ry = y + 102 + 16 * (len(lines) - 1)
-        if not d:
-            self._text(cr, x + 18, ry,
-                       "This event carries no structured detail.", 11, L.AMBER)
-            self._text(cr, x + 18, ry + 18,
-                       "Its emitter has not been updated to publish evidence yet.", 10, L.DIM)
-            return
-        # Lead with the fields an operator reaches for first.
-        order = ["src_ip", "dest_ip", "signature", "sid", "technique", "scan_kind",
-                 "distinct_ports", "window_seconds", "protocols", "latest_dport",
-                 "detector", "evidence", "triggering_rule", "ports_seen"]
-        keys = [k for k in order if k in d] + [k for k in sorted(d) if k not in order]
-        for k in keys:
-            if ry > y + h - 26:
-                self._text(cr, x + 18, ry, "\u2026", 11, L.DIM)
-                break
-            v = d[k]
-            if isinstance(v, list):
-                v = ", ".join(str(i) for i in v[:14]) + ("\u2026" if len(v) > 14 else "")
-            label = k.replace("_", " ")
-            if k == "_full":
-                label, v = "full evidence", str(v)
-            self._text(cr, x + 18, ry, label, 10.5, L.DIM)
-            self._text(cr, x + 190, ry, str(v)[:74], 11, (0.9, 0.9, 0.9))
-            ry += 18
+        # Rows: the whole message, then every detail field, wrapped.
+        self._font(cr, 11.5)
+        cwid = max(1.0, cr.text_extents("0123456789").x_advance / 10.0)
+        val_x = x + 190
+        rows = L.drill_rows(ev, int((x + w - 18 - val_x) / cwid))
+        line_h = 16
+        top, bottom = y + 72, y + h - 34
+        per_page = max(1, int((bottom - top) // line_h))
+        self.drill_scroll = max(0, min(self.drill_scroll, max(0, len(rows) - per_page)))
+        for n, (label, text) in enumerate(rows[self.drill_scroll:self.drill_scroll + per_page]):
+            ry = top + n * line_h
+            if label == "message" or (not label and n + self.drill_scroll < len(rows) and
+                                      all(lb in ("message", "") for lb, _t in rows[:n + self.drill_scroll + 1])):
+                self._text(cr, x + 18, ry, text, 11.5, (0.93, 0.93, 0.93), max_w=w - 36)
+            else:
+                if label:
+                    self._text(cr, x + 18, ry, label, 11, L.DIM, max_w=val_x - x - 26)
+                self._text(cr, val_x, ry, text, 11, (0.9, 0.9, 0.9), max_w=x + w - 18 - val_x)
+        if not (ev.get("detail") or {}):
+            ry = top + min(len(rows), per_page) * line_h + 8
+            self._text(cr, x + 18, ry, "This event carries no structured detail.", 11, L.AMBER)
+            self._text(cr, x + 18, ry + 18, "Its emitter has not been updated to publish evidence yet.", 11, L.DIM)
+        foot = []
+        if len(rows) > per_page:
+            last = min(len(rows), self.drill_scroll + per_page)
+            foot.append(f"rows {self.drill_scroll + 1}\u2013{last} of {len(rows)}  PgUp/PgDn")
+        if L.tune_args(ev, "squelch") is not None:
+            foot.append("[s] squelch this signature 1 h  [t] tune it off for good \u2014 the outcome says whether it survives a reboot")
+        elif (ev.get("detail") or {}).get("origin") == "self":
+            foot.append("SELF: this deck's own traffic")
+        if foot:
+            self._text(cr, x + 18, y + h - 14, "    ".join(foot), 11, L.AMBER, max_w=w - 36)
+        cr.restore()
 
     # --- deck identity + vitals (DEC-PHASE12-049) ---
     def _deck_panel(self, cr, x, y, w, h):
@@ -710,10 +760,7 @@ class Cockpit(Gtk.Window):
             parts.append("no default route")
         parts.append("up " + V.fmt_uptime(v.get("uptime_s")))
         line = "  \u00b7  ".join(parts)
-        maxc = max(20, int(cw / 7.0))
-        if len(line) > maxc:
-            line = line[: maxc - 1] + "\u2026"
-        self._text(cr, cx, cy + 16, line, 11.5, (0.9, 0.9, 0.9))
+        self._text(cr, cx, cy + 16, line, 11.5, (0.9, 0.9, 0.9), max_w=cw)
         # three bars: CPU, MEM, DISK — each labelled with the number, not just a colour
         mem = v.get("mem") or {}
         dsk = v.get("disk") or {}
@@ -735,8 +782,8 @@ class Cockpit(Gtk.Window):
         for i, (name, pct, label) in enumerate(bars):
             bx = cx + i * (bw + 12)
             col = L.DIM if pct is None else (L.RED if pct >= 90 else L.AMBER if pct >= 75 else L.GREEN)
-            self._text(cr, bx, by, name, 10, L.DIM, bold=True)
-            self._text(cr, bx + 36, by, label, 10.5, (0.85, 0.85, 0.85))
+            self._text(cr, bx, by, name, 11, L.DIM, bold=True)
+            self._text(cr, bx + 40, by, label, 11, (0.85, 0.85, 0.85), max_w=bw - 40)
             self._rrect(cr, bx, by + 8, bw, 8, 3)
             cr.set_source_rgba(*L.DIM, 0.25)
             cr.fill()
@@ -751,8 +798,10 @@ class Cockpit(Gtk.Window):
         p = self.pressure_shown
         col = L.pressure_color(p)
         cxm = cx0 + cw / 2
-        cym = cy0 + ch * 0.62
-        r = min(cw, ch) * 0.42
+        # The arc spans r above the centre and r*sin(45 deg) below it; size it
+        # to the box minus the caption row so nothing overlaps (UX-17).
+        r = max(12.0, min(cw * 0.42, (ch - 20) / 1.72))
+        cym = cy0 + r + 2
         a0 = math.radians(135)
         a1 = math.radians(405)
         # track
@@ -791,7 +840,7 @@ class Cockpit(Gtk.Window):
         self._text(cr, cxm, cym - 10, f"{int(round(p))}", 34, col, bold=True, align="center", glow=1.0)
         band = "CALM" if p < 25 else "ELEVATED" if p < 60 else "HOSTILE"
         self._text(cr, cxm, cym + 14, band, 12, col, bold=True, align="center")
-        self._text(cr, cxm, cy0 + ch - 4, "severity-weighted · 60s half-life", 10, L.DIM, align="center")
+        self._text(cr, cxm, cy0 + ch - 4, "severity-weighted · 60s half-life", 11, L.DIM, align="center", max_w=cw)
 
     # --- network sparkline ---
     def _net_panel(self, cr, x, y, w, h):
@@ -826,19 +875,21 @@ class Cockpit(Gtk.Window):
         items = list(self.systems.items())
         col_w = cw / max(1, len(items))
         pulse = 0.75 + 0.25 * math.sin((time.time() - self.t0) * 2.0)
+        # UX-17: LED and its two words on ONE row, inside the panel at the
+        # SYSTEMS_MIN_H floor (they used to sit 13 px below its bottom edge).
+        ly = cy + max(14.0, ch / 2)
         for i, (name, ok) in enumerate(items):
-            lx = cx + col_w * i + col_w / 2
-            ly = cy + ch * 0.42
-            col = L.GREEN if ok else L.RED
+            lx = cx + col_w * i + 14
+            col = L.GREEN if ok else L.AMBER if ok is None else L.RED
             cr.set_source_rgba(*col, (0.35 if ok else 0.2) * pulse)
-            cr.arc(lx, ly, 14, 0, 2 * math.pi)
+            cr.arc(lx, ly, 12, 0, 2 * math.pi)
             cr.fill()
             cr.set_source_rgb(*col)
-            cr.arc(lx, ly, 6, 0, 2 * math.pi)
+            cr.arc(lx, ly, 5, 0, 2 * math.pi)
             cr.fill()
-            self._text(cr, lx, ly + 30, name, 11, L.DIM if ok else col, bold=True, align="center")
-            self._text(cr, lx, ly + 44, "ONLINE" if ok else "DOWN", 9, col, align="center")
-
+            room = col_w - 34
+            self._text(cr, lx + 18, ly - 2, name, 11, L.DIM if ok else col, bold=True, max_w=room)
+            self._text(cr, lx + 18, ly + 13, "ONLINE" if ok else "UNKNOWN" if ok is None else "DOWN", 11, col, max_w=room)
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="orionx-cockpit",

@@ -14,6 +14,7 @@
 # about what detail must NOT do as what it must.
 # ---------------------------------------------------------------------------
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"
@@ -155,46 +156,81 @@ ev2 = cl.parse_event(json.dumps({"ts":1.0,"severity":"warning","source":"s","cat
 ck(len(ev2["message"]) == 500, f"parse_event keeps the message whole for the drill-down ({len(ev2['message'])} chars; was clipped to 160)")
 ck_src = (root/"scripts/cockpit/orionx-cockpit").read_text()
 ck('ev["message"][:96]' not in ck_src, "drill-down no longer clips the message to 96 chars")
-ck("textwrap.wrap(ev[\"message\"]" in ck_src, "drill-down wraps the whole message")
+ck("L.drill_rows(ev" in ck_src, "drill-down rows come from cockpit_lib.drill_rows (wrapped, never cut; tested in test_cockpit_honesty)")
 ck(cl.parse_event(json.dumps({"ts":1.0,"message":"m"}))["detail"] == {},
    "event without detail parses to an empty dict, not None")
 ck(cl.parse_event('{"detail":"not-a-dict","ts":1}')["detail"] == {},
    "non-dict detail is coerced away rather than crashing the stream")
 
-# The distinction that matters: 'nothing pending' vs 'could not look'.
+# DEC-PHASE12-065: healing state comes ONLY from heald's snapshot
+# (/run/orionx/healing-status.json, the A2 contract schema). The chain is
+# root:0600 and the Cockpit must not replay it.
 td = pathlib.Path(tempfile.mkdtemp(dir=str(root/"tmp")))
-absent = cl.healing_actions(td/"nope.jsonl")
-ck(absent["readable"] is True and not absent["pending"],
-   "absent chain reads as genuinely no actions")
-chain = td/"chain.jsonl"
-chain.write_text("\n".join(json.dumps(r) for r in [
-    {"action_id":"a1","playbook":"block_ip","target":"10.0.0.9","status":"pending","ts":2},
-    {"action_id":"a2","playbook":"quarantine_file","target":"/tmp/x","status":"active","ts":1},
-    {"action_id":"a3","playbook":"kill_process","target":"999","status":"reverted","ts":3},
-])+"\n")
-h = cl.healing_actions(chain)
-ck([r["action_id"] for r in h["pending"]] == ["a1"], "pending actions identified")
-ck([r["action_id"] for r in h["active"]] == ["a2"], "active actions identified")
-ck(not any(r["action_id"]=="a3" for r in h["pending"]+h["active"]),
-   "reverted actions are neither pending nor in force")
-bad = chain.with_name("bad.jsonl"); bad.write_text("{not json\n")
-ck(cl.healing_actions(bad)["readable"] is True, "unparseable lines are skipped, not fatal")
+NOW = 1_000_000.0
+ck(not hasattr(cl, "HEAL_CHAIN") and "chain.jsonl" not in (root/"scripts/cockpit/cockpit_lib.py").read_text(),
+   "no direct chain reader remains (single authority)")
+snap = td/"healing-status.json"
+snap.write_text(json.dumps({
+    "ts": NOW - 4, "chain_ok": True, "error": None,
+    "in_force": [{"id": "def456", "action": "block_ip", "target": "10.0.0.5",
+                  "applied_ts": NOW - 60, "expires_ts": NOW + 540},
+                 {"id": "abc123", "action": "kill_process", "target": "4242",
+                  "applied_ts": NOW - 30, "expires_ts": None}],
+    "pending": [{"id": "p1", "action": "isolate_node", "target": "wlan0", "proposed_ts": NOW - 5}]}))
+h = cl.healing_actions(snap, now=NOW)
+ck(h["readable"] is True and h["chain_ok"] is True, "fresh snapshot is readable")
+ck([r["id"] for r in h["active"]] == ["abc123", "def456"],
+   f"IN FORCE shows applied actions, newest first ({[r['id'] for r in h['active']]}) — was always empty (P1-1)")
+ck(h["active"][1]["expires_ts"] == NOW + 540 and h["active"][0]["expires_ts"] is None, "expiry carried")
+ck([r["id"] for r in h["pending"]] == ["p1"] and h["pending"][0]["action"] == "isolate_node", "pending carried")
 
-# The distinction this panel exists to preserve. An unreadable chain must
-# report readable=False so the Cockpit renders "state unknown" — rendering an
-# empty pending list would tell the operator there is nothing to approve while
-# the engine is holding a block-this-host decision. Found by mutation testing:
-# flipping this branch to readable=True previously passed every assertion.
-import os
-locked = chain.with_name("locked.jsonl"); locked.write_text("{}\n"); locked.chmod(0o000)
-if os.geteuid() == 0:
-    print("  ok   (skipped: running as root, chmod 000 cannot deny)")
-else:
-    lr = cl.healing_actions(locked)
-    ck(lr["readable"] is False, "unreadable chain reports readable=False, not an empty list")
-    ck(bool(lr["reason"]), "unreadable chain explains why")
-    ck(lr["pending"] == [], "unreadable chain yields no fabricated pending entries")
-locked.chmod(0o644)
+# 'nothing pending' vs 'could not look': every failure is readable=False + a reason.
+for label, setup, frag in [
+    ("missing snapshot", lambda p: None, "not publishing"),
+    ("stale snapshot (>30 s)", lambda p: p.write_text(json.dumps({"ts": NOW - 31, "in_force": [], "pending": []})), "31 s old"),
+    ("corrupt snapshot", lambda p: p.write_text("{not json"), "not valid JSON"),
+    ("snapshot without ts", lambda p: p.write_text(json.dumps({"in_force": []})), "no timestamp"),
+    ("heald reports an error", lambda p: p.write_text(json.dumps({"ts": NOW, "error": "chain unreadable", "in_force": [], "pending": []})), "chain unreadable"),
+]:
+    p = td/(label.replace(" ", "_") + ".json"); setup(p)
+    r = cl.healing_actions(p, now=NOW)
+    ck(r["readable"] is False and r["pending"] == [] and r["active"] == [] and frag in r["reason"],
+       f"{label} -> state unknown ({r['reason']})")
+ok_s = td/"edge.json"; ok_s.write_text(json.dumps({"ts": NOW - 30, "in_force": [], "pending": [{"id": ""}, "junk"]}))
+r = cl.healing_actions(ok_s, now=NOW)
+ck(r["readable"] is True and r["pending"] == [], "30 s exactly is still fresh; malformed records dropped")
+
+# EventTail: a line read mid-write is completed on the next poll (DEC-PHASE12-066).
+bus = td/"events.jsonl"; bus.write_text("")
+t = cl.EventTail(bus, backfill=0); t.poll()
+line = json.dumps({"ts": 1.0, "severity": "critical", "source": "s", "category": "ids", "message": "half"})
+with bus.open("a") as fh: fh.write(line[:20])
+ck(t.poll() == [], "partial line not yet emitted")
+with bus.open("a") as fh: fh.write(line[20:] + "\n")
+got = t.poll()
+ck(len(got) == 1 and got[0]["message"] == "half", f"partial line completed and delivered ({len(got)} event)")
+mk = lambda m: json.dumps({"ts": 2.0, "severity": "warning", "source": "s", "category": "ids", "message": m,
+                           "auth": "hmac-sha256:abcd"}) + "\n"
+# Rotation: the old file is renamed away and a new one appears with events
+# already in it — those must be delivered, not skipped as "backfill".
+bus.rename(bus.with_name("events.jsonl.1")); bus.write_text(mk("r1") + mk("r2"))
+got = [e["message"] for e in t.poll()]
+ck(got == ["r1", "r2"], f"rotated bus read from the top ({got})")
+# Deletion: nothing to read, no crash; recreation: read from the top.
+bus.unlink()
+ck(t.poll() == [], "deleted bus -> no events, no exception")
+bus.write_text(mk("d1"))
+ck([e["message"] for e in t.poll()] == ["d1"], "recreated bus is picked up")
+# Truncation in place.
+with bus.open("a") as fh: fh.write(mk("x") * 5)
+t.poll()
+bus.write_text(mk("t1"))
+ck([e["message"] for e in t.poll()] == ["t1"], "truncated bus re-read from the top")
+ck(cl.parse_event(mk("a"))["message"] == "a", "events carrying the producers' auth HMAC field parse unchanged")
+NOWE = 3_000_000.0
+e2 = td/"err.json"; e2.write_text(json.dumps({"ts": NOWE, "chain_ok": None, "error": "chain does not verify at line 42", "in_force": [], "pending": []}))
+r = cl.healing_actions(e2, now=NOWE)
+ck(r["readable"] is False and "line 42" in r["reason"] and r["chain_ok"] is None, f"chain_ok null + error -> state unknown with heald's reason ({r['reason']})")
 
 ok_, msg = cl.approve_action("")
 ck(ok_ is False and "no action" in msg, "approving nothing is refused")

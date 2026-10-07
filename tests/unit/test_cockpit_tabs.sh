@@ -2,6 +2,7 @@
 # The Cockpit as the one tabbed window (DEC-PHASE12-053..057): tab authority,
 # launcher, pure tab-data helpers, wiring. No display needed.
 set -uo pipefail
+export PYTHONDONTWRITEBYTECODE=1
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PASS=0; FAIL=0
 pass() { echo "  PASS: $1"; PASS=$((PASS+1)); }
@@ -15,12 +16,12 @@ grep -q 'os.execv(exe, \[exe, "--tab", tab\])' "$CC/app.py" && pass "run_app lau
 grep -q '"tools", "Orion Tools"' "$CC/app.py" && pass "IR Tools is Orion Tools" || fail "rename" "label not Orion Tools"
 grep -q 'from control_center import app as CC' "$CK" && grep -q 'CC.append_sections(self.nb)' "$CK" && pass "the Cockpit builds its tabs from app.SECTIONS" || fail "cockpit tabs" "not wired"
 grep -q 'CCUX.set_notifier(self.toast_bar.notify)' "$CK" && pass "sections toast through the Cockpit's toast bar" || fail "toast" "not wired"
-grep -q 'if not on_live and name != "F11":' "$CK" && pass "LIVE keys do not fire on GTK tabs" || fail "key routing" "missing"
+grep -q 'if not on_live:' "$CK" && pass "LIVE keys do not fire on GTK tabs (behaviour: test_cockpit_gtk.sh)" || fail "key routing" "missing"
 grep -q 'choices=CC.TAB_KEYS' "$CK" && pass "--tab accepts exactly the authority's keys" || fail "--tab" "missing"
 HOOK="$ROOT/iso/config/hooks/live/0700-orionx-setup.hook.chroot"
 grep -q 'Exec=/usr/bin/orionx-cockpit --tab network' "$HOOK" && pass "menu entry (written by the 0700 hook) opens the Cockpit tabs" || fail "desktop" "hook Exec not updated"
 [[ -f "$ROOT/iso/config/includes.chroot/usr/share/applications/orionx-control-center.desktop" ]] && fail "one writer for orionx-control-center.desktop" "a static copy exists beside the hook's heredoc — it overwrote the edit in rc7" || pass "one writer for orionx-control-center.desktop (the 0700 hook; no static copy)"
-python3 -m py_compile "$CC/app.py" "$CK" "$CC/sections/mesh.py" "$CC/sections/comms.py" "$CC/sections/ir.py" "$CC/sections/awareness.py" "$CC/helpers/"*.py 2>/dev/null && pass "everything compiles" || fail "compile" "syntax error"
+python3 -c 'import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' "$CC/app.py" "$CK" "$CC/sections/"*.py "$CC/helpers/"*.py "$CC/widgets/"*.py 2>/dev/null && pass "everything parses (ast; no bytecode written)" || fail "compile" "syntax error"
 
 echo "[pure helpers]"
 if python3 - "$CC/helpers" "$ROOT/scripts/awareness" <<'PY'
@@ -50,8 +51,20 @@ log.write_text("\n".join(json.dumps(e) for e in [
 h = M.read_history(log, limit=5)
 ck([e["source"] for e in h] == ["mesh", "mesh-health"], f"history: mesh events only, newest first ({[e['source'] for e in h]})")
 ck(M.read_history(tmp / "nope") == [], "missing bus -> empty, no crash")
-s = C.server_state("active", True, True, None, "192.168.4.57")
-ck(s["mode"] == "server" and s["url"] == "https://192.168.4.57:8008" and s["running"], f"server mode {s['headline']}")
+# UX-02 (DEC-PHASE12-071): the URL comes from Synapse's listener, never a constant.
+gen = "server_name: x\nlisteners:\n  - port: 8008\n    tls: false\n    type: http\n    x_forwarded: true\n    bind_addresses: ['::1', '127.0.0.1']\n    resources:\n      - names: [client, federation]\n        compress: false\ndatabase:\n  name: sqlite3\n"
+s = C.server_state("active", True, True, None, "192.168.4.57", homeserver_text=gen)
+ck(s["mode"] == "server" and s["url"] == "http://127.0.0.1:8008" and "loopback only" in s["note"] and s["running"],
+   f"Synapse's generated listener: http, loopback, and the tab says other machines cannot connect ({s['url']} / {s['note']})")
+lan = "listeners:\n  - port: 8448\n    type: http\n    tls: true\n    bind_addresses:\n      - '0.0.0.0'\n    resources:\n      - names:\n          - client\n          - federation\n"
+s = C.server_state("active", True, True, None, "192.168.4.57", homeserver_text=lan)
+ck(s["url"] == "https://192.168.4.57:8448" and s["note"] == "", f"TLS wildcard listener -> https://<deck IP>:8448 ({s['url']})")
+two = "listeners:\n  - port: 9000\n    type: metrics\n  - port: 8008\n    type: http\n    bind_addresses: ['192.168.4.57']\n    resources:\n      - names: [client]\n"
+ck(C.server_state("active", True, True, None, None, homeserver_text=two)["url"] == "http://192.168.4.57:8008", "picks the http client listener, honours a specific bind address")
+s = C.server_state("active", True, True, None, "192.168.4.57", homeserver_text=None, homeserver_err="not readable as this user: Permission denied")
+ck(s["url"] == "" and s["note"].startswith("URL unknown — read /etc/matrix-synapse/homeserver.yaml") and "Permission denied" in s["note"], f"unreadable config -> URL unknown ({s['note']})")
+ck(C.server_state("active", True, True, None, "x", homeserver_text="listeners: []\n")["note"].startswith("URL unknown — homeserver.yaml has no http client listener"), "no listener -> URL unknown")
+ck(C.SYNAPSE_UNIT == "matrix-synapse.service", "one unit constant: the package unit (lead decision, system.md P1-2)")
 s2 = C.server_state("inactive", False, False, json.dumps({"default_server_config":{"m.homeserver":{"base_url":"https://matrix.example.org"}}}), None)
 ck(s2["mode"] == "client" and s2["url"] == "https://matrix.example.org" and not s2["running"], "client mode from Element config")
 ck(C.server_state("inactive", False, False, None, None)["mode"] == "none", "nothing configured -> none, with the opt-in remedy")
@@ -75,11 +88,117 @@ ck(V.parse_resolv_conf("# x\nnameserver 192.168.4.1\nnameserver 1.1.1.1\nnameser
 PY
 then pass "mesh/comms/tools/spark/vitals pure helpers"; else fail "pure helper assertions" "see output above"; fi
 
+echo "[Orion Tools: pkg entries, action labels, guided-action argv, network gate (DEC-PHASE12-072)]"
+if python3 - "$ROOT" <<'PY'
+import sys, json, tempfile, pathlib, subprocess
+root = pathlib.Path(sys.argv[1]); sys.path.insert(0, str(root/"scripts"))
+from control_center.helpers import tools_data as T
+def ck(c, m):
+    print(("  ok   " if c else "  FAIL ") + m)
+    if not c: raise SystemExit(1)
+td = pathlib.Path(tempfile.mkdtemp(dir=str(root/"tmp")))
+info = td/"dpkg-info"; info.mkdir()
+(info/"nmap.list").write_text(""); (info/"tshark:amd64.list").write_text("")
+pk = lambda n: T.pkg_installed(n, info)
+ck(pk("nmap") and pk("tshark") and not pk("yara"), "pkg_installed reads dpkg's file lists (plain and :arch)")
+cat = json.loads((root/"iso/config/includes.chroot/opt/orionx/osint/links.json").read_text())
+od = [i["id"] for i in T.on_deck(cat["local"], lambda p: False, pk)]
+ck(od == ["nmap", "tshark"], f"pkg: entries appear when the package is installed (UX-05): {od}")
+ck(T.on_deck([{"id": "x", "runtime_path": "pkg:"}], lambda p: True, pk) == [], "empty pkg: name is not present")
+acts = {i["id"]: T.run_action(i) for i in cat["local"]}
+ck(acts["cockpit"] is None, "the Cockpit entry is omitted inside the Cockpit (UX-36)")
+ck(acts["nucleotide"]["label"] == "Help" and acts["artifact"]["label"] == "Help", "--help commands are labelled Help")
+ck(acts["nmap"]["label"] == "Terminal" and acts["nmap"]["example"] == "nmap -sV -Pn <target>", "placeholder commands become an example + terminal, never run literally")
+ck(acts["cyberchef"]["label"] == "Open" and acts["logquery"]["label"] == "Run", "pages Open, real commands Run")
+# Guided actions: the argv each real script's parser accepts (executed, not grepped).
+a_off = T.samples_argv(str(td/"samples"), has_route=False)
+ck(a_off[1:] == ["--samples-dir", str(td/"samples"), "--offline"], f"offline samples argv {a_off}")
+ck("--offline" not in T.samples_argv("/x", has_route=True), "online when there is a route")
+r = subprocess.run(["bash", str(root/"scripts"/a_off[0])] + a_off[1:], capture_output=True, text=True, timeout=120)
+ck(r.returncode == 0 and any((td/"samples").iterdir()), f"download-samples.sh accepts it and writes data (rc={r.returncode}) (UX-03)")
+(td/"logs").mkdir(); (td/"logs"/"auth.log").write_text("2026-10-07T03:00:00Z sshd[1]: Failed password for root from 10.0.0.5\n")
+sb, out = T.storyboard_argv(str(td/"logs"), str(td/"Analysis"), "20261007-030000")
+(td/"Analysis").mkdir()
+ck(sb[1:3] == ["-i", str(td/"logs")] and out.endswith("storyboard-20261007-030000.html"), f"storyboard argv {sb}")
+r = subprocess.run([sys.executable, str(root/"scripts"/sb[0])] + sb[1:], capture_output=True, text=True, timeout=120)
+ck(r.returncode == 0 and pathlib.Path(out).is_file(), f"storyboard-gen.py accepts it and writes the report (rc={r.returncode}) (UX-04)")
+ck("--disable-server" in T.THEME_ARGV[2] and "toggle-theme.sh --status" in T.THEME_ARGV[2], "theme report then a separate-process terminal (UX-24)")
+h, b = T.network_gate({"default_route": False}, {"known": True, "tier": "0", "label": "Tier 0", "outbound_allowed": True})
+ck("no default route" in h and "no default route" in b, f"no route: said up front, installs disabled ({b})")
+h, b = T.network_gate({"default_route": True, "interface": "wlan0"}, {"known": True, "tier": "2", "label": "Tier 2 · Deception", "outbound_allowed": False})
+ck("wlan0" in h and "Tier 2" in b, f"shields up: installs disabled with the reason ({b})")
+h, b = T.network_gate({"default_route": True, "interface": "wlan0"}, {"known": True, "tier": "0", "label": "Tier 0", "outbound_allowed": True})
+ck(b == "" and "Tier 0" in h, "route + tier 0: installs allowed")
+PY
+then pass "Orion Tools helpers"; else fail "Orion Tools helpers" "see output above"; fi
+
+echo "[mesh: one snapshot verdict on every surface (DEC-PHASE12-067)]"
+if PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT" <<'PY'
+import sys, json, tempfile, pathlib, importlib.util
+root = pathlib.Path(sys.argv[1]); sys.path.insert(0, str(root/"scripts"))
+from control_center.helpers import mesh_data as M
+def ck(c, m):
+    print(("  ok   " if c else "  FAIL ") + m)
+    if not c: raise SystemExit(1)
+now = 2_000_000.0
+td = pathlib.Path(tempfile.mkdtemp(dir=str(root/"tmp")))
+def snap(age, active=True, peers=None):
+    p = td/f"s{age}{active}.json"
+    p.write_text(json.dumps({"ts": now - age, "active": active, "interface": "wg0", "vpn_ip": "10.0.99.7",
+                             "peers": peers if peers is not None else
+                             [{"pubkey_short": "aaaa", "node": "10.0.99.2", "handshake": now - 20 - age, "rx": 5, "tx": 6},
+                              {"pubkey_short": "bbbb", "node": "10.0.99.3", "handshake": now - 400, "rx": 1, "tx": 1}]}))
+    return p
+s = M.mesh_summary(M.load_snapshot(snap(5), now=now), now)
+ck(s["state"] == "active" and s["live"] == 1 and s["short"] == "◆ 1 peer" and "5 s old" in s["text"], f"fresh: {s['short']} / {s['text']}")
+st = M.mesh_summary(M.load_snapshot(snap(612), now=now), now)
+ck(st["state"] == "stale" and "612 s" in st["text"] and "orionx-mesh-status.timer" in st["text"] and "active" not in st["text"].split("—")[0],
+   f"stale snapshot says stale, not active: {st['text']}")
+ck(st["live"] == 0, "handshake ages measured against now: a frozen snapshot shows no live peers (UX-26)")
+ck(M.mesh_summary(M.load_snapshot(snap(3, active=False, peers=[]), now=now), now)["state"] == "down", "not joined")
+ns = M.mesh_summary(M.load_snapshot(td/"missing.json"), now, wg_up=True)
+ck(ns["state"] == "no-snapshot" and ns["short"] == "— (no snapshot)" and "wg0 is up" in ns["text"], f"no snapshot: {ns['text']}")
+bad = td/"bad.json"; bad.write_text(json.dumps({"ts": now, "active": True, "peers": [{"handshake": "x", "rx": "y"}, "junk", None]}))
+b = M.load_snapshot(bad, now=now)
+ck(b is not None and len(b["peers"]) == 1 and b["peers"][0]["handshake_age"] is None, "malformed peers neither raise nor count (P3-4)")
+spec = importlib.util.spec_from_file_location("mesh_status", root/"scripts/control_center/widgets/mesh-status.py")
+w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+out = w.render(snap(5), now=now)
+ck(out.startswith("<txt>◆ 1 peer</txt>") and "<tool>Mesh: active" in out, f"panel widget renders the snapshot: {out.splitlines()[0]}")
+ck(w.render(snap(95), now=now).startswith("<txt>◆ stale (95 s)</txt>"), "panel widget says stale past 30 s")
+ck(w.render(td/"none.json", now=now).startswith("<txt>— (no snapshot)</txt>"), "panel widget: no snapshot")
+PY
+then pass "mesh verdict: tab, Awareness, LIVE LED and panel widget share mesh_summary"; else fail "mesh verdict" "see output above"; fi
+for f in "$CC/sections/awareness.py" "$CK" "$CC/sections/mesh.py"; do grep -q "mesh_summary(" "$f" || fail "mesh verdict wired" "$f does not use mesh_summary"; done
+
+echo "[no sudo from the GUI except inside an operator-visible terminal]"
+if PYTHONDONTWRITEBYTECODE=1 python3 - "$ROOT" <<'PY'
+import ast, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+files = sorted((root/"scripts/control_center").rglob("*.py")) + [root/"scripts/cockpit/orionx-cockpit", root/"scripts/cockpit/cockpit_lib.py"]
+bad = []
+for f in files:
+    tree = ast.parse(f.read_text(), str(f))
+    parents = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.List) and n.elts and isinstance(n.elts[0], ast.Constant) and n.elts[0].value == "sudo":
+            p = parents.get(n)
+            name = ""
+            if isinstance(p, ast.Call):
+                fn = p.func
+                name = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
+            if name != "launch_in_terminal":
+                bad.append(f"{f.relative_to(root)}:{n.lineno}")
+print("  offenders:", bad or "none")
+raise SystemExit(1 if bad else 0)
+PY
+then pass "every sudo argv is passed straight to launch_in_terminal (system.md P2-4)"; else fail "GUI sudo" "a sudo argv runs outside a terminal"; fi
+
 echo "[wiring]"
-grep -q 'M.load_snapshot()' "$CC/sections/mesh.py" && ! grep -qE 'run_stdout\(|from \.\.helpers\.subprocess_runner' "$CC/sections/mesh.py" && pass "Mesh tab reads the root-written snapshot; no privileged reads (DEC-PHASE12-059; Start/Stop/Peers still open a sudo terminal)" || fail "mesh snapshot" "tab still reads status via sudo or does not read the snapshot"
+grep -q 'M.load_snapshot(' "$CC/sections/mesh.py" && ! grep -qE 'run_stdout\(|from \.\.helpers\.subprocess_runner' "$CC/sections/mesh.py" && pass "Mesh tab reads the root-written snapshot; no privileged reads (DEC-PHASE12-059; Start/Stop/Peers still open a sudo terminal)" || fail "mesh snapshot" "tab still reads status via sudo or does not read the snapshot"
 grep -q 'M.read_history()' "$CC/sections/mesh.py" && pass "Mesh tab reads bus history" || fail "mesh history" "missing"
 grep -q 'C.client_states(' "$CC/sections/comms.py" && grep -q 'Gtk.Button(label="Install")' "$CC/sections/comms.py" && pass "Comms offers Install for absent clients" || fail "comms install" "missing"
-grep -q '"Next hop", _next_hop' "$CC/sections/awareness.py" && grep -q '"DNS", _dns' "$CC/sections/awareness.py" && grep -q '"Firewall address", _firewall_addr' "$CC/sections/awareness.py" && pass "Awareness rows: firewall address, next hop, DNS" || fail "awareness rows" "missing"
+grep -q '"Next hop", _next_hop' "$CC/sections/awareness.py" && grep -q '"DNS", _dns' "$CC/sections/awareness.py" && grep -qF 'rows["Firewall address"] = _firewall_addr' "$CC/sections/awareness.py" && pass "Awareness rows: firewall address, next hop, DNS" || fail "awareness rows" "missing"
 grep -q 'Spark("packets/s"' "$CC/sections/awareness.py" && pass "Awareness sparklines (packets/cpu/mem/disk)" || fail "sparklines" "missing"
 grep -q 'T.on_deck(local, os.path.exists)' "$CC/sections/ir.py" && grep -q '_OS.optional_state(installable' "$CC/sections/ir.py" && pass "Orion Tools is dynamic: catalogue + the Workbench's probe logic" || fail "tools dynamic" "missing"
 for d in 053 054 055 056 057; do grep -rq "DEC-PHASE12-$d" "$CC" && pass "DEC-PHASE12-$d annotated" || fail "DEC-PHASE12-$d" "not annotated"; done
