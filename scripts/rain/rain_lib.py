@@ -36,9 +36,12 @@ This module is the single authority for three things every R.A.I.N. piece shares
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import shutil
+import stat
 import subprocess
 import time
 import uuid
@@ -259,6 +262,115 @@ def _write_sidecar(event_id: str, payload: dict[str, Any]) -> str | None:
         return None
 
 
+# --- Attestation: which bus lines a ROOT producer wrote --------------------
+#
+# @decision DEC-PHASE12-084
+# @title Root producers sign their bus events; the healing daemon acts only on signed ones
+# @status accepted
+# @rationale QA round 1 (security F7). /run/orionx/events.jsonl is 0666 by
+#   design: the Cockpit, the operator's `orionx-event` and every sensor write
+#   it, and R.A.I.N. must hear all of them. But the `source` field is
+#   self-asserted, and orionx-heald (root, CAP_NET_ADMIN/CAP_KILL) maps
+#   source/category to block_ip, kill_process, isolate_node... Any local uid
+#   could append {"source":"health","category":"compromise"} and, with
+#   autonomy raised, isolate the deck.
+#   Trust model, kept to one bus: a 32-byte key lives in a root-only file
+#   (BUS_KEY, 0600 root, created by orionx-heald or any root emitter, never
+#   by anyone else: a file not owned by root or with group/other bits is
+#   REFUSED). emit_event() adds "auth" = HMAC-SHA256(key, canonical event)
+#   when, and only when, it can read that key - i.e. when the writer is root
+#   (postured, scanwatch, heald, `sudo orionx-event`). The engine verifies the
+#   HMAC, a freshness window and a replay set before it will park or execute
+#   anything; an unsigned, forged, stale or replayed event can at most become
+#   a labelled SUGGESTION the operator may act on by hand. The bus stays the
+#   single channel for see/hear/act; nothing else changes for its readers.
+#   What this does not solve: a root producer faithfully reporting attacker-
+#   controlled content (Suricata alerting on a spoofed source address can
+#   still drive block_ip at that address). That is inherent to any IPS; the
+#   never-lock-out guards, the default autonomy "off" and the rollback TTL
+#   are the mitigations, and the User Guide must say so.
+BUS_KEY = Path(os.environ.get("ORIONX_BUS_KEY", "/var/lib/orionx/bus.key"))
+AUTH_FIELD = "auth"
+_KEY_BYTES = 32
+_key_cache: dict[str, bytes] = {}
+
+
+def _canonical_event(event: dict[str, Any]) -> bytes:
+    body = {k: v for k, v in event.items() if k != AUTH_FIELD}
+    return json.dumps(body, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=False, default=str).encode("utf-8")
+
+
+def read_bus_key(path: Path | str | None = None) -> tuple[bytes | None, str | None]:
+    """(key, None) if the key file is one only root (or this uid) controls, else (None, why)."""
+    p = Path(path) if path is not None else BUS_KEY
+    try:
+        fd = os.open(str(p), os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None, f"no attestation key at {p}"
+    except OSError as exc:
+        return None, f"cannot read attestation key {p}: {exc.strerror}"
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_uid not in (0, os.geteuid()):
+            return None, f"attestation key {p} refused: not a regular file owned by root"
+        if st.st_mode & 0o077:
+            return None, f"attestation key {p} refused: mode {oct(st.st_mode & 0o777)} is not 0600"
+        raw = os.read(fd, 256).strip()
+    finally:
+        os.close(fd)
+    try:
+        key = bytes.fromhex(raw.decode("ascii"))
+    except (UnicodeDecodeError, ValueError):
+        return None, f"attestation key {p} refused: not hex"
+    if len(key) != _KEY_BYTES:
+        return None, f"attestation key {p} refused: wrong length"
+    return key, None
+
+
+def ensure_bus_key(path: Path | str | None = None) -> tuple[bytes | None, str | None]:
+    """Create the key if absent (O_EXCL: never overwrite, never follow a link),
+    then read it back through the same checks every reader applies."""
+    p = Path(path) if path is not None else BUS_KEY
+    try:
+        fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        return None, f"cannot create attestation key {p}: {exc.strerror}"
+    else:
+        try:
+            os.write(fd, os.urandom(_KEY_BYTES).hex().encode("ascii") + b"\n")
+        finally:
+            os.close(fd)
+    return read_bus_key(p)
+
+
+def _signing_key() -> bytes | None:
+    """The key, if this process may sign. Cached once found; retried until then."""
+    k = str(BUS_KEY)
+    if k in _key_cache:
+        return _key_cache[k]
+    key = None
+    if os.geteuid() == 0:
+        key, _why = ensure_bus_key(BUS_KEY)
+    if key is None:
+        key, _why = read_bus_key(BUS_KEY)
+    if key is not None:
+        _key_cache[k] = key
+    return key
+
+
+def sign_event(event: dict[str, Any], key: bytes) -> str:
+    return hmac.new(key, _canonical_event(event), hashlib.sha256).hexdigest()
+
+
+def verify_event(event: dict[str, Any], key: bytes | None) -> bool:
+    tag = event.get(AUTH_FIELD) if isinstance(event, dict) else None
+    if key is None or not isinstance(tag, str):
+        return False
+    return hmac.compare_digest(tag, sign_event(event, key))
+
 def emit_event(severity: str, source: str, category: str, message: str,
                detail: dict[str, Any] | None = None) -> bool:
     """Append one event to the bus. Safe to call from anywhere; never raises.
@@ -292,11 +404,16 @@ def emit_event(severity: str, source: str, category: str, message: str,
         if inline:
             event["detail"] = inline
 
+    key = _signing_key()               # DEC-PHASE12-084: root producers attest
+    if key is not None:
+        event[AUTH_FIELD] = sign_event(event, key)
     line = json.dumps(event, ensure_ascii=False) + "\n"
     if len(line.encode("utf-8")) > LINE_BUDGET + 512:
         # Last-resort guard: never risk a non-atomic append. Drop detail and
         # keep the event, because losing the alert is worse than losing detail.
         event.pop("detail", None)
+        if key is not None:
+            event[AUTH_FIELD] = sign_event(event, key)
         line = json.dumps(event, ensure_ascii=False) + "\n"
     try:
         # O_APPEND makes concurrent single-line appends atomic (< PIPE_BUF),
@@ -310,6 +427,133 @@ def emit_event(severity: str, source: str, category: str, message: str,
     except OSError:
         return False
 
+
+# --- Reading the bus ----------------------------------------------------------
+
+#: A partial line longer than this is not a line in progress, it is garbage
+#: (the writer budget is LINE_BUDGET); it is dropped so memory stays bounded.
+MAX_PARTIAL_BYTES = 64 * 1024
+
+
+class BusTail:
+    """The ONE incremental reader of the event bus (DEC-PHASE12-083).
+
+    @decision DEC-PHASE12-083
+    @title One bus reader: survives deletion/rotation/truncation, never drops a partial line
+    @status accepted
+    @rationale QA round 1 (python P1-4, P1-6). orionx-rain crashed with
+      FileNotFoundError when the bus file was deleted (rotation path called
+      open() outside any try) and, being an autostart rather than a unit with
+      Restart=, stayed dead for the session. orionx-rain, orionx-heald and the
+      Cockpit each parsed whatever readline() returned: a line read before its
+      newline arrived failed JSON parsing and was skipped for good, so a
+      critical event could be neither heard, acted on nor seen. This class
+      reads bytes, keeps the unterminated tail in a buffer and only yields
+      complete lines; a missing file is a normal state (poll again); an inode
+      change or a shrink reopens from the top so a fresh bus is read in full.
+      Readers that start at EOF (daemons must not re-act on history) still see
+      every event written after the first successful open.
+
+    poll() never raises. Lines are returned decoded; poll_events() parses them.
+    """
+
+    def __init__(self, path: Path | str | None = None, at_end: bool = True) -> None:
+        self.path = Path(path) if path is not None else EVENT_LOG
+        self._at_end = at_end          # only the FIRST open may skip history
+        self._fh = None
+        self._ino: int | None = None
+        self._buf = b""
+        self.reopens = 0
+        self.dropped_partial = 0
+
+    def _open(self) -> bool:
+        try:
+            fh = open(self.path, "rb")
+        except OSError:
+            return False
+        try:
+            st = os.fstat(fh.fileno())
+            if self._at_end:
+                fh.seek(0, os.SEEK_END)
+        except OSError:
+            fh.close()
+            return False
+        self._at_end = False           # any later (re)open reads a new file in full
+        self._fh, self._ino, self._buf = fh, st.st_ino, b""
+        return True
+
+    def _close(self) -> None:
+        if self._fh is not None:
+            try:
+                self._fh.close()
+            except OSError:
+                pass
+        self._fh, self._ino, self._buf = None, None, b""
+
+    def rewind(self) -> None:
+        """Read from the start on the next poll (one-shot modes)."""
+        self._close()
+        self._at_end = False
+
+    def _drain(self, max_bytes: int) -> list[str]:
+        try:
+            data = self._fh.read(max_bytes)
+        except OSError:
+            return []
+        if not data:
+            return []
+        data = self._buf + data
+        *lines, tail = data.split(b"\n")
+        if len(tail) > MAX_PARTIAL_BYTES:
+            self.dropped_partial += 1
+            tail = b""
+        self._buf = tail
+        return [ln.decode("utf-8", errors="replace") for ln in lines if ln.strip()]
+
+    def poll(self, max_bytes: int = 1 << 20) -> list[str]:
+        """Complete new lines since the last poll ([] when there are none)."""
+        if self._fh is None:
+            if not self._open():
+                # Not there yet: whatever it holds when it appears is new.
+                self._at_end = False
+                return []
+            return self._drain(max_bytes)
+        try:
+            st = os.stat(self.path)
+        except OSError:
+            st = None
+        if st is None or st.st_ino != self._ino:
+            # Deleted or replaced: finish what the old file still holds, then
+            # follow the new one (or wait for it) from its top.
+            out = self._drain(max_bytes)
+            self._close()
+            self.reopens += 1
+            if st is not None and self._open():
+                out += self._drain(max_bytes)
+            return out
+        try:
+            if st.st_size < self._fh.tell():
+                self._fh.seek(0)       # truncated in place: start over
+                self._buf = b""
+                self.reopens += 1
+        except OSError:
+            self._close()
+            return []
+        return self._drain(max_bytes)
+
+    def poll_events(self, max_bytes: int = 1 << 20) -> list[dict[str, Any]]:
+        out = []
+        for line in self.poll(max_bytes):
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(obj, dict):
+                out.append(obj)
+        return out
+
+    def close(self) -> None:
+        self._close()
 
 # --- Audio playback ---------------------------------------------------------
 def _tone_path(severity: str) -> Path:

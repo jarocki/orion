@@ -238,8 +238,9 @@ check("asked nobody" in nr["so_what"] or "not evidence" in nr["so_what"],
 su = S.godseye_gate(APP, shields)
 check("allorigins" in su["what"] and "jina" in su["what"],
       "shields up: names the anonymous relays by host")
-check("posture" in su["remedy"].lower() or "Control Center" in su["remedy"],
-      "shields up: remedy points at the posture control")
+check("Orion Cockpit" in su["remedy"] and "orionx-cockpit --tab awareness" in su["remedy"]
+      and "Control Center" not in su["remedy"],
+      "shields up: remedy points at the posture control that exists (Cockpit, not the retired Control Center; UX-06)")
 
 # 4. Scope. The gate governs the entry documents of this bundle and nothing else.
 check(S.godseye_gate(ASSET, noroute) is None, "static assets are not gated")
@@ -390,7 +391,8 @@ else
     serve_and_probe "$TMP/posture2.json" "$TMP/route-up" "Tier 2 shields up" \
         "/godseye/=200:preflight" \
         "/godseye/app/=503:allorigins" \
-        "/godseye/app/=503:Control Center"
+        "/godseye/app/=503:Orion Cockpit" \
+        "/godseye/app/=503:orionx-cockpit --tab awareness"
     serve_and_probe "$TMP/posture-bad.json" "$TMP/route-up" "posture unparseable" \
         "/godseye/app/=503:posture" \
         "/godseye/app/=503:systemctl status orionx-postured"

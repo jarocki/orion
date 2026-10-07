@@ -1049,6 +1049,82 @@ ck(res2["geoip"]["installed"], "geoip available -> installed")
 PY
 then pass "optional_state is pure and evidence-based"; else fail "optional_state" "see output above"; fi
 
+section "QA round 1: Host/Origin allowlist, cheap static serving, one server per operator"
+# security F3 (DEC-PHASE12-086), python P2-2, UX-25 (DEC-PHASE12-087). Executes the real server.
+if PYTHONDONTWRITEBYTECODE=1 python3 - "$SRC" "$WEB" <<'PY'
+import sys, threading, http.client
+sys.path.insert(0, sys.argv[1]); import osint_server as S
+from pathlib import Path
+def ck(c, m):
+    print(("  ok   " if c else "  FAIL ") + m)
+    if not c: raise SystemExit(1)
+P = 8787
+ck(S.request_allowed("127.0.0.1:8787", None, None, P)[0], "loopback Host accepted")
+ck(S.request_allowed("localhost:8787", "http://localhost:8787", "same-origin", P)[0], "localhost + same Origin accepted")
+ck(S.request_allowed("[::1]:8787", None, None, P)[0], "[::1] accepted")
+for host, origin, site, label in (("evil.example:8787", None, None, "rebinding Host"),
+                                  ("127.0.0.1:8787", "http://evil.example:8787", None, "foreign Origin"),
+                                  ("127.0.0.1:8787", "null", None, "null Origin"),
+                                  ("127.0.0.1:8787", None, "cross-site", "Sec-Fetch-Site cross-site"),
+                                  ("127.0.0.1:9999", None, None, "another port"),
+                                  ("", None, None, "no Host")):
+    ok, why = S.request_allowed(host, origin, site, P)
+    ck(not ok and why, f"refused: {label} ({why})")
+# live, in-process: count the expensive calls
+calls = {"status": 0, "outbound": 0}
+real_bs, real_co = S.build_status, S.current_outbound
+S.build_status = lambda: (calls.__setitem__("status", calls["status"] + 1), real_bs())[1]
+S.current_outbound = lambda: (calls.__setitem__("outbound", calls["outbound"] + 1), real_co())[1]
+S.WEB_ROOT = Path(sys.argv[2])
+httpd, port = S.bind(Path(sys.argv[2]), 18700 + (id(calls) % 500))
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+def get(path, host=None, origin=None):
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    h = {"Host": host or "127.0.0.1:%d" % port}
+    if origin: h["Origin"] = origin
+    c.request("GET", path, headers=h); r = c.getresponse(); body = r.read(); c.close()
+    return r.status, r.getheader("X-Content-Type-Options"), body
+st, nos, body = get("/api/pewpew.json", host="evil.example:%d" % port)
+ck(st == 403 and b"refused" in body , f"DNS-rebinding Host gets 403 for the alert feed ({st})")
+st, _, _ = get("/api/status.json", origin="http://evil.example")
+ck(st == 403, "cross-origin Origin gets 403")
+st, nos, _ = get("/api/status.json")
+ck(st == 200 and nos == "nosniff", "loopback request served, with X-Content-Type-Options: nosniff")
+calls.update(status=0, outbound=0)
+for f in ("/app.js", "/links.json", "/cyberchef/", "/pewpew/map.js", "/godseye/app/assets/index-CzhDypiF.css"):
+    st, nos, _ = get(f)
+    ck(st == 200 and nos == "nosniff", f"static {f} -> 200")
+ck(calls == {"status": 0, "outbound": 0}, f"static files cost no status/vitals/posture reads (P2-2): {calls}")
+get("/godseye/app/")
+ck(calls["outbound"] == 1 and calls["status"] == 0, f"the GODSEYE entry document asks the posture gate once, without vitals: {calls}")
+httpd.shutdown(); httpd.server_close()
+ck("Control Center" not in S.POSTURE_REMEDY and "orionx-cockpit --tab awareness" in S.POSTURE_REMEDY, "remedy names the Cockpit (UX-06)")
+PY
+then pass "Workbench request hardening + cheap static serving"; else fail "Workbench request hardening" "see output above"; fi
+
+# One server per operator: second launch reuses, --status says so, --stop stops.
+SI="$TMP/single"; mkdir -p "$SI"
+SI_PORT=$(( 9300 + ($$ % 90) ))
+( XDG_RUNTIME_DIR="$SI" ORIONX_PROC_ROUTE=/dev/null ORIONX_PROC_ROUTE6=/dev/null \
+  python3 "$SRC/osint_server.py" --root "$WEB" --port "$SI_PORT" --no-browser >"$SI/first.log" 2>&1 ) &
+SI_PID=$!
+for _ in $(seq 1 40); do [[ -s "$SI/orionx-osint.port" ]] && break; sleep 0.25; done
+SECOND="$(XDG_RUNTIME_DIR="$SI" python3 "$SRC/osint_server.py" --root "$WEB" --port "$SI_PORT" --no-browser 2>&1)"
+grep -q "already serving on :$SI_PORT" <<<"$SECOND" && pass "a second launch reuses the running server (no new port)" || fail "single instance" "$SECOND"
+STJ="$(XDG_RUNTIME_DIR="$SI" python3 "$SRC/osint_server.py" --root "$WEB" --status --json 2>&1)"
+python3 -c 'import json,sys; d=json.loads(sys.argv[1]); sys.exit(0 if d["running"] and d["port"]==int(sys.argv[2]) else 1)' "$STJ" "$SI_PORT" \
+  && pass "--status --json reports the live server ($STJ)" || fail "--status --json" "$STJ"
+STOP="$(XDG_RUNTIME_DIR="$SI" python3 "$SRC/osint_server.py" --root "$WEB" --stop 2>&1)"
+grep -q "stopped" <<<"$STOP" && pass "--stop stops it ($STOP)" || fail "--stop" "$STOP"
+wait "$SI_PID" 2>/dev/null
+XDG_RUNTIME_DIR="$SI" python3 "$SRC/osint_server.py" --root "$WEB" --status >"$SI/st.out" 2>&1; RC=$?
+[[ $RC -eq 3 ]] && grep -q "not running" "$SI/st.out" && [[ ! -e "$SI/orionx-osint.port" ]] \
+  && pass "after --stop: status says not running (rc 3) and the state file is gone" || fail "after stop" "rc=$RC $(cat "$SI/st.out"); $(ls "$SI")"
+# godseye_hosts: a mismatching inventory fails without --check too (P2-10)
+mkdir -p "$TMP/gh/app"; echo 'fetch("https://new.example.org/x")' > "$TMP/gh/app/a.js"; printf 'x\n' > "$TMP/gh/HOSTS.txt"
+python3 "$SRC/godseye_hosts.py" --root "$TMP/gh" >/dev/null 2>&1; RC=$?
+[[ $RC -eq 1 ]] && pass "godseye_hosts: a stale inventory exits 1 in default mode" || fail "godseye_hosts default mode" "rc=$RC"
+
 printf "\n===========================================\n"
 printf "  Results: ${GREEN}%s passed${NC}, ${RED}%s failed${NC}\n" "$PASS" "$FAIL"
 printf "===========================================\n"

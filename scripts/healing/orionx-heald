@@ -28,9 +28,12 @@ rollback timer, and is sealed into a hash-chained audit ledger.
   match_event() refuses events whose source is "healing": on a shared bus, an
   action that announces itself into its own trigger is a feedback loop.
 
-  Tailing follows cockpit_lib.EventTail: start at EOF (a daemon restart must
-  not re-act on an hour of history), and reopen on inode change or truncation
-  because the bus lives on tmpfs.
+  Tailing uses the one bus reader, rain_lib.BusTail (DEC-PHASE12-083): start
+  at EOF (a daemon restart must not re-act on an hour of history), reopen on
+  deletion, inode change or truncation because the bus lives on tmpfs, and
+  never drop a line that was read before its newline arrived. No backfill,
+  unlike the Cockpit: a responder that backfilled would re-act on every event
+  since boot each time systemd restarted it.
 """
 
 from __future__ import annotations
@@ -42,77 +45,20 @@ import time
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
-if str(_HERE) not in sys.path:
-    sys.path.insert(0, str(_HERE))
+for _p in (_HERE, _HERE.parent / "rain"):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 import engine as eng  # noqa: E402
 import healing_lib as hl  # noqa: E402
+import rain_lib  # noqa: E402
+from rain_lib import BusTail  # noqa: E402  (the one bus reader, DEC-PHASE12-083)
 
 POLL_SECONDS = 1.0
 SWEEP_SECONDS = 30.0
-
-
-class BusTail:
-    """Incremental tail of the JSONL event bus, starting at EOF.
-
-    Deliberately unlike cockpit_lib.EventTail in one respect: no backfill. The
-    Cockpit backfills so its panel is not empty at launch; a responder that
-    backfilled would re-act on every event since boot each time systemd
-    restarted it. Handles the file not existing yet, and tmpfs rotation
-    (inode change) or truncation.
-    """
-
-    def __init__(self, path: Path) -> None:
-        self.path = Path(path)
-        self._fh = None
-        self._inode = -1
-        self._pos = 0
-
-    def _open(self, from_start: bool = False) -> bool:
-        try:
-            st = self.path.stat()
-            fh = self.path.open("r", encoding="utf-8", errors="replace")
-        except OSError:
-            return False
-        self._fh = fh
-        self._inode = st.st_ino
-        if not from_start:
-            fh.seek(0, 2)
-        self._pos = fh.tell()
-        return True
-
-    def rewind(self) -> None:
-        """Re-read from the start of the bus (one-shot mode only)."""
-        if self._fh is not None:
-            self._fh.close()
-            self._fh = None
-        self._open(from_start=True)
-
-    def poll(self) -> list[dict]:
-        if self._fh is None and not self._open():
-            return []
-        try:
-            st = self.path.stat()
-            if st.st_ino != self._inode or st.st_size < self._pos:
-                self._fh.close()
-                self._fh = None
-                if not self._open(from_start=True):
-                    return []
-        except OSError:
-            return []
-        out = []
-        for line in self._fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except ValueError:
-                continue
-            if isinstance(obj, dict):
-                out.append(obj)
-        self._pos = self._fh.tell()
-        return out
+#: healing-status.json is refreshed on every chain append AND at least this
+#: often (the Cockpit contract says <= 10 s; DEC-PHASE12-085).
+STATUS_SECONDS = 5.0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -152,35 +98,49 @@ def main(argv: list[str] | None = None) -> int:
             except ValueError:
                 continue
             if isinstance(event, dict):
-                e.handle_event(event)
+                # The invoker vouches for its own stdin (it is not the shared
+                # bus); acting still needs root, guards and consent.
+                e.handle_event(event, trusted=True)
         return 0
 
+    if not args.dry_run:
+        # DEC-PHASE12-084: make sure root producers have a key to sign with.
+        # A refused/unwritable key is reported, and every bus trigger then
+        # stays a suggestion (fail closed), rather than the daemon dying.
+        _key, why = rain_lib.ensure_bus_key(rain_lib.BUS_KEY)
+        if why:
+            print(f"orionx-heald: {why}; bus events cannot be verified and will "
+                  "not be acted on", file=sys.stderr, flush=True)
     if not args.no_reconcile and not args.dry_run:
         e.reconcile()
     e.sweep()
+    e.publish_status()
 
-    tail = BusTail(Path(args.bus))
+    tail = BusTail(Path(args.bus), at_end=True)
     if args.once:
         # One-shot mode reads from the beginning: "process what is already on
         # the bus" is the whole point of it, and seeking to EOF first (which is
         # right for the daemon, so a restart does not re-act on history) would
         # make it silently process nothing at all.
         tail.rewind()
-        for event in tail.poll():
+        for event in tail.poll_events():
             e.handle_event(event)
         return 0
 
     e.publish("info", "auto-healing engine online; acting within "
                       "~/.config/orionx/autonomy.json")
-    last_sweep = time.time()
+    last_sweep = last_status = time.time()
     try:
         while True:
-            for event in tail.poll():
+            for event in tail.poll_events():
                 e.handle_event(event)
             now = time.time()
             if now - last_sweep >= SWEEP_SECONDS:
                 e.sweep(now)
                 last_sweep = now
+            if now - last_status >= STATUS_SECONDS:
+                e.publish_status(now)
+                last_status = now
             time.sleep(POLL_SECONDS)
     except KeyboardInterrupt:
         return 0

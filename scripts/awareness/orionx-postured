@@ -137,7 +137,9 @@ import deck_vitals  # noqa: E402  (DEC-PHASE12-051: the deck's own addresses -> 
 # Root's own ~/.config is therefore the wrong place to look first, which is why
 # posture_candidates() searches the real home directories.
 POSTURE_RELPATH = Path(".config") / "orionx" / "threat-posture"
-DESKTOP_USER = "orionx-operator"          # iso/auto/config live-config.username
+# WHO the operator is has ONE authority: tuning_lib.operator_user()
+# (ORIONX_OPERATOR_USER, else the live-config username). DEC-PHASE12-081.
+DESKTOP_USER = tuning_lib.operator_user()
 HOME_ROOT = Path("/home")
 
 # The lazy-start gate from DEC-PHASE11-008. Creating it is what lets systemd
@@ -256,9 +258,10 @@ def posture_candidates(explicit: str | os.PathLike | None = None,
                        env: dict | None = None) -> list[Path]:
     """Ordered list of places the posture file may live.
 
-    The Control Center writes it as the desktop user; systemd runs this as
-    root. Reading root's ~/.config would find nothing forever, so the real
-    home directories are searched too.
+    The Cockpit writes it as the desktop user; systemd runs this as root.
+    Only the operator's home is searched (plus an explicit/env path), not
+    every /home/* and not root's own ~/.config (DEC-PHASE12-081): a second
+    account must not be able to set the deck's posture.
     """
     env = os.environ if env is None else env
     out: list[Path] = []
@@ -272,42 +275,29 @@ def posture_candidates(explicit: str | os.PathLike | None = None,
     from_env = env.get("ORIONX_POSTURE_FILE")
     if from_env:
         add(Path(from_env))
-    add(home_root / desktop_user / POSTURE_RELPATH)
-    try:
-        for home in sorted(Path(home_root).iterdir()):
-            if home.is_dir():
-                add(home / POSTURE_RELPATH)
-    except OSError:
-        pass
-    add(Path.home() / POSTURE_RELPATH)
+    add(Path(home_root) / desktop_user / POSTURE_RELPATH)
     return out
 
 
 def pick_posture_file(candidates: list[Path]) -> Path | None:
     """The newest existing candidate, or None.
 
-    Newest wins so that a second operator account cannot pin the deck to a
-    stale tier: the most recent deliberate selection is the live one.
+    Newest wins between an explicit path and the operator's file: the most
+    recent deliberate selection is the live one.
     """
-    best: Path | None = None
-    best_mtime = -1.0
-    for path in candidates:
-        try:
-            mtime = path.stat().st_mtime
-        except OSError:
-            continue
-        if mtime > best_mtime:
-            best, best_mtime = path, mtime
-    return best
+    return tuning_lib.pick_file(candidates)
+
+
+def read_tier_report(path: Path | None) -> tuple[str, str | None]:
+    """(tier, refusal). A file the operator does not own, a symlink, or a
+    group/other-writable file is REFUSED (Tier 0) and the reason returned so
+    the daemon can say so (DEC-PHASE12-081)."""
+    text, refusal = tuning_lib.read_trusted(path)
+    return parse_tier(text), refusal
 
 
 def read_tier(path: Path | None) -> str:
-    if path is None:
-        return "0"
-    try:
-        return parse_tier(Path(path).read_text(encoding="utf-8", errors="replace"))
-    except OSError:
-        return "0"
+    return read_tier_report(path)[0]
 
 
 # ===========================================================================
@@ -1994,6 +1984,24 @@ class LogTailer:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.lines_read = 0
+        self.callback_errors = 0
+        self._last_error_log = -1e9
+
+    # @decision DEC-PHASE12-082
+    # @title A tail callback that raises is COUNTED and logged, not swallowed
+    # @status accepted
+    # @rationale QA round 1 (python P1-3): one bad tuning rule made every
+    #   _on_eve_line raise and `except Exception: pass` hid it - the IDS went
+    #   blind with no trace. The tail must survive (one bad line must not stop
+    #   the next), but the failure is written to the journal (rate-limited so a
+    #   per-line fault cannot flood it) and counted in posture-status.json.
+    def _callback_failed(self, exc: BaseException) -> None:
+        self.callback_errors += 1
+        now = time.monotonic()
+        if now - self._last_error_log >= 60.0:
+            self._last_error_log = now
+            print(f"orionx-postured: tail {self.path}: handler failed "
+                  f"({self.callback_errors} so far): {exc!r}", file=sys.stderr, flush=True)
 
     def start(self) -> None:
         if self._thread is not None:
@@ -2034,8 +2042,8 @@ class LogTailer:
                     if self.on_line is not None:
                         try:
                             self.on_line(line)
-                        except Exception:  # noqa: BLE001 - never kill the tail
-                            pass
+                        except Exception as exc:  # noqa: BLE001 - never kill the tail
+                            self._callback_failed(exc)
                     continue
                 try:
                     if os.stat(self.path).st_ino != inode:
@@ -2274,6 +2282,7 @@ class PostureDaemon:
         self.tuning = tuning_lib.TuningState(os.environ.get("ORIONX_TUNING_FILE"))
         self.tuned_suppressed = 0
         self._tuning_warned = 0.0
+        self._posture_refusal: str | None = None
         # DEC-PHASE12-051: alerts whose SOURCE is this deck are labelled
         # origin=self so the Cockpit says "this deck did this" instead of
         # implying an intruder, and the threat gauge does not count them.
@@ -2339,21 +2348,37 @@ class PostureDaemon:
         the threshold file and reload the ruleset over the command socket."""
         try:
             changed = self.tuning.refresh(now)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - say so; keep the last good rules
             changed = False
+            if now - self._tuning_warned > 600:
+                self._tuning_warned = now
+                self.emit("warning", "health",
+                          f"tuning: cannot re-read the tuning file ({exc!r}); "
+                          "the previous rules stay in force",
+                          detail={"remedy": "orionx-tune status; journalctl -u orionx-postured"})
+        if self.tuning.errors_changed and self.tuning.errors:
+            # DEC-PHASE12-080: a rejected rule is said out loud, once per change
+            # of the file. The OTHER rules still apply; the rejected one silences
+            # nothing.
+            errs = self.tuning.errors
+            self.emit("warning", "health",
+                      f"tuning: {len(errs)} entr{'y' if len(errs) == 1 else 'ies'} ignored "
+                      f"(they silence nothing): {errs[0]}"[:300],
+                      detail={"errors": errs[:20], "file": str(self.tuning.path or ""),
+                              "remedy": "orionx-tune status; fix or remove the entry, "
+                                        "or orionx-tune remove <id>"})
         if not changed or self.dry_run:
             return
         try:
-            tmp = tuning_lib.THRESHOLD_FILE.with_suffix(".tmp")
-            tmp.write_text(self.tuning.derived_text, encoding="utf-8")
-            os.replace(tmp, tuning_lib.THRESHOLD_FILE)
+            tuning_lib.atomic_write_text(tuning_lib.THRESHOLD_FILE,
+                                         self.tuning.derived_text, 0o644)
         except OSError as exc:
             if now - self._tuning_warned > 600:
                 self._tuning_warned = now
                 self.emit("warning", "health",
                           f"tuning: cannot write {tuning_lib.THRESHOLD_FILE} ({exc}); "
                           "alerts are still filtered bus-side, Suricata keeps evaluating them",
-                          detail={"remedy": "ls -l /etc/suricata; journalctl -u orionx-postured"})
+                          detail={"remedy": "ls -l /var/lib/suricata; journalctl -u orionx-postured"})
             return
         sock = getattr(capture, "COMMAND_SOCKET", Path("/var/lib/suricata/orionx-command.socket"))
         if service_active(SURICATA_UNIT):
@@ -2866,6 +2891,7 @@ class PostureDaemon:
             "alerts_suppressed": self.alerts_suppressed,
             # DEC-PHASE12-050/051
             "tuned_suppressed": self.tuned_suppressed,
+            "eve_handler_errors": self.tailer.callback_errors,
             "tuning": self.tuning.status(time.time()),
             "deck_addrs": sorted(self.deck_addrs),
             "posture_file": str(self.posture_path or ""),
@@ -2897,9 +2923,7 @@ class PostureDaemon:
         }
         try:
             STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
-            tmp = STATUS_FILE.with_suffix(".tmp")
-            tmp.write_text(json.dumps(payload), encoding="utf-8")
-            os.replace(tmp, STATUS_FILE)
+            tuning_lib.atomic_write_text(STATUS_FILE, json.dumps(payload), 0o644)
         except OSError:
             pass
 
@@ -2948,8 +2972,16 @@ class PostureDaemon:
             while True:
                 self.posture_path = pick_posture_file(
                     posture_candidates(self.args.posture_file))
-                new_tier = read_tier(self.posture_path)
+                new_tier, refusal = read_tier_report(self.posture_path)
                 now = time.time()
+                if refusal != self._posture_refusal:
+                    self._posture_refusal = refusal
+                    if refusal:
+                        self.emit("warning", "posture",
+                                  f"posture file refused, holding Tier 0: {refusal}"[:300],
+                                  detail={"remedy": "the posture file must be a regular file "
+                                                    f"owned by {DESKTOP_USER}, mode 0644 or "
+                                                    "stricter; re-select the tier in the Cockpit"})
                 self._refresh_tuning(now)
                 self._refresh_deck_addrs(now)
                 if (now - self._last_heartbeat) >= self.args.heartbeat:

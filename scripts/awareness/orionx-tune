@@ -49,9 +49,14 @@ def _describe(rule: dict) -> str:
     return what
 
 
+def _warn_rejected(path, errors: list[str]) -> None:
+    """A rule the daemon will ignore is said out loud (DEC-PHASE12-080)."""
+    for e in errors:
+        print(f"orionx-tune: IGNORED in {path}: {e}", file=sys.stderr)
+
+
 def cmd_add(args: argparse.Namespace, mode: str) -> int:
     path = T.default_path()
-    rules = T.prune(T.load_rules(T.read_text(path)), time.time())
     engine = args.engine or ("zeek" if args.note else "suricata")
     try:
         rule = T.make_rule(engine, mode, sid=args.sid, note=args.note, src_ip=args.src,
@@ -60,9 +65,14 @@ def cmd_add(args: argparse.Namespace, mode: str) -> int:
     except ValueError as exc:
         print(f"orionx-tune: {exc}", file=sys.stderr)
         return 2
-    rules.append(rule)
     try:
-        T.write_rules(path, rules)
+        # Read-modify-write under one lock: two concurrent runs must not lose a rule.
+        with T.locked(path):
+            rules, errors = T.load_rules_report(T.read_text(path))
+            _warn_rejected(path, errors)
+            rules = T.prune(rules, time.time())
+            rules.append(rule)
+            T.write_rules(path, rules)
     except OSError as exc:
         print(f"orionx-tune: cannot write {path}: {exc}", file=sys.stderr)
         return 1
@@ -81,10 +91,11 @@ def cmd_add(args: argparse.Namespace, mode: str) -> int:
 def cmd_list(_args: argparse.Namespace) -> int:
     path = T.default_path()
     now = time.time()
-    rules = T.load_rules(T.read_text(path))
+    rules, errors = T.load_rules_report(T.read_text(path))
+    _warn_rejected(path, errors)
     if not rules:
         print(f"no tuning rules ({path})")
-        return 0
+        return 1 if errors else 0
     for r in rules:
         state = "active" if T.is_active(r, now) else "expired"
         print(f"{r['id']}  {r['engine']:<8} {r['mode']:<7} {state:<7} {_describe(r)}"
@@ -94,12 +105,17 @@ def cmd_list(_args: argparse.Namespace) -> int:
 
 def cmd_remove(args: argparse.Namespace) -> int:
     path = T.default_path()
-    rules = T.load_rules(T.read_text(path))
-    keep = [r for r in rules if r.get("id") != args.id]
-    if len(keep) == len(rules):
-        print(f"orionx-tune: no rule {args.id}", file=sys.stderr)
+    try:
+        with T.locked(path):
+            rules = T.load_rules(T.read_text(path))
+            keep = [r for r in rules if r.get("id") != args.id]
+            if len(keep) == len(rules):
+                print(f"orionx-tune: no rule {args.id}", file=sys.stderr)
+                return 1
+            T.write_rules(path, keep)
+    except OSError as exc:
+        print(f"orionx-tune: cannot write {path}: {exc}", file=sys.stderr)
         return 1
-    T.write_rules(path, keep)
     print(f"removed {args.id}; the alert will be published again")
     _announce("info", f"operator removed tuning rule {args.id}", {"id": args.id})
     return 0
@@ -108,11 +124,13 @@ def cmd_remove(args: argparse.Namespace) -> int:
 def cmd_status(_args: argparse.Namespace) -> int:
     path = T.default_path()
     now = time.time()
-    rules = T.load_rules(T.read_text(path))
+    rules, errors = T.load_rules_report(T.read_text(path))
     present, where = T.persistence_present()
     print("Orion-X alert tuning (DEC-PHASE12-050)")
     print(f"  file          : {path} ({'present' if path.exists() else 'absent'})")
     print(f"  rules         : {len(rules)} ({len(T.active_rules(rules, now))} active)")
+    for e in errors:
+        print(f"  IGNORED       : {e}")
     print(f"  {T.survives_reboot_line(present, where)}")
     print(f"  derived       : {T.THRESHOLD_FILE} (written by orionx-postured as root; /var/lib is writable under its hardening)")
     print("  verify        : grep -c tuned_suppressed /run/orionx/posture-status.json")

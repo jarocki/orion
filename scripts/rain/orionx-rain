@@ -93,16 +93,6 @@ class _Throttle:
         self._last_any = now
 
 
-def _open_at_end(path: Path):
-    """Open the spool for reading, positioned at EOF. None if not present yet."""
-    try:
-        fh = path.open("r", encoding="utf-8", errors="replace")
-        fh.seek(0, 2)  # SEEK_END — only react to events after we start
-        return fh
-    except OSError:
-        return None
-
-
 def run_daemon() -> int:
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
@@ -112,9 +102,10 @@ def run_daemon() -> int:
     cfg_mtime = _config_mtime()
     narrator = _sync_narrator(None, cfg)   # DEC-PHASE12-046
 
-    path = rain_lib.EVENT_LOG
-    fh = _open_at_end(path)
-    inode = _inode(path)
+    # DEC-PHASE12-083: the shared reader. Starts at EOF, survives the bus
+    # being deleted/rotated/truncated, and never drops a half-written line.
+    tail = rain_lib.BusTail(rain_lib.EVENT_LOG, at_end=True)
+    pending: list[str] = []
 
     while _running:
         # Live-reload config when rain.json changes (CC toggle).
@@ -124,29 +115,12 @@ def run_daemon() -> int:
             cfg_mtime = m
             narrator = _sync_narrator(narrator, cfg)
 
-        # Wait for the spool to appear if it does not exist yet.
-        if fh is None:
-            fh = _open_at_end(path)
-            inode = _inode(path)
-            if fh is None:
+        if not pending:
+            pending = tail.poll()
+            if not pending:
                 time.sleep(_POLL)
                 continue
-
-        # Detect truncation/rotation (tmpfs recreated): reopen from the top so
-        # we don't miss a fresh session's events.
-        cur_inode = _inode(path)
-        if cur_inode != inode:
-            try:
-                fh.close()
-            except OSError:
-                pass
-            fh = path.open("r", encoding="utf-8", errors="replace")
-            inode = cur_inode
-
-        line = fh.readline()
-        if not line:
-            time.sleep(_POLL)
-            continue
+        line = pending.pop(0)
 
         event = _parse(line)
         if event is None:
@@ -173,11 +147,7 @@ def run_daemon() -> int:
 
     if narrator is not None:
         narrator.stop()
-    if fh is not None:
-        try:
-            fh.close()
-        except OSError:
-            pass
+    tail.close()
     return 0
 
 
@@ -197,13 +167,6 @@ def _config_mtime() -> float:
         return rain_lib.CONFIG_FILE.stat().st_mtime
     except OSError:
         return 0.0
-
-
-def _inode(path: Path) -> int:
-    try:
-        return path.stat().st_ino
-    except OSError:
-        return -1
 
 
 def run_oneshot() -> int:

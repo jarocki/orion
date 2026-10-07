@@ -54,8 +54,10 @@ includes.chroot rather than as a second symlink authority.
 from __future__ import annotations
 
 import argparse
+import http.client
 import http.server
 import json
+import signal
 import os
 import socketserver
 import subprocess
@@ -82,6 +84,42 @@ PROC_ROUTE6 = Path(os.environ.get("ORIONX_PROC_ROUTE6", "/proc/net/ipv6_route"))
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8787
 PORT_TRIES = 8
+
+# UX-06: the remedy names the surface that exists on this image.
+POSTURE_REMEDY = ("Lower the posture in Orion Cockpit -> Awareness -> Threat "
+                  "posture (or: orionx-cockpit --tab awareness) if reaching "
+                  "out is appropriate.")
+
+# @decision DEC-PHASE12-086
+# @title The Workbench answers only requests addressed to loopback by name
+# @status accepted
+# @rationale QA round 1 (security F3). Binding 127.0.0.1 does not stop DNS
+#   rebinding: a page the operator opens while researching an adversary can
+#   rebind its own name to 127.0.0.1 and read /api/pewpew.json (what the IDS
+#   sees, the deck's addresses, its posture). Every request must carry a Host
+#   of 127.0.0.1, localhost or [::1] (with this server's port), and any Origin
+#   it carries must be one of those same origins; Sec-Fetch-Site cross-site is
+#   refused. Anything else gets 403 and a sentence saying why. Same allowlist
+#   idea as Pivotglass (pivotglass/web/server.py _host_allowed). Every
+#   response also carries X-Content-Type-Options: nosniff.
+LOOPBACK_NAMES = ("127.0.0.1", "localhost", "[::1]")
+
+
+def request_allowed(host: str | None, origin: str | None, fetch_site: str | None,
+                    port: int) -> tuple[bool, str]:
+    """Pure: may a request with these headers be answered? (ok, why-not)."""
+    allowed = {"%s:%d" % (name, port) for name in LOOPBACK_NAMES}
+    h = (host or "").strip().lower()
+    if h not in allowed:
+        return False, "Host %r is not this deck's loopback address" % (host or "")
+    if (fetch_site or "").strip().lower() == "cross-site":
+        return False, "cross-site request"
+    o = (origin or "").strip().lower()
+    if o and o != "null" and o not in {"http://" + a for a in allowed}:
+        return False, "Origin %r is not this Workbench" % origin
+    if o == "null":
+        return False, "opaque (null) Origin"
+    return True, ""
 
 # Tier 2 is Deception: decoys are live on a network the operator has declared
 # hostile. Reaching out to a public OSINT site from that network announces
@@ -190,9 +228,7 @@ def outbound_verdict(posture: dict, route: dict) -> dict[str, object]:
                           "announces this deck to that network, and to the "
                           "site. The links stay listed so you can copy them "
                           "to a machine that should be making the request.",
-                "remedy": "Lower the posture in the Control Center "
-                          "(Awareness -> Threat posture) if reaching out is "
-                          "appropriate."}
+                "remedy": POSTURE_REMEDY}
     if not route.get("default_route"):
         return {"allowed": False, "state": "no-route",
                 "headline": "No default route — off-deck links unreachable",
@@ -221,6 +257,16 @@ def godseye_backend_route(path: str) -> str | None:
     return None
 
 
+def godseye_gated(path: str) -> bool:
+    """Is `path` one of the GODSEYE entry documents the posture gate governs?
+    Pure. The handler asks this FIRST, so a static asset never pays for the
+    posture/route reads (python P2-2: build_status, with a 0.15 s vitals
+    sample and subprocesses, used to run for every file served)."""
+    if not (path == GODSEYE_APP_PREFIX or path.startswith(GODSEYE_APP_PREFIX + "/")):
+        return False
+    return path.endswith("/") or path.endswith(".html") or path == GODSEYE_APP_PREFIX
+
+
 def godseye_gate(path: str, outbound: dict) -> dict[str, object] | None:
     """May this request for the GODSEYE document be served? None = yes.
 
@@ -236,10 +282,7 @@ def godseye_gate(path: str, outbound: dict) -> dict[str, object] | None:
     announces this deck to several dozen hosts. Both are refusals here, and
     each says which.
     """
-    if not (path == GODSEYE_APP_PREFIX or path.startswith(GODSEYE_APP_PREFIX + "/")):
-        return None
-    if not (path.endswith("/") or path.endswith(".html")
-            or path == GODSEYE_APP_PREFIX):
+    if not godseye_gated(path):
         return None
     if outbound.get("allowed"):
         return None
@@ -277,10 +320,7 @@ def godseye_gate(path: str, outbound: dict) -> dict[str, object] | None:
             "still_works": "The whole local Workbench. The host "
                            "list is readable offline at "
                            "/opt/orionx/osint/godseye/HOSTS.txt.",
-            "remedy": str(outbound.get("remedy")
-                          or "Lower the posture in the Control Center "
-                             "(Awareness -> Threat posture) if reaching out "
-                             "is appropriate."),
+            "remedy": str(outbound.get("remedy") or POSTURE_REMEDY),
         }
     return {
         "state": state,
@@ -378,6 +418,11 @@ def _read(path: Path, limit: int | None = None) -> str | None:
         return None
 
 
+#: Why each optional GeoIP database failed to open on the last attempt
+#: (path -> error). Surfaced in the pew-pew feed so "no geolocation" says why.
+GEOIP_OPEN_ERRORS: dict[str, str] = {}
+
+
 def open_geoip():
     """Open the optional databases, or return (None, None). Never raises."""
     try:
@@ -385,11 +430,15 @@ def open_geoip():
     except ImportError:
         return None, None
     country = asn = None
+    GEOIP_OPEN_ERRORS.clear()
     for path, slot in ((pewpew_feed.GEOIP_COUNTRY_DB, "country"),
                        (pewpew_feed.GEOIP_ASN_DB, "asn")):
+        if not Path(path).is_file():
+            continue
         try:
             reader = maxminddb.open_database(path)
-        except Exception:                                  # noqa: BLE001
+        except Exception as exc:                           # noqa: BLE001 - any reader fault
+            GEOIP_OPEN_ERRORS[str(path)] = repr(exc)[:200]
             continue
         if slot == "country":
             country = _CountryShim(reader)
@@ -468,6 +517,13 @@ def optional_state(entries: list[dict], geoip_available: bool,
     return out
 
 
+def current_outbound() -> dict:
+    """outbound_verdict from the two local reads only (no vitals, no GeoIP):
+    what the GODSEYE gate needs, and nothing it does not."""
+    route = read_default_route(_read(PROC_ROUTE) or "", _read(PROC_ROUTE6) or "")
+    return outbound_verdict(read_posture(_read(POSTURE_STATUS)), route)
+
+
 def build_status() -> dict:
     route = read_default_route(_read(PROC_ROUTE) or "", _read(PROC_ROUTE6) or "")
     posture = read_posture(_read(POSTURE_STATUS))
@@ -483,6 +539,7 @@ def build_status() -> dict:
         "outbound": outbound_verdict(posture, route),
         "deck": deck_vitals.collect(sample=0.15),
         "geoip": geo,
+        "server": {"pid": os.getpid(), "root": str(WEB_ROOT)},
         # DEC-PHASE12-052: optional installers, with evidence of whether each
         # has been run on this deck, so the Workbench can say so.
         "optional": optional_state(load_installable(WEB_ROOT), bool(geo.get("available"))),
@@ -508,6 +565,8 @@ def build_pewpew(window: float) -> dict:
         feed["bus_readable"] = False
         feed["bus_path"] = str(BUS)
         return feed
+    if GEOIP_OPEN_ERRORS:
+        geo = dict(geo, open_errors=dict(GEOIP_OPEN_ERRORS))
     feed = pewpew_feed.build_feed(text.splitlines(), window=window,
                                   reader=country, asn_reader=asn,
                                   geoip_state=geo)
@@ -530,6 +589,35 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):           # noqa: A003
         if os.environ.get("ORIONX_OSINT_VERBOSE"):
             sys.stderr.write("[orionx-osint] " + (fmt % args) + "\n")
+
+    def end_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        super().end_headers()
+
+    def _refuse_foreign(self) -> bool:
+        """DEC-PHASE12-086: 403 anything not addressed to loopback by name."""
+        ok, why = request_allowed(self.headers.get("Host"), self.headers.get("Origin"),
+                                  self.headers.get("Sec-Fetch-Site"),
+                                  self.server.server_address[1])
+        if ok:
+            return False
+        body = ("403 refused: %s. The Orion Workbench answers only "
+                "http://127.0.0.1:%d/ (or localhost) opened on this deck; a "
+                "page that rebinds another name to this address cannot read "
+                "it.\n" % (why, self.server.server_address[1])).encode("utf-8")
+        self.send_response(403)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+        return True
+
+    def do_HEAD(self):                           # noqa: N802
+        if self._refuse_foreign():
+            return
+        super().do_HEAD()
 
     def _json(self, payload: dict) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -572,6 +660,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         return self.window
 
     def do_GET(self):                            # noqa: N802
+        if self._refuse_foreign():
+            return
         path = self.path.split("?", 1)[0]
         if path == "/api/status.json":
             self._json(build_status())
@@ -595,7 +685,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             })
             return
 
-        refusal = godseye_gate(path, build_status()["outbound"])
+        refusal = godseye_gate(path, current_outbound()) if godseye_gated(path) else None
         if refusal is not None:
             self._html_status(503, godseye_refusal_html(refusal))
             return
@@ -624,6 +714,89 @@ def bind(root: Path, port: int, tries: int = PORT_TRIES):
         "               Another copy may already be running: try "
         "`ss -lntp | grep 87` and open the port it names."
         % (HOST, port, port + tries - 1, last))
+
+
+# ===========================================================================
+# One server per operator (UX-25)
+# ===========================================================================
+# @decision DEC-PHASE12-087
+# @title One Workbench server per operator, discoverable, reused, stoppable
+# @status accepted
+# @rationale QA round 1 (UX-25). Every menu launch and every Cockpit "Run"
+#   bound a NEW server on the next port (8787..8794); the ninth died silently
+#   and nothing said how many were running or how to stop them. Now a running
+#   server records "port pid" in $XDG_RUNTIME_DIR/orionx-osint.port; a launch
+#   first asks that port whether it is really this server (GET
+#   /api/status.json, pid must match) and, if so, just opens the page there.
+#   `orionx-osint --status` says what is serving; `--stop` stops it. A stale
+#   file (server gone) is ignored and replaced.
+
+def state_file() -> Path:
+    base = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
+    if not Path(base).is_dir():
+        base = str(Path.home() / ".cache")
+    return Path(base) / "orionx-osint.port"
+
+
+def probe_server(port: int, timeout: float = 1.0) -> dict | None:
+    """The status a Workbench on this loopback port reports, or None."""
+    try:
+        conn = http.client.HTTPConnection(HOST, port, timeout=timeout)
+        conn.request("GET", "/api/status.json", headers={"Host": "%s:%d" % (HOST, port)})
+        resp = conn.getresponse()
+        data = resp.read()
+        conn.close()
+        if resp.status != 200:
+            return None
+        obj = json.loads(data.decode("utf-8"))
+        return obj if isinstance(obj, dict) and obj.get("decision") == "DEC-PHASE12-043" else None
+    except (OSError, ValueError, http.client.HTTPException):
+        return None
+
+
+def running_server(path: Path | None = None) -> dict | None:
+    """{"port", "pid", "root"} of the live recorded server, else None."""
+    path = path or state_file()
+    try:
+        port_s, pid_s = path.read_text(encoding="utf-8").split()[:2]
+        port, pid = int(port_s), int(pid_s)
+    except (OSError, ValueError):
+        return None
+    status = probe_server(port)
+    server = (status or {}).get("server") or {}
+    if status is None or server.get("pid") != pid:
+        return None
+    return {"port": port, "pid": pid, "root": server.get("root", "")}
+
+
+def record_server(port: int, path: Path | None = None) -> Path | None:
+    path = path or state_file()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".%d.tmp" % os.getpid())
+        tmp.write_text("%d %d\n" % (port, os.getpid()), encoding="utf-8")
+        os.replace(tmp, path)
+        return path
+    except OSError as exc:
+        print("[orionx-osint] cannot record %s (%s); a second launch will start "
+              "a second server" % (path, exc), flush=True)
+        return None
+
+
+def forget_server(path: Path | None) -> None:
+    if path is None:
+        return
+    try:
+        if path.read_text(encoding="utf-8").split()[1] == str(os.getpid()):
+            path.unlink()
+    except (OSError, IndexError):
+        pass
+
+
+def page_url(port: int, page: str) -> str:
+    return "http://%s:%d/%s" % (HOST, port, {"cyberchef": "cyberchef/",
+                                             "pewpew": "pewpew/",
+                                             "godseye": "godseye/"}.get(page, ""))
 
 
 # ===========================================================================
@@ -762,6 +935,14 @@ def main(argv: list[str] | None = None) -> int:
                         help="report what is present and exit")
     parser.add_argument("--once", action="store_true",
                         help="handle a single request then exit (tests)")
+    parser.add_argument("--status", action="store_true",
+                        help="say whether a Workbench server is running, and where")
+    parser.add_argument("--stop", action="store_true",
+                        help="stop the running Workbench server")
+    parser.add_argument("--json", action="store_true",
+                        help="with --status: one JSON object (for the Cockpit)")
+    parser.add_argument("--new", action="store_true",
+                        help="start another server even if one is running")
     args = parser.parse_args(argv)
 
     root = Path(args.root)
@@ -769,6 +950,46 @@ def main(argv: list[str] | None = None) -> int:
     WEB_ROOT = root
     if args.check:
         return run_check(root)
+
+    if args.status or args.stop:
+        live = running_server()
+        if args.status:
+            if args.json:
+                print(json.dumps({"running": live is not None, **(live or {}),
+                                  "url": page_url(live["port"], "") if live else None,
+                                  "state_file": str(state_file())}))
+            elif live:
+                print("Workbench: serving on :%d (pid %d) — %s   stop: orionx-osint --stop"
+                      % (live["port"], live["pid"], page_url(live["port"], "")))
+            else:
+                print("Workbench: not running   start: orionx-osint")
+            return 0 if live else 3
+        if live is None:
+            print("Workbench: not running; nothing to stop")
+            return 0
+        try:
+            os.kill(live["pid"], signal.SIGTERM)
+        except OSError as exc:
+            print("Workbench: cannot stop pid %d: %s" % (live["pid"], exc))
+            return 1
+        for _ in range(20):
+            if probe_server(live["port"], timeout=0.25) is None:
+                print("Workbench: stopped (was :%d, pid %d)" % (live["port"], live["pid"]))
+                return 0
+            time.sleep(0.1)
+        print("Workbench: pid %d did not stop within 2 s" % live["pid"])
+        return 1
+
+    if not args.once and not args.new:
+        live = running_server()
+        if live is not None:
+            url = page_url(live["port"], args.page)
+            print("[orionx-osint] already serving on :%d (pid %d); opening %s"
+                  % (live["port"], live["pid"], url), flush=True)
+            print("[orionx-osint] stop it with: orionx-osint --stop", flush=True)
+            if not args.no_browser:
+                _open_browser(url)
+            return 0
 
     if not (root / "index.html").is_file():
         sys.stderr.write(
@@ -781,10 +1002,7 @@ def main(argv: list[str] | None = None) -> int:
 
     Handler.window = args.window
     httpd, port = bind(root, args.port)
-    url = "http://%s:%d/%s" % (HOST, port,
-                               {"cyberchef": "cyberchef/",
-                                "pewpew": "pewpew/",
-                                "godseye": "godseye/"}.get(args.page, ""))
+    url = page_url(port, args.page)
     # flush=True throughout: stdout is block-buffered when this is piped to a
     # log, and a server whose "I am up" line only appears after it exits is a
     # server nobody can tell has started.
@@ -807,15 +1025,22 @@ def main(argv: list[str] | None = None) -> int:
         httpd.server_close()
         return 0
 
+    recorded = record_server(port)
+    signal.signal(signal.SIGTERM, _sigterm)     # --stop: clean exit, state file removed
     if not args.no_browser:
         threading.Thread(target=_open_browser, args=(url,), daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\n[orionx-osint] stopped.")
+        print("\n[orionx-osint] stopped.", flush=True)
     finally:
         httpd.server_close()
+        forget_server(recorded)
     return 0
+
+
+def _sigterm(_signum, _frame):
+    raise KeyboardInterrupt
 
 
 def _open_browser(url: str) -> None:
