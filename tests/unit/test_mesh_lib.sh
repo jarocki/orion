@@ -418,6 +418,32 @@ teardown
 echo ""
 
 # ---------------------------------------------------------------------------
+# B2 handoff: mesh_genkeys fails loudly when the key cannot be written
+# ---------------------------------------------------------------------------
+echo "--- mesh_genkeys reports a failed key write ---"
+setup
+RO="$TMPDIR_TEST/ro"; mkdir -p "$RO"; chmod 0500 "$RO"
+wg() { case "$1" in genkey) echo "$(printf 'G%.0s' {1..42})A=" ;; pubkey) cat >/dev/null; echo "$(printf 'H%.0s' {1..42})A=" ;; esac; }
+rc=0; OUT="$(MESH_PRIVATE_KEY="$RO/k" mesh_genkeys 2>&1)" || rc=$?
+if [[ "$EUID" -ne 0 ]]; then
+    assert_eq "unwritable key dir: mesh_genkeys returns non-zero" "1" "$rc"
+    if [[ "$OUT" == *"Generated new WireGuard keypair"* ]]; then
+        echo "  FAIL: no 'Generated' claim after a failed write"; (( FAIL_COUNT++ )) || true
+    else
+        echo "  PASS: no 'Generated' claim after a failed write"; (( PASS_COUNT++ )) || true
+    fi
+    assert_match "the error names the path" "Could not write the WireGuard private key to $RO/k" "$OUT"
+else
+    echo "  SKIP: running as root (directory permissions do not bind)"
+fi
+rc=0; PUB="$(MESH_PRIVATE_KEY="$TMPDIR_TEST/ok.key" mesh_genkeys 2>/dev/null)" || rc=$?
+assert_eq "writable: mesh_genkeys succeeds" "0" "$rc"
+assert_eq "writable: prints the derived public key only" "$(printf 'H%.0s' {1..42})A=" "$PUB"
+chmod 0700 "$RO"; unset -f wg
+teardown
+echo ""
+
+# ---------------------------------------------------------------------------
 # shell P3-6: the state file is replaced atomically (no temp left behind)
 # ---------------------------------------------------------------------------
 echo "--- mesh_state_write is atomic ---"

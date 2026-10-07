@@ -61,7 +61,10 @@ mesh_join() {
 
     # --- 2. Generate WireGuard keys (idempotent) ---
     local pubkey
-    pubkey="$(mesh_genkeys)"
+    if ! pubkey="$(mesh_genkeys)"; then
+        echo "ERROR: could not create the mesh key (see above); nothing was changed." >&2
+        return 1
+    fi
     mesh_log INFO "Public key: ${pubkey:0:8}..."
 
     # --- 3. Report the team PSK posture (never invented here: DEC-PHASE12-098) ---

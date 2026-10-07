@@ -122,15 +122,30 @@ mesh_genkeys() {
         return 0
     fi
 
+    # B2 handoff: every step is checked. Callers run this inside $(...), where
+    # set -e is NOT inherited, so a failed write used to fall through to
+    # "Generated new WireGuard keypair" and then "Private key not found".
     local key_dir
     key_dir="$(dirname "$MESH_PRIVATE_KEY")"
-    mkdir -p "$key_dir"
+    if ! mkdir -p "$key_dir" 2>/dev/null; then
+        mesh_log ERROR "Cannot create $key_dir — no WireGuard key generated (run as root: sudo orionx-mesh join)"
+        return 1
+    fi
 
-    (umask 077; wg genkey > "$MESH_PRIVATE_KEY")   # born 0600; chmod below is belt
-    chmod 0600 "$MESH_PRIVATE_KEY"
+    if ! (umask 077; wg genkey > "$MESH_PRIVATE_KEY") 2>/dev/null || [[ ! -s "$MESH_PRIVATE_KEY" ]]; then
+        rm -f "$MESH_PRIVATE_KEY" 2>/dev/null || true
+        mesh_log ERROR "Could not write the WireGuard private key to $MESH_PRIVATE_KEY"
+        return 1
+    fi
+    chmod 0600 "$MESH_PRIVATE_KEY"   # born 0600 under umask 077; chmod is belt
 
+    local pub
+    if ! pub="$(mesh_get_pubkey)" || [[ -z "$pub" ]]; then
+        mesh_log ERROR "Generated $MESH_PRIVATE_KEY but could not derive its public key (wg pubkey failed)"
+        return 1
+    fi
     mesh_log INFO "Generated new WireGuard keypair"
-    mesh_get_pubkey
+    echo "$pub"
 }
 
 # Read public key derived from the private key file.
