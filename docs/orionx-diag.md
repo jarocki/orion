@@ -1,6 +1,6 @@
 # orionx-diag — Diagnostic Tool Reference
 
-**Shipped in:** v2.2.0 (first added in the v2.1.0 Bullseye line, W11-11).
+**Shipped in:** v3.0.0 and the v2.2.0 release candidates from rc5 (first added in the v2.1.0 Bullseye line, W11-11).
 **Source of truth:** `scripts/orionx-diag`
 **Location on ISO:** `/usr/bin/orionx-diag` (symlink to `/opt/orionx/scripts/orionx-diag`)
 **Decision:** DEC-PHASE11-015
@@ -235,7 +235,7 @@ assertions:
 
 ```json
 {
-  "iso_version": "v2.2.0",
+  "iso_version": "v3.0.0",
   "build_timestamp": "2026-09-20T14:32:00Z",
   "git_head_sha": "0ab8fa1",
   "overall": "PASS",
@@ -301,7 +301,7 @@ written at build time by the `0700-orionx-setup.hook.chroot` hook from the
 
 | Key | Example value | Description |
 |---|---|---|
-| `ISO_VERSION` | `v2.2.0` | Release identity — `ORIONX_VERSION` at build time, else `git describe` |
+| `ISO_VERSION` | `v3.0.0` | Release identity — `ORIONX_VERSION` at build time, else `git describe` |
 | `BUILD_TIMESTAMP` | `2026-09-16T04:23:56Z` | ISO 8601 UTC build time |
 | `GIT_HEAD_SHA` | `32247dd2734f` | Short SHA of the commit built |
 | `GIT_HEAD_TITLE` | `fix(trim): …` | First line of that commit's message |
@@ -311,8 +311,9 @@ The v2.2.0-beta image carries `ISO_VERSION=v2.2.0-trixie-dev9` because it was
 built with a development label; the release runbook now asserts the baked value
 equals the tag before an image is published (`docs/release-process.md` §10).
 
-The file is backward-compatible: the MOTD reader falls back to `v2.0.0` on
-pre-W11-11 images that have only a single-line `/etc/orionx-version`.
+If the build environment is lost, the 0700 hook writes `ISO_VERSION=unknown-build`,
+and the MOTD prints `unknown-build` when it cannot read the key (DEC-PHASE12-129);
+neither falls back to a string that looks like a real release.
 
 ---
 

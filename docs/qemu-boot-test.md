@@ -164,7 +164,7 @@ back-to-back runs never collide.
 {
   "harness_version": "1.0.0",
   "run_id": "20260428-143012",
-  "iso_path": "/abs/path/to/orionx-phoenix-edition-v2.2.0.iso",
+  "iso_path": "/abs/path/to/orionx-phoenix-edition-v3.0.0.iso",
   "iso_sha256": "abc123...",
   "host_kvm": true,
   "ovmf_path": "/usr/share/OVMF/OVMF_CODE.fd",
