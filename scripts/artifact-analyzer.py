@@ -472,7 +472,9 @@ def generate_chain_of_custody(filename, artifact_type, output_dir):
 def main():
     parser = argparse.ArgumentParser(description="Orion-X Artifact Analyzer")
     parser.add_argument("artifact", help="Path to the artifact file to analyze")
-    parser.add_argument("-o", "--output", help="Output directory for analysis results", default="./analysis_results")
+    parser.add_argument("-o", "--output", default=None,
+                        help="Output directory for analysis results "
+                             "(default: ~/Analysis/results/<artifact>-<UTC timestamp>)")
     parser.add_argument("-t", "--type", help="Explicitly specify artifact type (memory, disk, network, log)", default=None)
     parser.add_argument("--upload", help="Upload results to artifact vault after analysis", action="store_true")
     parser.add_argument("--vault-url", help="URL of the artifact vault", default=os.environ.get("ORIONX_VAULT_URL", ""))
@@ -484,9 +486,22 @@ def main():
         logger.error(f"Artifact file not found: {args.artifact}")
         return 1
     
-    # Create output directory
-    output_dir = os.path.abspath(args.output)
-    os.makedirs(output_dir, exist_ok=True)
+    # Create output directory. The default used to be ./analysis_results, i.e.
+    # wherever the terminal happened to be: from a menu launcher or `/` that is
+    # unwritable and the tool died with a raw PermissionError traceback (QA
+    # round 2, L-03). Default to the analyst's own tree; fail with a sentence.
+    if args.output:
+        output_dir = os.path.abspath(os.path.expanduser(args.output))
+    else:
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        base = os.path.basename(args.artifact.rstrip("/")) or "artifact"
+        output_dir = os.path.join(os.path.expanduser("~"), "Analysis", "results", f"{base}-{stamp}")
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+    except OSError as exc:
+        logger.error(f"Cannot create output directory {output_dir}: {exc.strerror or exc}. "
+                     f"Choose a writable one with -o DIR.")
+        return 2
     logger.info(f"Output directory: {output_dir}")
     
     # Identify artifact type
