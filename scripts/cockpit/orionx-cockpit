@@ -734,7 +734,7 @@ class Cockpit(Gtk.Window):
             last = min(len(rows), self.drill_scroll + per_page)
             foot.append(f"rows {self.drill_scroll + 1}\u2013{last} of {len(rows)}  PgUp/PgDn")
         if L.tune_args(ev, "squelch") is not None:
-            foot.append("[s] squelch 1 h  [t] tune off for good \u2014 the outcome says whether it survives a reboot")
+            foot.append("[s] squelch this signature 1 h  [t] tune it off for good \u2014 the outcome says whether it survives a reboot")
         elif (ev.get("detail") or {}).get("origin") == "self":
             foot.append("SELF: this deck's own traffic")
         if foot:
