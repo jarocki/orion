@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Orion-X Control Center — executable entry script.
+orionx-control-center — opens the Orion Cockpit on a tab.
 
 Usage:
-  orionx-control-center [--help] [--version]
+  orionx-control-center [--help] [--version] [--tab KEY]
 
-This script is symlinked to /usr/bin/orionx-control-center by
-0700-orionx-setup.hook.chroot so it is on PATH in the live system.
-
-The script launches a GTK 3 window with six sections (Network, Mesh, Comms,
-Situational Awareness, IR Tools, Nebula AI) plus an Auto-Healing tab.
+Symlinked to /usr/bin/orionx-control-center by 0700-orionx-setup.hook.chroot.
+The separate window it used to open is gone (DEC-PHASE12-053); the command
+name is kept so old habits and menu entries still land on the same content.
+--version reports the image's own /etc/orionx-version (UX-40 / P3-1: it
+printed a hard-coded "2.0.0-rc5-w9-2" on 2.2.0).
 
 @decision DEC-PHASE10-005
 @title Control Center ships ahead of Phase 10 Nebula AI
@@ -32,22 +32,34 @@ import argparse
 import os
 import sys
 
-_VERSION = "2.0.0-rc5-w9-2"
+VERSION_FILE = os.environ.get("ORIONX_VERSION_FILE", "/etc/orionx-version")
+
+
+def image_version(path: str = VERSION_FILE) -> str:
+    """ISO_VERSION from the image manifest (0700 hook is its only writer)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("ISO_VERSION="):
+                    return line.split("=", 1)[1].strip() or "unknown"
+    except OSError as exc:
+        return f"unknown ({path}: {exc.strerror or exc} — not running from an Orion-X image?)"
+    return f"unknown (no ISO_VERSION in {path})"
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="orionx-control-center",
         description=(
-            "Orion-X Control Center — launcher for the Orion Cockpit tabs (DEC-PHASE12-053).\n\n"
-            "Opens the Cockpit on a tab: Network, Mesh, Comms, "
-            "Awareness, Orion Tools, Nebula AI, Auto-Healing."
+            "Opens the Orion Cockpit on a tab: Network, Mesh, Comms, "
+            "Awareness, Orion Tools, Nebula AI, Auto-Healing. "
+            "(Same as: orionx-cockpit --tab KEY.)"
         ),
     )
     parser.add_argument(
         "--version",
         action="version",
-        version=f"%(prog)s {_VERSION}",
+        version=f"%(prog)s {image_version()}",
     )
     # DEC-PHASE12-053: the tabs live in the Orion Cockpit; this is a launcher.
     parser.add_argument("--tab", default=None,

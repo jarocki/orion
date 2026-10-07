@@ -158,6 +158,54 @@ else
     fail "orionx-control-center --help exits 0"
 fi
 
+section "--version is the image's, --help uses no retired names (UX-40, P3-1)"
+_VF="$(mktemp "$REPO_ROOT/tmp/orionx-version.XXXXXX")"
+printf 'ISO_VERSION=v2.2.0-rc9\nGIT_HEAD_SHA=abc\n' > "$_VF"
+if [[ "$(ORIONX_VERSION_FILE="$_VF" python3 "$ENTRY" --version 2>&1)" == "orionx-control-center v2.2.0-rc9" ]]; then
+    pass "--version reads ISO_VERSION from /etc/orionx-version"
+else
+    fail "--version reads ISO_VERSION" "got: $(ORIONX_VERSION_FILE="$_VF" python3 "$ENTRY" --version 2>&1)"
+fi
+if ORIONX_VERSION_FILE=/nonexistent python3 "$ENTRY" --version 2>&1 | grep -q "unknown (/nonexistent"; then
+    pass "--version without a manifest says unknown and why"
+else
+    fail "--version without a manifest" "no honest unknown"
+fi
+rm -f "$_VF"
+if python3 "$ENTRY" --help 2>&1 | grep -qiE "control center|IR Tools|investigation surface"; then
+    fail "--help free of retired names" "$(python3 "$ENTRY" --help 2>&1 | grep -iE 'control center|IR Tools|investigation surface')"
+else
+    pass "--help free of retired names"
+fi
+# Every string an operator can see (all non-docstring string constants in the
+# Cockpit and its tabs) avoids the retired names. Docstrings and comments are
+# internal history and may keep them.
+if python3 - "$REPO_ROOT" <<'PY'
+import ast, pathlib, re, sys
+root = pathlib.Path(sys.argv[1])
+files = sorted((root/"scripts/control_center").rglob("*.py")) + [root/"scripts/control_center/orionx-control-center",
+         root/"scripts/cockpit/orionx-cockpit", root/"scripts/cockpit/cockpit_lib.py"]
+bad = []
+rx = re.compile(r"control center|\bIR Tools\b|investigation surface|situational awareness", re.I)
+for f in files:
+    tree = ast.parse(f.read_text(), str(f))
+    docs = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and n.body \
+           and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant):
+            docs.add(id(n.body[0].value))
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs and rx.search(n.value):
+            bad.append(f"{f.relative_to(root)}:{n.lineno}: {n.value[:60]!r}")
+print("\n".join("  offender " + b for b in bad) or "  none")
+sys.exit(1 if bad else 0)
+PY
+then
+    pass "no retired surface name in any user-visible string"
+else
+    fail "retired names in user-visible strings" "see offenders above"
+fi
+
 # ===========================================================================
 # 5. Nebula section: W10-1 live-status integration (DEC-PHASE10-005)
 #    W10-1 replaces the placeholder with live status from scripts/nebula/
