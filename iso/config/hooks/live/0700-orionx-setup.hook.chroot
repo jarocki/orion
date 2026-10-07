@@ -380,11 +380,11 @@ if [[ -d /opt/orionx/theme ]]; then
     find /opt/orionx/theme -type f -exec chmod 644 {} \;
 fi
 
-# Set orionx user ownership when the user exists
-if id orionx &>/dev/null; then
-    chown -R orionx:orionx /opt/orionx
-    echo "  [orionx-setup] /opt/orionx ownership set to orionx:orionx"
-fi
+# DEC-PHASE12-108 (security F20): a latent `chown -R orionx:orionx /opt/orionx`
+# (guarded on a user named "orionx", which does not exist) stood here. Had
+# anyone "fixed" the name, every script root units execute (postured, heald,
+# the wizard) would have become operator-writable: a local privilege
+# escalation. /opt/orionx stays root-owned. Removed, not disabled.
 
 # ---------------------------------------------------------------------------
 # Completion marker (greppable from CI log)

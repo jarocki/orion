@@ -69,6 +69,9 @@ done
 pass "postured/heald/scanwatch carry the F19 kernel-facing hardening set (any miss is listed above)"
 grep -q '^Environment=ORIONX_OPERATOR_USER=orionx-operator$' "$U/orionx-postured.service" && pass "postured knows the operator account (A2 handoff)" || fail "postured ORIONX_OPERATOR_USER"
 
+echo "=== F20: no hook hands /opt/orionx to a non-root user ==="
+if grep -hvE '^[[:space:]]*#' "$ROOT"/iso/config/hooks/live/*.hook.chroot | grep -qE 'chown -R [^ ]+ /opt/orionx'; then fail "no chown -R of /opt/orionx in any hook"; else pass "no chown -R of /opt/orionx in any hook"; fi
+
 echo "=== container checks (systemd 257, trixie) ==="
 if [[ "${ORIONX_SKIP_DOCKER:-0}" == 1 ]] || ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
     skip "docker unavailable: systemd-analyze verify and the dumpcap run were not exercised"
