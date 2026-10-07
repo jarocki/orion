@@ -165,13 +165,16 @@ done
 echo "[orionx-setup] Creating XDG desktop entries..."
 mkdir -p /usr/share/applications
 
+# Mesh status. orionx-mesh refuses to run without root, so the bare call this
+# entry used to make printed an error (QA UX-42); it now runs the read-only
+# status subcommand with sudo (the live account's sudo needs no password).
 cat > /usr/share/applications/orionx-mesh.desktop << 'DESKTOP_EOF'
 [Desktop Entry]
 Type=Application
-Name=Orion-X Mesh
-Comment=WireGuard P2P mesh management
-Exec=xfce4-terminal --hold -e "bash -c 'orionx-mesh; exec bash'"
-Icon=network-workgroup
+Name=Orion-X Mesh — Status
+Comment=Show this deck's WireGuard mesh: interface, peers, last handshakes
+Exec=xfce4-terminal --hold -e "bash -c 'sudo orionx-mesh status; exec bash'"
+Icon=orionx-mesh
 Categories=X-Orion;
 DESKTOP_EOF
 
@@ -206,7 +209,7 @@ Categories=X-Orion;
 DESKTOP_EOF
 
 # One-click mesh launcher — invokes the existing orionx-mesh entrypoint with sudo.
-# orionx user is in the sudo group (passwordless), so sudo works without a prompt.
+# live-config gives the live account NOPASSWD sudo, so there is no prompt.
 # The 'join' subcommand is the primary production use-case: bring up the mesh.
 cat > /usr/share/applications/orionx-start-mesh.desktop << 'DESKTOP_EOF'
 [Desktop Entry]
@@ -214,7 +217,7 @@ Type=Application
 Name=Orion-X — Start Mesh
 Comment=Start Orion-X WireGuard mesh (one-click)
 Exec=xfce4-terminal --hold -e "bash -c 'sudo orionx-mesh join; exec bash'"
-Icon=network-wireless
+Icon=orionx-mesh
 Categories=X-Orion;
 DESKTOP_EOF
 
@@ -226,13 +229,26 @@ DESKTOP_EOF
 # tab. This hook is the ONLY writer of this file — rc7 shipped the old entry
 # because a static copy in includes.chroot was edited while this heredoc
 # silently overwrote it at build time (two authorities). The static copy is gone.
+#
+# @decision DEC-PHASE12-127
+# @title Menu entries are named for what they open and carry their own glyph
+# @status accepted
+# @rationale QA round 1 (UX-09/UX-44) found "Orion Cockpit" and "Orion Cockpit
+#   — Tabs" side by side with one icon, the latter listing six tabs while it
+#   opens Network. The file name stays (the content-presence and hooks-applied
+#   gates follow it, and old habits find it), but the entry now says what it
+#   opens. The Cockpit entries use orionx-cockpit and the mesh entries
+#   orionx-mesh from the Orion-X-Icons theme, so the primary surfaces are no
+#   longer six copies of the Phoenix PNG. tests/unit/test_operator_surfaces.sh
+#   parses every shipped entry: unique Name, no retired surface names, Exec
+#   resolves, --tab matches the Name, icon SVG parses.
 cat > /usr/share/applications/orionx-control-center.desktop << 'DESKTOP_EOF'
 [Desktop Entry]
 Type=Application
-Name=Orion Cockpit — Tabs
-Comment=Mesh, Comms, Awareness, Orion Tools, Nebula AI and Auto-Healing — the Cockpit's tabs (the former Control Center)
+Name=Orion Cockpit — Network tab
+Comment=Open the Orion Cockpit on its Network tab; Mesh, Comms, Awareness, Orion Tools, Nebula AI and Auto-Healing are in the strip on the left
 Exec=/usr/bin/orionx-cockpit --tab network
-Icon=/usr/share/pixmaps/orionx.png
+Icon=orionx-cockpit
 Categories=X-Orion;
 DESKTOP_EOF
 
@@ -243,9 +259,9 @@ cat > /usr/share/applications/orionx-cockpit.desktop << 'DESKTOP_EOF'
 [Desktop Entry]
 Type=Application
 Name=Orion Cockpit
-Comment=Live cockpit — see and hear the cyber activity around you
+Comment=See and hear the cyber activity around you — live dashboard plus the Network, Mesh, Comms, Awareness, Orion Tools, Nebula AI and Auto-Healing tabs
 Exec=/usr/bin/orionx-cockpit
-Icon=/usr/share/pixmaps/orionx.png
+Icon=orionx-cockpit
 Categories=X-Orion;
 DESKTOP_EOF
 

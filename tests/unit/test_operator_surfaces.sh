@@ -92,5 +92,30 @@ if [[ $n_cmds -ge 1 ]]; then pass "README names download-samples.sh ($n_cmds lin
 else fail "README names download-samples.sh" "no command found to execute"; fi
 
 # ---------------------------------------------------------------------------
+section "Menu entries: named for what they open, no retired names, icons resolve (UX-09/41/42/44, docs F21/F22)"
+# ---------------------------------------------------------------------------
+# Collect every .desktop the image ships in /usr/share/applications: the
+# heredocs 0700 writes plus the static files in includes.chroot.
+APPS_DIR="$WORK/applications"; mkdir -p "$APPS_DIR"
+INC="$REPO_ROOT/iso/config/includes.chroot"
+H0700="$HOOKS/live/0700-orionx-setup.hook.chroot"
+while IFS= read -r target; do
+    heredoc_body "$H0700" "$target" > "$APPS_DIR/$(basename "$target")" \
+        || fail "extract $target" "heredoc not found"
+done < <(grep -oE 'cat > /usr/share/applications/[A-Za-z0-9._-]+\.desktop' "$H0700" | awk '{print $3}')
+cp "$INC"/usr/share/applications/*.desktop "$APPS_DIR/"
+# orionx-mesh's own command list (it refuses to run without root, so the
+# menu must use sudo and a real subcommand — a bare call prints an error).
+MESH_CMDS="$(ORIONX_SKIP_ROOT_CHECK=1 bash "$REPO_ROOT/scripts/mesh/orionx-mesh" help 2>/dev/null \
+    | awk '/^Commands:/{f=1;next} /^$/{f=0} f{print $1}' | tr '\n' ' ')"
+DESKTOP_REPORT="$(python3 "$SCRIPT_DIR/lib/check_desktop_entries.py" "$APPS_DIR" "$INC" "$H0700" \
+    "$REPO_ROOT/scripts/control_center/app.py" "$MESH_CMDS" "$INC/etc/xdg/autostart")"
+if [[ "$DESKTOP_REPORT" == OK* ]]; then
+    pass "menu + autostart entries: unique names, no retired names or jargon, Exec/Icon resolve (${DESKTOP_REPORT#OK })"
+else
+    while IFS= read -r l; do fail "menu entry" "${l#FAIL }"; done <<<"$DESKTOP_REPORT"
+fi
+
+# ---------------------------------------------------------------------------
 printf "\nResults: %d passed, %d failed\n" "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]]
