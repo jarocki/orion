@@ -18,11 +18,14 @@
 #   so a failure in one step does not prevent subsequent cleanup. Systemd
 #   units are stopped unconditionally (2>/dev/null) since they may or may
 #   not exist depending on the deployment mode.
+#
+#   DEC-PHASE12-097: the units stopped here are the SAME lists join starts
+#   (MESH_UNITS_* in mesh-lib.sh), and the counters cleared are in
+#   MESH_HEALTH_COUNTER_DIR (also mesh-lib.sh) — the directory mesh-health.sh
+#   actually writes. MESH_DISCOVER_PID_FILE likewise comes from mesh-lib.sh;
+#   the old re-default here to /var/run/orionx-mesh-discover.pid was dead.
 
 set -euo pipefail
-
-# PID file for the discovery listener process
-MESH_DISCOVER_PID_FILE="${MESH_DISCOVER_PID_FILE:-/var/run/orionx-mesh-discover.pid}"
 
 # =========================================================================
 # mesh_leave — Main leave function
@@ -43,23 +46,25 @@ mesh_leave() {
 
     mesh_log INFO "Leaving mesh network..."
 
-    # --- 2. Stop discovery listener ---
-    _mesh_leave_stop_discovery
+    # --- 2. Stop the mesh runtime units and any detached listener ---
+    _mesh_leave_stop_units
 
-    # --- 3. Stop health check ---
-    _mesh_leave_stop_health
-
-    # --- 4. Tear down interface ---
+    # --- 3. Tear down interface ---
     mesh_interface_down
 
-    # --- 5. Remove state file and health counters ---
+    # --- 4. Remove state file and health state ---
     rm -f "$MESH_STATE_FILE"
     mesh_snapshot_write 2>/dev/null || true     # DEC-PHASE12-059: snapshot now says inactive
     mesh_emit info service "left the mesh ($MESH_IFACE removed)" 2>/dev/null || true
-    rm -f /var/run/orionx-mesh-health-* 2>/dev/null
+    # Per-peer counters, the mesh-wide heal budget, escalation markers and the
+    # once-per-boot discovery announcement: a rejoin starts from a clean slate.
+    rm -f "$MESH_HEALTH_COUNTER_DIR"/orionx-mesh-health-* \
+          "$MESH_HEALTH_COUNTER_DIR"/orionx-mesh-heal-budget \
+          "$MESH_HEALTH_COUNTER_DIR"/orionx-mesh-escalated-* \
+          "$MESH_HEALTH_COUNTER_DIR"/orionx-mesh-discovery-announced 2>/dev/null || true
     mesh_log INFO "State file and health counters removed"
 
-    # --- 6. Print message ---
+    # --- 5. Print message ---
     echo "Left the mesh. Interface $MESH_IFACE removed."
 
     return 0
@@ -69,10 +74,8 @@ mesh_leave() {
 # Internal helpers
 # =========================================================================
 
-# Stop the discovery listener process.
-# Checks PID file first, then tries systemd units.
-_mesh_leave_stop_discovery() {
-    # Kill via PID file if it exists
+# Stop the listener (detached fallback via PID file) and every mesh unit.
+_mesh_leave_stop_units() {
     if [[ -f "$MESH_DISCOVER_PID_FILE" ]]; then
         local pid
         pid="$(cat "$MESH_DISCOVER_PID_FILE" 2>/dev/null || true)"
@@ -83,12 +86,10 @@ _mesh_leave_stop_discovery() {
         rm -f "$MESH_DISCOVER_PID_FILE"
     fi
 
-    # Also stop systemd units if they exist (covers systemd deployments)
-    # shellcheck disable=SC2086
-    systemctl stop orionx-mesh-discover.service orionx-mesh-discover.timer orionx-mesh-beacon.service 2>/dev/null || true
-}
-
-# Stop the health check timer/service.
-_mesh_leave_stop_health() {
-    systemctl stop orionx-mesh-health.timer orionx-mesh-health.service 2>/dev/null || true
+    local -a units a d o
+    read -r -a a <<< "$MESH_UNITS_ALWAYS"
+    read -r -a d <<< "$MESH_UNITS_DISCOVERY"
+    read -r -a o <<< "$MESH_UNITS_ONESHOT"
+    units=("${d[@]}" "${a[@]}" "${o[@]}")
+    mesh_units_stop "${units[@]}"
 }

@@ -67,6 +67,11 @@ Commands:
   peers    List connected peers
   leave    Leave the mesh network
   snapshot Write /run/orionx/mesh-status.json for the Cockpit (root; run by a timer)
+  psk      Optional team pre-shared key, exchanged out of band (USB stick):
+             psk generate <file>   write a new PSK to <file> (on ONE deck)
+             psk install <file>    install it (on EVERY deck, before join)
+             psk remove            go back to public-key-only peering
+             psk status            say whether a PSK is installed
   help     Show this help message
 
 Options:
@@ -177,6 +182,18 @@ cmd_snapshot() {
     mesh_snapshot_write
 }
 
+# DEC-PHASE12-098: the out-of-band team PSK exchange. Never automatic.
+cmd_psk() {
+    local action="${1:-status}"
+    case "$action" in
+        generate) mesh_psk_generate "${2:-}" ;;
+        install)  mesh_psk_install "${2:-}" ;;
+        remove)   mesh_psk_remove ;;
+        status)   if [[ -f "$MESH_PSK_FILE" ]]; then echo "Team PSK: installed ($MESH_PSK_FILE)"; else echo "Team PSK: none (peers authenticate by public key only)"; fi ;;
+        *) echo "ERROR: usage: orionx-mesh psk generate <file> | install <file> | remove | status" >&2; return 1 ;;
+    esac
+}
+
 cmd_join() {
     # shellcheck source=mesh-join.sh disable=SC1091
     source "$SCRIPT_DIR/mesh-join.sh"
@@ -254,6 +271,9 @@ main() {
             ;;
         snapshot)
             cmd_snapshot
+            ;;
+        psk)
+            cmd_psk "${SUBCOMMAND_ARGS[@]+"${SUBCOMMAND_ARGS[@]}"}"
             ;;
         help)
             usage

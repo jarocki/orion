@@ -102,7 +102,8 @@ source "$SCRIPT_DIR/mesh-lib.sh"
 # the mesh units' RuntimeDirectory (RuntimeDirectoryPreserve=yes, so it
 # survives a oneshot exit — without that the heal budget would reset every
 # 60 seconds and the bound would not be a bound).
-MESH_HEALTH_COUNTER_DIR="${MESH_HEALTH_COUNTER_DIR:-/run/orionx-mesh}"
+# MESH_HEALTH_COUNTER_DIR is defined in mesh-lib.sh (sourced above), so that
+# `orionx-mesh leave` clears the same directory this script writes.
 
 # Handshake staleness threshold in seconds (3 minutes).
 MESH_HANDSHAKE_STALE_SECS="${MESH_HANDSHAKE_STALE_SECS:-180}"
@@ -453,9 +454,9 @@ health_aggressive_heal() {
 # Discovery wiring — degrade loudly about a build defect we cannot fix here
 # =========================================================================
 
-# orionx-mesh-discover.timer sets Unit=orionx-mesh-beacon.service, but
-# orionx-mesh-beacon.service is absent from UNIT_FILES in
-# 0615-install-systemd-units.hook.chroot, so the timer fires at a unit that
+# History: orionx-mesh-discover.timer sets Unit=orionx-mesh-beacon.service, and
+# until DEC-PHASE12-041 orionx-mesh-beacon.service was absent from UNIT_FILES in
+# 0615-install-systemd-units.hook.chroot, so the timer fired at a unit that
 # does not exist; and because the timer names the beacon explicitly,
 # orionx-mesh-discover.service (the listener) is never triggered either.
 # Both halves of peer discovery are dead.
@@ -463,12 +464,23 @@ health_aggressive_heal() {
 # This check cannot repair that — the fix is in the build hook. What it can
 # do is make sure the operator is TOLD, exactly once per boot, instead of
 # wondering why no peer ever appears (rule 8).
+#
+# DEC-PHASE12-097: since join starts the listener unit, a dead listener is a
+# RUNTIME condition with a runtime remedy, not a build defect — so each cause
+# now carries its own remedy, and a pre-planned (--config) join, which by
+# design runs no listener and sends no beacon, is not reported at all.
 health_check_discovery() {
     local marker="$MESH_HEALTH_COUNTER_DIR/orionx-mesh-discovery-announced"
     local -a broken=()
+    local -a remedy=()
+
+    if [[ "$(mesh_state_read mode 2>/dev/null || true)" == "config" ]]; then
+        return 0
+    fi
 
     if [[ ! -f "$MESH_UNIT_DIR/orionx-mesh-beacon.service" ]]; then
         broken+=("orionx-mesh-beacon.service is not installed, so orionx-mesh-discover.timer activates a unit that does not exist and this deck never announces itself")
+        remedy+=("this is a build defect: add orionx-mesh-beacon.service to UNIT_FILES in 0615-install-systemd-units.hook.chroot and rebuild")
     fi
     # Assert the EFFECT — a live listener process — not systemd's opinion of
     # the unit. `systemctl is-active` would also drag a D-Bus connection to
@@ -479,6 +491,7 @@ health_check_discovery() {
     fi
     if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
         broken+=("no live discovery listener (nothing alive at $MESH_DISCOVER_PID_FILE), so beacons from other decks are ignored")
+        remedy+=("sudo systemctl start orionx-mesh-discover.service (or leave and rejoin the mesh)")
     fi
 
     if (( ${#broken[@]} == 0 )); then
@@ -494,7 +507,7 @@ health_check_discovery() {
     : > "$marker"
 
     mesh_emit warning health \
-        "Mesh peer discovery is NOT running: ${broken[*]}. Already-configured peers still work and health checking is unaffected, but no NEW peer will ever be found or informed. Remedy: add orionx-mesh-beacon.service to UNIT_FILES and orionx-mesh-discover.service to AUTOSTART_UNITS in 0615-install-systemd-units.hook.chroot, then rebuild. Check: systemctl list-timers orionx-mesh-discover.timer; systemctl status orionx-mesh-discover.service; ls $MESH_UNIT_DIR/orionx-mesh-*" \
+        "Mesh peer discovery is NOT running: ${broken[*]}. Already-configured peers still work and health checking is unaffected, but no NEW peer will ever be found or informed. Remedy: ${remedy[*]}. Check: systemctl list-timers orionx-mesh-discover.timer; systemctl status orionx-mesh-discover.service; ls $MESH_UNIT_DIR/orionx-mesh-*" \
         '{"reason":"discovery-not-wired"}' || true
     return 1
 }
