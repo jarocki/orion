@@ -28,7 +28,12 @@ grep -q '^GtkTheme=Orion-X-Cyberdeck-Green' "$TH/Orion-X-Cyberdeck-Green/index.t
 grep -q 'apply_wallpaper "\$theme"' "$T" && grep -q '"\$SET_WALLPAPER" "\$wp"' "$T" && pass "the toggle passes the theme's wallpaper to set-wallpaper.sh" || fail "wallpaper wiring" "set-wallpaper called without the theme image"
 grep -q 'WP="\${1:-\$_WP_DEFAULT}"' "$ROOT/scripts/set-wallpaper.sh" && pass "set-wallpaper.sh accepts the image as \$1" || fail "set-wallpaper arg" "no positional image"
 grep -q "n_bad backdrop(s) do not show" "$T" && pass "--status verifies every backdrop shows the theme wallpaper" || fail "status wallpaper" "missing"
-grep -q "toggle-theme.sh; exec xfce4-terminal --title 'Orion-X theme' --hold -e 'toggle-theme.sh --status'" "$ROOT/scripts/control_center/sections/ir.py" && pass "Cockpit button opens a NEW terminal with the report after toggling" || fail "cockpit button" "still detached with no window"
+( cd "$ROOT/scripts/control_center" && PYTHONDONTWRITEBYTECODE=1 python3 -c '
+import sys; sys.path.insert(0, ".")
+from helpers.tools_data import THEME_ARGV as a
+s = " ".join(a)
+assert a[:2] == ["sh", "-c"] and "toggle-theme.sh" in s and "--disable-server" in s and "toggle-theme.sh --status" in s
+' ) && pass "Cockpit button runs the toggle, then a NEW terminal process (new palette) showing --status" || fail "cockpit button" "THEME_ARGV does not open a separate terminal with --status"
 grep -q "DEC-PHASE12-058" "$T" && pass "decision annotated" || fail "DEC-PHASE12-058" "missing"
 echo "==========================================="; echo "Results: $PASS passed, $FAIL failed"; echo "==========================================="
 [[ $FAIL -eq 0 ]]

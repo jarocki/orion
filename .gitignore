@@ -84,3 +84,6 @@ DECISIONS.md
 decision-config-configurator.html
 docker_gordon_ai.html
 *.iso.OLD
+
+# Test fixtures are evidence, not runtime logs: track them (zeek suite needs them in a clean clone)
+!tests/fixtures/**/*.log

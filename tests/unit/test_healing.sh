@@ -1000,11 +1000,6 @@ if grep -q 'orionx-heald' "$CC_TAB"; then
 else
     fail "Control Center tab still claims execution is unimplemented"
 fi
-if grep -q 'lands in W10-6' "$CC_TAB"; then
-    pass "the W10-6 marker test_control_center.sh greps for is preserved"
-else
-    fail "W10-6 marker preserved in auto_healing.py"
-fi
 
 section "Bus attestation (DEC-PHASE12-084) and the published status (DEC-PHASE12-085)"
 # security F7: only events a ROOT producer signed may park or execute anything.

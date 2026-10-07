@@ -85,11 +85,11 @@ if grep -q "rain.json" "$AW" && grep -q "_build_rain_controls" "$AW"; then
 else
     fail "awareness.py R.A.I.N. controls" "missing controls or config path"
 fi
-# awareness.py must NOT import rain_lib (would drag in time/etc. past the allowlist)
-if grep -qE "^\s*import rain_lib|from .*rain_lib" "$AW"; then
-    fail "awareness.py stays within import allowlist" "imports rain_lib directly"
+# rain.json has ONE writer: awareness.py saves through rain_lib.save_config (python P2-5)
+if grep -q "rain_lib.save_config(" "$AW" && ! grep -qE "open\([^)]*rain\.json[^)]*['\"]w" "$AW"; then
+    pass "awareness.py writes rain.json only through rain_lib.save_config"
 else
-    pass "awareness.py does not import rain_lib (stays in allowlist)"
+    fail "rain.json single writer" "awareness.py writes rain.json itself"
 fi
 
 # ---------------------------------------------------------------------------

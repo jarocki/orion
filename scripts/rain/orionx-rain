@@ -344,9 +344,14 @@ def main(argv: list[str] | None = None) -> int:
         return speech_test()
     if args.test:
         # Test button: always audible, honour volume/voice but not enable/min.
+        # The Cockpit toasts this exit status, so a silent cue must not report success
+        # (UX-12, RESILIENCE rule 3).
         cfg = rain_lib.load_config()
-        rain_lib.play_cue(args.test, cfg)
-        return 0
+        if rain_lib.play_cue(args.test, cfg):
+            return 0
+        print(f"orionx-rain: no {args.test} cue played: no player, no tone file, or no audio device",
+              file=sys.stderr)
+        return 1
     if args.oneshot:
         return run_oneshot()
     return run_daemon()
