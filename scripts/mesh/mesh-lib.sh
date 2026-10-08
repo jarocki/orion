@@ -500,7 +500,13 @@ mesh_psk_remove() {
 # tests substitute MESH_SYSTEMCTL with a stub.
 mesh_systemd_available() {
     [[ "${MESH_FORCE_SYSTEMD:-0}" == "1" ]] && return 0
-    command -v "$MESH_SYSTEMCTL" >/dev/null 2>&1 && [[ -d /run/systemd/system ]]
+    command -v "$MESH_SYSTEMCTL" >/dev/null 2>&1 && [[ -d /run/systemd/system ]] || return 1
+    # A container can carry systemctl and /run/systemd/system without a running
+    # manager (the e2e suite does): then `systemctl start` fails and the join
+    # must fall back to the detached listener instead of reporting units.
+    local state
+    state="$("$MESH_SYSTEMCTL" is-system-running 2>/dev/null || true)"
+    [[ "$state" =~ ^(running|degraded|starting|initializing|maintenance)$ ]]
 }
 
 # Start each unit; print the ones that did not start. Returns non-zero if any failed.

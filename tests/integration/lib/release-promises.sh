@@ -128,8 +128,8 @@ assert_release_promises() {
         if chroot "$SQF" /opt/orionx/venv/forensics/bin/python -c 'import volatility3' >/dev/null 2>&1; then
             pass "37m: forensics venv python imports volatility3 (run in the image via chroot)"
         else fail "37m: forensics venv python imports volatility3" "chroot import failed"; fi
-    elif [[ -n "$volpkg" ]] && grep -q '^home = /usr/bin' "$SQF/opt/orionx/venv/forensics/pyvenv.cfg" 2>/dev/null; then
-        pass "37m: volatility3 package in the forensics venv site-packages, venv bound to /usr/bin python (not root: import not executed)"
+    elif [[ -n "$volpkg" ]] && grep -qE '^home = (/usr)?/bin$' "$SQF/opt/orionx/venv/forensics/pyvenv.cfg" 2>/dev/null; then
+        pass "37m: volatility3 package in the forensics venv site-packages, venv bound to the system python (/bin or /usr/bin on merged-usr; not root: import not executed)"
     else fail "37m: forensics venv can import volatility3" "no volatility3 package in the venv, or pyvenv.cfg not bound to /usr/bin"; fi
     _rp_exec 37n "tcpdump" /usr/bin/tcpdump
     _rp_exec 37n "binwalk" /usr/bin/binwalk
