@@ -104,5 +104,11 @@ grep -q 'ORIONX_RELEASE_GATE:-0}" == "1" && $SKIP -gt 0' "$GATE" && tpass "ORION
 grep -nE 'pass "[^"]*(skipped|informational only)' "$GATE" >/dev/null && tfail "PASS on missing evidence" "$(grep -nE 'pass "[^"]*(skipped|informational only)' "$GATE" | head -3)" \
     || tpass "no check records PASS for a skipped or 'informational' branch (F-05)"
 
+# The content-presence suite must source this library BEFORE the first section
+# that calls its helpers (v3.0.0 gate: sourced at section 37, used at 32).
+_cp="$REPO_ROOT/tests/integration/test-iso-content-presence.sh"
+_src_ln="$(grep -nE '^\. "\$SCRIPT_DIR/lib/release-promises.sh"' "$_cp" | head -1 | cut -d: -f1)"
+_use_ln="$(grep -nE 'sqf_resolve|dpkg_state|assert_release_promises' "$_cp" | grep -vE '^[0-9]+:\s*#' | grep -v 'release-promises.sh' | head -1 | cut -d: -f1)"
+if [[ -n "$_src_ln" && -n "$_use_ln" && "$_src_ln" -lt "$_use_ln" ]]; then pass "content-presence sources the helper library (line $_src_ln) before its first use (line $_use_ln)"; else fail "helper library sourced before use" "source=$_src_ln first use=$_use_ln"; fi
 echo; echo "Results: $T_PASS passed, $T_FAIL failed"
 [[ $T_FAIL -eq 0 ]]

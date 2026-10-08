@@ -194,6 +194,14 @@ echo "  Full extraction complete."
 
 SQF="$WORK/sqfs"
 
+# Image-reading helpers (sqf_resolve, dpkg_state, assert_release_promises).
+# Sourced HERE, before any section uses them: on the v3.0.0 gate run the
+# library was sourced only at section 37, so section 32's calls to
+# sqf_resolve/dpkg_state were "command not found" and four checks FAILED on
+# an image that had every one of those things (QA round 2).
+# shellcheck source=tests/integration/lib/release-promises.sh
+. "$SCRIPT_DIR/lib/release-promises.sh"
+
 # ===========================================================================
 # 2. Application scripts
 # ===========================================================================
@@ -3422,8 +3430,6 @@ else
 fi
 
 section "37. Release promises: README tools + rc5-rc9 deck fixes, in the image (DEC-PHASE12-119)"
-# shellcheck source=tests/integration/lib/release-promises.sh
-. "$SCRIPT_DIR/lib/release-promises.sh"
 assert_release_promises
 
 # ===========================================================================
