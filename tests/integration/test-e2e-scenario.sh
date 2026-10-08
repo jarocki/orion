@@ -595,7 +595,12 @@ step_2_verify_mesh() {
         # Determine whether the listener is actually running — if so this is the
         # known Docker/systemd beacon-timer race; otherwise it is a real failure.
         local listener_running=false
-        local pid_file="/var/run/orionx-mesh-discover.pid"
+        # One authority for the PID path: mesh-lib.sh's MESH_DISCOVER_PID_FILE
+        # (/run/orionx-mesh/orionx-mesh-discover.pid since DEC-PHASE12-095);
+        # the old /var/run/orionx-mesh-discover.pid literal here reported a live
+        # listener as dead and turned known issue #21 into a hard failure.
+        local pid_file
+        pid_file="$(run_on e2e-server bash -c 'source /opt/orionx/scripts/mesh/mesh-lib.sh 2>/dev/null; printf %s "${MESH_DISCOVER_PID_FILE:-/run/orionx-mesh/orionx-mesh-discover.pid}"' 2>/dev/null || echo /run/orionx-mesh/orionx-mesh-discover.pid)"
         local saved_pid
         saved_pid=$(run_on e2e-server cat "$pid_file" 2>/dev/null || true)
         if [[ -n "$saved_pid" ]] && run_on e2e-server kill -0 "$saved_pid" 2>/dev/null; then

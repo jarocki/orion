@@ -97,17 +97,18 @@ def _tool_version(tool: str) -> str:
             capture_output=True,
             text=True,
             timeout=10,
+            check=False,
         )
         first_line = (result.stdout or result.stderr or "unknown").splitlines()[0]
         return first_line.strip()
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort: a report step must not abort the run
         return "unknown"
 
 
 def build_custody_header(pcap_path: pathlib.Path, tool_versions: dict) -> str:
     """Return a chain-of-custody block for the top of every output file."""
     sha256 = _sha256(pcap_path)
-    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     hostname = _best_effort_hostname()
     lines = [
         "=" * 72,
@@ -136,7 +137,7 @@ def _sha256(path: pathlib.Path) -> str:
 def _best_effort_hostname() -> str:
     try:
         return socket.gethostname()
-    except Exception:
+    except Exception:  # noqa: BLE001 - best-effort: a report step must not abort the run
         return "unknown"
 
 
@@ -176,6 +177,7 @@ def run_tshark(args: list, pcap_path: pathlib.Path, timeout: int = 120) -> str:
             capture_output=True,
             text=True,
             timeout=timeout,
+            check=False,
         )
         if result.returncode != 0:
             stderr_snippet = result.stderr.strip()[:500] if result.stderr else ""
@@ -198,6 +200,7 @@ def run_tcpdump(pcap_path: pathlib.Path, max_packets: int = 200) -> str:
             capture_output=True,
             text=True,
             timeout=60,
+            check=False,
         )
         # tcpdump writes summaries to stderr; stdout may be empty
         output = result.stdout or result.stderr or ""
@@ -218,7 +221,7 @@ def resolve_output_dir(pcap_path: pathlib.Path, output_dir_arg: str | None) -> p
     if output_dir_arg:
         out = pathlib.Path(output_dir_arg).expanduser()
     else:
-        ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
         stem = pcap_path.stem
         out = pathlib.Path.home() / "Analysis" / f"{stem}-{ts}"
     out.mkdir(parents=True, exist_ok=True)
