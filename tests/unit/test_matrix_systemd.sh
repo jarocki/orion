@@ -30,10 +30,9 @@ else
 fi
 
 # Every live (non-comment) reference in shipped code/config names the package
-# unit. scripts/control_center is A1-owned and switched to matrix-synapse.service
-# on A1's branch; it is excluded here only until that merge (ledger-B1 handoff:
-# drop the --exclude-dir after merging A1).
-STALE="$(grep -rn --exclude-dir=control_center 'matrix-synapse-orionx' "$PROJECT_ROOT/scripts" "$INC" "$PROJECT_ROOT/iso/config/hooks" 2>/dev/null | grep -vE ':[0-9]+:[[:space:]]*#' || true)"
+# unit. git grep: tracked files only, so a local 1.8 GB model blob under
+# includes.chroot is not read on every run.
+STALE="$(git -C "$PROJECT_ROOT" grep -n 'matrix-synapse-orionx' -- scripts iso/config/includes.chroot iso/config/hooks 2>/dev/null | grep -vE ':[0-9]+:[[:space:]]*#' || true)"
 if [[ -z "$STALE" ]]; then
     pass "nothing shipped names matrix-synapse-orionx.service"
 else

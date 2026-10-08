@@ -60,6 +60,7 @@ import json
 import signal
 import os
 import socketserver
+import shutil
 import subprocess
 import sys
 import threading
@@ -1043,14 +1044,38 @@ def _sigterm(_signum, _frame):
     raise KeyboardInterrupt
 
 
+def browser_argv(url: str, which=shutil.which, runtime_dir: str | None = None) -> list[str]:
+    """How to open the Workbench. Pure.
+
+    @decision DEC-PHASE12-067
+    @title The Workbench opens in its own Firefox profile, never the OSINT one
+    @status accepted
+    @rationale Security F16/F3: the Workbench serves this deck's own alert
+      stream to the browser; opening it in the same profile the operator uses
+      to look at adversary pages gave a hostile page a same-browser path to
+      it (DNS rebinding was one). A dedicated profile under XDG_RUNTIME_DIR
+      (tmpfs on the deck, gone at reboot) keeps the two worlds apart without
+      touching the operator's browsing profile. xdg-open stays as the
+      fallback when firefox-esr is not installed.
+    """
+    ff = which("firefox-esr") or which("firefox")
+    if ff:
+        base = runtime_dir or os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/orionx-{os.getuid()}"
+        return [ff, "--no-remote", "--profile", os.path.join(base, "orionx-workbench"), url]
+    return ["xdg-open", url]
+
+
 def _open_browser(url: str) -> None:
     time.sleep(0.3)
-    # xdg-open first: it honours the desktop's default browser, which on this
-    # deck is firefox-esr. webbrowser is the fallback for a bare console.
+    argv = browser_argv(url)
     try:
-        if subprocess.call(["xdg-open", url],
-                           stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL) == 0:
+        if argv[0] != "xdg-open":
+            os.makedirs(os.path.dirname(argv[3]), exist_ok=True)
+            os.makedirs(argv[3], mode=0o700, exist_ok=True)
+            subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+            return
+        if subprocess.call(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0:
             return
     except OSError:
         pass

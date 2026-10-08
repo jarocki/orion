@@ -1126,6 +1126,14 @@ python3 "$SRC/godseye_hosts.py" --root "$TMP/gh" >/dev/null 2>&1; RC=$?
 [[ $RC -eq 1 ]] && pass "godseye_hosts: a stale inventory exits 1 in default mode" || fail "godseye_hosts default mode" "rc=$RC"
 
 printf "\n===========================================\n"
+# DEC-PHASE12-067: the Workbench opens in its own Firefox profile (tmpfs), never the OSINT one
+BA="$(cd "$REPO_ROOT/scripts/osint" && PYTHONDONTWRITEBYTECODE=1 python3 -c '
+import osint_server as S
+a = S.browser_argv("http://127.0.0.1:8765/", which=lambda n: "/usr/bin/firefox-esr" if n == "firefox-esr" else None, runtime_dir="/run/user/1000")
+assert a == ["/usr/bin/firefox-esr", "--no-remote", "--profile", "/run/user/1000/orionx-workbench", "http://127.0.0.1:8765/"], a
+assert S.browser_argv("u", which=lambda n: None) == ["xdg-open", "u"]
+print("ok")' 2>&1)"
+[[ "$BA" == ok ]] && pass "Workbench opens firefox-esr with its own --profile under XDG_RUNTIME_DIR (xdg-open fallback)" || fail "workbench browser profile" "$BA"
 printf "  Results: ${GREEN}%s passed${NC}, ${RED}%s failed${NC}\n" "$PASS" "$FAIL"
 printf "===========================================\n"
 [[ $FAIL -gt 0 ]] && exit 1
