@@ -30,17 +30,18 @@ Rationale:
 # different logs and artifacts. It generates a human-readable incident narrative
 # or an HTML report.
 
-import os
-import sys
 import argparse
-import logging
-import json
 import datetime
-import re
+import json
+import logging
+import os
 
 # Resilient logging (DEC-PHASE11-027): a forensic tool must NEVER crash because
 # the log dir is missing or unwritable (e.g. run as operator, dir root-owned).
 import os as _os
+import re
+import sys
+
 _log_handlers = [logging.StreamHandler(sys.stdout)]
 try:
     _os.makedirs("/var/log/orionx", exist_ok=True)
@@ -57,6 +58,10 @@ logger = logging.getLogger("orionx-storyboard-gen")
 # Timeline event class
 class TimelineEvent:
     def __init__(self, timestamp, source, description, severity="info", artifact_path=None):
+        # Timestamps compare and sort; a naive one (older parsers, tests) is taken as UTC
+        # so it never meets an aware one in __lt__ (TypeError).
+        if timestamp is not None and timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=datetime.timezone.utc)
         self.timestamp = timestamp
         self.source = source
         self.description = description
@@ -106,7 +111,9 @@ def parse_timestamp(timestamp_str):
     
     for fmt in formats:
         try:
-            return datetime.datetime.strptime(timestamp_str, fmt)
+            # Log lines carry no zone; treat them as UTC so they compare with the
+            # tz-aware clock used everywhere else in this tool (never mix naive/aware).
+            return datetime.datetime.strptime(timestamp_str, fmt).replace(tzinfo=datetime.timezone.utc)
         except ValueError:
             continue
     
@@ -123,7 +130,7 @@ def parse_timestamp(timestamp_str):
             return parse_timestamp(match.group(1))
     
     logger.warning(f"Could not parse timestamp: {timestamp_str}")
-    return datetime.datetime.now()  # Default to current time if parsing fails
+    return datetime.datetime.now(datetime.timezone.utc)  # Default to current time if parsing fails
 
 # Function to parse log file and extract events
 def parse_log_file(file_path, source_name=None):
@@ -204,17 +211,17 @@ def parse_generic_log(file_path, source_name):
                     # Try simpler timestamp formats
                     timestamp_match = re.search(r"(\w{3} \d{2} \d{2}:\d{2}:\d{2})", line)
                     if timestamp_match:
-                        current_year = datetime.datetime.now().year
+                        current_year = datetime.datetime.now(datetime.timezone.utc).year
                         timestamp_str = f"{timestamp_match.group(1)} {current_year}"
                         try:
-                            timestamp = datetime.datetime.strptime(timestamp_str, "%b %d %H:%M:%S %Y")
+                            timestamp = datetime.datetime.strptime(timestamp_str, "%b %d %H:%M:%S %Y").replace(tzinfo=datetime.timezone.utc)
                         except ValueError:
-                            timestamp = datetime.datetime.now()
+                            timestamp = datetime.datetime.now(datetime.timezone.utc)
 
                 if timestamp is None:
                     # If no timestamp found, use file modification time
                     file_time = os.path.getmtime(file_path)
-                    timestamp = datetime.datetime.fromtimestamp(file_time)
+                    timestamp = datetime.datetime.fromtimestamp(file_time, tz=datetime.timezone.utc)
 
                 # Determine severity
                 severity = "info"
@@ -232,7 +239,7 @@ def parse_generic_log(file_path, source_name):
                     artifact_path=file_path
                 )
                 events.append(event)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - best-effort: reported, never fatal
         logger.error(f"Error parsing generic log {file_path}: {e}")
 
     return events
@@ -287,7 +294,7 @@ def parse_csv_log(file_path, source_name):
                 except ValueError:
                     # @defprog-exempt: timestamp parse failure is non-fatal — fall back to mtime
                     file_time = os.path.getmtime(file_path)
-                    timestamp = datetime.datetime.fromtimestamp(file_time)
+                    timestamp = datetime.datetime.fromtimestamp(file_time, tz=datetime.timezone.utc)
 
                 description = row[desc_col]
 
@@ -307,7 +314,7 @@ def parse_csv_log(file_path, source_name):
                     artifact_path=file_path
                 )
                 events.append(event)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - best-effort: reported, never fatal
         logger.error(f"Error parsing CSV log {file_path}: {e}")
 
     return events
@@ -338,7 +345,7 @@ def parse_json_log(file_path, source_name):
                         events.extend(extract_events_from_json(entry, source_name, file_path))
                     except json.JSONDecodeError:
                         continue
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - best-effort: reported, never fatal
         logger.error(f"Error parsing JSON log {file_path}: {e}")
 
     return events
@@ -362,7 +369,7 @@ def extract_events_from_json(entry, source_name, file_path):
     if timestamp is None:
         # If no timestamp found, use file modification time
         file_time = os.path.getmtime(file_path)
-        timestamp = datetime.datetime.fromtimestamp(file_time)
+        timestamp = datetime.datetime.fromtimestamp(file_time, tz=datetime.timezone.utc)
 
     # Find message/description field
     description = None
@@ -446,7 +453,7 @@ def parse_xml_log(file_path, source_name):
             if timestamp is None:
                 # If no timestamp found, use file modification time
                 file_time = os.path.getmtime(file_path)
-                timestamp = datetime.datetime.fromtimestamp(file_time)
+                timestamp = datetime.datetime.fromtimestamp(file_time, tz=datetime.timezone.utc)
 
             # Find message/description
             description = None
@@ -483,7 +490,7 @@ def parse_xml_log(file_path, source_name):
                 artifact_path=file_path
             )
             events.append(event)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - best-effort: reported, never fatal
         logger.error(f"Error parsing XML log {file_path}: {e}")
 
     return events
@@ -572,7 +579,7 @@ def generate_html_report(timeline, case_info, output_file):
     # Fill in template
     html_content = html_template.format(
         case_name=case_info.get("case_name", "Incident Investigation"),
-        generation_date=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        generation_date=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
         case_id=case_info.get("case_id", "N/A"),
         analyst=case_info.get("analyst", "N/A"),
         date_range=date_range,
@@ -586,7 +593,7 @@ def generate_html_report(timeline, case_info, output_file):
             f.write(html_content)
         logger.info(f"HTML report successfully written to {output_file}")
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - best-effort: reported, never fatal
         logger.error(f"Error writing HTML report: {e}")
         return False
 
@@ -611,7 +618,7 @@ def generate_text_report(timeline, case_info, output_file):
             f.write("===============================================\n")
             f.write(f"INCIDENT TIMELINE: {case_info.get('case_name', 'Incident Investigation')}\n")
             f.write("===============================================\n")
-            f.write(f"Generated by Orion-X Phoenix Edition v1.5.5 on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            f.write(f"Generated by Orion-X Phoenix Edition v1.5.5 on {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
             # Write case info
             f.write("CASE INFORMATION\n")
@@ -637,7 +644,7 @@ def generate_text_report(timeline, case_info, output_file):
 
         logger.info(f"Text report successfully written to {output_file}")
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 - best-effort: reported, never fatal
         logger.error(f"Error writing text report: {e}")
         return False
 
@@ -647,7 +654,7 @@ def main():
     parser.add_argument("-o", "--output", help="Output file for the report", required=True)
     parser.add_argument("-f", "--format", help="Output format (html or text)", choices=["html", "text"], default="html")
     parser.add_argument("-c", "--case-name", help="Case name", default="Incident Investigation")
-    parser.add_argument("-id", "--case-id", help="Case ID", default=f"ORIONX-{datetime.datetime.now().strftime('%Y%m%d')}")
+    parser.add_argument("-id", "--case-id", help="Case ID", default=f"ORIONX-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d')}")
     parser.add_argument("-a", "--analyst", help="Analyst name", default=os.environ.get("USER", "Unknown"))
     args = parser.parse_args()
 

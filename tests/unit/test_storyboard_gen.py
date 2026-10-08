@@ -80,19 +80,19 @@ class TestParseTimestamp(unittest.TestCase):
 
     def test_iso8601_space(self):
         result = storyboard.parse_timestamp("2025-01-15 08:23:01")
-        self.assertEqual(result, datetime.datetime(2025, 1, 15, 8, 23, 1))
+        self.assertEqual(result, datetime.datetime(2025, 1, 15, 8, 23, 1, tzinfo=datetime.timezone.utc))
 
     def test_iso8601_t_separator(self):
         result = storyboard.parse_timestamp("2025-01-15T08:23:01")
-        self.assertEqual(result, datetime.datetime(2025, 1, 15, 8, 23, 1))
+        self.assertEqual(result, datetime.datetime(2025, 1, 15, 8, 23, 1, tzinfo=datetime.timezone.utc))
 
     def test_slash_format(self):
         result = storyboard.parse_timestamp("2025/01/15 08:23:01")
-        self.assertEqual(result, datetime.datetime(2025, 1, 15, 8, 23, 1))
+        self.assertEqual(result, datetime.datetime(2025, 1, 15, 8, 23, 1, tzinfo=datetime.timezone.utc))
 
     def test_apache_format(self):
         result = storyboard.parse_timestamp("15/Jan/2025:08:23:01")
-        self.assertEqual(result, datetime.datetime(2025, 1, 15, 8, 23, 1))
+        self.assertEqual(result, datetime.datetime(2025, 1, 15, 8, 23, 1, tzinfo=datetime.timezone.utc))
 
     def test_syslog_format(self):
         """Syslog timestamps lack a year — parse_timestamp returns year 1900."""
@@ -105,18 +105,18 @@ class TestParseTimestamp(unittest.TestCase):
 
     def test_generic_datetime(self):
         result = storyboard.parse_timestamp("15 Jan 2025 08:23:01")
-        self.assertEqual(result, datetime.datetime(2025, 1, 15, 8, 23, 1))
+        self.assertEqual(result, datetime.datetime(2025, 1, 15, 8, 23, 1, tzinfo=datetime.timezone.utc))
 
     def test_embedded_timestamp_extracted(self):
         """A string with extra text around an ISO timestamp should still parse."""
         result = storyboard.parse_timestamp("prefix 2025-01-15 08:23:01 suffix")
-        self.assertEqual(result, datetime.datetime(2025, 1, 15, 8, 23, 1))
+        self.assertEqual(result, datetime.datetime(2025, 1, 15, 8, 23, 1, tzinfo=datetime.timezone.utc))
 
     def test_unparseable_returns_now(self):
         """Totally unparseable text falls back to datetime.now()."""
-        before = datetime.datetime.now()
+        before = datetime.datetime.now(datetime.timezone.utc)
         result = storyboard.parse_timestamp("not-a-timestamp-at-all")
-        after = datetime.datetime.now()
+        after = datetime.datetime.now(datetime.timezone.utc)
         # The fallback is datetime.now() — result should be between before and after
         self.assertGreaterEqual(result, before)
         self.assertLessEqual(result, after)
@@ -129,7 +129,7 @@ class TestTimelineEvent(unittest.TestCase):
 
     def _make_event(self, **overrides):
         defaults = dict(
-            timestamp=datetime.datetime(2025, 1, 15, 8, 23, 1),
+            timestamp=datetime.datetime(2025, 1, 15, 8, 23, 1, tzinfo=datetime.timezone.utc),
             source="sshd",
             description="Accepted publickey for admin",
             severity="INFO",
@@ -369,7 +369,7 @@ class TestGenerateHtmlReport(unittest.TestCase):
     def setUp(self):
         self.timeline = storyboard.Timeline()
         self.timeline.add_event(storyboard.TimelineEvent(
-            timestamp=datetime.datetime(2025, 1, 15, 8, 23, 1),
+            timestamp=datetime.datetime(2025, 1, 15, 8, 23, 1, tzinfo=datetime.timezone.utc),
             source="sshd",
             description="Accepted publickey for admin",
             severity="INFO",
@@ -465,7 +465,7 @@ class TestGenerateTextReport(unittest.TestCase):
     def setUp(self):
         self.timeline = storyboard.Timeline()
         self.timeline.add_event(storyboard.TimelineEvent(
-            timestamp=datetime.datetime(2025, 1, 15, 8, 23, 1),
+            timestamp=datetime.datetime(2025, 1, 15, 8, 23, 1, tzinfo=datetime.timezone.utc),
             source="sshd",
             description="Accepted publickey for admin",
             severity="INFO",
