@@ -4,7 +4,7 @@
 scenes:
   - id: desktop
     setup:
-      - "pkill -f '^python3 /usr/bin/orionx-cockpit'; pkill -x xfce4-terminal; pkill -f '^/usr/lib/firefox-esr/firefox-esr'; true"
+      - "pkill -f '^python3 /usr/bin/orionx-cockpit'; pkill -x xfce4-terminal; pkill -9 -u orionx-operator -f '[f]irefox'; pkill -9 -u orionx-operator -f '[c]rashhelper'; true"
     settle: 3
     record: 7
     actions:
@@ -65,7 +65,9 @@ scenes:
     teardown: ["pkill -f '^python3 /usr/bin/orionx-cockpit'; true"]
 
   - id: defense
-    setup: ["(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"]
+    setup:
+      - "for w in $(xdotool search --classname Navigator 2>/dev/null); do kill -9 $(xdotool getwindowpid $w 2>/dev/null) 2>/dev/null; done; pkill -9 -u orionx-operator -f '[f]irefox'; pkill -9 -u orionx-operator -f '[x]-www-browser'; pkill -9 -u orionx-operator -f '[c]rashhelper'; sleep 1; true"   # the terminal is translucent: nothing may sit behind it (Firefox may run as x-www-browser)
+      - "(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"
     settle: 4
     record: 30
     actions:
@@ -78,7 +80,9 @@ scenes:
     teardown: ["pkill -x xfce4-terminal; true"]
 
   - id: forensics-pcap
-    setup: ["(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"]
+    setup:
+      - "for w in $(xdotool search --classname Navigator 2>/dev/null); do kill -9 $(xdotool getwindowpid $w 2>/dev/null) 2>/dev/null; done; pkill -9 -u orionx-operator -f '[f]irefox'; pkill -9 -u orionx-operator -f '[x]-www-browser'; pkill -9 -u orionx-operator -f '[c]rashhelper'; sleep 1; true"   # the terminal is translucent: nothing may sit behind it (Firefox may run as x-www-browser)
+      - "(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"
     settle: 4
     record: 24
     actions:
@@ -89,7 +93,9 @@ scenes:
     teardown: ["pkill -x xfce4-terminal; true"]
 
   - id: forensics-memory
-    setup: ["(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"]
+    setup:
+      - "for w in $(xdotool search --classname Navigator 2>/dev/null); do kill -9 $(xdotool getwindowpid $w 2>/dev/null) 2>/dev/null; done; pkill -9 -u orionx-operator -f '[f]irefox'; pkill -9 -u orionx-operator -f '[x]-www-browser'; pkill -9 -u orionx-operator -f '[c]rashhelper'; sleep 1; true"   # the terminal is translucent: nothing may sit behind it (Firefox may run as x-www-browser)
+      - "(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"
     settle: 4
     record: 22
     actions:
@@ -100,7 +106,9 @@ scenes:
     teardown: ["pkill -x xfce4-terminal; true"]
 
   - id: forensics-yara
-    setup: ["(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"]
+    setup:
+      - "for w in $(xdotool search --classname Navigator 2>/dev/null); do kill -9 $(xdotool getwindowpid $w 2>/dev/null) 2>/dev/null; done; pkill -9 -u orionx-operator -f '[f]irefox'; pkill -9 -u orionx-operator -f '[x]-www-browser'; pkill -9 -u orionx-operator -f '[c]rashhelper'; sleep 1; true"   # the terminal is translucent: nothing may sit behind it (Firefox may run as x-www-browser)
+      - "(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"
     settle: 4
     record: 26
     actions:
@@ -111,7 +119,9 @@ scenes:
     teardown: ["pkill -x xfce4-terminal; true"]
 
   - id: nebula-status
-    setup: ["(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"]
+    setup:
+      - "for w in $(xdotool search --classname Navigator 2>/dev/null); do kill -9 $(xdotool getwindowpid $w 2>/dev/null) 2>/dev/null; done; pkill -9 -u orionx-operator -f '[f]irefox'; pkill -9 -u orionx-operator -f '[x]-www-browser'; pkill -9 -u orionx-operator -f '[c]rashhelper'; sleep 1; true"   # the terminal is translucent: nothing may sit behind it (Firefox may run as x-www-browser)
+      - "(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"
     settle: 4
     record: 16
     actions:
@@ -153,7 +163,7 @@ scenes:
     setup: ["(setsid ap web >/tmp/ap.log 2>&1 &); sleep 1"]
     settle: 18
     record: 12
-    teardown: ["pkill -f '^/usr/lib/firefox-esr/firefox-esr'; pkill -f '^python3 .*pivotglass'; true"]
+    teardown: ["pkill -9 -u orionx-operator -f '[f]irefox'; pkill -9 -u orionx-operator -f '[c]rashhelper'; pkill -f '^python3 .*pivotglass'; true"]
 
   - id: x-rain
     # Narration is opt-in on the deck; the operator turns it on (Awareness tab
