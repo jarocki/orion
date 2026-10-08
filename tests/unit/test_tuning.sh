@@ -213,5 +213,14 @@ grep -q 'self._tune_selected("squelch" if name == "s" else "tune")' "$CK" && pas
 grep -q '\[s\] squelch this signature' "$CK" && pass "drill-down shows the two keys for tunable events" || fail "footer" "missing"
 grep -q 'tag = "SELF "' "$CK" && pass "stream row tags SELF events" || fail "SELF tag" "missing"
 PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/orionx-pycache" python3 -m py_compile "$CK" "$ROOT/scripts/cockpit/cockpit_lib.py" 2>/dev/null && pass "cockpit compiles" || fail "cockpit compiles" "syntax"
+# --ttl accepts seconds or m/h/d suffixes and explains a bad value (QA round 2, L-12)
+_tt="$(cd "$ROOT/scripts/awareness" && PYTHONDONTWRITEBYTECODE=1 python3 -c '
+import argparse
+from importlib.machinery import SourceFileLoader
+m = SourceFileLoader("ot", "orionx-tune").load_module()
+assert (m.ttl_seconds("1800"), m.ttl_seconds("30m"), m.ttl_seconds("2h"), m.ttl_seconds("1d")) == (1800, 1800, 7200, 86400)
+try: m.ttl_seconds("30 minutes"); print("bad")
+except argparse.ArgumentTypeError as e: print("ok" if "30m" in str(e) else "msg")' 2>&1)"
+[[ "$_tt" == ok ]] && pass "orionx-tune --ttl takes seconds or 30m/2h/1d and names the accepted forms on a bad value" || fail "--ttl parsing" "$_tt"
 echo "==========================================="; echo "Results: $PASS passed, $FAIL failed"; echo "==========================================="
 [[ $FAIL -eq 0 ]]

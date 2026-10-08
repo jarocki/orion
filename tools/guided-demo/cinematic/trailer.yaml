@@ -203,8 +203,8 @@ shots:
   - id: artifact
     kind: capture
     scene: forensics-yara
-    window: [0.2, 1.0]
-    dur: 4.0
+    window: [0.15, 1.0]
+    dur: 5.0
     zoom: {from: [0, 0, 0.8, 0.8], to: [0, 0, 0.62, 0.62]}
     music: {intensity: 0.85}
 
@@ -253,7 +253,7 @@ shots:
   - id: cyberchef
     kind: capture
     scene: cyberchef
-    window: [0.3, 1.0]
+    window: [0.6, 1.0]
     dur: 3.5
     zoom: {from: [0, 0, 1, 1], to: [0.1, 0.1, 0.8, 0.8]}
     music: {intensity: 0.92}

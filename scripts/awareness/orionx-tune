@@ -137,6 +137,22 @@ def cmd_status(_args: argparse.Namespace) -> int:
     return 0
 
 
+def ttl_seconds(text: str) -> float:
+    """'1800', '30m', '2h', '1d' -> seconds. argparse type; a bad value says what is accepted."""
+    import argparse
+    s = str(text).strip().lower()
+    mult = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    unit = s[-1] if s and s[-1] in mult else ""
+    num = s[:-1] if unit else s
+    try:
+        v = float(num) * mult.get(unit, 1)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r}: give seconds, or a number with m, h or d (e.g. 30m)") from None
+    if v <= 0:
+        raise argparse.ArgumentTypeError("ttl must be positive")
+    return v
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="orionx-tune", description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -149,7 +165,8 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--signature", help="human name, recorded with the rule")
         p.add_argument("--reason", help="why (recorded with the rule)")
         if name == "squelch":
-            p.add_argument("--ttl", type=float, help=f"seconds (default {int(T.DEFAULT_SQUELCH_SECONDS)})")
+            p.add_argument("--ttl", type=ttl_seconds, metavar="SECONDS|30m|2h|1d",
+                           help=f"how long (seconds, or a number with m/h/d; default {int(T.DEFAULT_SQUELCH_SECONDS)} s)")
         else:
             p.set_defaults(ttl=None)
     sub.add_parser("list")

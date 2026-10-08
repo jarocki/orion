@@ -69,7 +69,7 @@ scenes:
     settle: 4
     record: 30
     actions:
-      - {at: 1.0, type: "orionx-tune squelch --sid 2010937 --src 172.17.0.1 --ttl 30m --reason 'own scanner'"}
+      - {at: 1.0, type: "orionx-tune squelch --sid 2010937 --src 172.17.0.1 --ttl 1800 --reason 'own scanner'"}
       - {at: 7.5, key: Return}
       - {at: 12.0, type: "orionx-tune list"}
       - {at: 13.5, key: Return}
@@ -102,10 +102,12 @@ scenes:
   - id: forensics-yara
     setup: ["(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"]
     settle: 4
-    record: 18
+    record: 26
     actions:
-      - {at: 1.0, type: "artifact-analyzer.py ~/Analysis/firmware/synthetic-firmware.bin 2>&1 | head -45"}
-      - {at: 5.5, key: Return}
+      - {at: 1.0, type: "binwalk ~/Analysis/firmware/synthetic-firmware.bin 2>&1 | head -14; strings -n 8 ~/Analysis/firmware/synthetic-firmware.bin | head -8"}
+      - {at: 6.0, key: Return}
+      - {at: 11.0, type: "clear; artifact-analyzer.py ~/Analysis/logs/synthetic-syslog.log 2>&1 | tail -25"}
+      - {at: 14.5, key: Return}
     teardown: ["pkill -x xfce4-terminal; true"]
 
   - id: nebula-status
