@@ -54,7 +54,7 @@ shots:
   - id: config
     kind: capture
     scene: config
-    window: [0.0, 1.0]
+    window: [0.02, 0.62]
     dur: 8.0
     zoom: {from: [0.0, 0.25, 0.75, 0.75], to: [0.0, 0.35, 0.6, 0.6]}
     chapter: "CONFIGURE"
@@ -248,7 +248,7 @@ shots:
     dur: 5.0
     zoom: {from: [0, 0, 1, 1], to: [0.15, 0.12, 0.7, 0.7]}
     music: {intensity: 0.92}
-    narration: "GODSEYE puts infrastructure on the globe."
+    narration: "GODSEYE will not reach out until the deck says it can."
 
   - id: cyberchef
     kind: capture

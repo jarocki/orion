@@ -122,7 +122,7 @@ scenes:
     settle: 25
     record: 10
     actions:
-      - {at: 0.2, sh: "xdotool search --name 'apt_malware_traffic' windowactivate --sync key --clearmodifiers alt+F10; true"}
+      - {at: 0.2, sh: "w=$(xdotool search --name 'apt_malware_traffic' | tail -1); [ -n \"$w\" ] && xdotool windowactivate --sync $w windowmove $w 0 30 windowsize $w 1920 1050; true"}
       - {at: 2.0, click: [700, 260]}
       - {at: 5.0, key: Down}
       - {at: 5.6, key: Down}
@@ -131,7 +131,7 @@ scenes:
 
   - id: workbench
     setup: ["(setsid orionx-osint >/tmp/osint.log 2>&1 &); sleep 1"]
-    settle: 22
+    settle: 40
     record: 12
     actions:
       - {at: 4.0, sh: "xdotool key --delay 200 End; true"}
