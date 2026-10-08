@@ -78,8 +78,12 @@ jobs:
               apt-get update -q
               apt-get install -y -q --no-install-recommends \
                 live-build debootstrap xorriso isolinux \
-                ca-certificates wget gnupg python3 \
+                ca-certificates wget gnupg python3 git \
                 squashfs-tools rsync cpio
+              # The workspace is owned by the runner uid, not root: without this
+              # git refuses it ("dubious ownership") and /etc/orionx-version
+              # bakes GIT_HEAD_SHA=unknown (content-presence 31b/34g).
+              git config --global --add safe.directory /workspace
               bash scripts/build-iso.sh
             ' 2>&1 | tee tmp/release-build-iso.log
 

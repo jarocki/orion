@@ -27,14 +27,14 @@ Rationale:
 # This script automates the analysis of collected artifacts (network captures,
 # memory dumps, disk images, etc.) to speed up the responder's workflow.
 
-import os
-import sys
 import argparse
-import subprocess
-import logging
-import hashlib
 import datetime
+import hashlib
+import logging
+import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 # @decision DEC-PHASE11-016 self-heal log dir at import time — /var/log/orionx
@@ -151,7 +151,7 @@ def check_tools_availability(tools):
     """Check if required tools are installed."""
     missing_tools = []
     
-    for tool, info in tools.items():
+    for info in tools.values():
         cmd = info["cmd"]
         if shutil.which(cmd) is None:
             missing_tools.append(cmd)
@@ -199,7 +199,7 @@ def analyze_memory_dump(filename, output_dir):
     summary_file = os.path.join(output_dir, "memory_analysis_summary.txt")
     with open(summary_file, "w") as f:
         f.write(f"Memory Analysis Summary for {os.path.basename(filename)}\n")
-        f.write(f"Generated on: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write(f"Generated on: {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}\n\n")
         
         # Process results
         if os.path.exists(os.path.join(vol_output_dir, "pslist.txt")):
@@ -276,7 +276,7 @@ def analyze_network_capture(filename, output_dir):
     summary_file = os.path.join(output_dir, "network_analysis_summary.txt")
     with open(summary_file, "w") as f:
         f.write(f"Network Analysis Summary for {os.path.basename(filename)}\n")
-        f.write(f"Generated on: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write(f"Generated on: {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}\n\n")
         
         # Extract interesting traffic
         f.write("== HTTP Traffic ==\n")
@@ -356,7 +356,7 @@ def analyze_disk_image(filename, output_dir):
     summary_file = os.path.join(output_dir, "disk_analysis_summary.txt")
     with open(summary_file, "w") as f:
         f.write(f"Disk Analysis Summary for {os.path.basename(filename)}\n")
-        f.write(f"Generated on: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write(f"Generated on: {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}\n\n")
         
         # Summarize recovered files
         tsk_output_dir = os.path.join(disk_output_dir, "recovered_files")
@@ -373,19 +373,22 @@ def analyze_disk_image(filename, output_dir):
             # Check for email addresses
             email_file = os.path.join(bulk_output_dir, "email.txt")
             if os.path.exists(email_file):
-                email_count = sum(1 for _ in open(email_file)) - 1  # Subtract header line
+                with open(email_file) as fh:
+                    email_count = sum(1 for _ in fh) - 1  # Subtract header line
                 f.write(f"  Email addresses found: {email_count}\n")
             
             # Check for credit card numbers
             ccn_file = os.path.join(bulk_output_dir, "ccn.txt")
             if os.path.exists(ccn_file):
-                ccn_count = sum(1 for _ in open(ccn_file)) - 1  # Subtract header line
+                with open(ccn_file) as fh:
+                    ccn_count = sum(1 for _ in fh) - 1  # Subtract header line
                 f.write(f"  Credit card numbers found: {ccn_count}\n")
             
             # Check for URLs
             url_file = os.path.join(bulk_output_dir, "url.txt")
             if os.path.exists(url_file):
-                url_count = sum(1 for _ in open(url_file)) - 1  # Subtract header line
+                with open(url_file) as fh:
+                    url_count = sum(1 for _ in fh) - 1  # Subtract header line
                 f.write(f"  URLs found: {url_count}\n")
             
             f.write("\n")
@@ -414,9 +417,9 @@ def analyze_log_file(filename, output_dir):
             try:
                 result = subprocess.run(
                     ["grep", "-i", pattern, filename],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True
+                    capture_output=True,
+                    text=True,
+                    check=False,
                 )
                 
                 if result.stdout:
@@ -445,8 +448,8 @@ def generate_chain_of_custody(filename, artifact_type, output_dir):
     with open(custody_file, "w") as f:
         f.write("CHAIN OF CUSTODY DOCUMENT\n")
         f.write("=========================\n\n")
-        f.write(f"Case ID: ORIONX-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}\n")
-        f.write(f"Date of Acquisition: {datetime.datetime.fromtimestamp(file_stat.st_ctime).strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Case ID: ORIONX-{datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M%S')}\n")
+        f.write(f"Date of Acquisition: {datetime.datetime.fromtimestamp(file_stat.st_ctime, tz=datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"Analyst: {os.environ.get('USER', 'unknown')}\n\n")
         
         f.write("ARTIFACT DETAILS\n")
@@ -458,7 +461,7 @@ def generate_chain_of_custody(filename, artifact_type, output_dir):
         
         f.write("CUSTODY CHAIN\n")
         f.write("=============\n")
-        f.write(f"1. {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Initial analysis by {os.environ.get('USER', 'unknown')}\n")
+        f.write(f"1. {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} - Initial analysis by {os.environ.get('USER', 'unknown')}\n")
         f.write("   Orion-X Phoenix Edition v1.5.5 Artifact Analyzer\n\n")
         
         f.write("ANALYSIS SUMMARY\n")
