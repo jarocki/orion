@@ -90,6 +90,30 @@ def run_action(item: dict) -> dict | None:
     return {"label": "Run", "how": how, "argv": argv, "example": ""}
 
 
+def workbench_state(run=None) -> dict:
+    """What `orionx-osint --status --json` says: {'running': bool, 'url': str, 'pid': int|None, 'note': str}.
+
+    rc 3 means not running (A2's contract); anything else is reported, not guessed
+    (UX-25, Cockpit half).
+    """
+    import json
+    import subprocess
+    try:
+        r = (run or subprocess.run)(["orionx-osint", "--status", "--json"], capture_output=True, text=True, timeout=5, check=False)
+    except FileNotFoundError:
+        return {"running": False, "url": "", "pid": None, "note": "orionx-osint is not on this deck"}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"running": False, "url": "", "pid": None, "note": f"could not ask orionx-osint: {exc}"}
+    if r.returncode == 3:
+        return {"running": False, "url": "", "pid": None, "note": "not running — opens on first use"}
+    try:
+        d = json.loads(r.stdout or "{}")
+    except ValueError:
+        return {"running": False, "url": "", "pid": None, "note": f"orionx-osint --status returned rc {r.returncode}: {(r.stderr or r.stdout or '').strip()[:80]}"}
+    return {"running": bool(d.get("running")), "url": str(d.get("url", "")), "pid": d.get("pid"),
+            "note": f"running at {d.get('url', '?')} (pid {d.get('pid', '?')})" if d.get("running") else "not running"}
+
+
 def launch_argv(item: dict) -> tuple[str, list[str]]:
     """('terminal'|'detached', argv) for a local catalogue entry."""
     kind = str(item.get("kind", "command"))

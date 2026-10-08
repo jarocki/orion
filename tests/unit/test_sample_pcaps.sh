@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The shipped training capture (DEC-PHASE12-066): a real, deterministic,
+# The shipped training capture (DEC-PHASE12-141): a real, deterministic,
 # synthetic pcap — never again a text placeholder named like APT traffic.
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

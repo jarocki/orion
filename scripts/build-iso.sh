@@ -1093,6 +1093,12 @@ label live
     initrd /live/initrd.img
     append $bootappend
 
+label live-noquestions
+    menu label Orion-X Live (no questions)
+    kernel /live/vmlinuz
+    initrd /live/initrd.img
+    append $bootappend orionx.wizard=0
+
 label live-failsafe
     menu label Orion-X Live (failsafe)
     kernel /live/vmlinuz

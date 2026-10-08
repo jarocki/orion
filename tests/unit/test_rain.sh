@@ -160,6 +160,13 @@ fi
 
 # ---------------------------------------------------------------------------
 printf "\n===========================================\n"
+# UX-12 (A2 handoff, lead 828f970): --test must exit non-zero when no cue played,
+# because the Cockpit toasts that exit status. Run with an empty PATH so no
+# player exists; the old code returned 0 regardless.
+_rt="$(mktemp -d)"; mkdir -p "$_rt/bin"; ln -s "$(command -v python3)" "$_rt/bin/python3"
+_out="$(cd "$REPO_ROOT/scripts/rain" && HOME="$_rt" PATH="$_rt/bin" PYTHONDONTWRITEBYTECODE=1 python3 orionx-rain --test warning 2>&1)"; _rc=$?
+if [[ $_rc -ne 0 && "$_out" == *"no warning cue played"* ]]; then pass "orionx-rain --test exits non-zero and says why when nothing could play (rc=$_rc)"; else fail "orionx-rain --test honesty" "rc=$_rc out=$_out"; fi
+rm -rf "$_rt"
 printf "  Results: ${GREEN}%d passed${NC}, ${RED}%d failed${NC}\n" "$PASS" "$FAIL"
 printf "===========================================\n"
 [[ $FAIL -eq 0 ]]

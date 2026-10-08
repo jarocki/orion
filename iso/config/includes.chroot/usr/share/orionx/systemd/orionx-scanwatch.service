@@ -11,7 +11,8 @@
 [Unit]
 Description=Orion-X Port Scan Watch (nftables drop log -> R.A.I.N.)
 Documentation=man:nft(8)
-After=orionx-firewall.service systemd-journald.service
+# After heald: it creates the bus-signing key, so scanwatch's first events are signed (QA round 2, P3-2).
+After=orionx-firewall.service systemd-journald.service orionx-heald.service
 Wants=orionx-firewall.service
 
 [Service]

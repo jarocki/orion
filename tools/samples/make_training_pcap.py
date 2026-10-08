@@ -26,7 +26,7 @@ The story, in order (times are seconds from the first packet):
 Re-running produces a byte-identical file (fixed seed, fixed epoch); a unit
 test regenerates it and compares.
 
-@decision DEC-PHASE12-066
+@decision DEC-PHASE12-141
 @title The APT training capture is synthesised from a script, not shipped as a placeholder
 @status accepted
 @rationale Through v2.2.0-rc9 the file named apt_malware_traffic.pcap was a

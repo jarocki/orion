@@ -78,7 +78,8 @@ DRY_RUN="${ORIONX_MATRIX_DRY_RUN:-0}"
 # Paths (overridable for tests; the defaults are the deck's).
 LOGFILE="${ORIONX_MATRIX_LOGFILE:-/var/log/orionx/matrix_setup.log}"
 CONFIG_DIR="${ORIONX_MATRIX_CONFIG_DIR:-/etc/matrix-synapse}"
-ORIONX_CONF="$CONFIG_DIR/conf.d/orionx.yaml"
+ORIONX_CONF="$CONFIG_DIR/conf.d/orionx.yaml"            # the listener: 0644, the Cockpit reads it as the operator
+ORIONX_SECRET_CONF="$CONFIG_DIR/conf.d/orionx-secret.yaml" # registration_shared_secret: 0640 root:matrix-synapse
 CLIENT_CONFIG_DIR="${ORIONX_MATRIX_CLIENT_DIR:-/etc/element-desktop}"
 DESKTOP_FILE="${ORIONX_MATRIX_DESKTOP_FILE:-/usr/share/applications/orionx-matrix.desktop}"
 INSTALLER_LIB="${ORIONX_INSTALLER_LIB:-/opt/orionx/optional/lib/orionx-installer-common.sh}"
@@ -375,11 +376,22 @@ write_orionx_conf() {
     for b in "$@"; do binds+="${binds:+, }'$b'"; done
     mkdir -p "$CONFIG_DIR/conf.d"
     local tmp
+    # Two files (QA round 2, P2-1): the Cockpit's Comms tab derives the URL from
+    # listeners[0] as the operator, so the listener file must be readable; the
+    # registration secret must not be. One file with 0640 made the tab fall back
+    # to the package's loopback listener and print the wrong URL.
+    local stmp
+    stmp="$(mktemp "$ORIONX_SECRET_CONF.XXXXXX")"
+    chmod 0640 "$stmp"
+    printf '# Written by setup-matrix.sh (DEC-PHASE12-102). Root and matrix-synapse only.\nregistration_shared_secret: "%s"\n' "$secret" > "$stmp"
+    chgrp matrix-synapse "$stmp" 2>/dev/null || true
+    mv -f "$stmp" "$ORIONX_SECRET_CONF"
     tmp="$(mktemp "$ORIONX_CONF.XXXXXX")"
-    chmod 0640 "$tmp"
+    chmod 0644 "$tmp"
     cat > "$tmp" <<YAML
 # Written by setup-matrix.sh (DEC-PHASE12-102). Re-run setup to change it.
 # The Cockpit's Comms tab derives the homeserver URL from listeners[0].
+# The registration secret lives in orionx-secret.yaml (0640).
 listeners:
   - port: ${SYNAPSE_PORT}
     tls: false
@@ -390,9 +402,7 @@ listeners:
       - names: [client, federation]
         compress: false
 enable_registration: false
-registration_shared_secret: "${secret}"
 YAML
-    chgrp matrix-synapse "$tmp" 2>/dev/null || true
     mv -f "$tmp" "$ORIONX_CONF"
 }
 
@@ -483,7 +493,7 @@ setup_matrix_server() {
 
     if [[ -n "$MATRIX_USERNAME" ]]; then
         log "Registering admin user '$MATRIX_USERNAME'..."
-        local -a reg=(register_new_matrix_user -c "$ORIONX_CONF" -u "$MATRIX_USERNAME" -a)
+        local -a reg=(register_new_matrix_user -c "$ORIONX_SECRET_CONF" -u "$MATRIX_USERNAME" -a)
         local pwfile=""
         if [[ -n "$MATRIX_PASSWORD" ]]; then
             pwfile="$(umask 077; mktemp "${TMPDIR:-/tmp}/orionx-matrix-pw.XXXXXX")"
@@ -501,7 +511,7 @@ setup_matrix_server() {
         fi
         log "Admin user: $MATRIX_USERNAME"
     else
-        log "No admin user requested. Create one later with: sudo register_new_matrix_user -c $ORIONX_CONF -a http://127.0.0.1:${SYNAPSE_PORT}"
+        log "No admin user requested. Create one later with: sudo register_new_matrix_user -c $ORIONX_SECRET_CONF -a http://127.0.0.1:${SYNAPSE_PORT}"
     fi
 
     log "Matrix Synapse server setup complete"

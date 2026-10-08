@@ -118,14 +118,20 @@ def parse_listeners(yaml_text: str) -> list[dict]:
     return out
 
 
-def effective_listener_source(confd_text: Optional[str], hs_text: Optional[str]) -> tuple[Optional[str], Path]:
+def effective_listener_source(confd_text: Optional[str], hs_text: Optional[str],
+                              confd_exists: bool = False) -> tuple[Optional[str], Path]:
     """(text, path) of the file whose `listeners:` Synapse actually uses. Pure.
 
     Mirrors Synapse's merge: conf.d/orionx.yaml is loaded after homeserver.yaml
     and its top-level `listeners` replaces the main file's (B1, QA round 1).
+    If that file exists but this user cannot read it, the answer is "unknown"
+    (text None, path conf.d) — never the package default, which is the wrong
+    listener (QA round 2, P2-1).
     """
     if confd_text is not None and parse_listeners(confd_text):
         return confd_text, ORIONX_SYNAPSE_CONF
+    if confd_text is None and confd_exists:
+        return None, ORIONX_SYNAPSE_CONF
     return hs_text, HOMESERVER_YAML
 
 
@@ -156,7 +162,8 @@ def client_endpoint(listeners: list[dict], primary_ip: Optional[str]) -> dict:
 
 def server_state(unit_active: str, synapse_installed: bool, homeserver_yaml_exists: bool,
                  element_cfg_text: Optional[str], primary_ip: Optional[str],
-                 homeserver_text: Optional[str] = None, homeserver_err: str = "") -> dict:
+                 homeserver_text: Optional[str] = None, homeserver_err: str = "",
+                 source: Optional[Path] = None) -> dict:
     """Where Matrix is for this deck, and in what state. Pure.
 
     UX-02: the client URL is DERIVED from the listener in homeserver.yaml
@@ -169,17 +176,18 @@ def server_state(unit_active: str, synapse_installed: bool, homeserver_yaml_exis
     note = ""
     if homeserver_yaml_exists or synapse_installed:
         mode = "server"
+        src = source or HOMESERVER_YAML
         if homeserver_text is None:
-            note = (f"URL unknown — read {HOMESERVER_YAML}"
+            note = (f"URL unknown — read {src}"
                     + (f" ({homeserver_err})" if homeserver_err else " (not present yet)"))
         else:
             ep = client_endpoint(parse_listeners(homeserver_text), primary_ip)
             url = ep["url"]
             if not url:
-                note = f"URL unknown — {ep['why']} ({HOMESERVER_YAML})"
+                note = f"URL unknown — {ep['why']} ({src})"
             elif ep["loopback_only"]:
                 note = (f"listener {url} is bound to loopback only — other machines cannot connect "
-                        f"(bind_addresses in {HOMESERVER_YAML})")
+                        f"(bind_addresses in {src})")
     elif element_cfg_text:
         try:
             cfg = json.loads(element_cfg_text)

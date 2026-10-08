@@ -203,12 +203,12 @@ sha256sum -c SHA256SUMS        # macOS: shasum -a 256 -c SHA256SUMS
 
 ```powershell
 # Windows (PowerShell)
-# list EVERY part from SHA256SUMS, in order (this example has seven: part-aa … part-ag)
+# list EVERY part from SHA256SUMS, in order (about seventeen 190 MiB parts: part-aa … part-aq)
 cmd /c copy /b orionx-phoenix-edition-<version>.iso.part-aa + orionx-phoenix-edition-<version>.iso.part-ab + orionx-phoenix-edition-<version>.iso.part-ac + orionx-phoenix-edition-<version>.iso.part-ad + orionx-phoenix-edition-<version>.iso.part-ae + orionx-phoenix-edition-<version>.iso.part-af + orionx-phoenix-edition-<version>.iso.part-ag orionx-phoenix-edition-<version>.iso
 Get-FileHash orionx-phoenix-edition-<version>.iso -Algorithm SHA256
 ```
 
-Run these in the folder that holds the downloads (`cd ~/Downloads` first if that is where they are). The parts can be uneven (each is at most 1000 MiB, and the later ones may be much smaller) — that is expected, not a truncated download. Windows Explorer counts in GiB, so it shows the joined file about 7% smaller than the size on the release page; it is the same file.
+Run these in the folder that holds the downloads (`cd ~/Downloads` first if that is where they are). The parts can be uneven (each is at most 190 MiB, and the later ones may be much smaller) — that is expected, not a truncated download. Windows Explorer counts in GiB, so it shows the joined file about 7% smaller than the size on the release page; it is the same file.
 
 `SHA256SUMS` lists the whole ISO **and** each part, so a corrupted download can be identified and re-fetched individually: the check prints one `OK` line per file; re-download any file marked `FAILED` and run the check again. If you delete the parts after joining, the part lines report "No such file" — only the `.iso` line matters then. A single `.part-*` file is not bootable.
 
@@ -292,7 +292,7 @@ Nothing is installed on the computer — this checks the file you downloaded and
 
 What you see depends on how your firmware boots the USB drive:
 
-- **UEFI**: a plain, readable GRUB menu with two entries — **Orion-X Live** and **Orion-X Live (failsafe)**. The default entry boots after a 5 s timeout.
+- **UEFI**: a plain, readable GRUB menu with three entries — **Orion-X Live**, **Orion-X Live (no questions)** (skips the first-boot wizard's prompts) and **Orion-X Live (failsafe)**. The default entry boots after a 5 s timeout.
 - **Legacy BIOS**: the same two entries on the themed isolinux menu.
 
 After you choose an entry, the Plymouth **"Orion-X Phoenix"** splash is shown while the kernel and live system start. On the very first boot the splash is followed by the first-boot wizard on the console (next section); when it finishes, the desktop opens **already logged in** as the primary account. On later boots (persistence) the system goes straight to the desktop. The login screen appears only if you log out (there is no screen lock).
@@ -413,7 +413,7 @@ Left of the window list sit the **Orion-X** applications menu and the Orion Cock
 | Widget | Meaning |
 |---|---|
 | ▲ *interface* | Active network interface; shows `▼ down` when offline |
-| ◆ *N*p | Connected mesh peers (`◆ 3p` = three peers); shows — when the mesh is idle |
+| ◆ *N* peers | Live mesh peers from the root-written snapshot (`◆ 3 peers`); `◆ stale (N s)` when the snapshot timer is not refreshing; `— (no snapshot)` when the mesh is idle |
 | ◎ *scans* | Number of scan / intrusion-detection events published to the event bus since boot (categories `ids`, `scan`, `recon`, `probe`, or sources `suricata`, `zeek`, `nucleotide`). `◎ 0` on a quiet deck is normal |
 | ◉ *clients* | Number of other machines on the local network segment that have exchanged traffic with this deck (live entries in the ARP/neighbour table) |
 
@@ -499,6 +499,8 @@ Add `--verbose` to any subcommand for detailed output. The ◆ widget in the top
 **Keys.** `join` creates this deck's WireGuard keypair on first use (under `/etc/wireguard/`, mode 0600) — nothing is pre-generated on the image, so no two decks share a key. Join and leave print whether the result survives a reboot; on a stick without persistence it does not, and the deck says so.
 
 **Beacons.** Decks find each other with a UDP beacon on port 55555. A beacon can only add a peer as a single host address inside the mesh subnet and never changes an existing peer's addresses; malformed or out-of-range beacons are logged and dropped.
+
+**Limits of LAN discovery.** A beacon cannot steal or rewrite an existing peer's address, but discovery is otherwise unauthenticated: any host on the LAN that sends a well-formed beacon with a free address and its own public key becomes a peer. On a hostile LAN, install the team PSK below *before* joining, or join from a peer list (`--config peers.conf`).
 
 **Optional team pre-shared key.** Public-key peering is the default and needs no setup. For a second layer, make one PSK on one deck, carry it to the others out of band (a USB stick), and install it on every deck **before** they join:
 
@@ -606,7 +608,7 @@ If setting up a local server:
 3. The script will:
    - Check for root and a network route, then install Synapse and Element from their package repositories (apt keys are fingerprint-pinned)
    - Write one listener to `/etc/matrix-synapse/conf.d/orionx.yaml`: `http`, port `8008`, bound to `127.0.0.1` and this deck's `wg0` address (if joined). Open registration stays **off**; teammates get accounts from you.
-   - Start the package's `matrix-synapse.service` (hardened by a systemd drop-in; there is no AppArmor profile for Synapse because its interpreter is the system Python)
+   - Start the package's `matrix-synapse.service` (hardened by a systemd drop-in; there is no AppArmor profile for Synapse: the old one attached to a symlink and confined nothing, and a profile that matched the venv's interpreter would confine every Python program on the deck)
    - Register your admin user (the password is passed through a file, never on the command line)
    - Point Element at `http://127.0.0.1:8008`
 
@@ -694,7 +696,7 @@ The Orion Cockpit (`orionx-cockpit`; also the desktop icon, the panel's gauge ic
 
 Keys: **F11** toggles fullscreen on any tab. The other keys act on the **LIVE** tab only (on the other tabs they go to the controls, so typing in a text field is safe): **Esc** closes an open drill-down, and quits when none is open; **q** quits; **s** and **t** squelch or tune the event in an open drill-down (below); **Page Up** scrolls the stream back. Flags: `--fullscreen` starts fullscreen; `--demo` feeds synthetic events for a demonstration; `--tab NAME` opens on a tab (`live`, `network`, `mesh`, `comms`, `awareness`, `tools`, `nebula`, `healing`).
 
-**Tuning a false positive.** Open an IDS event (Suricata or Zeek) in the drill-down and press **s** to *squelch* that signature — from that source — for an hour, or **t** to *tune* it off and keep it. The outcome line states whether the rule **survives a reboot**: on a live USB without a persistence partition it does not, and the deck says so rather than letting you believe otherwise. `orionx-tune list` shows the rules, `orionx-tune remove <id>` restores an alert, `orionx-tune status` reports where the file is and whether it persists. Rules are applied by `orionx-postured` for both engines and derived into Suricata's threshold file, so the engine stops evaluating them too. Events whose source is one of this deck's own addresses are tagged **SELF** — the deck did that, not an intruder — and they do not raise THREAT PRESSURE.
+**Tuning a false positive.** Open an IDS event (Suricata or Zeek) in the drill-down and press **s** to *squelch* that signature — from that source — for an hour, or **t** to *tune* it off and keep it. The outcome line states whether the rule **survives a reboot**: on a live USB without a persistence partition it does not, and the deck says so rather than letting you believe otherwise. `orionx-tune list` shows the rules, `orionx-tune remove <id>` restores an alert, `orionx-tune status` reports where the file is and whether it persists. Rules are applied by `orionx-postured` for both engines and derived into Suricata's threshold file, so the engine stops evaluating them too. **Who the bus trusts.** Any program on the deck can append to the event bus, so R.A.I.N. and the Cockpit will hear and show an event you publish yourself with `orionx-event`. Auto-Healing is stricter: it acts only on events signed by the deck's root producers (postured, scanwatch, heald — the key lives in a root-only file), and an unsigned event can at most appear as a suggestion labelled *UNVERIFIED*. A spoofed alert that reaches a root producer's input (for example an IDS signature triggered on purpose) can still drive an autonomous block at that address, which is one reason autonomy is off by default. Events whose source is one of this deck's own addresses are tagged **SELF** — the deck did that, not an intruder — and they do not raise THREAT PRESSURE.
 
 ![Orion Cockpit layout](images/orionx-cockpit-layout.svg)
 
@@ -716,7 +718,7 @@ GODSEYE (Apache-2.0, vendored at a pinned upstream commit under `/opt/orionx/osi
 
 Nebula is Orion-X's on-device assistant: ollama serving **Qwen2.5-3B-Instruct** (a 1.9 GB open-source language model, stored in a compact "Q4_K_M" form), run by `nebula-runtime.service`. It answers questions, explains tool output, and can call a fixed set of local tools.
 
-**What "local" means here.** The model and everything you type stay on this machine: ollama listens on `127.0.0.1:11434` only, and its AppArmor profile confines what it can touch on disk (model files read-only, no writes to your home directory, no launching of system programs). Nebula never needs the internet. Network egress is **not** blocked by policy, though — on a disconnected deck nothing can leave; on a connected deck treat ollama like any other local service.
+**What "local" means here.** The model and everything you type stay on this machine: ollama listens on `127.0.0.1:11434` only, `nebula-runtime.service` pins it to loopback at the kernel (`IPAddressDeny=any`, `IPAddressAllow=localhost`), and its AppArmor profile confines what it can touch on disk (model files read-only, no writes to your home directory, no launching of system programs). Nebula never needs the internet. Network egress is **not** blocked by policy, though — on a disconnected deck nothing can leave; on a connected deck treat ollama like any other local service.
 
 **When it starts.** `nebula-runtime.service` is enabled at boot, after `nebula-integrity-check.service` has verified the model's SHA-256 against `MANIFEST.sha256`. The model itself is loaded into memory on the first question (or when you click **Warm up model**), which can take a few minutes on a 4 GB machine — a red or amber Nebula light before you have asked anything is normal.
 
@@ -1655,7 +1657,7 @@ If you encounter problems booting Orion-X:
    - Disable hardware in BIOS/UEFI that might be causing conflicts
 
 4. **Boot appears to stop at a text banner**
-   - That is the first-boot wizard waiting for input on tty1 ("the boot has PAUSED — your input is needed"). Answer the prompts, or wait: each prompt continues with its default after 120 s. On an amnesic stick it appears at every boot (§3).
+   - That is the first-boot wizard waiting for input on tty1 ("the boot has PAUSED — your input is needed"). Answer the prompts, or wait: each prompt continues with its default after 30 s. On an amnesic stick it appears at every boot (§3).
 
 5. **The computer starts Windows (or its own system) again, or shows "Invalid signature"**
    - Secure Boot is on. This release cannot boot with Secure Boot enabled — disable it in the firmware settings (Windows 11: Settings → System → Recovery → Advanced startup → Restart now → Troubleshoot → UEFI Firmware Settings), then choose the USB stick from the boot menu ("Use a device" on the same screen). Have your BitLocker recovery key to hand first (§2).
@@ -1921,7 +1923,7 @@ When experiencing issues with specific tools:
      ```
    - Remove only files you created (for example old analysis output). Do **not** clear `/tmp` wholesale: on the live system it is RAM-backed and holds session state for running tools.
      ```bash
-     rm -rf ~/analysis_results/old-run
+     rm -rf ~/Analysis/results/old-run
      ```
 
 ## 17. Appendices
@@ -1951,6 +1953,8 @@ orionx-rain --test warning     # Play a sample alert cue
 orionx-rain --oneshot          # Play the most urgent pending event once
 orionx-rain --speech on|off    # Spoken narration after the cue (off by default)
 orionx-rain --speech-status    # Narration engine, Nebula reachability, bounds
+orionx-osint [--page NAME]                       # Open the Workbench (one server per operator; reuses it)
+orionx-osint --status [--json] | --stop | --new  # Workbench server state / stop it / force a new one
 orionx-tune squelch --sid N [--src IP] [--ttl S]   # Silence an IDS signature for a while
 orionx-tune tune --sid N | --note Zeek::Note       # Keep it off (says if it survives reboot)
 orionx-tune list | remove ID | status
@@ -2039,7 +2043,6 @@ Important file locations within Orion-X:
 /usr/local/bin/roast           # go-roast binary
 /usr/share/doc/orionx/         # Documentation (this guide, README, CHANGELOG)
 /usr/share/doc/orionx/User_Guide.html   # This guide, rendered (open with firefox)
-/etc/motd.d/orionx-ssh-admin   # Wizard's SSH one-shot text (unusable, issue #98; removable)
 
 # User Files (in the primary account's home)
 ~/.bashrc                      # Bash configuration
@@ -2078,8 +2081,9 @@ Ctrl+Alt+Arrow                 # Switch workspace
 
 # Orion Cockpit (all but F11 act on the LIVE tab only)
 F11                            # Toggle fullscreen (any tab)
-Esc                            # Close the drill-down; quit if none is open
-q                              # Quit
+Esc                            # Close the drill-down (a stray Esc never quits)
+Ctrl+Q                         # Quit the Cockpit
+Alt+1 … Alt+8                  # Jump to a tab; Ctrl+PgUp/PgDn also switch tabs
 s / t                          # Squelch / tune the event in the open drill-down
 Page Up                        # Scroll the event stream back
 

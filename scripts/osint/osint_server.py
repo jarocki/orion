@@ -1047,7 +1047,7 @@ def _sigterm(_signum, _frame):
 def browser_argv(url: str, which=shutil.which, runtime_dir: str | None = None) -> list[str]:
     """How to open the Workbench. Pure.
 
-    @decision DEC-PHASE12-067
+    @decision DEC-PHASE12-142
     @title The Workbench opens in its own Firefox profile, never the OSINT one
     @status accepted
     @rationale Security F16/F3: the Workbench serves this deck's own alert

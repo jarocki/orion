@@ -1,0 +1,16 @@
+# Smoke plan for qemu_capture.py: boot, log in on the serial console, prove
+# that GUI apps can be launched from it, and that QMP key events reach XFCE.
+- {label: boot,        mark: boot, fps: 2}
+- {label: login-prompt, wait: 'orionx login:', timeout: 1200, required: true}
+- {label: settle,      sleep: 45}
+- {label: user,        send: "orionx-operator\n"}
+- {label: password,    wait: 'Password:', timeout: 60, send: "live\n"}
+- {label: shell,       wait: '\[Orion-X\] [^\n]*\$ ', timeout: 60, required: true}
+- {label: env,         send: "export DISPLAY=:0 XAUTHORITY=/home/orionx-operator/.Xauthority; xrandr 2>&1 | head -3; ls -la ~/.Xauthority; id; ip -4 -br addr; cat /etc/orionx-version | head -2\n"}
+- {label: env-done,    wait: '\[Orion-X\] [^\n]*\$ ', timeout: 60}
+- {label: cockpit,     mark: cockpit, fps: 2, send: "orionx-cockpit --demo >/tmp/cockpit.log 2>&1 &\n"}
+- {label: cockpit-up,  sleep: 50}
+- {label: tabs,        key: ctrl+pgdn, repeat: 3, interval: 5}
+- {label: tabs-settle, sleep: 8}
+- {label: cockpit-log, send: "tail -5 /tmp/cockpit.log; echo SMOKE-DONE\n"}
+- {label: done,        wait: 'SMOKE-DONE', timeout: 30}

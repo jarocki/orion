@@ -124,7 +124,7 @@ setup() {
 
     # Reset call tracking files
     MOCK_CALLS_FILE="$TMPDIR_TEST/mock_calls.log"
-    > "$MOCK_CALLS_FILE"
+    : > "$MOCK_CALLS_FILE"
 
     MOCK_DISCOVER_PID_FILE="$TMPDIR_TEST/discover.pid"
 
@@ -527,7 +527,7 @@ assert_file_not_exists "state file gone after leave" "$MESH_STATE_FILE"
 _mock_is_active=1
 
 # Clear mock calls for clean tracking
-> "$MOCK_CALLS_FILE"
+: > "$MOCK_CALLS_FILE"
 
 # Second join
 OUTPUT3=$(mesh_join "" 2>&1)

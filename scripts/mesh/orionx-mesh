@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
 #
-# Orion-X Phoenix Edition v2.0.0
+# Orion-X Phoenix Edition — version from /etc/orionx-version at runtime
 # Mesh Networking CLI — Main Entrypoint
 #
 # CLI tool for managing the WireGuard P2P mesh network.
@@ -56,8 +56,11 @@ CONFIG_FILE=""
 
 # --- Usage ---
 usage() {
+    local _ver
+    # no /etc/orionx-version (tests, dev hosts): say so; never let set -e/pipefail kill help
+    _ver="$( { sed -n 's/^ISO_VERSION=//p' /etc/orionx-version 2>/dev/null || true; } | head -1)"
+    echo "Orion-X Mesh Networking Tool ${_ver:-unknown-build}"
     cat <<'EOF'
-Orion-X Mesh Networking Tool v2.0.0
 
 Usage: orionx-mesh <command> [options]
 

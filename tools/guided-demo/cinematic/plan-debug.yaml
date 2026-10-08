@@ -1,0 +1,10 @@
+# Boot, log in on serial, then hand control to the inbox (qemu_capture.py interactive step).
+- {label: boot, mark: boot, fps: 1}
+- {label: login-prompt, wait: 'orionx login:', history: true, timeout: 1500, required: true}
+- {sleep: 3, send: "\n"}
+- {send: "orionx-operator\n"}
+- {wait: 'Password:', timeout: 60, send: "live\n"}
+- {sleep: 6}
+- {send: "export DISPLAY=:0 XAUTHORITY=$HOME/.Xauthority; echo READY-FOR-INBOX\n"}
+- {wait: '(?m)^READY-FOR-INBOX', timeout: 60}
+- {label: inbox, mark: debug, fps: 1, interactive: 5400}

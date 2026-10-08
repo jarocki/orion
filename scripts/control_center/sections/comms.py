@@ -69,13 +69,15 @@ def _read(path: Path) -> tuple[str | None, str]:
 def collect_state() -> dict:
     """Worker thread: every probe the tab draws from."""
     hs_text, hs_err = _read(C.HOMESERVER_YAML)
-    confd_text, _ = _read(C.ORIONX_SYNAPSE_CONF)
-    hs_text, src = C.effective_listener_source(confd_text, hs_text)
+    confd_text, confd_err = _read(C.ORIONX_SYNAPSE_CONF)
+    hs_text, src = C.effective_listener_source(confd_text, hs_text, confd_exists=C.ORIONX_SYNAPSE_CONF.exists())
+    if hs_text is None and confd_err:
+        hs_err = confd_err
     el_text, _ = _read(C.ELEMENT_CFG)
     st = C.server_state(
         run_stdout(["systemctl", "is-active", C.SYNAPSE_UNIT], timeout=5) or "inactive",
         _synapse_installed(), C.HOMESERVER_YAML.exists(), el_text, _primary_ip(),
-        homeserver_text=hs_text, homeserver_err=hs_err)
+        homeserver_text=hs_text, homeserver_err=hs_err, source=src)
     mc_desktop, _ = _read(C.MC_DESKTOP)
     clients = C.client_states(os.path.exists, lambda n: shutil.which(n) is not None)
     st["source"] = str(src)

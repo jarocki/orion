@@ -1,0 +1,163 @@
+# UI scenes recorded from the ISO's own userspace (record_scenes.py).
+# `scene:` is the name trailer.yaml's shots refer to. Every command here is a
+# command the operator could type on the deck; nothing is mocked.
+scenes:
+  - id: desktop
+    setup:
+      - "pkill -f '^python3 /usr/bin/orionx-cockpit'; pkill -x xfce4-terminal; pkill -f '^/usr/lib/firefox-esr/firefox-esr'; true"
+    settle: 3
+    record: 7
+    actions:
+      - {at: 1.0, move: [900, 500]}
+      - {at: 3.0, move: [1300, 420]}
+
+  - id: menu
+    setup: ["true"]
+    record: 7
+    actions:
+      - {at: 0.8, click: [30, 14]}
+      - {at: 5.8, key: Escape}
+
+  - id: cockpit-live
+    setup:
+      - "(setsid orionx-cockpit --demo --fullscreen >/tmp/ck-live.log 2>&1 &); sleep 1"
+    settle: 7
+    record: 26
+    actions:
+      - {at: 5.0, sh: "orionx-event -s critical --source suricata -c ids 'ET MALWARE Cobalt Strike beacon 10.0.2.15 to 45.13.7.9 on 443'"}
+      - {at: 15.0, sh: "orionx-event -s warning --source scanwatch -c scan 'Port sweep: 172.17.0.1 touched 118 ports in 20 seconds'"}
+    teardown: ["pkill -f '^python3 /usr/bin/orionx-cockpit'; true"]
+
+  - id: tab-network
+    setup: ["(setsid orionx-cockpit --tab network --fullscreen >/tmp/ck.log 2>&1 &); sleep 1"]
+    settle: 6
+    record: 9
+    teardown: ["pkill -f '^python3 /usr/bin/orionx-cockpit'; true"]
+
+  - id: tab-mesh
+    setup: ["(setsid orionx-cockpit --tab mesh --fullscreen >/tmp/ck.log 2>&1 &); sleep 1"]
+    settle: 6
+    record: 9
+    teardown: ["pkill -f '^python3 /usr/bin/orionx-cockpit'; true"]
+
+  - id: tab-comms
+    setup: ["(setsid orionx-cockpit --tab comms --fullscreen >/tmp/ck.log 2>&1 &); sleep 1"]
+    settle: 6
+    record: 8
+    teardown: ["pkill -f '^python3 /usr/bin/orionx-cockpit'; true"]
+
+  - id: tab-awareness
+    setup: ["(setsid orionx-cockpit --tab awareness --fullscreen >/tmp/ck.log 2>&1 &); sleep 1"]
+    settle: 6
+    record: 10
+    teardown: ["pkill -f '^python3 /usr/bin/orionx-cockpit'; true"]
+
+  - id: tab-tools
+    setup: ["(setsid orionx-cockpit --tab tools --fullscreen >/tmp/ck.log 2>&1 &); sleep 1"]
+    settle: 6
+    record: 8
+    teardown: ["pkill -f '^python3 /usr/bin/orionx-cockpit'; true"]
+
+  - id: tab-nebula
+    setup: ["(setsid orionx-cockpit --tab nebula --fullscreen >/tmp/ck.log 2>&1 &); sleep 1"]
+    settle: 6
+    record: 8
+    teardown: ["pkill -f '^python3 /usr/bin/orionx-cockpit'; true"]
+
+  - id: defense
+    setup: ["(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"]
+    settle: 4
+    record: 30
+    actions:
+      - {at: 1.0, type: "orionx-tune squelch --sid 2010937 --src 172.17.0.1 --ttl 30m --reason 'own scanner'"}
+      - {at: 7.5, key: Return}
+      - {at: 12.0, type: "orionx-tune list"}
+      - {at: 13.5, key: Return}
+      - {at: 17.0, type: "clear; sudo nft list ruleset | head -32"}
+      - {at: 20.0, key: Return}
+    teardown: ["pkill -x xfce4-terminal; true"]
+
+  - id: forensics-pcap
+    setup: ["(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"]
+    settle: 4
+    record: 24
+    actions:
+      - {at: 1.0, type: "tshark -r ~/Analysis/pcaps/apt_malware_traffic.pcap -q -z conv,ip 2>/dev/null | head -28"}
+      - {at: 5.5, key: Return}
+      - {at: 12.0, type: "clear; pcap-analyzer.py ~/Analysis/pcaps/apt_malware_traffic.pcap 2>&1 | head -40"}
+      - {at: 16.0, key: Return}
+    teardown: ["pkill -x xfce4-terminal; true"]
+
+  - id: forensics-memory
+    setup: ["(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"]
+    settle: 4
+    record: 22
+    actions:
+      - {at: 1.0, type: "vol -q -f ~/Analysis/memory/synthetic-mini.raw banners.Banners"}
+      - {at: 4.0, key: Return}
+      - {at: 9.0, type: "vol -h | grep -E '^ +(windows|linux)[.](pslist|psscan|netscan|malfind|cmdline|bash|sockstat)' "}
+      - {at: 13.5, key: Return}
+    teardown: ["pkill -x xfce4-terminal; true"]
+
+  - id: forensics-yara
+    setup: ["(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"]
+    settle: 4
+    record: 18
+    actions:
+      - {at: 1.0, type: "artifact-analyzer.py ~/Analysis/firmware/synthetic-firmware.bin 2>&1 | head -45"}
+      - {at: 5.5, key: Return}
+    teardown: ["pkill -x xfce4-terminal; true"]
+
+  - id: nebula-status
+    setup: ["(setsid xfce4-terminal --maximize --zoom=1.6 --working-directory=/home/orionx-operator --title=ORION-OPS >/dev/null 2>&1 &); sleep 1"]
+    settle: 4
+    record: 16
+    actions:
+      - {at: 1.0, type: "nebula status"}
+      - {at: 2.5, key: Return}
+    teardown: ["pkill -x xfce4-terminal; true"]
+
+  - id: wireshark
+    setup: ["(setsid wireshark ~/Analysis/pcaps/apt_malware_traffic.pcap >/tmp/ws.log 2>&1 &); sleep 1"]
+    settle: 25
+    record: 10
+    actions:
+      - {at: 0.2, sh: "xdotool search --name 'apt_malware_traffic' windowactivate --sync key --clearmodifiers alt+F10; true"}
+      - {at: 2.0, click: [700, 260]}
+      - {at: 5.0, key: Down}
+      - {at: 5.6, key: Down}
+      - {at: 6.2, key: Down}
+    teardown: ["pkill -x wireshark; true"]
+
+  - id: workbench
+    setup: ["(setsid orionx-osint >/tmp/osint.log 2>&1 &); sleep 1"]
+    settle: 22
+    record: 12
+    actions:
+      - {at: 4.0, sh: "xdotool key --delay 200 End; true"}
+      - {at: 8.0, sh: "xdotool key --delay 200 Home; true"}
+
+  - id: godseye
+    setup: ["(setsid orionx-osint --page godseye >/tmp/osint2.log 2>&1 &); sleep 1"]
+    settle: 25
+    record: 12
+
+  - id: cyberchef
+    setup: ["(setsid orionx-osint --page cyberchef >/tmp/osint3.log 2>&1 &); sleep 1"]
+    settle: 18
+    record: 9
+
+  - id: pivotglass
+    setup: ["(setsid ap web >/tmp/ap.log 2>&1 &); sleep 1"]
+    settle: 18
+    record: 12
+    teardown: ["pkill -f '^/usr/lib/firefox-esr/firefox-esr'; pkill -f '^python3 .*pivotglass'; true"]
+
+  - id: x-rain
+    # Narration is opt-in on the deck; the operator turns it on (Awareness tab
+    # or this command) — the video shows the shipped voice, not a re-synthesis.
+    setup: ["orionx-rain --speech on >/dev/null 2>&1; sleep 1"]
+    record: 26
+    actions:
+      - {at: 0.5, sh: "for s in info notice warning critical; do paplay /usr/share/orionx/rain/$s.wav; sleep 1.2; done"}
+      - {at: 8.0, sh: "orionx-event -s critical --source zeek -c ids 'Zeek notice: SSH brute force from 172.17.0.1 against ox-alpha'"}

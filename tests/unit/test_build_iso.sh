@@ -223,7 +223,7 @@ echo "[T5] --dry-run with valid iso/ directory"
 FAKE_REPO_OK="$SCRATCH/repo_ok"
 make_fake_repo "$FAKE_REPO_OK"
 
-DRY_OUTPUT="$((cd "$FAKE_REPO_OK" && bash scripts/build-iso.sh --dry-run) 2>&1)"
+DRY_OUTPUT="$( (cd "$FAKE_REPO_OK" && bash scripts/build-iso.sh --dry-run) 2>&1)"
 run_test "--dry-run exits 0 with iso/ present" \
     "(cd '$FAKE_REPO_OK' && bash scripts/build-iso.sh --dry-run)"
 contains "--dry-run emits 'iso/ directory found'" "iso/ directory found" "$DRY_OUTPUT"
@@ -249,7 +249,7 @@ echo "[T6] --dry-run fails loudly when iso/ is absent"
 FAKE_REPO_NOISO="$SCRATCH/repo_noiso"
 make_fake_repo_no_iso "$FAKE_REPO_NOISO"
 
-MISSING_OUTPUT="$((cd "$FAKE_REPO_NOISO" && bash scripts/build-iso.sh --dry-run) 2>&1 || true)"
+MISSING_OUTPUT="$( (cd "$FAKE_REPO_NOISO" && bash scripts/build-iso.sh --dry-run) 2>&1 || true)"
 run_test_fail "--dry-run exits non-zero when iso/ missing" \
     "(cd '$FAKE_REPO_NOISO' && bash scripts/build-iso.sh --dry-run)"
 contains "error message mentions iso/ not found" "iso/ directory not found" "$MISSING_OUTPUT"
@@ -264,7 +264,7 @@ echo "[T7] --version override"
 FAKE_REPO_VER="$SCRATCH/repo_ver"
 make_fake_repo "$FAKE_REPO_VER"
 
-VER_OUTPUT="$((cd "$FAKE_REPO_VER" && bash scripts/build-iso.sh --dry-run --version v99.0.0-test) 2>&1)"
+VER_OUTPUT="$( (cd "$FAKE_REPO_VER" && bash scripts/build-iso.sh --dry-run --version v99.0.0-test) 2>&1)"
 run_test "--version override exits 0" \
     "(cd '$FAKE_REPO_VER' && bash scripts/build-iso.sh --dry-run --version v99.0.0-test)"
 contains "--version appears in output" "v99.0.0-test" "$VER_OUTPUT"
@@ -278,7 +278,7 @@ echo "[T8] ORIONX_VERSION env var"
 FAKE_REPO_ENV="$SCRATCH/repo_env"
 make_fake_repo "$FAKE_REPO_ENV"
 
-ENV_OUTPUT="$((cd "$FAKE_REPO_ENV" && ORIONX_VERSION=v3.0.0-env bash scripts/build-iso.sh --dry-run) 2>&1)"
+ENV_OUTPUT="$( (cd "$FAKE_REPO_ENV" && ORIONX_VERSION=v3.0.0-env bash scripts/build-iso.sh --dry-run) 2>&1)"
 run_test "ORIONX_VERSION env sets version, exits 0" \
     "(cd '$FAKE_REPO_ENV' && ORIONX_VERSION=v3.0.0-env bash scripts/build-iso.sh --dry-run)"
 contains "env version appears in output" "v3.0.0-env" "$ENV_OUTPUT"
@@ -392,13 +392,13 @@ FAKE_REPO_VPREFIX="$SCRATCH/repo_vprefix"
 make_fake_repo "$FAKE_REPO_VPREFIX"
 
 # No-prefix version must fail
-VPREFIX_OUTPUT="$((cd "$FAKE_REPO_VPREFIX" && bash scripts/build-iso.sh --dry-run --version 99.0.0-noprefix) 2>&1 || true)"
+VPREFIX_OUTPUT="$( (cd "$FAKE_REPO_VPREFIX" && bash scripts/build-iso.sh --dry-run --version 99.0.0-noprefix) 2>&1 || true)"
 run_test_fail "--version without v-prefix exits non-zero" \
     "(cd '$FAKE_REPO_VPREFIX' && bash scripts/build-iso.sh --dry-run --version 99.0.0-noprefix)"
 contains "error message mentions v-prefix requirement" "must start with" "$VPREFIX_OUTPUT"
 
 # With v-prefix must succeed
-VPREFIX_OK_OUTPUT="$((cd "$FAKE_REPO_VPREFIX" && bash scripts/build-iso.sh --dry-run --version v99.0.0-test) 2>&1)"
+VPREFIX_OK_OUTPUT="$( (cd "$FAKE_REPO_VPREFIX" && bash scripts/build-iso.sh --dry-run --version v99.0.0-test) 2>&1)"
 run_test "--version with v-prefix exits 0" \
     "(cd '$FAKE_REPO_VPREFIX' && bash scripts/build-iso.sh --dry-run --version v99.0.0-test)"
 contains "v-prefix version appears in output" "v99.0.0-test" "$VPREFIX_OK_OUTPUT"
@@ -1259,6 +1259,7 @@ for _m in default plain themed; do
     [[ -f "$_f" ]] || { _t36_modes_ok=0; continue; }
     grep -qF 'menuentry "Orion-X Live (failsafe)"' "$_f" || _t36_modes_ok=0
     grep -A1 -F 'menuentry "Orion-X Live (no questions)"' "$_f" | grep -q 'orionx.wizard=0' || _t36_modes_ok=0
+    grep -A4 -F 'label live-noquestions' "$(dirname "$(dirname "$(dirname "$_f")")")/isolinux/isolinux.cfg" | grep -q 'orionx.wizard=0' || _t36_modes_ok=0
     grep -qF 'set timeout=5' "$_f" || _t36_modes_ok=0
 done
 if [[ "$_t36_modes_ok" -eq 1 ]]; then

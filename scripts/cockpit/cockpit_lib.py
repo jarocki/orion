@@ -510,9 +510,12 @@ def healing_actions(path: Path = HEAL_STATUS, now: float | None = None,
     if age > stale_after:
         out["reason"] = f"orionx-heald not publishing (snapshot {age:.0f} s old)"
         return out
-    if data.get("error"):
+    if data.get("error") and out["chain_ok"] is not True:
         out["reason"] = f"orionx-heald reports: {str(data['error'])[:100]}"
         return out
+    if data.get("error"):
+        # chain verified: the actions are real; carry heald's warning alongside (QA round 2, P3-1)
+        out["warning"] = str(data["error"])[:100]
     pend = [x for x in (_heal_rec(r, "proposed_ts") for r in data.get("pending") or []) if x]
     act = [x for x in (_heal_rec(r, "applied_ts") for r in data.get("in_force") or []) if x]
     pend.sort(key=lambda r: r["proposed_ts"] or 0.0, reverse=True)

@@ -54,7 +54,7 @@
 Description=Orion-X Mesh Health Check (oneshot)
 # W11-14f offline-safe: order after basic net; skip cleanly when no mesh
 # interface (wg0 absent = not joined) so timer firings are no-ops, not fails.
-After=network.target
+After=network.target orionx-heald.service
 ConditionPathExists=/sys/class/net/wg0
 
 [Service]

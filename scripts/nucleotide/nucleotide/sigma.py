@@ -102,8 +102,8 @@ def _rule_yaml(
     lines.append(f"id: {rule_id}")
     if description:
         lines.append(f'description: "{_yaml_escape(description)}"')
-    lines.append(f'status: experimental')
-    lines.append(f'author: nucleotide')
+    lines.append('status: experimental')
+    lines.append('author: nucleotide')
     lines.append(f'level: {level}')
     all_tags = [f'nucleotide.tier.{tier.lower()}']
     if tid:

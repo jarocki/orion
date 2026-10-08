@@ -164,9 +164,10 @@ def collect_tools(_visible: bool = True) -> dict:
             states_err = f"{exc.__class__.__name__}: {exc}"
     route, posture = network_state()
     head, block = T.network_gate(route, posture)
+    wb = T.workbench_state()
     deck = [(it, T.run_action(it)) for it in T.on_deck(local, os.path.exists)]
     return {"deck": [(it, a) for it, a in deck if a is not None], "installable": installable,
-            "states": states, "states_err": states_err, "net_head": head, "block": block,
+            "states": states, "states_err": states_err, "net_head": head, "block": block, "workbench": wb,
             "catalogue_empty": not local and not installable}
 
 
@@ -183,6 +184,18 @@ def build_section() -> Gtk.Widget:
     net.set_line_wrap(True)
     net.set_selectable(True)
     box.pack_start(net, False, False, 2)
+    wbrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    wblabel = Gtk.Label(label="Workbench server: checking…")
+    wblabel.set_halign(Gtk.Align.START)
+    wblabel.set_selectable(True)
+    wbstop = Gtk.Button(label="Stop")
+    wbstop.set_tooltip_text("Stop this operator's Workbench server (orionx-osint --stop). It restarts on the next open.")
+    wbstop.set_sensitive(False)
+    wbstop.connect("clicked", lambda _w: ux.launch_in_terminal(["orionx-osint", "--stop"], needs="orionx-osint",
+                                                               friendly="Workbench server", title="Workbench — stop"))
+    wbrow.pack_start(wblabel, True, True, 0)
+    wbrow.pack_end(wbstop, False, False, 0)
+    box.pack_start(wbrow, False, False, 2)
 
     _hdr(box, "Guided actions")
     grid = Gtk.Grid()
@@ -217,6 +230,9 @@ def build_section() -> Gtk.Widget:
         if err is not None:
             net.set_text(f"Could not read the tool catalogue: {err}")
             return
+        wb = d.get("workbench") or {}
+        wblabel.set_text(f"Workbench server: {wb.get('note', 'unknown')}")
+        wbstop.set_sensitive(bool(wb.get("running")))
         block = d["block"]
         net.set_markup(_esc(d["net_head"]) + (f'\n<span foreground="{_AMBER}">Installs disabled: {_esc(block)}</span>' if block else ""))
         _clear(deck_grid)

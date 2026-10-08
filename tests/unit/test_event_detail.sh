@@ -230,6 +230,9 @@ ck(cl.parse_event(mk("a"))["message"] == "a", "events carrying the producers' au
 NOWE = 3_000_000.0
 e2 = td/"err.json"; e2.write_text(json.dumps({"ts": NOWE, "chain_ok": None, "error": "chain does not verify at line 42", "in_force": [], "pending": []}))
 r = cl.healing_actions(e2, now=NOWE)
+e3 = td/"warn.json"; e3.write_text(json.dumps({"ts": NOWE, "chain_ok": True, "error": "bus events cannot be verified: key missing", "in_force": [{"id": "x1", "action": "block_ip", "target": "10.0.0.9", "applied_ts": NOWE - 5, "expires_ts": None}], "pending": []}))
+r3 = cl.healing_actions(e3, now=NOWE)
+ck(r3["readable"] is True and len(r3["active"]) == 1 and "key missing" in r3.get("warning", ""), f"chain verified + heald warning -> actions shown, warning carried (QA round 2 P3-1) ({r3.get('reason')})")
 ck(r["readable"] is False and "line 42" in r["reason"] and r["chain_ok"] is None, f"chain_ok null + error -> state unknown with heald's reason ({r['reason']})")
 
 ok_, msg = cl.approve_action("")

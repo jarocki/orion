@@ -61,10 +61,15 @@ Before tagging:
 - **Version literals bumped.** `scripts/build-iso.sh` has no version literal
   (it uses `ORIONX_VERSION` or `git describe`, DEC-PHASE7-002) and
   `iso/auto/config` only a fallback default. The real touchpoints are:
-  `README.md`, `docs/User_Guide.md` (line 3 and the *About the beta* list),
-  `CHANGELOG.md`, `tools/guided-demo/scenes.yaml` (`version:` — the demo
-  video is re-cut per release), `docs/orionx-diag.md`, and the release notes.
-  Confirm with `git grep -n 'v2.2.0-beta'`.
+  `README.md` (header, download commands, Known issues), `docs/User_Guide.md`
+  (the rendered copy takes its release line from `/etc/orionx-version`; the
+  Markdown still names the release in its header and §2), `CHANGELOG.md`,
+  `tools/guided-demo/scenes.yaml` and `tools/guided-demo/cinematic/trailer.yaml`
+  (`version:` — the demo and trailer are re-cut per release), `docs/orionx-diag.md`,
+  `manifest.json`, the `Dockerfile` label, and the release notes. Confirm with
+  `git grep -n '<previous tag>'` that only historical references remain, and
+  that no `<vX.Y.Z SHA-256 — filled at release>` placeholder is left
+  (`git grep -n 'filled at release'` must be empty before the tag).
 - **GPG signing key** is provisioned as repository secrets:
   - `secrets.GPG_PRIVATE_KEY` — ASCII-armored private key
   - `secrets.GPG_PASSPHRASE` — passphrase for the key

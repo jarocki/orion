@@ -376,7 +376,9 @@ CONF="$MX/etc/conf.d/orionx.yaml"
 if grep -q '^enable_registration: false$' "$CONF" 2>/dev/null; then pass "registration is closed"; else fail "registration is closed" "$(cat "$CONF" 2>/dev/null)"; fi
 if grep -Eq "bind_addresses: \['127\.0\.0\.1', '10\.0\.99\.5'\]" "$CONF" 2>/dev/null; then pass "ONE listener bound to loopback + the wg0 address"; else fail "explicit bind addresses" "$(grep bind "$CONF" 2>/dev/null)"; fi
 if [[ "$(grep -c '^  - port:' "$CONF" 2>/dev/null)" == "1" ]]; then pass "exactly one listener"; else fail "exactly one listener"; fi
-if grep -Eq '^registration_shared_secret: "[0-9a-f]{64}"$' "$CONF" 2>/dev/null; then pass "a 64-hex registration secret is written"; else fail "registration secret"; fi
+SECRET="$MX/etc/conf.d/orionx-secret.yaml"
+if grep -Eq '^registration_shared_secret: "[0-9a-f]{64}"$' "$SECRET" 2>/dev/null && ! grep -q registration_shared_secret "$CONF"; then pass "a 64-hex registration secret is written to orionx-secret.yaml, not the listener file (QA round 2, P2-1)"; else fail "registration secret location"; fi
+if [[ "$(stat -f %Lp "$CONF" 2>/dev/null || stat -c %a "$CONF")" == "644" && "$(stat -f %Lp "$SECRET" 2>/dev/null || stat -c %a "$SECRET")" == "640" ]]; then pass "listener file 0644 (the Cockpit reads it as the operator), secret 0640"; else fail "conf.d modes" "$(stat -f %Lp "$CONF" "$SECRET" 2>/dev/null || stat -c %a "$CONF" "$SECRET")"; fi
 if grep -q '^systemctl enable matrix-synapse.service' "$MX/calls" && grep -q '^systemctl restart matrix-synapse.service' "$MX/calls"; then
     pass "enables and starts the package unit matrix-synapse.service"
 else

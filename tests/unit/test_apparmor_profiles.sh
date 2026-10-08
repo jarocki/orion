@@ -77,7 +77,7 @@ assert_file_contains() {
 # Profile paths
 # ============================================================
 PROFILES_DIR="iso/config/includes.chroot/etc/apparmor.d"
-SYNAPSE_PROFILE="$PROFILES_DIR/usr.bin.synapse"
+# SYNAPSE_PROFILE="$PROFILES_DIR/usr.bin.synapse"
 WIREGUARD_PROFILE="$PROFILES_DIR/usr.sbin.wg"
 VOLATILITY_PROFILE="$PROFILES_DIR/usr.bin.volatility3"
 BULKEXT_PROFILE="$PROFILES_DIR/usr.bin.bulk_extractor"

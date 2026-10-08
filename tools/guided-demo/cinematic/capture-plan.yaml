@@ -1,0 +1,121 @@
+# Capture plan for the v3 release trailer (tools/guided-demo/qemu_capture.py).
+# Boots the REAL ISO in QEMU at 1920x1080, answers the first-boot wizard on the
+# console with typed keys, then drives the desktop from the serial console
+# (DISPLAY=:0) and types into terminals with QMP key events.
+# Scenes whose name starts with "x-" are waiting time and are never cut in.
+- {label: boot,        mark: boot, fps: 3}
+- {label: wizard-up,   wait: 'Starting orionx-first-boot', timeout: 600, required: true}
+- {label: wizard-draw, mark: config, fps: 3, sleep: 10}
+- {label: hostname,    type: "ox-alpha", delay: 0.18}
+- {sleep: 1.5}
+- {key: enter}
+- {sleep: 4}
+- {label: username,    key: enter}
+- {sleep: 4}
+- {label: password,    type: "live", delay: 0.2}
+- {key: enter}
+- {sleep: 2}
+- {type: "live", delay: 0.2}
+- {key: enter}
+- {label: wizard-rest, sleep: 30}
+- {label: serial-login, mark: x-desktop-wait, fps: 1, wait: 'orionx login:', history: true, timeout: 900, required: true}
+- {sleep: 3, send: "\n"}
+- {send: "orionx-operator\n"}
+- {wait: 'Password:', timeout: 60, send: "live\n"}
+- {sleep: 8}
+- {label: helpers, send: "export DISPLAY=:0 XAUTHORITY=$HOME/.Xauthority; w(){ for i in $(seq 1 ${2:-90}); do xwininfo -root -tree 2>/dev/null | grep -qi -- \"$1\" && break; sleep 2; done; echo WIN-$1-$i; }; xup(){ until xwininfo -root >/dev/null 2>&1; do sleep 2; done; echo X-IS-UP; }; echo HELPERS-READY\n"}
+- {wait: '(?m)^HELPERS-READY', timeout: 60, required: true}
+- {send: "xup\n"}
+- {wait: '(?m)^X-IS-UP', timeout: 900, required: true}
+- {label: desktop,     mark: desktop, fps: 2, sleep: 40}
+- {label: probe,       send: "id; ip -4 -br addr; head -3 /etc/orionx-version; pgrep -a -f orionx-rain | head -2; systemctl is-active orionx-postured nebula-runtime.socket 2>&1 | tr '\\n' ' '; echo PROBE-DONE\n"}
+- {wait: '(?m)^PROBE-DONE', timeout: 60}
+# ---- the Orion menu (panel button, top-left) ----
+- {label: menu,        mark: menu, fps: 3, mouse: [40, 15, left]}
+- {sleep: 8}
+- {key: esc}
+- {sleep: 2}
+# ---- mesh up, so the Mesh tab has something real to show ----
+- {label: mesh-join,   mark: x-mesh, fps: 1, send: "echo live | sudo -S orionx-mesh join >/tmp/mesh.log 2>&1; echo MESH-RC-$?\n"}
+- {wait: '(?m)^MESH-RC-', timeout: 240}
+# ---- Cockpit LIVE with the demo feed, plus real events on the bus (R.A.I.N. speaks them) ----
+- {label: cockpit,     send: "nohup orionx-cockpit --demo --fullscreen >/tmp/cockpit.log 2>&1 & w ockpit 90\n"}
+- {wait: '(?m)^WIN-ockpit-', timeout: 240}
+- {label: cockpit-live, mark: cockpit-live, fps: 3, sleep: 25}
+- {label: events,      send: "orionx-event -s critical --source suricata -c ids 'ET MALWARE Cobalt Strike beacon 10.0.2.15 to 45.13.7.9 on 443'; sleep 9; orionx-event -s warning --source scanwatch -c scan 'Port sweep: 10.0.2.2 touched 118 ports in 20 seconds'; echo EV-DONE\n"}
+- {sleep: 30}
+- {label: cockpit-down, send: "pkill -f orionx-cockpit; sleep 2; echo K\n"}
+# ---- one tab per relaunch (tab keys are swallowed on LIVE; launch straight into the tab) ----
+- {label: tab-net,     mark: x-tab, fps: 1, send: "nohup orionx-cockpit --tab network --fullscreen >/tmp/c1.log 2>&1 & w ockpit 90\n"}
+- {wait: '(?m)^WIN-ockpit-', timeout: 240}
+- {mark: tab-network, fps: 2, sleep: 14}
+- {send: "pkill -f orionx-cockpit; sleep 2; nohup orionx-cockpit --tab mesh --fullscreen >/tmp/c2.log 2>&1 & w ockpit 90\n", mark: x-tab, fps: 1}
+- {wait: '(?m)^WIN-ockpit-', timeout: 240}
+- {mark: tab-mesh, fps: 2, sleep: 16}
+- {send: "pkill -f orionx-cockpit; sleep 2; nohup orionx-cockpit --tab awareness --fullscreen >/tmp/c3.log 2>&1 & w ockpit 90\n", mark: x-tab, fps: 1}
+- {wait: '(?m)^WIN-ockpit-', timeout: 240}
+- {mark: tab-awareness, fps: 2, sleep: 18}
+- {send: "pkill -f orionx-cockpit; sleep 2; nohup orionx-cockpit --tab comms --fullscreen >/tmp/c4.log 2>&1 & w ockpit 90\n", mark: x-tab, fps: 1}
+- {wait: '(?m)^WIN-ockpit-', timeout: 240}
+- {mark: tab-comms, fps: 2, sleep: 14}
+- {send: "pkill -f orionx-cockpit; sleep 2; nohup orionx-cockpit --tab tools --fullscreen >/tmp/c5.log 2>&1 & w ockpit 90\n", mark: x-tab, fps: 1}
+- {wait: '(?m)^WIN-ockpit-', timeout: 240}
+- {mark: tab-tools, fps: 2, sleep: 14}
+- {send: "pkill -f orionx-cockpit; sleep 2; nohup orionx-cockpit --tab nebula --fullscreen >/tmp/c6.log 2>&1 & w ockpit 90\n", mark: x-tab, fps: 1}
+- {wait: '(?m)^WIN-ockpit-', timeout: 240}
+- {mark: tab-nebula, fps: 2, sleep: 14}
+- {send: "pkill -f orionx-cockpit; echo K\n"}
+# ---- proactive defense + forensics: typed into a real terminal ----
+- {label: term,        mark: x-term, fps: 1, send: "nohup xfce4-terminal --maximize --title=ORION-OPS >/dev/null 2>&1 & w ORION-OPS 90\n"}
+- {wait: '(?m)^WIN-ORION-OPS', timeout: 240}
+- {sleep: 4}
+- {label: tune,        mark: defense, fps: 4, type: "orionx-tune squelch --sid 2010937 --minutes 30 --reason 'own scanner'; orionx-tune list", delay: 0.05}
+- {key: enter}
+- {sleep: 8}
+- {type: "clear; sudo nft list ruleset | head -40", delay: 0.05}
+- {key: enter}
+- {sleep: 3}
+- {type: "live", delay: 0.1}
+- {key: enter}
+- {sleep: 8}
+- {label: tshark,      mark: forensics-pcap, fps: 4, type: "clear; tshark -r ~/Analysis/pcaps/apt_malware_traffic.pcap -q -z conv,ip 2>/dev/null | head -30", delay: 0.04}
+- {key: enter}
+- {sleep: 14}
+- {type: "clear; pcap-analyzer.py ~/Analysis/pcaps/apt_malware_traffic.pcap 2>&1 | head -45", delay: 0.04}
+- {key: enter}
+- {sleep: 20}
+- {label: memory,      mark: forensics-memory, fps: 4, type: "clear; vol -q -f ~/Analysis/memory/synthetic-mini.raw banners.Banners 2>&1 | head -25", delay: 0.04}
+- {key: enter}
+- {sleep: 45}
+- {label: yara,        mark: forensics-yara, fps: 4, type: "clear; artifact-analyzer.py ~/Analysis/firmware/synthetic-firmware.bin 2>&1 | head -45", delay: 0.04}
+- {key: enter}
+- {sleep: 25}
+- {label: nebula,      mark: nebula-status, fps: 3, type: "clear; nebula status 2>&1 | head -30", delay: 0.05}
+- {key: enter}
+- {sleep: 20}
+- {send: "pkill -f 'title=ORION-OPS'; echo K\n", mark: x-wireshark, fps: 1}
+- {label: wireshark,   send: "nohup wireshark ~/Analysis/pcaps/apt_malware_traffic.pcap >/tmp/ws.log 2>&1 & w Wireshark 120\n"}
+- {wait: '(?m)^WIN-Wireshark', timeout: 400}
+- {sleep: 10}
+- {mark: wireshark, fps: 2, sleep: 16}
+- {send: "pkill -x wireshark; echo K\n", mark: x-osint, fps: 1}
+# ---- OSINT hunting in the Workbench ----
+- {label: workbench,   send: "nohup orionx-osint >/tmp/osint.log 2>&1 & w 'Workbench' 150\n"}
+- {wait: '(?m)^WIN-Workbench', timeout: 500}
+- {sleep: 25}
+- {mark: workbench, fps: 2, sleep: 18}
+- {label: godseye,     mark: x-osint, fps: 1, send: "nohup orionx-osint --page godseye >/tmp/osint2.log 2>&1 & sleep 60; echo GE-UP\n"}
+- {wait: '(?m)^GE-UP', timeout: 300}
+- {mark: godseye, fps: 2, sleep: 25}
+- {label: cyberchef,   mark: x-osint, fps: 1, send: "nohup orionx-osint --page cyberchef >/tmp/osint3.log 2>&1 & sleep 45; echo CC-UP\n"}
+- {wait: '(?m)^CC-UP', timeout: 300}
+- {mark: cyberchef, fps: 2, sleep: 15}
+- {label: pivotglass,  mark: x-osint, fps: 1, send: "nohup ap web >/tmp/ap.log 2>&1 & sleep 50; echo PG-UP\n"}
+- {wait: '(?m)^PG-UP', timeout: 300}
+- {mark: pivotglass, fps: 2, sleep: 18}
+# ---- deck audio: the R.A.I.N. severity cues and its voice, recorded from the guest ----
+- {label: rain,        mark: x-rain, fps: 0.5, send: "for s in info notice warning critical; do paplay /usr/share/orionx/rain/$s.wav; sleep 1.5; done; echo RAIN-CUES\n"}
+- {wait: '(?m)^RAIN-CUES', timeout: 120}
+- {send: "orionx-event -s critical --source zeek -c notice 'Zeek notice: SSH brute force from 10.0.2.2 against ox-alpha'; sleep 20; echo RAIN-DONE\n"}
+- {wait: '(?m)^RAIN-DONE', timeout: 120}
+- {label: end,         mark: x-end, sleep: 3}

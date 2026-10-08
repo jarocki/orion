@@ -56,7 +56,7 @@ makes no outbound connection on its own, but nothing blocks one you start.
   catches timing-evasive scans such as `nmap -T2`.
 - **Suricata IDS** — lazy-start network IDS. It is **off by default and ships
   no threat rules**: enable with
-  `sudo touch /var/lib/suricata/orionx-enabled && systemctl start suricata`,
+  `sudo touch /var/lib/suricata/orionx-enabled && sudo systemctl start suricata`,
   then fetch rules with `sudo orionx-freshen-suricata` (needs a network).
   Until both are done Suricata detects nothing — port-scan coverage on a stock
   deck comes from `orionx-scanwatch` above.
@@ -82,9 +82,9 @@ the supported reverse-engineering option and installs post-boot via
   (DEC-PHASE10-009, DEC-PHASE12-016)
 - **Listens on 127.0.0.1 only; AppArmor-confined** — `/usr/local/bin/ollama`
   runs under an AppArmor profile that limits what it can read and write
-  (DEC-PHASE10-011). The profile does **not** block network egress: the model
-  never needs the internet and nothing on the deck sends your prompts anywhere,
-  but on a connected deck treat ollama like any other local service
+  (DEC-PHASE10-011), and `nebula-runtime.service` pins it to loopback at the
+  kernel (`IPAddressDeny=any` + `IPAddressAllow=localhost`): the model never
+  needs the internet and nothing on the deck sends your prompts anywhere
 - **12 local MCP tools** — pcap/artifact analysis, OAST decoding,
   nuclei-template lookup, service status
 
@@ -160,7 +160,7 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 
 **v3.0.0 (`<v3.0.0 size — filled at release>`):** GitHub caps release assets
 at 2 GB per file, and every Debian 13 build so far has been about 3.1 GB, so
-the ISO is published as `.part-*` files (≤1000 MiB each) plus `SHA256SUMS`
+the ISO is published as signed `.part-*` files (190 MiB each, about seventeen) plus `SHA256SUMS`/`SHA512SUMS`
 and `REASSEMBLE.txt` on the
 [release page](https://github.com/jarocki/orion/releases/tag/v3.0.0).
 Download all of them into one directory, then:
@@ -248,7 +248,8 @@ disk is touched by booting Orion-X unless you mount or image it yourself.
   and asks for a hostname (default `orionx-node`), the account name (default
   `orionx-operator`) and an optional password (blank keeps the default
   password, `live`), and Wi-Fi only if no wired network is found. Each question
-  times out to its default after 120 s, so an unattended boot still completes.
+  times out to its default after 30 s, so an unattended boot still completes
+  (or pick **Orion-X Live (no questions)** in the boot menu).
 - Then the desktop opens **automatically logged in** as that account. It has
   `sudo` rights **without a password prompt** — by design for a single-operator
   deck, which means anything running as the operator can become root (see the
@@ -356,11 +357,16 @@ without the bundled model.
 
 Open in v3.0.0 (each links to its tracking issue):
 
-- **SSH is installed but not started at boot** (closes
-  [#98](https://github.com/jarocki/orion/issues/98)). The old "SSH admin
+- **SSH is installed but not started at boot** (fixes
+  [#98](https://github.com/jarocki/orion/issues/98), still open until the owner closes it). The old "SSH admin
   one-shot" credential was removed: it targeted an account SSH refuses. Start
   sshd deliberately with `sudo systemctl start ssh`; the firewall accepts port
   22 only over the mesh (`wg0`), key login only, for `orionx-operator`.
+- **LAN mesh discovery trusts any well-formed beacon.** A host on the same LAN
+  that sends a valid beacon with a free mesh address and its own public key is
+  added as a peer (it cannot steal or rewrite another peer's address). On a
+  hostile LAN install the optional team PSK before joining
+  (`sudo orionx-mesh psk install …`, User Guide §5) or join from a peer list.
 - **`radare2` and `fonts-iosevka` are not shipped** ([#85](https://github.com/jarocki/orion/issues/85)):
   Debian 13 has no candidate package for either. Ghidra installs post-boot via
   `/opt/orionx/optional/install-ghidra.sh`; Hack is the monospace font.

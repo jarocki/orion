@@ -3095,8 +3095,10 @@ else fail "32c: wallpaper autostart wire in the image" "desktop entry, script, o
 for _p in git python3-pip firefox-esr; do
     [[ "$(dpkg_state "$_p")" == "install ok installed" ]] && pass "32d: dpkg: $_p installed (AC6)" || fail "32d: dpkg: $_p installed (AC6)" "not installed in the image"
 done
+# v3.0.0 (B1 b82997a, security F6): the SSH one-shot (a root key + passphrase in
+# the pre-login banner, for a login sshd refuses) is gone; these must NOT ship.
 for _f in /etc/motd.d/orionx-ssh-admin /etc/issue.d/orionx-ssh-admin.issue; do
-    [[ -e "$SQF$_f" ]] && pass "32e: $_f ships (AC9)" || fail "32e: $_f ships (AC9)" "missing from the image"
+    [[ -e "$SQF$_f" ]] && fail "32e: $_f absent (SSH one-shot removed, v3.0.0)" "still ships" || pass "32e: $_f absent (SSH one-shot removed, v3.0.0)"
 done
 
 section "33. ISO volume identity matches the baked version"

@@ -1,0 +1,289 @@
+# Orion-X Phoenix Edition — cinematic release trailer (single source).
+#
+# tools/guided-demo/cinematic/build_trailer.py derives the MP4, the WebVTT
+# captions, the Markdown transcript and the poster from THIS file plus the
+# frames that qemu_capture.py recorded from the real ISO. Nothing in the
+# picture is mocked up except the title cards and the architecture diagrams,
+# which are drawn from the same facts as docs/images/*.svg.
+#
+# Narration rules (same as the guided demo and the User Guide): say only what
+# the image does; no invented metrics. The Cockpit's LIVE tab runs its built-in
+# demo feed (labelled on screen); the two alerts R.A.I.N. speaks are real
+# events published to the bus with orionx-event during the capture.
+
+title: "Orion-X Phoenix Edition"
+version: "v3.0.0"
+release_url: "https://github.com/jarocki/orion/releases"
+voice: af_heart           # Kokoro v1.0 (Apache-2.0), rendered offline
+voice_speed: 0.94
+resolution: [1920, 1080]
+fps: 30
+
+shots:
+  - id: cold-open
+    kind: black
+    dur: 5.0
+    deck_audio: critical  # the deck's own R.A.I.N. critical cue
+    text: {lines: ["03:12", "UNTRUSTED NETWORK"], style: terminal}
+    music: {intensity: 0.12}
+    narration: "Somewhere on a network you can't trust, something is moving."
+
+  - id: title
+    kind: title
+    dur: 5.5
+    text: {lines: ["ORION-X", "PHOENIX EDITION"], style: title}
+    music: {intensity: 0.45, hit: true, riser: 3.0}
+
+  - id: boot
+    kind: montage
+    scenes: [boot]
+    pick: spread          # evenly spaced frames through the whole boot
+    cuts: 7
+    dur: 8.5
+    chapter: "BOOT"
+    music: {intensity: 0.35}
+    narration: "It starts from a USB stick. Nothing is installed. Nothing is left behind."
+
+  - id: bootchain
+    kind: diagram
+    diagram: bootchain
+    dur: 7.0
+    music: {intensity: 0.38}
+    narration: "Firmware, kernel, the Phoenix splash, then your desktop."
+
+  - id: config
+    kind: capture
+    scene: config
+    window: [0.0, 1.0]
+    dur: 8.0
+    zoom: {from: [0.0, 0.25, 0.75, 0.75], to: [0.0, 0.35, 0.6, 0.6]}
+    chapter: "CONFIGURE"
+    music: {intensity: 0.4}
+    narration: "The first boot asks for a name and an account, then gets out of your way."
+
+  - id: desktop
+    kind: capture
+    scene: desktop
+    window: [0.55, 1.0]
+    dur: 6.5
+    zoom: {from: [0, 0, 1, 1], to: [0.05, 0.05, 0.9, 0.9]}
+    chapter: "AUTOLOGIN"
+    music: {intensity: 0.42}
+    narration: "A cyberdeck built for your three a.m. self."
+
+  - id: menu
+    kind: capture
+    scene: menu
+    window: [0.3, 1.0]
+    dur: 4.5
+    zoom: {from: [0, 0, 0.6, 0.6], to: [0, 0, 0.45, 0.45]}
+    music: {intensity: 0.45}
+    narration: "Every tool, one menu."
+
+  - id: cockpit
+    kind: capture
+    scene: cockpit-live
+    window: [0.1, 1.0]
+    dur: 10.0
+    zoom: {from: [0, 0, 1, 1], to: [0.08, 0.06, 0.84, 0.84]}
+    chapter: "MONITOR"
+    tag: "Cockpit · built-in demo feed + live events"
+    music: {intensity: 0.6, hit: true}
+    narration: "The Orion Cockpit lets you see, and hear, the network around you. Every detection lands on one event bus."
+
+  - id: eventbus
+    kind: diagram
+    diagram: eventbus
+    dur: 8.0
+    music: {intensity: 0.55}
+    narration: "Producers publish once. R.A.I.N. sounds it. The Cockpit shows it. What you hear and what you see always agree."
+
+  - id: rain
+    kind: capture
+    scene: cockpit-live
+    window: [0.55, 1.0]
+    dur: 7.0
+    zoom: {from: [0.0, 0.1, 0.6, 0.6], to: [0.0, 0.15, 0.5, 0.5]}
+    deck_audio: rain-voice   # the deck speaking a real alert, recorded from the guest
+    duck_music: 0.25
+    music: {intensity: 0.5}
+
+  - id: mesh
+    kind: capture
+    scene: tab-mesh
+    window: [0.3, 1.0]
+    dur: 6.0
+    zoom: {from: [0, 0, 1, 1], to: [0.1, 0.08, 0.8, 0.8]}
+    music: {intensity: 0.55}
+    narration: "Decks find each other and form an encrypted WireGuard mesh."
+
+  - id: meshdiagram
+    kind: diagram
+    diagram: mesh
+    dur: 6.5
+    music: {intensity: 0.58}
+    narration: "Every deck peers with every other. No hub. No cloud."
+
+  - id: comms
+    kind: capture
+    scene: tab-comms
+    window: [0.3, 1.0]
+    dur: 5.0
+    zoom: {from: [0, 0, 1, 1], to: [0.05, 0.05, 0.85, 0.85]}
+    music: {intensity: 0.58}
+    narration: "Team chat runs over that mesh, on your own Matrix server."
+
+  - id: defense-title
+    kind: title
+    dur: 2.6
+    text: {lines: ["SHIELDS UP"], style: chapter}
+    music: {intensity: 0.75, hit: true, riser: 2.5}
+
+  - id: awareness
+    kind: capture
+    scene: tab-awareness
+    window: [0.3, 1.0]
+    dur: 7.0
+    zoom: {from: [0, 0, 1, 1], to: [0.1, 0.1, 0.75, 0.75]}
+    chapter: "DEFEND"
+    music: {intensity: 0.75}
+    narration: "Threat posture comes in three tiers, from quiet watching to decoys and canaries."
+
+  - id: tuning
+    kind: capture
+    scene: defense
+    window: [0.0, 0.55]
+    dur: 7.5
+    zoom: {from: [0, 0, 0.8, 0.8], to: [0, 0, 0.6, 0.6]}
+    music: {intensity: 0.72}
+    narration: "When an alert is your own scanner, squelch it for thirty minutes or tune it for good, and the deck tells you whether that survives a reboot."
+
+  - id: firewall
+    kind: capture
+    scene: defense
+    window: [0.6, 1.0]
+    dur: 4.0
+    zoom: {from: [0, 0, 0.8, 0.8], to: [0, 0, 0.65, 0.65]}
+    music: {intensity: 0.75}
+
+  - id: forensics-title
+    kind: title
+    dur: 2.6
+    text: {lines: ["THEN THE WORK"], style: chapter}
+    music: {intensity: 0.8, hit: true, riser: 2.0}
+
+  - id: pcap
+    kind: capture
+    scene: forensics-pcap
+    window: [0.0, 1.0]
+    dur: 7.0
+    zoom: {from: [0, 0, 0.8, 0.8], to: [0, 0, 0.62, 0.62]}
+    chapter: "ANALYZE"
+    music: {intensity: 0.82}
+    narration: "Packet captures, memory images, suspicious binaries."
+
+  - id: wireshark
+    kind: capture
+    scene: wireshark
+    window: [0.2, 1.0]
+    dur: 5.0
+    zoom: {from: [0, 0, 1, 1], to: [0.05, 0.05, 0.8, 0.8]}
+    music: {intensity: 0.85}
+    narration: "Wireshark. Volatility. YARA. capa."
+
+  - id: memory
+    kind: capture
+    scene: forensics-memory
+    window: [0.2, 1.0]
+    dur: 4.5
+    zoom: {from: [0, 0, 0.8, 0.8], to: [0, 0, 0.62, 0.62]}
+    music: {intensity: 0.85}
+    narration: "Offline. On the stick."
+
+  - id: artifact
+    kind: capture
+    scene: forensics-yara
+    window: [0.2, 1.0]
+    dur: 4.0
+    zoom: {from: [0, 0, 0.8, 0.8], to: [0, 0, 0.62, 0.62]}
+    music: {intensity: 0.85}
+
+  - id: nebula
+    kind: capture
+    scene: nebula-status
+    window: [0.2, 1.0]
+    dur: 5.0
+    zoom: {from: [0, 0, 0.8, 0.8], to: [0, 0, 0.62, 0.62]}
+    chapter: "ASK"
+    music: {intensity: 0.8}
+    narration: "Nebula is a local AI copilot. Its model is hash-checked at every boot."
+
+  - id: nebuladiagram
+    kind: diagram
+    diagram: nebula
+    dur: 7.0
+    music: {intensity: 0.78}
+    narration: "Its tools can look, but they cannot improvise commands. Nothing leaves the deck."
+
+  - id: hunt-title
+    kind: title
+    dur: 2.4
+    text: {lines: ["THE HUNT GOES OUTWARD"], style: chapter}
+    music: {intensity: 0.88, hit: true, riser: 2.0}
+
+  - id: workbench
+    kind: capture
+    scene: workbench
+    window: [0.2, 1.0]
+    dur: 5.5
+    zoom: {from: [0, 0, 1, 1], to: [0.06, 0.06, 0.8, 0.8]}
+    chapter: "HUNT"
+    music: {intensity: 0.9}
+    narration: "The Orion Workbench is the analyst's toolbox."
+
+  - id: godseye
+    kind: capture
+    scene: godseye
+    window: [0.2, 1.0]
+    dur: 5.0
+    zoom: {from: [0, 0, 1, 1], to: [0.15, 0.12, 0.7, 0.7]}
+    music: {intensity: 0.92}
+    narration: "GODSEYE puts infrastructure on the globe."
+
+  - id: cyberchef
+    kind: capture
+    scene: cyberchef
+    window: [0.3, 1.0]
+    dur: 3.5
+    zoom: {from: [0, 0, 1, 1], to: [0.1, 0.1, 0.8, 0.8]}
+    music: {intensity: 0.92}
+    narration: "CyberChef decodes."
+
+  - id: pivotglass
+    kind: capture
+    scene: pivotglass
+    window: [0.3, 1.0]
+    dur: 6.5
+    zoom: {from: [0, 0, 1, 1], to: [0.08, 0.08, 0.8, 0.8]}
+    music: {intensity: 0.95, braam: true}
+    narration: "And Pivotglass keeps hypotheses, evidence and contradictions apart."
+
+  - id: architecture
+    kind: diagram
+    diagram: architecture
+    dur: 9.0
+    music: {intensity: 0.7, hit: true}
+    narration: "Monitor. Detect. Defend. Triage. Timeline. One stick."
+
+  - id: finale
+    kind: title
+    dur: 9.0
+    text: {lines: ["ORION-X", "PHOENIX EDITION", "v3.0.0"], style: finale}
+    music: {intensity: 0.35, hit: true}
+    narration: "Orion-X Phoenix Edition. A cyberdeck for the good guys."
+
+  - id: end-card
+    kind: title
+    dur: 5.0
+    text: {lines: ["github.com/jarocki/orion", "Debian 13 · x86-64 · runs from USB · works air-gapped"], style: endcard}
+    music: {intensity: 0.1}
