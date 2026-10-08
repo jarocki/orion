@@ -276,7 +276,7 @@ Nothing is installed on the computer — this checks the file you downloaded and
    Get-FileHash orionx-phoenix-edition-<version>.iso -Algorithm SHA256
    ```
 
-2. Compare the result with the hash on the release page and in `SHA256SUMS` (`orionx-imager` does this for you when it downloads the release). For v3.0.0 the ISO hashes to `<v3.0.0 SHA-256 — filled at release>`.
+2. Compare the result with the hash on the release page and in `SHA256SUMS` (`orionx-imager` does this for you when it downloads the release). For v3.0.0 the ISO hashes to `c952ca5be03789208e39ef1807c1f09c1c15fb1f82c223272c8c3c2007332386`.
 
 3. After booting Orion-X, open a terminal and check the image identity:
    ```bash

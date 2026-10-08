@@ -169,7 +169,7 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 
 ### 1. Get the ISO
 
-**v3.0.0 (`<v3.0.0 size — filled at release>`):** GitHub caps release assets
+**v3.0.0 (3.13 GB):** GitHub caps release assets
 at 2 GB per file, and every Debian 13 build so far has been about 3.1 GB, so
 the ISO is published as signed `.part-*` files (190 MiB each, about seventeen) plus `SHA256SUMS`/`SHA512SUMS`
 and `REASSEMBLE.txt` on the
@@ -197,7 +197,7 @@ Check that fingerprint against a source other than this page. A checksum on the
 same page as the download proves only that the file matches what the page says.
 
 The reassembled ISO must hash to
-`<v3.0.0 SHA-256 — filled at release>`. A single `.part-*` file is not bootable
+`c952ca5be03789208e39ef1807c1f09c1c15fb1f82c223272c8c3c2007332386`. A single `.part-*` file is not bootable
 on its own.
 
 You need a **USB stick of 8 GB or more** (everything on it will be erased) and an

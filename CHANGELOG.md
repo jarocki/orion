@@ -17,9 +17,14 @@ findings), five fix groups working in parallel worktrees, and a second round of
 defects found by booting and recording the image for the release video. Nothing
 below was accepted without a test that failed before the fix and passes after it.
 
-**ISO identity.** `<v3.0.0 SHA-256 — filled at release>`, `<size>`, built from
-`<commit>` with a clean chroot. Gates: hooks-applied, content-presence in release
-mode (`ORIONX_RELEASE_GATE=1`), QEMU BIOS + UEFI. `<filled after the build>`
+**ISO identity.** SHA-256 `c952ca5be03789208e39ef1807c1f09c1c15fb1f82c223272c8c3c2007332386`,
+3,131,211,776 bytes (3.13 GB), built 2026-10-08 16:25–16:58 MDT from `2da37512` with a
+clean chroot (only the bootstrap stage reused). Baked `ISO_VERSION=v3.0.0`, baked README ==
+repo. Gates on this image: hooks-applied 19/0; content-presence in release mode
+(`ORIONX_RELEASE_GATE=1 ORIONX_EXPECT_VERSION=v3.0.0`, shellcheck and lsinitramfs present)
+391/0/0; QEMU BIOS 104 s / UEFI 112 s. Not yet booted on the reference laptop. The
+CHANGELOG, README and User Guide copies baked into the image predate this identity line,
+as every release's must.
 
 ### Added
 
