@@ -356,12 +356,11 @@ without the bundled model.
 
 Open in v3.0.0 (each links to its tracking issue):
 
-- **The first-boot wizard's "SSH admin one-shot" credential cannot be used**
-  ([#98](https://github.com/jarocki/orion/issues/98)). The wizard prints a root
-  SSH key and password to the console, the login banner and the terminal
-  welcome text, but the image's SSH hardening sets `PermitRootLogin no`, so the
-  credential targets an account SSH will not let in. Ignore it; the User Guide
-  (§3) shows how to remove the text.
+- **SSH is installed but not started at boot** (closes
+  [#98](https://github.com/jarocki/orion/issues/98)). The old "SSH admin
+  one-shot" credential was removed: it targeted an account SSH refuses. Start
+  sshd deliberately with `sudo systemctl start ssh`; the firewall accepts port
+  22 only over the mesh (`wg0`), key login only, for `orionx-operator`.
 - **`radare2` and `fonts-iosevka` are not shipped** ([#85](https://github.com/jarocki/orion/issues/85)):
   Debian 13 has no candidate package for either. Ghidra installs post-boot via
   `/opt/orionx/optional/install-ghidra.sh`; Hack is the monospace font.

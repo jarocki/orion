@@ -1258,10 +1258,11 @@ for _m in default plain themed; do
     _f="$_t36_tmp/$_m/config/includes.binary/boot/grub/grub.cfg"
     [[ -f "$_f" ]] || { _t36_modes_ok=0; continue; }
     grep -qF 'menuentry "Orion-X Live (failsafe)"' "$_f" || _t36_modes_ok=0
+    grep -A1 -F 'menuentry "Orion-X Live (no questions)"' "$_f" | grep -q 'orionx.wizard=0' || _t36_modes_ok=0
     grep -qF 'set timeout=5' "$_f" || _t36_modes_ok=0
 done
 if [[ "$_t36_modes_ok" -eq 1 ]]; then
-    pass "T36.b8: failsafe entry + 5s timeout present in default, plain and themed modes"
+    pass "T36.b8: failsafe + no-questions (orionx.wizard=0) entries + 5s timeout present in default, plain and themed modes"
 else
     fail "T36.b8: a GRUB mode lost the failsafe entry or the visible timeout" \
          "that entry exists for when things are already wrong — it is not optional in any mode"

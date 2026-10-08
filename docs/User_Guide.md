@@ -29,6 +29,7 @@ Release: **<!--orionx:release-->v3.0.0<!--/orionx:release-->** — Debian 13 "tr
    - [Connecting to Local Networks](#connecting-to-local-networks)
    - [Setting Up WireGuard VPN](#setting-up-wireguard-vpn)
    - [WireGuard P2P Mesh](#wireguard-p2p-mesh)
+   - [Firewall and Remote Access](#firewall-and-remote-access)
    - [Network Configuration Verification](#network-configuration-verification)
 
 6. [Secure Communication](#6-secure-communication)
@@ -116,7 +117,6 @@ The "Phoenix" name symbolizes the toolkit's ability to help organizations rise f
 - Nothing you change survives a reboot unless you set up [persistence](#persistence-options).
 - It does not update itself: a new release means writing a new stick.
 - `radare2` and `bulk_extractor` are not on the image (no Debian 13 package; issue #85); Ghidra is available as an optional installer (§15).
-- The "SSH admin one-shot" credential the first-boot wizard prints cannot be used (issue #98; §3).
 - The operator account has administrator rights without a password prompt — by design for a single-operator deck; read [The Live Account and Administrator Rights](#the-live-account-and-administrator-rights) before you analyse anything hostile.
 - `/etc/orionx-version` names the exact build. If yours says `ISO_VERSION=v2.2.0-trixie-dev9`, you are running the earlier v2.2.0-beta; CHANGELOG.md lists what changed since.
 
@@ -311,17 +311,9 @@ Before the desktop appears, Orion-X pauses on the text console (tty1) and shows 
 2. **Primary account** — the account name (default `orionx-operator`; if you change it, the live user is renamed) and a password. **Leave the password blank to keep the default password, `live`.** The account can use `sudo` without a password either way (next section).
 3. **Wi-Fi** — network name (SSID) and password, asked **only** when no wired link is detected
 
-Every prompt auto-continues with its default after 120 seconds, so an unattended boot still completes: about 6 minutes at the banner with a network cable plugged in, about 8 without one (the Wi-Fi question is added). One prompt has no timeout: on a stick with persistence where you have set up a Matrix server (§6), the wizard asks "Register Matrix admin user now? [y/N]" and waits for an answer. When the wizard finishes, the desktop opens automatically logged in as the primary account — there is no login prompt on a normal boot. If you log out, the login screen asks for the account's password: the one you set, or `live`.
+Every prompt auto-continues with its default after 30 seconds, so an unattended boot still completes: about 2 minutes at the banner with a network cable plugged in, about 2½ without one (the Wi-Fi question is added). To skip the questions entirely, pick **"Orion-X Live (no questions)"** in the boot menu (it adds `orionx.wizard=0` to the kernel command line); the wizard then takes every default.
 
-The wizard also does three things without asking:
-
-- **Generates WireGuard keys** for the mesh (`/etc/wireguard/wg0.conf` and `/etc/wireguard/mesh-private.key`), so `sudo orionx-mesh join` works immediately.
-- **Prints an "SSH admin one-shot" credential** (a random password, a key fingerprint and a private key) to the console and writes it to `/etc/motd.d/orionx-ssh-admin` and `/etc/issue.d/orionx-ssh-admin.issue`, so you also see it in the terminal welcome text. **The credential cannot be used** (issue #98): it targets the `root` account, and the image's SSH hardening disables root login. Ignore it. To remove the text from the login prompt and the terminal welcome:
-  ```bash
-  sudo rm -f /etc/motd.d/orionx-ssh-admin /etc/issue.d/*
-  ```
-  SSH itself stays enabled; disable it with `sudo systemctl disable --now ssh` if you do not need it.
-- **Skips Matrix registration** on the image (the Synapse server is not installed until you run `setup-matrix.sh --mode server`, §6).
+The wizard does **not** create mesh keys or any SSH credential. Mesh keys are made by `sudo orionx-mesh join` (§5), and SSH is off at boot (§5, *Remote access*). Matrix registration is skipped on the image (the Synapse server is not installed until you run `setup-matrix.sh --mode server`, §6).
 
 You can re-run the wizard at any time:
 
@@ -504,6 +496,41 @@ sudo orionx-mesh leave                      # tear down wg0 and leave the mesh
 
 Add `--verbose` to any subcommand for detailed output. The ◆ widget in the top panel shows the current peer count.
 
+**Keys.** `join` creates this deck's WireGuard keypair on first use (under `/etc/wireguard/`, mode 0600) — nothing is pre-generated on the image, so no two decks share a key. Join and leave print whether the result survives a reboot; on a stick without persistence it does not, and the deck says so.
+
+**Beacons.** Decks find each other with a UDP beacon on port 55555. A beacon can only add a peer as a single host address inside the mesh subnet and never changes an existing peer's addresses; malformed or out-of-range beacons are logged and dropped.
+
+**Optional team pre-shared key.** Public-key peering is the default and needs no setup. For a second layer, make one PSK on one deck, carry it to the others out of band (a USB stick), and install it on every deck **before** they join:
+
+```bash
+sudo orionx-mesh psk generate /media/usb/team.psk   # on ONE deck
+sudo orionx-mesh psk install  /media/usb/team.psk   # on EVERY deck, before join
+sudo orionx-mesh psk status                          # installed or not
+sudo orionx-mesh psk remove                          # back to public-key-only
+```
+
+### Firewall and Remote Access
+
+The firewall (`nftables`, table `orionx_firewall`, applied by `orionx-firewall.service`) drops inbound traffic by default and logs the drops; `orionx-scanwatch` reads that log to detect port sweeps. What it admits:
+
+| Interface | Allowed in |
+|---|---|
+| any | established/related, DHCP replies, WireGuard `51820/udp`, mesh beacons `55555/udp` (rate-limited) |
+| `wg0` only | ping, SSH `22/tcp`, Matrix `8008`/`8448/tcp` |
+| LAN (`eth`/`wlan`) | nothing else — no SSH, no Matrix, no ICMP echo |
+
+Restarting the firewall reloads only its own table, so blocks placed by Auto-Healing stay in force.
+
+**SSH** is installed but **not started at boot**. To let a teammate in over the mesh:
+
+```bash
+sudo systemctl start ssh                      # on this deck; stop it again when done
+# on the teammate's deck:
+ssh orionx-operator@10.0.99.X                 # this deck's wg0 address (sudo orionx-mesh status)
+```
+
+Only key login is accepted (put the teammate's public key in `~/.ssh/authorized_keys`); password and root login are refused, and port 22 is reachable only over `wg0`.
+
 ![P2P mesh: every node peers directly; a relay is optional](images/orionx-mesh-topology.svg)
 
 *Figure: P2P mesh topology — every node peers directly; a relay is optional.*
@@ -577,12 +604,13 @@ If setting up a local server:
 1. Enter a server name for the Matrix homeserver (default `orionx.local`)
 2. Create an admin username and password
 3. The script will:
-   - Install Synapse and Element from their package repositories (network)
-   - Generate a secure configuration
-   - Create a self-signed certificate
-   - Start the Matrix Synapse server (`matrix-synapse`, port 8448)
-   - Register your admin user
-   - Configure the client
+   - Check for root and a network route, then install Synapse and Element from their package repositories (apt keys are fingerprint-pinned)
+   - Write one listener to `/etc/matrix-synapse/conf.d/orionx.yaml`: `http`, port `8008`, bound to `127.0.0.1` and this deck's `wg0` address (if joined). Open registration stays **off**; teammates get accounts from you.
+   - Start the package's `matrix-synapse.service` (hardened by a systemd drop-in; there is no AppArmor profile for Synapse because its interpreter is the system Python)
+   - Register your admin user (the password is passed through a file, never on the command line)
+   - Point Element at `http://127.0.0.1:8008`
+
+   Teammates connect to `http://<this deck's wg0 address>:8008` — the Cockpit's **Comms** tab prints the exact URL from that listener. The firewall admits 8008 only over `wg0`.
 
 ### Matrix Clients
 
@@ -1633,8 +1661,8 @@ If you encounter problems booting Orion-X:
    - Secure Boot is on. This release cannot boot with Secure Boot enabled — disable it in the firmware settings (Windows 11: Settings → System → Recovery → Advanced startup → Restart now → Troubleshoot → UEFI Firmware Settings), then choose the USB stick from the boot menu ("Use a device" on the same screen). Have your BitLocker recovery key to hand first (§2).
    - Some laptops also need "Fast Boot" / "Fast Startup" turned off before the F-key boot menu appears.
 
-6. **Terminal welcome text shows an "SSH Admin One-Shot" password and key**
-   - Written by the first-boot wizard; it cannot be used on this image and can be removed (§3, *First-Boot Wizard*).
+6. **I cannot SSH into the deck**
+   - SSH is installed but not started at boot, and the firewall accepts port 22 only over the mesh (`wg0`). On the deck: `sudo systemctl start ssh`; from a teammate's deck: `ssh orionx-operator@<this deck's 10.0.99.x address>` with a key you put in `~/.ssh/authorized_keys`. Password login and root login are refused.
 
 ### Network Connectivity
 

@@ -1318,6 +1318,9 @@ fi
 #
 # set timeout=5: show the menu 5s (lets the operator pick failsafe), then
 #   auto-boot the default. set default=0: boot the first menuentry.
+# "(no questions)" appends orionx.wizard=0: the first-boot wizard takes every
+#   default without prompting (DEC-PHASE12-106; UX-14 — a responder booting
+#   on a hostile network at 3 a.m. should not be asked for a hostname).
 
 ${grub_graphics_block}${grub_theme_block}
 serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
@@ -1329,6 +1332,11 @@ set default=0
 
 menuentry "Orion-X Live" {
     linux /live/vmlinuz $bootappend
+    initrd /live/initrd.img
+}
+
+menuentry "Orion-X Live (no questions)" {
+    linux /live/vmlinuz $bootappend orionx.wizard=0
     initrd /live/initrd.img
 }
 
