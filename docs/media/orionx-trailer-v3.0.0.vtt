@@ -1,0 +1,134 @@
+WEBVTT
+
+1
+00:00:00.350 --> 00:00:03.685
+Somewhere on a network you can't trust,
+something is moving.
+
+2
+00:00:10.850 --> 00:00:15.881
+It starts from a USB stick. Nothing is
+installed. Nothing is left behind.
+
+3
+00:00:19.350 --> 00:00:22.226
+Firmware, kernel, the Phoenix splash, then
+your desktop.
+
+4
+00:00:26.350 --> 00:00:30.184
+The first boot asks for a name and an
+account, then gets out of your way.
+
+5
+00:00:34.350 --> 00:00:37.266
+A cyberdeck built for your three a.m.
+self.
+
+6
+00:00:40.850 --> 00:00:42.403
+Every tool, one menu.
+
+7a
+00:00:45.350 --> 00:00:47.984
+The Orion Cockpit lets you see, and hear,
+
+7b
+00:00:47.984 --> 00:00:52.095
+the network around you. Every detection
+lands on one event bus.
+
+8a
+00:00:55.350 --> 00:00:58.124
+Producers publish once. R.A.I.N. sounds
+
+8b
+00:00:58.124 --> 00:01:03.175
+it. The Cockpit shows it. What you hear
+and what you see always agree.
+
+9
+00:01:10.975 --> 00:01:14.606
+Decks find each other and form an
+encrypted WireGuard mesh.
+
+10
+00:01:16.975 --> 00:01:20.411
+Every deck peers with every other. No hub.
+No cloud.
+
+11
+00:01:23.475 --> 00:01:26.850
+Team chat runs over that mesh, on your own
+Matrix server.
+
+12
+00:01:31.075 --> 00:01:35.999
+Threat posture comes in three tiers, from
+quiet watching to decoys and canaries.
+
+13a
+00:01:38.075 --> 00:01:42.651
+When an alert is your own scanner, squelch
+it for thirty minutes or tune it for good,
+
+13b
+00:01:42.651 --> 00:01:45.612
+and the deck tells you whether that
+survives a reboot.
+
+14
+00:01:53.011 --> 00:01:56.444
+Packet captures, memory images, suspicious
+binaries.
+
+15
+00:02:00.011 --> 00:02:02.802
+Wireshark. Volatility. YARA. capa.
+
+16
+00:02:05.011 --> 00:02:06.405
+Offline. On the stick.
+
+17
+00:02:14.512 --> 00:02:19.468
+Nebula is a local AI copilot. Its model is
+hash-checked at every boot.
+
+18a
+00:02:20.268 --> 00:02:22.346
+Its tools can look, but they cannot
+
+18b
+00:02:22.346 --> 00:02:25.019
+improvise commands. Nothing leaves the
+deck.
+
+19
+00:02:29.668 --> 00:02:32.573
+The Orion Workbench is the analyst's
+toolbox.
+
+20
+00:02:35.168 --> 00:02:38.116
+GODSEYE will not reach out until the deck
+says it can.
+
+21
+00:02:40.168 --> 00:02:41.536
+CyberChef decodes.
+
+22
+00:02:43.668 --> 00:02:48.096
+And Pivotglass keeps hypotheses, evidence
+and contradictions apart.
+
+23
+00:02:50.168 --> 00:02:54.012
+Monitor. Detect. Defend. Triage. Timeline.
+One stick.
+
+24
+00:02:59.168 --> 00:03:02.797
+Orion-X Phoenix Edition. A cyberdeck for
+the good guys.

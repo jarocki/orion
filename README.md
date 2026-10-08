@@ -29,6 +29,17 @@ Mission verbs: **monitor** / **detect** / **defend** / **triage** / **timeline**
 > between reboots unless you set up persistence, or update itself. See
 > [Known issues](#known-issues).
 
+[![Watch the Orion-X 3.0 release trailer](docs/media/orionx-trailer-v3.0.0-poster.png)](docs/media/orionx-trailer-v3.0.0.mp4)
+
+**[Watch the v3.0.0 release trailer (3 min, 720p)](docs/media/orionx-trailer-v3.0.0.mp4)** ·
+**[Captions](docs/media/orionx-trailer-v3.0.0.vtt)** ·
+**[Transcript](docs/media/orionx-trailer-v3.0.0-transcript.md)** — the 1080p master is
+attached to the release. Every boot, wizard and desktop frame is the v3.0.0 ISO booting in
+QEMU; every application frame is the ISO's own userspace running (`tools/guided-demo/cinematic/`,
+DEC-PHASE12-062…064, -140). The Cockpit's LIVE tab runs its built-in demo feed plus real events
+published during the capture; the alert you hear spoken is the deck's own voice. Narration is
+synthesised offline; the score is procedural.
+
 [![Watch the Orion-X guided walkthrough](docs/media/orionx-guided-demo-v2.2.0-beta-poster.png)](docs/media/orionx-guided-demo-v2.2.0-beta.mp4)
 
 **[Watch or download the guided walkthrough (2½ min)](docs/media/orionx-guided-demo-v2.2.0-beta.mp4)** ·

@@ -898,7 +898,8 @@ def write_vtt(captions, path: Path):
 def write_transcript(cfg, shots, captions, total, path: Path):
     out = [f"# {cfg['title']} {cfg['version']} — release trailer — transcript", "",
            f"**Runtime:** {int(total // 60)} min {int(total % 60)} s<br>",
-           "**Picture:** the release ISO booted in QEMU (UEFI, 1920x1080) and driven from its own console; "
+           "**Picture:** boot, first-boot wizard and desktop are the release ISO booting in QEMU (UEFI, 1920x1080); "
+           "every application scene is the ISO's own userspace running in a container (`record_scenes.py`); "
            "title cards and architecture diagrams are drawn by `tools/guided-demo/cinematic/build_trailer.py`.<br>",
            "**Sound:** narration synthesised offline (Kokoro v1.0, voice `" + cfg.get("voice", "") + "`); "
            "procedural score (`render_music.py`); deck samples are the image's own R.A.I.N. cues and voice.<br>",

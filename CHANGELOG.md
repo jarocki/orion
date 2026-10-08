@@ -38,7 +38,8 @@ mode (`ORIONX_RELEASE_GATE=1`), QEMU BIOS + UEFI. `<filled after the build>`
   ISO as signed 190 MiB parts with SHA256SUMS/SHA512SUMS and reassembly
   instructions; `scripts/release/ci-local.sh` runs the CI gates locally; lint, e2e
   and QEMU workflows run on `release/**` branches (DEC-PHASE12-115, -123).
-- **The release trailer pipeline** (`tools/guided-demo/cinematic/`): boot footage
+- **The release trailer** (`docs/media/orionx-trailer-v3.0.0.{mp4,vtt,-transcript.md,-poster.png}`,
+  720p in the repo, 1080p master on the release) and its pipeline (`tools/guided-demo/cinematic/`): boot footage
   captured from the real ISO in QEMU, UI scenes recorded from the ISO's own root
   filesystem, the deck's own R.A.I.N. cues and voice, a synthesised score and an
   offline neural narrator; captions and transcript derive from one script
