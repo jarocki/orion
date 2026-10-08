@@ -87,7 +87,7 @@ else
 fi
 
 section "stage-split-release.sh: refusals"
-bash "$STAGE" "$S/build.iso" v3.0.0 --out "$S/r2" --part-size 1m --unsigned >/dev/null 2>&1 \
+bash "$STAGE" "$S/build.iso" v9.9.9 --out "$S/r2" --part-size 1m --unsigned >/dev/null 2>&1 \
     && fail "tag without CHANGELOG section" "staged" || pass "a tag with no CHANGELOG section is refused"
 cp "$S/build.iso" "$S/bad.iso"; echo "0000000000000000000000000000000000000000000000000000000000000000  bad.iso" > "$S/bad.iso.sha256"
 bash "$STAGE" "$S/bad.iso" "$TAG" --out "$S/r3" --part-size 1m --unsigned >/dev/null 2>&1 \
