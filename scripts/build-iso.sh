@@ -177,6 +177,7 @@ require_release_changelog() {  # <version> <repo_root>
 #   patches are verified after sed; a live-build whose text no longer matches
 #   fails the build instead of silently building unpatched.
 # ---------------------------------------------------------------------------
+# shellcheck disable=SC2120  # the optional dir is passed by tests/unit/test_build_iso.sh (T41); the build uses the default
 patch_live_build() {  # [functions_dir]
     local fdir="${1:-/usr/share/live/build/functions}"
     # -i.orig + rm: the one in-place form GNU and BSD sed both accept (tests run on macOS).
@@ -1402,6 +1403,7 @@ prepare_build_env() {
     # They edit the toolchain's own files, so they run only inside a build
     # container (Docker sets /.dockerenv; the macOS wrap sets ORIONX_BUILD_IN_DOCKER).
     if [[ -f /.dockerenv || -n "${ORIONX_BUILD_IN_DOCKER:-}" ]]; then
+        # shellcheck disable=SC2119  # default functions dir inside the build container
         patch_live_build || exit 1
         log "  live-build patched: cp -fl -> cp -f; --allow-remove-essential in Remove_packages only"
     else
