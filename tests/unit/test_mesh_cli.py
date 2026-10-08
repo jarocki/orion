@@ -242,9 +242,13 @@ class TestHelpOutput:
         assert "Usage: orionx-mesh" in result.stdout
 
     def test_help_contains_version(self):
-        """Help must include version string."""
+        """The banner names the image version from /etc/orionx-version, or unknown-build."""
         result = _run_cli("help")
-        assert "v2.0.0" in result.stdout
+        first = result.stdout.splitlines()[0]
+        assert first.startswith("Orion-X Mesh Networking Tool ")
+        ver = first.split()[-1]
+        assert ver == "unknown-build" or ver.startswith("v")
+        assert "v2.0.0" not in result.stdout
 
     def test_help_lists_all_commands(self):
         """Help must list all subcommands."""
