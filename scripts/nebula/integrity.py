@@ -44,8 +44,12 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
+import json
 import logging
 import os
+import shutil
+import signal
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -74,6 +78,60 @@ _DEFAULT_MANIFEST = _DEFAULT_MODELS_DIR / "MANIFEST.sha256"
 _DEFAULT_STATUS_FILE = Path("/run/orionx/nebula-integrity.status")
 
 _BLOCK_SIZE = 65536  # 64 KiB read chunks for large GGUF files
+
+# The CLI that publishes onto the R.A.I.N. bus. Overridable for tests.
+_EVENT_CLI = os.environ.get("NEBULA_EVENT_CLI", "orionx-event")
+
+
+def publish_event(severity: str, message: str,
+                  detail: Optional[dict] = None) -> bool:
+    """Publish one event onto the R.A.I.N. bus. Return True only if written.
+
+    @decision DEC-PHASE12-041
+    @title An integrity gate that fails silently is worse than no gate
+    @status accepted
+    @rationale On rc4 this check could be SIGTERMed mid-hash by the unit's
+      (implicit, 90s) start timeout. nebula-runtime.service then refused to
+      start because of Requires=, and the only surface that said anything was
+      /var/log/orionx/nebula-integrity.log. The operator saw an LLM that did
+      not work and a badge with no input. RESILIENCE rule 8: a degraded state
+      must name what is broken, what still works, and the exact remedy.
+
+      The category is `service`, which is in rain_lib.STATUS_CATEGORIES and so
+      is excluded from THREAT PRESSURE (DEC-PHASE12-040). A failed self-check
+      is self-status, not an intrusion — even when the cause WOULD be an
+      intrusion, raising the threat gauge from a boot-time self-test is how
+      DEC-PHASE12-034 taught the operator to ignore the gauge.
+
+      Never reports a publication it did not confirm (rule 3): a missing CLI
+      or a non-zero exit returns False and logs the fact.
+    """
+    if os.environ.get("NEBULA_NO_EVENTS"):
+        return False
+    exe = shutil.which(_EVENT_CLI)
+    if exe is None:
+        logger.warning(
+            "orionx-event not on PATH — event NOT published to the R.A.I.N. "
+            "bus: [%s] %s", severity, message)
+        return False
+    cmd = [exe, "--severity", severity, "--source", "nebula-integrity",
+           "--category", "service"]
+    if detail:
+        cmd += ["--detail", json.dumps(detail)]
+    cmd.append(message)
+    try:
+        completed = subprocess.run(cmd, timeout=10, capture_output=True,
+                                   check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("orionx-event failed (%s) — event NOT published: %s",
+                       exc, message)
+        return False
+    if completed.returncode != 0:
+        logger.warning(
+            "orionx-event exited %d — event NOT published: %s",
+            completed.returncode, message)
+        return False
+    return True
 
 
 def _sha256_file(path: Path) -> str:
@@ -136,6 +194,7 @@ def write_status(
     status_file: Path,
     ok: bool,
     detail: str,
+    state: Optional[str] = None,
 ) -> None:
     """Write the machine-readable integrity status file.
 
@@ -150,7 +209,11 @@ def write_status(
         NEBULA_INTEGRITY_TS=2026-06-09T10:30:00
     """
     ts = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
-    state = "OK" if ok else "FAIL"
+    # `state` overrides the OK/FAIL pair for the in-progress CHECKING marker.
+    # Anything that is not OK must read as not-OK to every consumer, so the
+    # interrupted case writes FAIL, not a third terminal value.
+    if state is None:
+        state = "OK" if ok else "FAIL"
     content = (
         f"NEBULA_INTEGRITY={state}\n"
         f"NEBULA_INTEGRITY_DETAIL={detail}\n"
@@ -292,6 +355,48 @@ def main(argv: Optional[list[str]] = None) -> int:
         args.status_file,
     )
 
+    # The Control Center reads this file. Write a CHECKING marker BEFORE the
+    # hash starts, so a long verification reads as "in progress" rather than
+    # "status file not found" (DEC-PHASE12-041).
+    write_status(args.status_file, ok=False, state="CHECKING",
+                 detail="verifying model files — this can take minutes on "
+                        "slow storage")
+
+    # If systemd's start timeout fires we are SIGTERMed mid-hash. Before this
+    # handler existed the process simply died, leaving the CHECKING marker (or
+    # on rc4, nothing at all) and a nebula-runtime that Requires= us and so
+    # never started. Fail CLOSED, but say why, and say that "killed" is not
+    # the same as "tampered".
+    def _on_term(signum, _frame):  # noqa: ANN001
+        name = signal.Signals(signum).name
+        detail = (
+            f"integrity check was interrupted by {name} before it finished "
+            "(most likely the unit's TimeoutStartSec); NOT a hash mismatch"
+        )
+        logger.error(detail)
+        write_status(args.status_file, ok=False, detail=detail)
+        publish_event(
+            "critical",
+            "Nebula model integrity check was killed by " + name + " before "
+            "it could finish verifying the model. The gate fails closed, so "
+            "nebula-runtime will NOT start and on-device AI is unavailable; "
+            "this is a timeout, NOT evidence of tampering. Everything else on "
+            "the deck is unaffected. Remedy: raise TimeoutStartSec= in "
+            "nebula-integrity-check.service, or verify by hand with "
+            "`python3 /opt/orionx/scripts/nebula/integrity.py`. Check: "
+            "systemctl status nebula-integrity-check; "
+            "journalctl -u nebula-integrity-check -n 50; "
+            "sha256sum -c /opt/orionx/nebula/models/MANIFEST.sha256",
+            {"reason": "integrity-check-interrupted", "signal": name,
+             "manifest": str(args.manifest)})
+        sys.exit(1)
+
+    for _sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(_sig, _on_term)
+        except (ValueError, OSError):      # not the main thread / unsupported
+            pass
+
     try:
         ok = verify_manifest(args.models_dir, args.manifest, test_models_dir=test_dir)
     except FileNotFoundError as exc:
@@ -299,11 +404,28 @@ def main(argv: Optional[list[str]] = None) -> int:
         detail = f"MANIFEST.sha256 missing: {exc}"
         logger.error(detail)
         write_status(args.status_file, ok=False, detail=detail)
+        publish_event(
+            "critical",
+            "Nebula model integrity CANNOT be verified: "
+            f"{args.manifest} is missing, so the model was never staged or "
+            "staging failed. nebula-runtime will NOT start and on-device AI "
+            "is unavailable; the rest of the deck is unaffected. Remedy: "
+            "rebuild the ISO, or re-stage the model. Check: "
+            f"ls -l {args.models_dir}; systemctl status nebula-integrity-check",
+            {"reason": "manifest-missing", "manifest": str(args.manifest)})
         return 1
     except Exception as exc:  # noqa: BLE001
         detail = f"Unexpected error during integrity check: {exc}"
         logger.error(detail)
         write_status(args.status_file, ok=False, detail=detail)
+        publish_event(
+            "critical",
+            f"Nebula model integrity check errored out: {exc}. "
+            "nebula-runtime will NOT start and on-device AI is unavailable; "
+            "the rest of the deck is unaffected. Check: "
+            "journalctl -u nebula-integrity-check -n 50; "
+            "cat /var/log/orionx/nebula-integrity.log",
+            {"reason": "integrity-check-error", "error": str(exc)})
         return 1
 
     try:
@@ -319,6 +441,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         detail = "one or more model files failed integrity verification — see logs"
         logger.error("Integrity check FAILED: %s", detail)
         write_status(args.status_file, ok=False, detail=detail)
+        publish_event(
+            "critical",
+            "Nebula model FAILED SHA-256 verification: the on-device model "
+            "does not match the manifest recorded at build time. The gate is "
+            "holding — nebula-runtime will NOT start, so the altered model "
+            "cannot answer anything (DEC-PHASE10-009). On-device AI is "
+            "unavailable; capture, the IDS and local tooling are unaffected. "
+            "Check: "
+            f"sha256sum -c {args.manifest}; "
+            "cat /var/log/orionx/nebula-integrity.log; "
+            "journalctl -u nebula-integrity-check -n 50",
+            {"reason": "integrity-mismatch", "manifest": str(args.manifest),
+             "models_dir": str(args.models_dir)})
         return 1
 
 

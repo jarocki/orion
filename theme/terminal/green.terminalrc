@@ -1,0 +1,74 @@
+# Orion-X Phoenix Edition — xfce4-terminal profile: GREEN (phosphor)
+#
+# @decision DEC-PHASE12-042
+# @title Terminal appearance is a DATA asset, not code in two scripts
+# @status accepted
+# @rationale Until now the terminal palette existed TWICE: as a heredoc in
+#   iso/config/hooks/normal/0100-create-user.hook.chroot (the /etc/skel seed)
+#   and as two more heredocs in scripts/toggle-theme.sh. The two disagreed —
+#   the skel seed carried the DEC-PHASE11-031 readable-grey foreground and a
+#   37-key config; toggle-theme.sh overwrote it with an 11-key config that
+#   reverted the foreground to #0cfa54 / #ff9900 and silently DROPPED every
+#   other setting (scrollback, URL highlighting, tab behaviour). Toggling the
+#   theme therefore degraded the terminal. That is rule 7 (one authority per
+#   fact) with a visible consequence.
+#
+#   These two files are now the single authority for terminal appearance.
+#   0100 copies dark.terminalrc into /etc/skel; toggle-theme.sh copies one of
+#   them over ~/.config/xfce4/terminal/terminalrc and then VERIFIES the copy
+#   by reading it back.
+#
+#   FontName=Hack 12 is load-bearing: DEC-PHASE11-031 (Iosevka is not in the
+#   archive and fell back to an unreadable substitute) and the
+#   tests/integration/test-iso-content-presence.sh 23b-j assertion both pin it.
+#
+#   Transparency (DEC-PHASE12-042): BackgroundMode=TERMINAL_BACKGROUND_TRANSPARENT
+#   with BackgroundDarkness=0.88 renders the Phoenix wallpaper faintly through
+#   the terminal. This REQUIRES a running compositor — xfwm4's
+#   /general/use_compositing, seeded true in 0100's xfwm4.xml. With no
+#   compositor xfce4-terminal degrades to an opaque ColorBackground, which is
+#   exactly the current appearance: the failure mode is "not pretty", never
+#   "not readable".
+[Configuration]
+FontName=Hack 12
+MiscAlwaysShowTabs=FALSE
+MiscBell=FALSE
+MiscBellUrgent=FALSE
+MiscBordersDefault=TRUE
+MiscCursorBlinks=TRUE
+MiscCursorShape=TERMINAL_CURSOR_SHAPE_BLOCK
+MiscDefaultGeometry=96x28
+MiscInheritGeometry=FALSE
+MiscMenubarDefault=FALSE
+MiscMouseAutohide=FALSE
+MiscMouseWheelZoom=TRUE
+MiscToolbarDefault=FALSE
+MiscConfirmClose=TRUE
+MiscCycleTabs=TRUE
+MiscTabCloseButtons=TRUE
+MiscTabCloseMiddleClick=TRUE
+MiscTabPosition=GTK_POS_TOP
+MiscHighlightUrls=TRUE
+MiscMiddleClickOpensUri=FALSE
+MiscCopyOnSelect=FALSE
+MiscShowRelaunchDialog=TRUE
+MiscRewrapOnResize=TRUE
+MiscUseShiftArrowsToScroll=FALSE
+MiscSlimTabs=TRUE
+MiscNewTabAdjacent=FALSE
+ScrollingUnlimited=TRUE
+ScrollingBar=TERMINAL_SCROLLBAR_NONE
+BackgroundMode=TERMINAL_BACKGROUND_TRANSPARENT
+BackgroundDarkness=0.780000
+ColorUseTheme=FALSE
+ColorForeground=#B9F7C8
+ColorBackground=#04140C
+ColorCursor=#25C3DC
+ColorCursorUseDefault=FALSE
+ColorBold=#E8FFF0
+ColorBoldUseDefault=FALSE
+ColorSelection=#04140C
+ColorSelectionBackground=#25C3DC
+ColorSelectionUseDefault=FALSE
+ColorPalette=#0b1f16;#ef5350;#0cfa54;#b9f27c;#25c3dc;#7fe0c0;#26c6da;#cfe8d8;#2a4a3a;#ff6a4a;#6cff9c;#d8ff9c;#6ce0f0;#aef0d8;#5ff0f0;#ffffff
+TitleMode=TERMINAL_TITLE_REPLACE

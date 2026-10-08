@@ -1,0 +1,436 @@
+GODSEYE on Orion-X — every host name present in the bundle that ships
+=====================================================================
+DEC-PHASE12-045 · /opt/orionx/osint/godseye/
+
+Read this before you open GODSEYE on a network you do not control.
+
+GODSEYE is a live-API application. It has no offline mode and no cached
+world: the globe's base imagery, every aircraft, every satellite pass, every
+earthquake and every camera arrives over the internet at the moment you look
+at it. Opening it announces this deck — its address, and the subject of your
+interest — to between a handful and a few dozen third parties, depending on
+which layers you enable.
+
+That is not a reason never to use it. It is a reason to know the list.
+
+How this list is kept true
+--------------------------
+The block between the INVENTORY markers at the bottom is *generated* from the
+bytes under ./app/ by `scripts/osint/godseye_hosts.py`. It is not a summary
+and not a memory: it is every syntactically valid host name appearing in a
+URL literal anywhere in the shipped bundle, including inside Cesium.js, the
+feed manifests and the compiled application chunk.
+
+`tests/unit/test_godseye.sh` re-derives it and fails if it has drifted. So
+re-vendoring GODSEYE cannot quietly add a host — the suite goes red and a
+human has to classify the new name in the sections below.
+
+The sections below are the part a human wrote. They are a judgement about
+*when* each host is contacted, and they are signed as one. Section G is
+defined as the complement: anything in the inventory that A-F do not name is
+a string in the bytes that nothing requests — documentation links, licence
+URLs, XML namespaces, Cesium's own source comments and attribution.
+
+
+A. CONTACTED THE MOMENT THE GLOBE OPENS
+---------------------------------------
+Unavoidable. There is no GODSEYE without these.
+
+  server.arcgisonline.com     Esri World Imagery raster tiles — the map
+  services.arcgisonline.com   Esri World Imagery (high-detail upgrade) and
+                              the country/city label reference overlays
+  terrain.reearth.land        Cesium quantized-mesh terrain
+
+  With these unreachable the globe is a featureless dark ellipsoid. That is
+  the state this deck's gate exists to refuse to show you.
+
+  CesiumJS does ship a 43-tile offline Natural Earth II basemap (zoom 0-2) at
+  app/cesium/Assets/Textures/NaturalEarthII/, and a reviewer will find it.
+  GODSEYE never instantiates it: src/components/Globe.jsx constructs the
+  Viewer with `baseLayer` set to the Esri provider above and
+  `baseLayerPicker: false`, so there is no code path and no control that
+  reaches those tiles. They do not rescue the offline case today. Wiring
+  them in as an offline fallback would be a real improvement and is recorded
+  as a follow-up rather than claimed here.
+
+
+B. CONTACTED WHEN A LAYER IS ENABLED
+------------------------------------
+Each is requested directly by the browser, from this deck's address.
+
+  earthquake.usgs.gov         USGS seismic feed
+  service.iris.edu            IRIS FDSN seismic station metadata
+  eonet.gsfc.nasa.gov         NASA EONET natural-hazard events
+  firms.modaps.eosdis.nasa.gov  NASA FIRMS active-fire detections (via relay)
+  www.gdacs.org               GDACS global disaster alerts
+  volcano.si.edu              Smithsonian weekly volcanic activity
+  api.weather.gov             NOAA/NWS severe-weather alerts
+  www.ndbc.noaa.gov           NOAA ocean-buoy telemetry (via relay)
+  services.swpc.noaa.gov      NOAA space weather: aurora, GOES X-ray flares
+  api.open-meteo.com          Open-Meteo world weather grid
+  air-quality-api.open-meteo.com  Open-Meteo air quality
+  open-meteo.com              Open-Meteo documentation/root
+  aviationweather.gov         METAR, AIRMET/SIGMET (via relay)
+  celestrak.org               CelesTrak TLE element sets
+  tle.ivanstanojevic.me       TLE API (satellite fallback)
+  opensky-network.org         OpenSky aircraft states
+  api.adsb.lol                ADS-B aircraft (community)
+  api.adsb.one                ADS-B aircraft (community)
+  api.airplanes.live          ADS-B aircraft (community)
+  ourairports.com             global airport dataset
+  msi.nga.mil                 NGA maritime safety information
+  ornl.opendatasoft.com       WFP/ORNL global port dataset
+  query.wikidata.org          Wikidata SPARQL — the conflict layer
+  www.wikidata.org            Wikidata entity lookups
+  en.wikipedia.org            article enrichment in the inspector panel
+  commons.wikimedia.org       imagery for inspector entries
+  www.openstreetmap.org       OSM attribution and object links
+  overpass-api.de             OSM Overpass (military sites, infrastructure)
+  raw.githubusercontent.com   static datasets pulled from GitHub
+  services.arcgis.com         NTAD military-base feature service
+  data.austintexas.gov        Austin open-data traffic cameras
+  cctv.austinmobility.io      Austin camera index
+  cwwp2.dot.ca.gov            Caltrans camera index
+  511on.ca                    Ontario 511 camera index
+  511.alberta.ca              Alberta 511 camera index
+  api.tfl.gov.uk              Transport for London
+  gpsjam.org                  GPS interference map reference
+  img.youtube.com             thumbnails for YouTube-hosted camera entries
+  www.youtube.com             embedded player for YouTube-hosted cameras
+  www.w3.org                  XML/SVG namespaces (no request is made)
+
+
+C. RELAYS — READ THIS ONE TWICE
+-------------------------------
+  api.allorigins.win          anonymous public CORS relay
+  r.jina.ai                   anonymous public reader/proxy
+
+Roughly fifteen of GODSEYE's feeds are not fetched from their origin. They
+are fetched *through* one of these two relays, because the origin does not
+send CORS headers a browser will accept. Concretely:
+
+  - the relay operator sees this deck's public address;
+  - the relay operator sees the full target URL, which is the question you
+    are asking — which ADS-B box, which METAR bounding box, which fire
+    region;
+  - the relay operator returns the answer, and can change it. Nothing in
+    GODSEYE authenticates what comes back.
+
+  - `r.jina.ai` is additionally used in the form `https://r.jina.ai/http://...`:
+    the leg from the relay to the origin is plaintext HTTP.
+
+This is an ordinary engineering compromise for a public web app and an
+unusual thing to accept on an incident-response deck. It is the single
+strongest argument against enabling GODSEYE on a sensitive engagement, and it
+is why `orionx-osint` will not serve this bundle at a raised posture.
+
+
+D. CONTACTED ONLY WHEN YOU OPEN A SPECIFIC CAMERA OR STATION
+------------------------------------------------------------
+./app/manifests/cctv-verified.json carries several thousand curated public
+camera entries and the radio station list carries several hundred streams.
+Their hosts are in the inventory below and are *not* listed here one by one,
+because none of them is contacted until you click that entry. They include
+commercial camera platforms (worldcams.tv, earthcam.net, ivideon,
+rhombussystems, angelcam, nest/dropcam), municipal DOT stream endpoints, CDN
+edges and broadcaster audio streams, across many jurisdictions including
+ones you may not wish to transit.
+
+A single click here is a direct TLS connection from this deck to that
+operator. Treat each one as a deliberate act.
+
+
+E. REQUIRES AN API KEY — NEVER CONTACTED ON THIS DECK
+-----------------------------------------------------
+  api.cesium.com              Cesium ion asset service
+  assets.ion.cesium.com       Cesium ion asset delivery
+  cesium.com                  Cesium ion
+  maps.googleapis.com         Google Photorealistic 3D Tiles
+  www.googleapis.com          Google APIs (YouTube discovery)
+  generativelanguage.googleapis.com   Gemini — the HUD's briefing generator
+  api.mapbox.com              Mapbox tiles
+  aisstream.io                AISstream live vessel WebSocket
+
+Three more hosts upstream's source references do not survive into this build
+at all. They are listed for completeness and marked, because a reviewer
+grepping the bytes will not find them and is entitled to know why:
+
+  content.guardianapis.com    Guardian intel enrichment
+                              [not in this build's bytes]
+  dns.google                  DoH resolver for the Firebase shared cache
+                              [not in this build's bytes]
+  api.tomtom.com              TomTom traffic tiles — referenced only inside
+                              upstream's Node backend (server/routes/traffic.mjs),
+                              which Orion-X does not ship, so this one is
+                              unreachable twice over
+                              [not in this build's bytes]
+
+GODSEYE reads its keys from Vite build-time environment variables
+(`VITE_*`). This bundle was built with none of them set, so the key values
+are compiled out: the code paths above cannot run and the hosts cannot be
+reached. No key is present in this tree, and none can be added by editing a
+file on the deck — a key would have to be baked in at build time, which
+would publish it in cleartext inside a distributed ISO. Orion-X will not do
+that. See PROVENANCE.txt for the build command.
+
+CesiumJS ships its own public demo ion token inside app/cesium/Cesium.js.
+It is upstream's token, not a secret, not Orion-X's, and nothing in this
+build requests an ion-backed asset.
+
+
+F. DEAD IN THIS BUILD — NO NODE BACKEND
+---------------------------------------
+Upstream GODSEYE ships a Node service (`server/`) that proxies five route
+families the browser cannot call directly. Orion-X runs no Node at runtime,
+so these routes do not exist here and the layers that depend on them cannot
+work even with a perfect network:
+
+  /api/flights        aircraft via the backend proxy
+  /api/cctv/*         camera source index and frame grabs
+  /api/radio/*        station list and click-through
+  /api/traffic/*      flow tiles and status
+  /api/overpass       Overpass queries via the backend
+
+`osint_server.py` answers each of them with HTTP 501 and a JSON body that
+says so by name, rather than a bare 404 the application would render as an
+empty layer. Some aircraft and camera data still arrives through the direct
+browser paths in section B; the proxied paths do not.
+
+
+G. PRESENT IN THE BYTES, NOT CONTACTED
+--------------------------------------
+Everything in the inventory below that sections A-F do not name. These are
+documentation links, licence URLs, XML namespaces, academic references and
+Cesium's own source comments and attribution strings. They are listed
+because an audit that hides what it judged irrelevant is not an audit.
+
+
+=== INVENTORY BEGIN (generated: scripts/osint/godseye_hosts.py --write) ===
+2-fss-2.streamhoster.com
+29a.ch
+511.alberta.ca
+511on.ca
+565c3c746b763.streamlock.net
+5a5f765a4fcc2.streamlock.net:1936
+5a6f905a69aae.streamlock.net
+5ab0d1d85f91f.streamlock.net
+5b5d5bdb0d55e.streamlock.net
+5ddd47d64e730.streamlock.net:444
+5ed7b8fd7bf40.streamlock.net:444
+5f9f690034fb0.streamlock.net:444
+5fe4f07c28b74.streamlock.net:442
+623bf6bf3ce68.streamlock.net:444
+air-quality-api.open-meteo.com
+aisstream.io
+aomedia.org
+ape.hls.camzonecdn.com
+api.adsb.lol
+api.adsb.one
+api.airplanes.live
+api.allorigins.win
+api.bentley.com
+api.cesium.com
+api.mapbox.com
+api.open-meteo.com
+api.tfl.gov.uk
+api.weather.gov
+api.wetmet.net
+aras-p.info
+archive.org
+assets.ion.cesium.com
+atlas.microsoft.com
+aviationweather.gov
+balticlivecam.com
+bruop.github.io
+bugs.chromium.org
+cam.visitthirsk.uk
+cams.cdn-surfline.com
+camsecure.co
+camsecure.uk
+camstream.uk
+casual-effects.blogspot.com
+cbk0.google.com
+cctv.austinmobility.io
+cdn-004.whatsupcams.com
+cdn-13-go.toya.net.pl
+cdn-3-go.toya.net.pl
+cdn.star.nesdis.noaa.gov
+celestrak.org
+cesium.com
+commons.wikimedia.org
+console.rhombussystems.com
+content.gpwiki.org
+creativecommons.org
+cs4.pixelcaster.com
+cs7.pixelcaster.com
+cs9.pixelcaster.com
+cwwp2.dot.ca.gov
+data.austintexas.gov
+deliverys6.quanteec.com
+dev.virtualearth.net
+developer.download.nvidia.com
+developer.nvidia.com
+developers.arcgis.com
+docs.stadiamaps.com
+ds2-cache.quanteec.com
+earth.google.com
+earthquake.usgs.gov
+elephants.hls.camzonecdn.com
+embed.cdn-surfline.com
+en.in2thebeach.es
+en.wikipedia.org
+eonet.gsfc.nasa.gov
+firms.modaps.eosdis.nasa.gov
+generativelanguage.googleapis.com
+get.webgl.org
+github.com
+google.github.io
+gpsjam.org
+graphics.stanford.edu
+help.agi.com
+hn.algolia.com
+hoktastream2.webcamera.pl
+ibasemaps-api.arcgis.com
+images.unsplash.com
+img.youtube.com
+instagram.com
+ipcamlive.com
+island.networkingdesign.com:8184
+jcgt.org
+knarkowicz.wordpress.com
+knockoutjs.com
+live-hls-web-ajm.getaj.net
+livebeachcam.slidersseaside.com
+livestream.fullcityservers.com
+lolengine.net
+maps.google.com
+maps.googleapis.com
+medialize.github.io
+msi.nga.mil
+mths.be
+mubasher.aljazeera.net
+news.google.com
+ns.adobe.com
+open-meteo.com
+open.ivideon.com
+openmaptiles.org
+opensky-network.org
+ornl.opendatasoft.com
+ourairports.com
+overpass-api.de
+polarplunge.hls.camzonecdn.com
+public.earthcam.net
+purl.org
+query.wikidata.org
+r.jina.ai
+raw.githubusercontent.com
+react.dev
+reservations.palmettodunes.com
+rtsp.me
+runtime.strm.yandex.ru
+s100.ipcamlive.com
+s100ipcamlive.com
+s101.ipcamlive.com
+s107.ipcamlive.com
+s112.ipcamlive.com
+s116.ipcamlive.com
+s117.ipcamlive.com
+s127.ipcamlive.com
+s133.ipcamlive.com
+s138.ipcamlive.com
+s14.ipcamlive.com
+s140.ipcamlive.com
+s151.ipcamlive.com
+s157.ipcamlive.com
+s159.ipcamlive.com
+s165.ipcamlive.com
+s171.ipcamlive.com
+s172.ipcamlive.com
+s3-eu-west-1.amazonaws.com
+s33.ipcamlive.com
+s37.ipcamlive.com
+s40.ipcamlive.com
+s47.ipcamlive.com
+s59.ipcamlive.com
+s69.ipcamlive.com
+s81.ipcamlive.com
+s9.ipcamlive.com
+s90.ipcamlive.com
+s92.ipcamlive.com
+server.arcgisonline.com
+service.iris.edu
+services.arcgis.com
+services.arcgisonline.com
+services.swpc.noaa.gov
+sig1.vedge.infomaniak.com
+sodipodi.sourceforge.net
+soundcloud.com
+stackoverflow.com
+stamen.com
+static.worldcams.tv
+stream-5gw.1000eyes.de
+stream-ue1-delta.dropcam.com
+stream.iwcpinc.com
+stream.profi-net.sk
+stream.resortcams.com
+stream.vistawebcams.com:19350
+stream1.vossaskyen.no
+streamer.devnet.rs
+streamer5.brownrice.com
+streaming.comunitatvalenciana.com
+terrain.reearth.land
+tile.googleapis.com
+tile.openstreetmap.org
+tiles.stadiamaps.com
+tle.ivanstanojevic.me
+tms.osgeo.org
+twitter.com
+usw01-smr05-relay.ozolio.com
+v.angelcam.com
+video.nest.com
+visionenvironnement.quanteec.com
+volcano.si.edu
+webvideo.mississauga.ca
+worldcams.tv
+www-senate-gov-media-srs.akamaized.net
+www.antarctica.gov.au
+www.apache.org
+www.arcgis.com
+www.bbc.co.uk
+www.cg.tuwien.ac.at
+www.chilliant.com
+www.cs.drexel.edu
+www.cs.utah.edu
+www.esri.com
+www.facebook.com
+www.fundza.com
+www.gdacs.org
+www.gdcvault.com
+www.google.com
+www.googleapis.com
+www.iec.ch
+www.inkscape.org
+www.jcgt.org
+www.json.org
+www.khronos.org
+www.mapbox.com
+www.mapinfo.com
+www.microsoft.com
+www.nasa.gov
+www.naturalearthdata.com
+www.ndbc.noaa.gov
+www.opengis.net
+www.opensource.org
+www.openstreetmap.org
+www.ppsloan.org
+www.stadiamaps.com
+www.star.nesdis.noaa.gov
+www.tiktok.com
+www.topografix.com
+www.w3.org
+www.wikidata.org
+www.youtube-nocookie.com
+www.youtube.com
+wzmedia.dot.ca.gov
+youtube.com
+=== INVENTORY END ===

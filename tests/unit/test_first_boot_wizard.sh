@@ -34,7 +34,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 WIZARD_SCRIPT="$REPO_ROOT/scripts/security/first-boot-wizard.sh"
-SYSTEMD_UNIT="$REPO_ROOT/systemd/orionx-first-boot.service"
+SYSTEMD_UNIT="$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/orionx-first-boot.service"
 
 # Test counters
 PASS=0
@@ -397,22 +397,6 @@ else
     skip "generated hostname stability" "no MAC exposed in this environment (non-Linux test host)"
 fi
 
-# The wizard must not depend on the hostname BINARY for anything load-bearing:
-# live-build diverts it during image builds and rc1-25/rc1-31 shipped without
-# it entirely, killing the real (non-dry) run with status=127 at the
-# `hostname -I` in wg0.conf authoring. IP derivation must come from ip(8).
-if grep -vE '^[[:space:]]*#' "$WIZARD_SCRIPT" | grep -qE 'hostname -I'; then
-    fail "wizard does not use 'hostname -I' (binary may be absent from the image)" \
-         "Found 'hostname -I' — this died 127 on the 2026-08-23 hardware attestation"
-else
-    pass "wizard does not use 'hostname -I' (binary may be absent from the image)"
-fi
-if grep -qE 'ip -4 -o addr show' "$WIZARD_SCRIPT"; then
-    pass "wizard derives host IPv4 via ip(8)"
-else
-    fail "wizard derives host IPv4 via ip(8)"
-fi
-
 # ===========================================================================
 # Production sequence: first-boot on a fresh node
 # ===========================================================================
@@ -460,128 +444,98 @@ fi
 rm -rf "$PROD_DIR" "$DRY_RUN_DIR"
 
 # ===========================================================================
-# W11-13: wg0.conf + mesh-private.key extension (T1b — DEC-PHASE11-016)
+# DEC-PHASE12-105: no SSH "one-shot" root key, no wg0.conf, no duplicate keys
 # ===========================================================================
-section "W11-13: wg0.conf + mesh-private.key (T1b)"
+section "DEC-PHASE12-105: no secrets on the console, one mesh-key authority"
 
-if grep -q 'wg0\.conf' "$WIZARD_SCRIPT"; then
-    pass "wizard references wg0.conf (T1b AC7)"
+if [[ -e "$REPO_ROOT/iso/config/includes.chroot/etc/issue.d" || -e "$REPO_ROOT/iso/config/includes.chroot/etc/motd.d" ]]; then
+    fail "no Orion-X files are shipped in /etc/issue.d or /etc/motd.d"
 else
-    fail "wizard references wg0.conf (T1b AC7)" \
-         "wg0.conf not mentioned in $WIZARD_SCRIPT"
+    pass "no Orion-X files are shipped in /etc/issue.d or /etc/motd.d"
 fi
-
-if grep -q 'mesh-private\.key' "$WIZARD_SCRIPT"; then
-    pass "wizard references mesh-private.key (T1b AC7)"
+# Source the wizard and confirm the removed steps are really gone (not merely
+# unwired) and that main() completes without them.
+FN_OUT="$(ORIONX_WIZARD_SOURCED=1 bash -c 'source "$1"; for f in step_seed_ssh_admin step_generate_wg_keys; do declare -F "$f" >/dev/null && echo "present:$f"; done; true' _ "$WIZARD_SCRIPT" 2>&1)"
+if [[ -z "$FN_OUT" ]]; then pass "step_seed_ssh_admin and step_generate_wg_keys no longer exist"; else fail "removed steps are gone" "$FN_OUT"; fi
+if grep -vE '^[[:space:]]*#' "$WIZARD_SCRIPT" | grep -qE '/etc/(issue|motd)\.d|PRIVATE KEY|authorized_keys|wg0\.conf'; then
+    fail "wizard code writes nothing to issue.d/motd.d, no keys, no wg0.conf"
 else
-    fail "wizard references mesh-private.key (T1b AC7)" \
-         "mesh-private.key not mentioned in $WIZARD_SCRIPT"
+    pass "wizard code writes nothing to issue.d/motd.d, no keys, no wg0.conf"
 fi
-
-if grep -q 'DEC-PHASE11-016' "$WIZARD_SCRIPT"; then
-    pass "wizard has DEC-PHASE11-016 annotation"
+D105="$(mktemp -d)"
+out105="$(ORIONX_FIRST_BOOT_DRY_RUN=1 ORIONX_FIRST_BOOT_FLAG="$D105/.done" bash "$WIZARD_SCRIPT" --non-interactive 2>&1)"; rc105=$?
+if [[ $rc105 -eq 0 && "$out105" == *"not started at boot"* ]]; then
+    pass "wizard says sshd is not started at boot (and how to start it)"
 else
-    fail "wizard has DEC-PHASE11-016 annotation" \
-         "DEC-PHASE11-016 not found in $WIZARD_SCRIPT"
+    fail "wizard SSH posture message" "rc=$rc105 $out105"
 fi
-
-# Dry-run token check: wg0.conf and mesh-private.key should appear in dry-run output
-WG_DRY_DIR=$(mktemp -d)
-set +e
-wg_dry_output=$(ORIONX_FIRST_BOOT_DRY_RUN=1 \
-    ORIONX_FIRST_BOOT_FLAG="$WG_DRY_DIR/.done" \
-    bash "$WIZARD_SCRIPT" --non-interactive 2>&1)
-wg_dry_rc=$?
-set -e
-
-if [[ $wg_dry_rc -eq 0 ]]; then
-    pass "wizard dry-run with wg0.conf extension exits 0"
-else
-    fail "wizard dry-run with wg0.conf extension exits 0" \
-         "exit code: $wg_dry_rc, output: $wg_dry_output"
-fi
-
-if echo "$wg_dry_output" | grep -q 'wg0.conf\|mesh-private.key'; then
-    pass "dry-run output mentions wg0.conf or mesh-private.key"
-else
-    fail "dry-run output mentions wg0.conf or mesh-private.key" \
-         "Output: $wg_dry_output"
-fi
-
-rm -rf "$WG_DRY_DIR"
+rm -rf "$D105"
 
 # ===========================================================================
-# W11-13: SSH admin one-shot extension (T7 — DEC-PHASE11-019)
+# DEC-PHASE12-106: rename keeps sudo/polkit; honest password text; UX-14
 # ===========================================================================
-section "W11-13: SSH admin one-shot (T7)"
-
-if grep -q 'step_seed_ssh_admin' "$WIZARD_SCRIPT"; then
-    pass "step_seed_ssh_admin function present (T7 AC8)"
+section "DEC-PHASE12-106: rename repoints sudo + polkit"
+R="$(mktemp -d)"
+printf 'orionx-operator ALL=(ALL) NOPASSWD: ALL\n' > "$R/live"
+printf 'polkit.addRule(function(action, subject) {\n  if (subject.user === "orionx-operator") { return polkit.Result.YES; }\n});\n' > "$R/sudo_on_live.rules"
+ORIONX_WIZARD_SOURCED=1 ORIONX_SUDOERS_LIVE="$R/live" ORIONX_POLKIT_LIVE="$R/sudo_on_live.rules" \
+    bash -c 'source "$1"; _repoint_privileges orionx-operator jdoe' _ "$WIZARD_SCRIPT" >/dev/null 2>&1
+if grep -qx 'jdoe ALL=(ALL) NOPASSWD: ALL' "$R/live"; then pass "sudoers grant follows the renamed account"; else fail "sudoers repointed" "$(cat "$R/live")"; fi
+if grep -q '"jdoe"' "$R/sudo_on_live.rules" && ! grep -q '"orionx-operator"' "$R/sudo_on_live.rules"; then pass "polkit grant follows the renamed account"; else fail "polkit repointed"; fi
+PERM="$(stat -f '%Lp' "$R/live" 2>/dev/null || stat -c '%a' "$R/live")"
+if [[ "$PERM" == "440" ]]; then pass "sudoers file stays 0440"; else fail "sudoers mode" "$PERM"; fi
+if command -v visudo >/dev/null 2>&1; then
+    rm -f "$R/live"; printf 'orionx-operator ALL=(ALL) NOPASSWD: ALL\n' > "$R/live"
+    ORIONX_WIZARD_SOURCED=1 ORIONX_SUDOERS_LIVE="$R/live" ORIONX_POLKIT_LIVE="$R/none" \
+        bash -c 'source "$1"; _repoint_privileges orionx-operator "bad name"' _ "$WIZARD_SCRIPT" >/dev/null 2>&1
+    if grep -qx 'orionx-operator ALL=(ALL) NOPASSWD: ALL' "$R/live"; then pass "an invalid rewrite is not installed (visudo -cf)"; else fail "visudo guard" "$(cat "$R/live")"; fi
 else
-    fail "step_seed_ssh_admin function present (T7 AC8)" \
-         "step_seed_ssh_admin not found in $WIZARD_SCRIPT"
+    skip "visudo guard" "visudo not installed"
+fi
+rm -rf "$R"
+
+if grep -q 'blank = keep the current password' "$WIZARD_SCRIPT" && ! grep -vE '^[[:space:]]*#' "$WIZARD_SCRIPT" | grep -q 'passwordless'; then
+    pass "password prompt no longer claims the account is passwordless (it is 'live')"
+else
+    fail "password prompt text"
 fi
 
-if grep -q 'authorized_keys' "$WIZARD_SCRIPT"; then
-    pass "wizard references authorized_keys (T7 AC8)"
+section "UX-14: orionx.wizard=0, 30 s timeouts, no untimed prompt"
+CM="$(mktemp -d)"
+printf 'BOOT_IMAGE=/live/vmlinuz boot=live orionx.wizard=0 quiet\n' > "$CM/cmdline"
+outc="$(ORIONX_CMDLINE_FILE="$CM/cmdline" ORIONX_FIRST_BOOT_DRY_RUN=1 ORIONX_FIRST_BOOT_FLAG="$CM/.done" \
+    bash "$WIZARD_SCRIPT" </dev/null 2>&1)"; rcc=$?
+if [[ $rcc -eq 0 && "$outc" == *"orionx.wizard=0"* && "$outc" == *"Skipping account setup (non-interactive mode)"* ]]; then
+    pass "orionx.wizard=0 on the kernel cmdline runs the wizard without prompts"
 else
-    fail "wizard references authorized_keys (T7 AC8)" \
-         "authorized_keys not mentioned in $WIZARD_SCRIPT"
+    fail "orionx.wizard=0 honoured" "rc=$rcc $outc"
 fi
+printf 'BOOT_IMAGE=/live/vmlinuz boot=live quiet\n' > "$CM/cmdline"; rm -f "$CM/.done"
+outd="$(ORIONX_CMDLINE_FILE="$CM/cmdline" ORIONX_FIRST_BOOT_PROMPT_TIMEOUT=1 ORIONX_FIRST_BOOT_DRY_RUN=1 ORIONX_FIRST_BOOT_FLAG="$CM/.done" \
+    bash "$WIZARD_SCRIPT" </dev/null 2>&1)"
+if [[ "$outd" != *"orionx.wizard=0"* ]]; then pass "without the flag the wizard stays interactive"; else fail "flag not invented"; fi
+rm -rf "$CM"
+if grep -q 'PROMPT_TIMEOUT="${ORIONX_FIRST_BOOT_PROMPT_TIMEOUT:-30}"' "$WIZARD_SCRIPT"; then pass "default prompt timeout is 30 s"; else fail "30 s default"; fi
+UNTIMED="$(grep -nE '^[[:space:]]*read -r' "$WIZARD_SCRIPT" | grep -v -- '-t ' | grep -v '< "' || true)"  # reads from a file are not prompts
+if [[ -z "$UNTIMED" ]]; then pass "every read has a timeout (the Matrix prompt had none)"; else fail "untimed read" "$UNTIMED"; fi
 
-if grep -q 'SSH admin one-shot\|SSH Admin One-Shot' "$WIZARD_SCRIPT"; then
-    pass "wizard references SSH admin one-shot (T7 AC8)"
+section "F24: the Wi-Fi password never reaches argv"
+if grep -vE '^[[:space:]]*#' "$WIZARD_SCRIPT" | grep -qE 'nmcli .*password'; then
+    fail "nmcli is never given the Wi-Fi password"
 else
-    fail "wizard references SSH admin one-shot (T7 AC8)" \
-         "SSH admin one-shot not mentioned in $WIZARD_SCRIPT"
+    pass "nmcli is never given the Wi-Fi password"
 fi
-
-if grep -q 'DEC-PHASE11-019' "$WIZARD_SCRIPT"; then
-    pass "wizard has DEC-PHASE11-019 annotation (T7)"
-else
-    fail "wizard has DEC-PHASE11-019 annotation (T7)" \
-         "DEC-PHASE11-019 not found in $WIZARD_SCRIPT"
-fi
-
-# step_seed_ssh_admin is called from main() — verify wiring.
-# Window is -A 30: main() gained announce_interactive_start (DEC-PHASE11-043)
-# before the step calls, so the seed_ssh_admin call now sits deeper in the body.
-if grep -q 'step_seed_ssh_admin' "$WIZARD_SCRIPT" && \
-   grep -A 30 '^main()' "$WIZARD_SCRIPT" | grep -q 'step_seed_ssh_admin'; then
-    pass "step_seed_ssh_admin is wired into main() (T7)"
-else
-    fail "step_seed_ssh_admin is wired into main() (T7)" \
-         "step_seed_ssh_admin not called from main() in $WIZARD_SCRIPT"
-fi
-
-# Dry-run verifies the SSH step runs without error
-SSH_DRY_DIR=$(mktemp -d)
-set +e
-ssh_dry_output=$(ORIONX_FIRST_BOOT_DRY_RUN=1 \
-    ORIONX_FIRST_BOOT_FLAG="$SSH_DRY_DIR/.done" \
-    bash "$WIZARD_SCRIPT" --non-interactive 2>&1)
-ssh_dry_rc=$?
-set -e
-
-if [[ $ssh_dry_rc -eq 0 ]]; then
-    pass "wizard dry-run with SSH admin step exits 0"
-else
-    fail "wizard dry-run with SSH admin step exits 0" \
-         "exit code: $ssh_dry_rc, output: $ssh_dry_output"
-fi
-
-if echo "$ssh_dry_output" | grep -qi 'ssh\|authorized'; then
-    pass "dry-run output mentions SSH or authorized_keys path"
-else
-    fail "dry-run output mentions SSH or authorized_keys path" \
-         "Output: $ssh_dry_output"
-fi
-
-rm -rf "$SSH_DRY_DIR"
+W="$(mktemp -d)"
+ORIONX_WIZARD_SOURCED=1 ORIONX_NM_CONN_DIR="$W" bash -c 'source "$1"; _write_wifi_keyfile "Cafe Net" "s3cret pass" >/dev/null' _ "$WIZARD_SCRIPT"
+KF="$W/orionx-wifi.nmconnection"
+if grep -qx 'psk=s3cret pass' "$KF" 2>/dev/null && grep -qx 'ssid=Cafe Net' "$KF"; then pass "keyfile carries SSID and PSK"; else fail "keyfile content" "$(cat "$KF" 2>/dev/null)"; fi
+KPERM="$(stat -f '%Lp' "$KF" 2>/dev/null || stat -c '%a' "$KF")"
+if [[ "$KPERM" == "600" ]]; then pass "keyfile is 0600 (NetworkManager refuses wider)"; else fail "keyfile mode" "$KPERM"; fi
+rm -rf "$W"
 
 # ===========================================================================
 # W11-13: Compound integration test — full first-boot sequence end-to-end
-# (crosses step_generate_wg_keys + step_seed_ssh_admin + flag-file guard)
+# (crosses the SSH-posture step + flag-file guard)
 # ===========================================================================
 section "W11-13: Compound integration — full first-boot sequence"
 
@@ -603,10 +557,10 @@ else
          "rc=$c_boot1_rc flag=$(test -f "$COMPOUND_FLAG" && echo yes || echo no) out=$c_boot1"
 fi
 
-if echo "$c_boot1" | grep -qi 'wireguard\|wg\|ssh\|authorized'; then
-    pass "Compound: boot1 output references WireGuard and SSH steps"
+if echo "$c_boot1" | grep -qi 'ssh'; then
+    pass "Compound: boot1 output reports the SSH posture"
 else
-    fail "Compound: boot1 output references WireGuard and SSH steps" \
+    fail "Compound: boot1 output reports the SSH posture" \
          "Output: $c_boot1"
 fi
 

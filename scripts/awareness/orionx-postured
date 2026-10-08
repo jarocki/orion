@@ -1,0 +1,3147 @@
+#!/usr/bin/env python3
+"""orionx-postured — make the threat-posture tier mean something.
+
+@decision DEC-PHASE12-024
+@title Threat posture is enforced by a daemon, and a blind IDS says so out loud
+@status accepted
+@rationale W10-5 shipped the tier selector (DEC-PHASE10-005) and W11-6 Layer A
+  shipped Suricata behind a lazy-start gate (DEC-PHASE11-008). Nothing joined
+  them. Selecting "Tier 2 · Deception" wrote a '2' to
+  ~/.config/orionx/threat-posture, recoloured one Cockpit badge, and changed
+  nothing else: `nmap -Pn -A` against the deck at Tier 2 produced no Suricata
+  output at all. Three independent reasons, all real:
+
+    1. Nothing started suricata.service when the tier was raised.
+    2. Its drop-in sets ConditionPathExists=/var/lib/suricata/orionx-enabled
+       and that file never existed, so systemd skipped the unit and reported
+       success while doing nothing.
+    3. /var/lib/suricata/rules is empty. The 22 files in /etc/suricata/rules
+       are Debian's stock decoder/stream protocol-anomaly rules, not threat
+       signatures. ET-Open arrives only via `orionx-freshen-suricata`, which
+       needs a network the deck may not have.
+
+  This daemon closes all three, and the third one is the reason it exists.
+  A detector that is installed, enabled, running, and carrying no signatures
+  reports nothing — which is indistinguishable, from the operator's chair,
+  from a quiet network. That is the failure mode that made the deck look like
+  it was watching when it was not. So: SILENT NON-DETECTION IS A BUG. Whenever
+  a tier that implies IDS coverage is active without usable threat rules, this
+  daemon says so on the bus, at critical, naming the remedy, and keeps saying
+  it. It would rather be annoying than dishonest.
+
+  Design constraints that shaped it:
+
+  - Air-gap first. stdlib only, no pip, no network lookups. The ATT&CK map is
+    a static local table; the Nebula call is to 127.0.0.1.
+  - The model never gates an alert. Every alert is published BEFORE it is
+    queued for contextualisation, on a bounded queue, from a worker thread.
+    If ollama is absent, slow, or wedged, detection is unaffected.
+  - No second scan detector. orionx-scanwatch (DEC-PHASE12-022) already reports
+    port scans from the firewall's own drop log at Tier 0 and needs no rules.
+    Suricata's scan-class alerts for a source scanwatch just reported are
+    suppressed, so one scan is one story, not two.
+  - Deception is local and non-destructive: listening decoys and canary files
+    on this host. It never probes, scans, or sends anything to another host.
+    Tier 2 is the explicit operator opt-in DEC-PHASE9-008 requires.
+  - Runtime state only. The decoy firewall openings live in their own nft
+    table created at arm time and destroyed at disarm; /etc/nftables.conf
+    remains the single authority for base policy and is never edited.
+
+@decision DEC-PHASE12-028
+@title Zeek is ingested if it is there, discovered at runtime, by this daemon
+  rather than by a second one
+@status accepted
+@rationale Zeek is not in Debian 13 main. The build tries to install it from
+  the OpenSUSE Build Service (0500 hook, DEC-PHASE12-003/015) and that block
+  is SOFT-FAIL, so whether a given ISO has Zeek is decided by whether a repo
+  answered during the build. `grep -c zeek iso/chroot.files` on the 2026-09-27
+  image returns 0: the shipped deck has no Zeek, while 0700 skips its symlink
+  and artifact-analyzer.py still lists zeek as a wrapped tool. An operator can
+  also install it post-boot at any time (/opt/orionx/optional/install-zeek.sh).
+
+  So "is Zeek present" is not a build-time fact and must not be treated as
+  one. This daemon re-checks on every reassert cycle. Zeek installed an hour
+  after boot is ingested an hour after boot, with no restart, no rebuild, and
+  no reconfiguration — and the transition is ANNOUNCED, so the operator learns
+  their deck just gained a capability.
+
+  Why here and not in a new daemon: this daemon already owns the tier, already
+  tails an IDS log, already maps alerts to ATT&CK, already de-duplicates scans
+  against orionx-scanwatch, and already writes the Cockpit's status file. A
+  second daemon would need its own copy of the tier to decide what to do with
+  a notice, and two things holding a tier is two things that drift. Zeek ingest
+  is therefore a subordinate reader inside the existing enforcement loop.
+
+  Zeek ingest is NOT tier-gated, and that is deliberate. Reading a log file the
+  deck has already written costs nothing and sends nothing, exactly like
+  orionx-scanwatch at Tier 0 (DEC-PHASE12-022). Gating it behind Tier 1 would
+  mean a Tier 0 deck with Zeek running throws away detections it already has.
+  It appears in tier_plan() as a plan key that is True at every tier so that
+  `--print-plan` states it outright rather than leaving it implicit.
+
+  What is ingested, and what is deliberately not:
+    notice.log — Zeek's own judgements. This is the signal; every notice is a
+      candidate event, severity-mapped, ATT&CK-tagged where honest.
+    weird.log  — protocol anomalies. Individually near-worthless and extremely
+      high volume, so these are AGGREGATED: a weird type only reaches the bus
+      when it bursts past a threshold in a window. Publishing them one by one
+      would bury the notices that matter.
+    conn.log   — NOT alerted on. Connection records are the wrong shape for an
+      alert and would flood the bus. They are counted, and the count is used
+      for one thing: proving Zeek is not blind. Zeek running with a log
+      directory that produces zero connections is the same failure as Suricata
+      with no rules, and it gets the same treatment — said out loud.
+
+  Not reporting one scan three times. Three detectors can now see the same
+  sweep: orionx-scanwatch from the firewall drop log, Suricata from its rules,
+  and Zeek from Scan::Port_Scan. SCAN_REPORTER_PRECEDENCE fixes the order once
+  — firewall, then suricata, then zeek — and each reporter suppresses a scan
+  source that anything ahead of it already published. The bus itself is the
+  shared state, so there is no second place for the three to disagree.
+
+Usage:
+    orionx-postured                       # daemon (systemd)
+    orionx-postured --once --dry-run      # apply nothing, print the plan
+    orionx-postured --print-plan          # JSON plan for the current tier
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import queue
+import random
+import re
+import shutil
+import socket
+import string
+import subprocess
+import sys
+import threading
+import time
+from collections import OrderedDict
+from pathlib import Path
+
+# Sibling module (DEC-PHASE12-038). __file__ MUST be resolved first: the 0700
+# hook symlinks /usr/bin/orionx-postured at /opt/orionx/scripts/awareness/
+# orionx-postured, so a naive dirname(__file__) is /usr/bin and this import
+# fails at boot with the daemon dead and the tier unenforced.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import suricata_capture as capture  # noqa: E402
+import tuning_lib  # noqa: E402  (DEC-PHASE12-050: operator squelch/tune authority)
+import deck_vitals  # noqa: E402  (DEC-PHASE12-051: the deck's own addresses -> origin=self)
+
+# --- Paths (single authorities, all overridable for tests) ------------------
+
+# Written by the Control Center as the DESKTOP user; this daemon runs as root.
+# Root's own ~/.config is therefore the wrong place to look first, which is why
+# posture_candidates() searches the real home directories.
+POSTURE_RELPATH = Path(".config") / "orionx" / "threat-posture"
+# WHO the operator is has ONE authority: tuning_lib.operator_user()
+# (ORIONX_OPERATOR_USER, else the live-config username). DEC-PHASE12-081.
+DESKTOP_USER = tuning_lib.operator_user()
+HOME_ROOT = Path("/home")
+
+# The lazy-start gate from DEC-PHASE11-008. Creating it is what lets systemd
+# actually run suricata.service.
+SURICATA_GATE = Path("/var/lib/suricata/orionx-enabled")
+SURICATA_UNIT = "suricata.service"
+EVE_JSON = Path("/var/log/suricata/eve.json")
+
+# Where ET-Open lands (orionx-freshen-suricata) and where Debian's stock
+# protocol-anomaly rules live. Both are searched; only the first can hold
+# threat signatures.
+RULES_DIRS = (Path("/var/lib/suricata/rules"), Path("/etc/suricata/rules"))
+
+BUS = Path("/run/orionx/events.jsonl")
+STATUS_FILE = Path("/run/orionx/posture-status.json")
+CANARY_DIR = Path("/var/lib/orionx/canary")
+CAPTURE_STATE_DIR = Path("/run/orionx/capture")
+
+# --- Zeek (DEC-PHASE12-028) -------------------------------------------------
+# Zeek may be absent, may arrive later, and may write its logs in any of
+# several places depending on how it was started. All three are runtime
+# questions, re-asked on every reassert cycle.
+#
+# /opt/zeek is where the OBS zeek-core package lands (DEC-PHASE12-003). The
+# others cover a hand-built install and a distro package, in case the install
+# path changes under us.
+ZEEK_BIN_CANDIDATES = (
+    Path("/opt/zeek/bin/zeek"),
+    Path("/usr/local/zeek/bin/zeek"),
+    Path("/usr/bin/zeek"),
+)
+# Searched in order; the first directory holding a readable Zeek log wins.
+# /opt/zeek/logs/current is zeekctl's live directory; /var/log/zeek/current is
+# the convention an operator running `zeek -i` by hand is told to use by
+# install-zeek.sh; /var/lib/orionx/zeek is where Orion-X's own offline runs go.
+ZEEK_LOG_DIRS = (
+    Path("/opt/zeek/logs/current"),
+    Path("/var/log/zeek/current"),
+    Path("/var/log/zeek"),
+    Path("/var/lib/orionx/zeek"),
+)
+ZEEK_NOTICE_LOG = "notice.log"
+ZEEK_WEIRD_LOG = "weird.log"
+ZEEK_CONN_LOG = "conn.log"
+
+# weird.log is aggregated, not forwarded: N of the same weird type inside the
+# window is one event. Chosen so a genuinely broken/attacked protocol surfaces
+# within a minute while ordinary internet noise never reaches the bus.
+ZEEK_WEIRD_WINDOW = 60.0
+ZEEK_WEIRD_BURST = 25
+ZEEK_WEIRD_REANNOUNCE = 600.0
+ZEEK_MAX_WEIRD_KEYS = 1024
+
+# How long Zeek may be watched with zero conn.log records before that silence
+# is reported as possible blindness rather than as a quiet network.
+ZEEK_LIVENESS_SECONDS = 600.0
+ZEEK_STATE_REANNOUNCE = 900.0
+
+# Precedence for "who owns this scan". Fixed once, here, so three detectors
+# cannot tell the same story three times. scanwatch is first because it reads
+# the kernel's own drop log and needs no rules and no network; Suricata second
+# because its signatures carry more detail than a Zeek Scan:: notice.
+SCAN_REPORTER_PRECEDENCE = ("firewall", "suricata", "zeek")
+
+NEBULA_URL = "http://127.0.0.1:11434"     # DEC-006: localhost only, always.
+
+# --- Cadences ---------------------------------------------------------------
+
+POLL_SECONDS = 2.0            # posture file check
+REASSERT_SECONDS = 30.0       # re-apply drift (someone stopped suricata)
+CANARY_POLL_SECONDS = 5.0
+NO_RULES_FIRST = "critical"   # first announcement of a blind IDS
+NO_RULES_REPEAT = "warning"   # and it keeps repeating, forever, at this level
+NO_RULES_REANNOUNCE = 900.0
+ALERT_REANNOUNCE = 300.0      # per (sid, src, dport)
+MAX_ALERT_KEYS = 4096         # bounded memory; an alert storm must not OOM us
+SCAN_DEDUP_WINDOW = 180.0     # suppress Suricata scan alerts scanwatch owns
+NEBULA_QUEUE_MAX = 8          # drop context requests rather than block anything
+NEBULA_TIMEOUT = 20.0
+
+# DEC-PHASE12-038. How often capture self-status repeats once announced. Long,
+# because a degraded capture state is persistent by nature and the bus is the
+# operator's only record of everything else that happened to the deck.
+CAPTURE_REANNOUNCE = 900.0
+CAPTURE_VERIFY_EVERY = 60.0   # re-ask the engine what it is attached to
+
+TIERS = ("0", "1", "2")
+TIER_LABEL = {
+    "0": "Tier 0 · Passive",
+    "1": "Tier 1 · Active Monitoring",
+    "2": "Tier 2 · Deception",
+}
+
+
+# ===========================================================================
+# PURE: threat posture
+# ===========================================================================
+
+def parse_tier(text: str | None) -> str:
+    """Coerce the contents of a threat-posture file to a tier id.
+
+    Default-safe in the paranoid direction that matters here: an unreadable,
+    empty, or corrupt file means Tier 0 — never silently arm deception or
+    start services because a byte got mangled. Tier 0 is also the tier that
+    changes nothing, so a broken file leaves the deck exactly as it booted.
+    """
+    if text is None:
+        return "0"
+    val = str(text).strip().splitlines()[0].strip() if str(text).strip() else ""
+    return val if val in TIERS else "0"
+
+
+def posture_candidates(explicit: str | os.PathLike | None = None,
+                       home_root: Path = HOME_ROOT,
+                       desktop_user: str = DESKTOP_USER,
+                       env: dict | None = None) -> list[Path]:
+    """Ordered list of places the posture file may live.
+
+    The Cockpit writes it as the desktop user; systemd runs this as root.
+    Only the operator's home is searched (plus an explicit/env path), not
+    every /home/* and not root's own ~/.config (DEC-PHASE12-081): a second
+    account must not be able to set the deck's posture.
+    """
+    env = os.environ if env is None else env
+    out: list[Path] = []
+
+    def add(p: Path) -> None:
+        if p not in out:
+            out.append(p)
+
+    if explicit:
+        add(Path(explicit))
+    from_env = env.get("ORIONX_POSTURE_FILE")
+    if from_env:
+        add(Path(from_env))
+    add(Path(home_root) / desktop_user / POSTURE_RELPATH)
+    return out
+
+
+def pick_posture_file(candidates: list[Path]) -> Path | None:
+    """The newest existing candidate, or None.
+
+    Newest wins between an explicit path and the operator's file: the most
+    recent deliberate selection is the live one.
+    """
+    return tuning_lib.pick_file(candidates)
+
+
+def read_tier_report(path: Path | None) -> tuple[str, str | None]:
+    """(tier, refusal). A file the operator does not own, a symlink, or a
+    group/other-writable file is REFUSED (Tier 0) and the reason returned so
+    the daemon can say so (DEC-PHASE12-081)."""
+    text, refusal = tuning_lib.read_trusted(path)
+    return parse_tier(text), refusal
+
+
+def read_tier(path: Path | None) -> str:
+    return read_tier_report(path)[0]
+
+
+# ===========================================================================
+# PURE: does Suricata actually have threat signatures?
+# ===========================================================================
+
+# Debian's suricata package ships these in /etc/suricata/rules. They fire on
+# malformed packets and protocol violations — useful, but they are not threat
+# signatures. A deck carrying only these detects no exploit, no malware, no
+# C2 and no scan, which is exactly the blindness this daemon must announce.
+STOCK_ANOMALY_RULES = frozenset({
+    "app-layer-events.rules", "decoder-events.rules", "dhcp-events.rules",
+    "dnp3-events.rules", "dns-events.rules", "files.rules", "ftp-events.rules",
+    "http-events.rules", "http2-events.rules", "ike-events.rules",
+    "ipsec-events.rules", "kerberos-events.rules", "modbus-events.rules",
+    "mqtt-events.rules", "nfs-events.rules", "ntp-events.rules",
+    "quic-events.rules", "rfb-events.rules", "smb-events.rules",
+    "smtp-events.rules", "ssh-events.rules", "stream-events.rules",
+    "tls-events.rules", "tftp-events.rules",
+})
+
+
+def is_threat_rule_file(name: str) -> bool:
+    """True if a .rules filename plausibly carries threat signatures.
+
+    Name-based, deliberately: the check must be cheap enough to run on every
+    reassert tick, and the distinction being drawn (stock anomaly set vs.
+    everything else) is exactly a naming convention in both Debian's package
+    and the ET-Open tarball.
+    """
+    base = os.path.basename(str(name))
+    if not base.endswith(".rules"):
+        return False
+    if base in STOCK_ANOMALY_RULES:
+        return False
+    return not base.endswith("-events.rules")
+
+
+def assess_rules(entries: list[tuple[str, int]]) -> dict:
+    """Classify a list of (path, size_bytes) rule files.
+
+    Returns {"threat_files", "threat_bytes", "anomaly_files", "usable"}.
+    `usable` means at least one non-empty threat-signature file — the only
+    condition under which Tier 1 or Tier 2 can honestly claim IDS coverage.
+    """
+    threat = [(p, n) for p, n in entries if is_threat_rule_file(p)]
+    anomaly = [(p, n) for p, n in entries if not is_threat_rule_file(p)]
+    threat_bytes = sum(n for _p, n in threat)
+    return {
+        "threat_files": len(threat),
+        "threat_bytes": threat_bytes,
+        "anomaly_files": len(anomaly),
+        "usable": any(n > 0 for _p, n in threat),
+    }
+
+
+def scan_rule_dirs(dirs=RULES_DIRS) -> list[tuple[str, int]]:
+    """Side-effecting companion to assess_rules(): stat the real rule dirs."""
+    entries: list[tuple[str, int]] = []
+    for d in dirs:
+        try:
+            for f in sorted(Path(d).iterdir()):
+                if f.name.endswith(".rules"):
+                    try:
+                        entries.append((f.name, f.stat().st_size))
+                    except OSError:
+                        entries.append((f.name, 0))
+        except OSError:
+            continue
+    return entries
+
+
+def no_rules_message(tier: str, status: dict) -> str:
+    """The loud one. Names the blindness, its consequence, and the remedy."""
+    return (
+        f"IDS COVERAGE GAP — {TIER_LABEL.get(tier, 'Tier ' + tier)} is active but "
+        f"Suricata has NO threat rules "
+        f"({status['threat_files']} signature file(s), "
+        f"{status['anomaly_files']} stock protocol-anomaly file(s)). "
+        "Exploits, malware, C2 and scans will NOT be detected — this deck is "
+        "not watching, it is only listening to itself. "
+        "Remedy: sudo orionx-freshen-suricata (requires network access). "
+        "Port-scan detection via orionx-scanwatch is unaffected and still works."
+    )
+
+
+# ===========================================================================
+# PURE: MITRE ATT&CK mapping
+# ===========================================================================
+#
+# Source: MITRE ATT&CK Enterprise matrix (v15, April 2024), technique IDs and
+# names transcribed by hand into this table. Keys on the left are Suricata
+# classtypes as defined in Debian's /etc/suricata/classification.config, plus
+# the ET-Open classtypes that tarball adds. Static and local by design: an
+# ATT&CK lookup over the network would fail exactly when the deck is air-
+# gapped, which is its documented primary use.
+#
+# Unmapped is a first-class answer. A wrong technique id is worse than none —
+# it sends an operator down the wrong hunt — so classtypes with no honest
+# single mapping (bad-unknown, misc-activity, policy-violation) return None.
+
+ATTACK_BY_CLASSTYPE: dict[str, tuple[str, str]] = {
+    "attempted-recon": ("T1595", "Active Scanning"),
+    "successful-recon-limited": ("T1595", "Active Scanning"),
+    "successful-recon-largescale": ("T1595", "Active Scanning"),
+    "network-scan": ("T1046", "Network Service Discovery"),
+    "rpc-portmap-decode": ("T1046", "Network Service Discovery"),
+    "external-ip-check": ("T1016", "System Network Configuration Discovery"),
+    "attempted-admin": ("T1068", "Exploitation for Privilege Escalation"),
+    "successful-admin": ("T1068", "Exploitation for Privilege Escalation"),
+    "attempted-user": ("T1203", "Exploitation for Client Execution"),
+    "successful-user": ("T1203", "Exploitation for Client Execution"),
+    "unsuccessful-user": ("T1110", "Brute Force"),
+    "default-login-attempt": ("T1078.001", "Valid Accounts: Default Accounts"),
+    "suspicious-login": ("T1078", "Valid Accounts"),
+    "credential-theft": ("T1555", "Credentials from Password Stores"),
+    "web-application-attack": ("T1190", "Exploit Public-Facing Application"),
+    "misc-attack": ("T1190", "Exploit Public-Facing Application"),
+    "exploit-kit": ("T1189", "Drive-by Compromise"),
+    "shellcode-detect": ("T1059", "Command and Scripting Interpreter"),
+    "system-call-detect": ("T1059", "Command and Scripting Interpreter"),
+    "trojan-activity": ("T1071", "Application Layer Protocol"),
+    "command-and-control": ("T1071", "Application Layer Protocol"),
+    "domain-c2": ("T1071.004", "Application Layer Protocol: DNS"),
+    "targeted-activity": ("T1071", "Application Layer Protocol"),
+    "pup-activity": ("T1176", "Browser Extensions"),
+    "non-standard-protocol": ("T1095", "Non-Application Layer Protocol"),
+    "protocol-command-decode": ("T1071", "Application Layer Protocol"),
+    "attempted-dos": ("T1499", "Endpoint Denial of Service"),
+    "successful-dos": ("T1499", "Endpoint Denial of Service"),
+    "denial-of-service": ("T1498", "Network Denial of Service"),
+    "social-engineering": ("T1566", "Phishing"),
+    "coin-mining": ("T1496", "Resource Hijacking"),
+    "suspicious-filename-detect": ("T1036", "Masquerading"),
+    "inappropriate-content": ("T1204", "User Execution"),
+    "string-detect": ("T1027", "Obfuscated Files or Information"),
+    "unusual-client-port-connection": ("T1571", "Non-Standard Port"),
+    # Deliberately unmapped: no honest single technique.
+    "bad-unknown": ("", ""),
+    "not-suspicious": ("", ""),
+    "unknown": ("", ""),
+    "misc-activity": ("", ""),
+    "policy-violation": ("", ""),
+    "tcp-connection": ("", ""),
+    "icmp-event": ("", ""),
+    "web-application-activity": ("", ""),
+}
+
+# ET-Open signatures are prefixed by ruleset name; used when a classtype is
+# missing or unmapped. Longest prefix wins, so "ET WEB_SERVER" beats "ET WEB".
+ATTACK_BY_SIGNATURE_PREFIX: dict[str, tuple[str, str]] = {
+    "ET SCAN": ("T1046", "Network Service Discovery"),
+    "ET EXPLOIT": ("T1190", "Exploit Public-Facing Application"),
+    "ET WEB_SERVER": ("T1190", "Exploit Public-Facing Application"),
+    "ET WEB_SPECIFIC_APPS": ("T1190", "Exploit Public-Facing Application"),
+    "ET WEB_CLIENT": ("T1189", "Drive-by Compromise"),
+    "ET ACTIVEX": ("T1189", "Drive-by Compromise"),
+    "ET MALWARE": ("T1071", "Application Layer Protocol"),
+    "ET TROJAN": ("T1071", "Application Layer Protocol"),
+    "ET ADWARE_PUP": ("T1176", "Browser Extensions"),
+    "ET MOBILE_MALWARE": ("T1071", "Application Layer Protocol"),
+    "ET COINMINER": ("T1496", "Resource Hijacking"),
+    "ET PHISHING": ("T1566", "Phishing"),
+    "ET SHELLCODE": ("T1059", "Command and Scripting Interpreter"),
+    "ET ATTACK_RESPONSE": ("T1059", "Command and Scripting Interpreter"),
+    "ET DOS": ("T1499", "Endpoint Denial of Service"),
+    "ET DNS": ("T1071.004", "Application Layer Protocol: DNS"),
+    "ET WORM": ("T1210", "Exploitation of Remote Services"),
+    "ET USER_AGENTS": ("T1071.001", "Application Layer Protocol: Web Protocols"),
+    "ET FTP": ("T1071.002", "Application Layer Protocol: File Transfer Protocols"),
+    "ET TELNET": ("T1021", "Remote Services"),
+    "ET RDP": ("T1021.001", "Remote Services: Remote Desktop Protocol"),
+    "ET SMB": ("T1021.002", "Remote Services: SMB/Windows Admin Shares"),
+    "GPL SHELLCODE": ("T1059", "Command and Scripting Interpreter"),
+    "GPL SCAN": ("T1046", "Network Service Discovery"),
+    "GPL EXPLOIT": ("T1190", "Exploit Public-Facing Application"),
+}
+
+# Orion-X's own deception producers.
+ATTACK_CANARY = ("T1083", "File and Directory Discovery")
+ATTACK_DECOY = ("T1046", "Network Service Discovery")
+
+# Suricata numeric severity (1 = most urgent) -> Orion-X bus severity.
+EVE_SEVERITY = {1: "critical", 2: "warning", 3: "notice"}
+
+# Classtypes and signature prefixes that mean "someone is scanning us".
+# orionx-scanwatch (DEC-PHASE12-022) already owns that story from the firewall
+# drop log, so these are candidates for suppression, not a second report.
+SCAN_CLASSTYPES = frozenset({
+    "attempted-recon", "network-scan", "successful-recon-limited",
+    "successful-recon-largescale", "rpc-portmap-decode",
+})
+SCAN_SIGNATURE_PREFIXES = ("ET SCAN", "GPL SCAN")
+
+
+def attack_technique(classtype: str | None,
+                     signature: str | None) -> tuple[str, str]:
+    """Map an alert to (technique_id, technique_name); ('','') if unmapped.
+
+    Classtype first (it is the rule author's own taxonomy), signature prefix
+    second (covers ET rules whose classtype is generic or absent).
+    """
+    ct = (classtype or "").strip().lower()
+    hit = ATTACK_BY_CLASSTYPE.get(ct)
+    if hit and hit[0]:
+        return hit
+    sig = (signature or "").strip()
+    best: tuple[str, str] = ("", "")
+    best_len = 0
+    for prefix, tech in ATTACK_BY_SIGNATURE_PREFIX.items():
+        if sig.upper().startswith(prefix) and len(prefix) > best_len:
+            best, best_len = tech, len(prefix)
+    return best
+
+
+def is_scan_alert(alert: dict) -> bool:
+    ct = (alert.get("classtype") or "").strip().lower()
+    if ct in SCAN_CLASSTYPES:
+        return True
+    sig = (alert.get("signature") or "").upper()
+    return any(sig.startswith(p) for p in SCAN_SIGNATURE_PREFIXES)
+
+
+# ===========================================================================
+# PURE: eve.json alert parsing
+# ===========================================================================
+
+def parse_eve_line(line: str) -> dict | None:
+    """Extract one Suricata alert from a line of eve.json.
+
+    eve.json is newline-delimited JSON carrying many event_types (flow, dns,
+    http, stats, ...). Only `alert` records are detections; everything else is
+    telemetry and is ignored here. Returns None for anything unparseable, so a
+    truncated final line during log rotation is a skip, not a crash.
+    """
+    line = (line or "").strip()
+    if not line or line[0] != "{":
+        return None
+    try:
+        rec = json.loads(line)
+    except ValueError:
+        return None
+    if not isinstance(rec, dict) or rec.get("event_type") != "alert":
+        return None
+    alert = rec.get("alert")
+    if not isinstance(alert, dict):
+        return None
+    try:
+        sev = int(alert.get("severity", 3))
+    except (TypeError, ValueError):
+        sev = 3
+    try:
+        sid = int(alert.get("signature_id", 0))
+    except (TypeError, ValueError):
+        sid = 0
+    return {
+        "timestamp": str(rec.get("timestamp", "")),
+        "signature": str(alert.get("signature", "")).strip(),
+        "signature_id": sid,
+        "classtype": str(alert.get("category", "")).strip(),
+        "eve_severity": sev,
+        "src_ip": str(rec.get("src_ip", "")),
+        "src_port": rec.get("src_port"),
+        "dest_ip": str(rec.get("dest_ip", "")),
+        "dest_port": rec.get("dest_port"),
+        "proto": str(rec.get("proto", "")).lower(),
+    }
+
+
+def bus_severity(alert: dict) -> str:
+    """Suricata severity -> Orion-X bus severity (1 critical .. 4+ info)."""
+    return EVE_SEVERITY.get(int(alert.get("eve_severity", 3) or 3), "info")
+
+
+def dedup_key(alert: dict) -> tuple:
+    """One ongoing attack is one story. Key on what makes it distinct."""
+    return (alert.get("signature_id", 0), alert.get("src_ip", ""),
+            alert.get("dest_port"))
+
+
+def format_alert_message(alert: dict, technique: tuple[str, str]) -> str:
+    sig = alert.get("signature") or "unnamed signature"
+    src = alert.get("src_ip") or "?"
+    dst = alert.get("dest_ip") or "?"
+    sport = alert.get("src_port")
+    dport = alert.get("dest_port")
+    src_s = f"{src}:{sport}" if sport else src
+    dst_s = f"{dst}:{dport}" if dport else dst
+    tech = f" [{technique[0]} {technique[1]}]" if technique[0] else ""
+    proto = alert.get("proto") or "ip"
+    return f"{sig}{tech} — {src_s} → {dst_s} ({proto}) sid:{alert.get('signature_id', 0)}"
+
+
+class AlertDeduper:
+    """Bounded re-announce throttle keyed by dedup_key().
+
+    Bounded because a spoofed-source flood must not turn the detector into a
+    memory exhaustion attack against the deck it protects (same reasoning as
+    orionx-scanwatch's MAX_SOURCES).
+    """
+
+    def __init__(self, reannounce: float = ALERT_REANNOUNCE,
+                 max_keys: int = MAX_ALERT_KEYS):
+        self.reannounce = reannounce
+        self.max_keys = max_keys
+        self._seen: OrderedDict[tuple, float] = OrderedDict()
+
+    def should_publish(self, key: tuple, now: float) -> bool:
+        last = self._seen.get(key)
+        if last is not None and (now - last) < self.reannounce:
+            self._seen.move_to_end(key)
+            return False
+        if key not in self._seen and len(self._seen) >= self.max_keys:
+            self._seen.popitem(last=False)
+        self._seen[key] = now
+        self._seen.move_to_end(key)
+        return True
+
+    def tracked(self) -> int:
+        return len(self._seen)
+
+
+# --- Not reporting the same scan twice --------------------------------------
+
+_BUS_SCAN_SRC = re.compile(r"\bfrom\s+(\d{1,3}(?:\.\d{1,3}){3}|[0-9a-fA-F:]{3,})")
+
+
+def upstream_scan_reporters(reporter: str) -> tuple[str, ...]:
+    """The reporters that outrank `reporter` for scan attribution.
+
+    A detector suppresses a scan only when something AHEAD of it in
+    SCAN_REPORTER_PRECEDENCE already published that source. Deriving this from
+    one ordered tuple is what keeps the rule symmetric: adding a fourth
+    detector means adding one name, not editing three suppression checks.
+
+    An unknown reporter outranks nothing, so a detector that is not in the
+    precedence list publishes rather than falling silent. Failing open is
+    correct here — a duplicate event is noise, a suppressed event is a missed
+    detection, and this project's recurring bug is the second one.
+    """
+    try:
+        idx = SCAN_REPORTER_PRECEDENCE.index(reporter)
+    except ValueError:
+        return ()
+    return SCAN_REPORTER_PRECEDENCE[:idx]
+
+
+def scan_sources_from_bus(lines, now: float,
+                          window: float = SCAN_DEDUP_WINDOW,
+                          sources: tuple[str, ...] = ("firewall",)) -> set[str]:
+    """Scan sources the named reporters have already published, recently.
+
+    Reads the shared bus rather than duplicating each detector's state: the bus
+    is the existing single authority for what has been reported, so there is no
+    second place for the detectors to disagree.
+
+    `sources` defaults to ("firewall",) — orionx-scanwatch alone — which is the
+    Suricata behaviour this has always had. Zeek passes the wider tuple from
+    upstream_scan_reporters("zeek"), so it defers to both.
+    """
+    out: set[str] = set()
+    wanted = set(sources)
+    for line in lines:
+        line = (line or "").strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if rec.get("category") != "scan" or rec.get("source") not in wanted:
+            continue
+        try:
+            ts = float(rec.get("ts", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if ts and (now - ts) > window:
+            continue
+        m = _BUS_SCAN_SRC.search(str(rec.get("message", "")))
+        if m:
+            out.add(m.group(1))
+    return out
+
+
+def should_suppress(alert: dict, scan_sources: set[str]) -> bool:
+    """True if scanwatch already told this story for this source."""
+    return is_scan_alert(alert) and alert.get("src_ip", "") in scan_sources
+
+
+class ScanLedger:
+    """Who has already reported a scan from a given source, and when.
+
+    Three detectors can now see one sweep: orionx-scanwatch (a separate
+    process, reading the firewall drop log), Suricata (this daemon, via
+    eve.json) and Zeek (this daemon, via notice.log). Without a shared answer
+    to "has this already been said", one nmap run produces three stories.
+
+    Two inputs, one answer:
+
+      - Other processes are learned from the BUS, which is the existing
+        cross-process authority for what has been published.
+      - This daemon's OWN publications are recorded directly. That is not a
+        shortcut around the bus, it is strictly more reliable: recognising our
+        own Suricata alert by regexing its message back off the bus would make
+        dedup depend on message prose, and Suricata alert text does not even
+        contain the word "from". Reading our own memory for our own actions
+        cannot disagree with itself.
+
+    Bounded, for the same reason AlertDeduper is: a spoofed-source flood must
+    not turn de-duplication into a memory exhaustion attack on the deck.
+    """
+
+    def __init__(self, window: float = SCAN_DEDUP_WINDOW,
+                 max_keys: int = MAX_ALERT_KEYS):
+        self.window = window
+        self.max_keys = max_keys
+        # (reporter, src) -> last report time
+        self._seen: OrderedDict[tuple[str, str], float] = OrderedDict()
+
+    def record(self, reporter: str, src: str, now: float) -> None:
+        if not src:
+            return
+        key = (reporter, src)
+        if key not in self._seen and len(self._seen) >= self.max_keys:
+            self._seen.popitem(last=False)
+        self._seen[key] = now
+        self._seen.move_to_end(key)
+
+    def merge_bus(self, reporter: str, sources: set[str], now: float) -> None:
+        for src in sources:
+            self.record(reporter, src, now)
+
+    def reported_by(self, reporters, src: str, now: float) -> str | None:
+        """Which of `reporters` reported `src` inside the window, if any."""
+        for reporter in reporters:
+            ts = self._seen.get((reporter, src))
+            if ts is not None and (now - ts) <= self.window:
+                return reporter
+        return None
+
+    def tracked(self) -> int:
+        return len(self._seen)
+
+
+def should_suppress_scan(reporter: str, src: str, ledger: ScanLedger,
+                         now: float) -> str | None:
+    """Name of the detector that already owns this scan source, or None.
+
+    Returns the owner rather than a bool so the suppression can be explained
+    in the status file and in a log line. A suppression nobody can account for
+    is indistinguishable from a detector that stopped working.
+    """
+    if not src:
+        return None
+    return ledger.reported_by(upstream_scan_reporters(reporter), src, now)
+
+
+# ===========================================================================
+# PURE: Zeek — is it here, and what is it saying? (DEC-PHASE12-028)
+# ===========================================================================
+
+def find_zeek_binary(candidates=ZEEK_BIN_CANDIDATES,
+                     use_path: bool = True) -> Path | None:
+    """The Zeek binary, or None. Re-asked every cycle, never cached at boot.
+
+    `use_path` controls the PATH fallback. It is on by default, because a deck
+    where someone built Zeek into an unusual prefix and symlinked it should
+    still be ingested. It is OFF when the operator passed --zeek-bin: an
+    explicit override is authoritative, and silently searching PATH anyway
+    would mean the flag does not actually control what is used.
+    """
+    for cand in candidates:
+        cand = Path(cand)
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return cand
+    if not use_path:
+        return None
+    found = shutil.which("zeek")
+    return Path(found) if found else None
+
+
+def assess_zeek_logs(dirs=ZEEK_LOG_DIRS, logs=(ZEEK_NOTICE_LOG,
+                                               ZEEK_WEIRD_LOG,
+                                               ZEEK_CONN_LOG)) -> dict:
+    """Which Zeek log directory to read, and why not, when there is none.
+
+    The three failure states are kept DISTINCT because they call for three
+    different things from the operator, and collapsing them into "no Zeek
+    logs" is how a permissions bug gets mistaken for a quiet network:
+
+      absent     — no candidate directory exists. Zeek has not been run.
+      unreadable — a directory exists but this daemon cannot read it. THIS IS
+                   THE DANGEROUS ONE: Zeek may be detecting plenty and we are
+                   blind to all of it. Reported at warning, repeatedly.
+      empty      — readable, but holds none of the logs we consume.
+      ok         — readable and holding at least one log.
+    """
+    considered: list[str] = []
+    unreadable: list[str] = []
+    empty: list[str] = []
+    for d in dirs:
+        d = Path(d)
+        considered.append(str(d))
+        if not d.is_dir():
+            continue
+        if not os.access(d, os.R_OK | os.X_OK):
+            unreadable.append(str(d))
+            continue
+        present = [name for name in logs if (d / name).is_file()]
+        if not present:
+            empty.append(str(d))
+            continue
+        return {"state": "ok", "dir": str(d), "logs": present,
+                "considered": considered, "unreadable": unreadable}
+    if unreadable:
+        return {"state": "unreadable", "dir": unreadable[0], "logs": [],
+                "considered": considered, "unreadable": unreadable}
+    if empty:
+        return {"state": "empty", "dir": empty[0], "logs": [],
+                "considered": considered, "unreadable": []}
+    return {"state": "absent", "dir": "", "logs": [],
+            "considered": considered, "unreadable": []}
+
+
+def detect_zeek(bin_candidates=ZEEK_BIN_CANDIDATES,
+                log_dirs=ZEEK_LOG_DIRS, use_path: bool = True) -> dict:
+    """Runtime Zeek status: installed?, logs where?, usable?
+
+    `usable` is the only field the ingest acts on, and it means exactly
+    "there is a readable log directory to tail". Note it does NOT require the
+    binary: a deck handed a Zeek log directory from elsewhere can still be
+    given the analysis, and refusing to read logs because the binary that
+    produced them is not installed locally would be pedantry with a cost.
+    """
+    binary = find_zeek_binary(bin_candidates, use_path=use_path)
+    logs = assess_zeek_logs(log_dirs)
+    return {
+        "installed": binary is not None,
+        "binary": str(binary or ""),
+        "log_state": logs["state"],
+        "log_dir": logs["dir"],
+        "logs": logs["logs"],
+        "considered": logs["considered"],
+        "usable": logs["state"] == "ok",
+    }
+
+
+def zeek_state_message(zeek: dict) -> tuple[str, str]:
+    """(severity, message) describing the current Zeek state. Never silent.
+
+    Absence is a NOTICE, not a critical: Zeek missing is a capability the deck
+    does not have, and it says so while naming the remedy. That is a different
+    thing from Suricata claiming coverage it does not have, which is a lie and
+    is reported as critical (no_rules_message). Unreadable logs ARE a warning,
+    because that is detection happening where we cannot see it.
+    """
+    if zeek["usable"]:
+        return ("notice",
+                f"Zeek ingest ACTIVE — reading {', '.join(zeek['logs'])} from "
+                f"{zeek['log_dir']}. Notices reach the R.A.I.N. bus with ATT&CK "
+                "context; scans already reported by the firewall or Suricata "
+                "are not repeated.")
+    if zeek["log_state"] == "unreadable":
+        return ("warning",
+                f"Zeek log directory {zeek['log_dir']} EXISTS BUT IS NOT "
+                "READABLE by orionx-postured. Zeek may be detecting and this "
+                "deck cannot see any of it — that is silent non-detection, not "
+                "a quiet network. Fix with: sudo chmod o+rx "
+                f"{zeek['log_dir']}")
+    if not zeek["installed"]:
+        return ("notice",
+                "Zeek is NOT installed on this deck, so there is no protocol "
+                "analysis or connection record layer. Suricata and "
+                "orionx-scanwatch are unaffected. Install it with: sudo "
+                "/opt/orionx/optional/install-zeek.sh — no rebuild or restart "
+                "is needed, this daemon picks it up on its next cycle.")
+    if zeek["log_state"] == "empty":
+        return ("notice",
+                f"Zeek is installed ({zeek['binary']}) but {zeek['log_dir']} "
+                "holds no logs yet, so there is nothing to ingest. Give it "
+                "traffic with: sudo zeek -i <iface>  (or capture first with "
+                "sudo orionx-capture start <iface>, then zeek -r the pcap).")
+    return ("notice",
+            f"Zeek is installed ({zeek['binary']}) but no log directory was "
+            f"found. Searched: {', '.join(zeek['considered'])}. Nothing to "
+            "ingest until Zeek writes somewhere this daemon looks.")
+
+
+# --- Zeek log formats: TSV (default) and JSON (LogAscii::use_json) ---------
+
+def zeek_fields_from_header(line: str) -> list[str] | None:
+    """Column names from a Zeek TSV `#fields` header line, else None."""
+    if not line.startswith("#fields"):
+        return None
+    parts = line.rstrip("\n").split("\t")
+    return [p for p in parts[1:] if p] or None
+
+
+def zeek_fields_from_file(path, max_header_lines: int = 12) -> list[str] | None:
+    """Prime the column list by reading a Zeek log's header.
+
+    Needed because the tailer starts at EOF: without this, a TSV log that was
+    already open when we attached has no column names and every row is
+    unparseable. Re-read on every (re)open, so log rotation cannot leave us
+    decoding new rows with a stale header.
+    """
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for _ in range(max_header_lines):
+                line = fh.readline()
+                if not line:
+                    break
+                fields = zeek_fields_from_header(line)
+                if fields:
+                    return fields
+                if not line.startswith("#"):
+                    break
+    except OSError:
+        return None
+    return None
+
+
+def zeek_record(line: str, fields: list[str] | None) -> dict | None:
+    """One Zeek log line -> dict, for both the TSV and JSON log formats.
+
+    Zeek writes TSV by default and JSON when LogAscii::use_json is set, and
+    which one a given deck produces depends on local policy this daemon does
+    not control. Handling only TSV would mean a JSON-configured Zeek is
+    ingested as zero events — silent non-detection again, this time caused by
+    a config file nobody remembered.
+
+    Zeek's unset marker "-" and empty marker "(empty)" become None, so callers
+    test for a value rather than for a sentinel string.
+    """
+    line = (line or "").strip()
+    if not line or line.startswith("#"):
+        return None
+    if line.startswith("{"):
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            return None
+        if not isinstance(rec, dict):
+            return None
+        return {k: (None if v in ("-", "(empty)") else v)
+                for k, v in rec.items()}
+    if not fields:
+        return None
+    parts = line.split("\t")
+    if len(parts) < len(fields):
+        parts += [None] * (len(fields) - len(parts))
+    out: dict = {}
+    for name, value in zip(fields, parts):
+        out[name] = None if value in ("-", "(empty)", "", None) else value
+    return out
+
+
+# --- What a Zeek notice means ----------------------------------------------
+
+# Severity by Notice::Type.
+#
+# VERIFIED, not assumed: every entry below whose comment does not say
+# otherwise was checked against the Notice::Type enums actually defined by
+# Zeek 8.1.1 (`redef enum Notice::Type` across base/ and policy/). An earlier
+# draft of this table listed SSL::Invalid_Server_Cert and Intel::Notice, and
+# neither exists — they would have been dead rows giving a false impression of
+# coverage. Docs are claims; the installed scripts are proof.
+#
+# Anything unlisted is published at "notice" rather than dropped. Zeek's notice
+# framework is extensible and a deck may load site policy or zkg packages, so
+# an unknown type is a detection this table has not met yet, not noise.
+ZEEK_NOTE_SEVERITY = {
+    # --- Scan:: is NOT part of stock Zeek. --------------------------------
+    # Zeek removed policy/misc/scan years ago; 8.1.1 defines no Scan:: notice
+    # at all. These entries exist because a deck can add scan detection via a
+    # zkg package or site policy, and because the scan DE-DUPLICATION below
+    # must be correct the day someone does. They are the one part of this
+    # table that is deliberately speculative, and they cost nothing when the
+    # notices never appear.
+    "Scan::Port_Scan": "warning",
+    "Scan::Address_Scan": "warning",
+    # --- credential attacks ----------------------------------------------
+    "SSH::Password_Guessing": "critical",
+    "SSH::Login_By_Password_Guesser": "critical",
+    "FTP::Bruteforcing": "critical",
+    # --- exploitation ------------------------------------------------------
+    "HTTP::SQL_Injection_Attacker": "critical",
+    "HTTP::SQL_Injection_Victim": "critical",
+    "Heartbleed::SSL_Heartbeat_Attack": "critical",
+    "Heartbleed::SSL_Heartbeat_Attack_Success": "critical",
+    "Heartbleed::SSL_Heartbeat_Odd_Length": "warning",
+    "Software::Vulnerable_Version": "warning",
+    # --- intel and signature hits -----------------------------------------
+    "Intel::Intel": "critical",
+    "Signatures::Sensitive_Signature": "warning",
+    "Signatures::Multiple_Signatures": "warning",
+    "Signatures::Multiple_Sig_Responders": "warning",
+    "Signatures::Count_Signature": "notice",
+    # --- transport and crypto hygiene -------------------------------------
+    "SSL::Weak_Key": "warning",
+    "SSL::Old_Version": "notice",
+    "SSL::Certificate_Expired": "notice",
+    "SSL::Certificate_Not_Valid_Yet": "notice",
+    "SSL::Certificate_Expires_Soon": "info",
+    # --- recon and reputation ---------------------------------------------
+    "Traceroute::Detected": "notice",
+    "SSH::Interesting_Hostname_Login": "warning",
+    "SSH::Watched_Country_Login": "warning",
+    "SMTP::Blocklist_Blocked_Host": "warning",
+    "SMTP::Blocklist_Error_Message": "notice",
+    "DNS::External_Name": "notice",
+    "Weird::Activity": "notice",
+    # --- Zeek telling us Zeek is blind ------------------------------------
+    # The most important rows in the table: these are the difference between
+    # "nothing happened" and "we did not see what happened".
+    "CaptureLoss::Too_Much_Loss": "warning",
+    "CaptureLoss::Too_Little_Traffic": "warning",
+    "Conn::Content_Gap": "warning",
+    "PacketFilter::Dropped_Packets": "warning",
+    "PacketFilter::Compile_Failure": "critical",
+    "PacketFilter::Install_Failure": "critical",
+    "PacketFilter::Cannot_BPF_Shunt_Conn": "notice",
+    "Conn::Retransmission_Inconsistency": "notice",
+}
+
+# Notices that mean the SENSOR is degraded rather than the network is hostile.
+# These get extra prose on the bus, because "Zeek reported nothing" and "Zeek
+# reported that it cannot see" must never read the same to a tired operator.
+ZEEK_BLINDNESS_NOTES = frozenset({
+    "CaptureLoss::Too_Much_Loss",
+    "CaptureLoss::Too_Little_Traffic",
+    "Conn::Content_Gap",
+    "PacketFilter::Dropped_Packets",
+    "PacketFilter::Compile_Failure",
+    "PacketFilter::Install_Failure",
+})
+
+# ATT&CK by Notice::Type. Deliberately sparse: an unmapped notice yields
+# ("", "") and says nothing about ATT&CK rather than guessing a technique.
+# A wrong technique id in an incident report is worse than no technique id.
+ATTACK_BY_ZEEK_NOTE: dict[str, tuple[str, str]] = {
+    "Scan::Port_Scan": ("T1046", "Network Service Discovery"),
+    "Scan::Address_Scan": ("T1018", "Remote System Discovery"),
+    "Traceroute::Detected": ("T1018", "Remote System Discovery"),
+    "SSH::Password_Guessing": ("T1110", "Brute Force"),
+    "SSH::Login_By_Password_Guesser": ("T1110", "Brute Force"),
+    "FTP::Bruteforcing": ("T1110", "Brute Force"),
+    "HTTP::SQL_Injection_Attacker": ("T1190", "Exploit Public-Facing Application"),
+    "HTTP::SQL_Injection_Victim": ("T1190", "Exploit Public-Facing Application"),
+    "Heartbleed::SSL_Heartbeat_Attack": ("T1190", "Exploit Public-Facing Application"),
+    "Heartbleed::SSL_Heartbeat_Attack_Success": ("T1190", "Exploit Public-Facing Application"),
+    "Software::Vulnerable_Version": ("T1190", "Exploit Public-Facing Application"),
+    "SSL::Weak_Key": ("T1557", "Adversary-in-the-Middle"),
+    "SSL::Old_Version": ("T1557", "Adversary-in-the-Middle"),
+    "DNS::External_Name": ("T1071.004", "Application Layer Protocol: DNS"),
+}
+
+
+def zeek_attack_technique(note: str | None) -> tuple[str, str]:
+    """ATT&CK technique for a Zeek notice type, or ("", "") when unmapped."""
+    return ATTACK_BY_ZEEK_NOTE.get(str(note or ""), ("", ""))
+
+
+def is_zeek_scan_notice(note: str | None) -> bool:
+    """True for the Zeek notices that describe a scan of this deck.
+
+    Prefix match on the Scan:: namespace rather than an exact list, so a
+    site-local Scan::Something policy is deduplicated too.
+    """
+    return str(note or "").startswith("Scan::")
+
+
+def parse_zeek_notice(rec: dict | None) -> dict | None:
+    """Normalise a notice.log record into this daemon's alert shape."""
+    if not isinstance(rec, dict):
+        return None
+    note = rec.get("note")
+    if not note:
+        return None
+    actions = rec.get("actions") or ""
+    if isinstance(actions, list):
+        actions = ",".join(str(a) for a in actions)
+    return {
+        "note": str(note),
+        "msg": str(rec.get("msg") or ""),
+        "sub": str(rec.get("sub") or ""),
+        "src_ip": str(rec.get("src") or rec.get("id.orig_h") or ""),
+        "dest_ip": str(rec.get("dst") or rec.get("id.resp_h") or ""),
+        "dest_port": rec.get("p") or rec.get("id.resp_p"),
+        "proto": str(rec.get("proto") or ""),
+        "actions": str(actions),
+    }
+
+
+def zeek_notice_severity(alert: dict) -> str:
+    """Bus severity for a Zeek notice, honouring Zeek's own escalation.
+
+    A site that attached Notice::ACTION_ALARM to a type has said explicitly
+    that this one matters here. Respecting that is how local policy reaches
+    the operator without this table having to know about it.
+    """
+    sev = ZEEK_NOTE_SEVERITY.get(alert.get("note", ""), "notice")
+    if "ACTION_ALARM" in alert.get("actions", "") and sev == "notice":
+        return "warning"
+    return sev
+
+
+def zeek_dedup_key(alert: dict) -> tuple:
+    return ("zeek", alert.get("note", ""), alert.get("src_ip", ""),
+            alert.get("dest_port"))
+
+
+def format_zeek_message(alert: dict, technique: tuple[str, str]) -> str:
+    note = alert.get("note") or "Zeek notice"
+    src = alert.get("src_ip") or "?"
+    dst = alert.get("dest_ip") or "?"
+    dport = alert.get("dest_port")
+    dst_s = f"{dst}:{dport}" if dport else dst
+    tech = f" [{technique[0]} {technique[1]}]" if technique[0] else ""
+    msg = alert.get("msg") or ""
+    detail = f" — {msg}" if msg else ""
+    blind = ""
+    if note in ZEEK_BLINDNESS_NOTES:
+        blind = (" — THIS IS A SENSOR PROBLEM, NOT A QUIET NETWORK: Zeek is "
+                 "reporting it is missing traffic.")
+    return f"Zeek {note}{tech}: {src} → {dst_s}{detail}{blind}"
+
+
+class WeirdAggregator:
+    """weird.log is a firehose; this turns a burst into one honest event.
+
+    Zeek's weird.log records every protocol oddity it sees, and on a real
+    network that is thousands of lines an hour of things nobody should be
+    paged about. Forwarding them one-for-one would drown notice.log's actual
+    detections on the shared bus, which would make the bus less useful than
+    before Zeek was ingested at all.
+
+    So a weird type is only published once it BURSTS: `burst` occurrences of
+    the same (name, source) inside `window`. That keeps the ordinary drip
+    silent while a protocol being actively abused or mangled still surfaces.
+    Bounded, like every other table in this daemon.
+    """
+
+    def __init__(self, window: float = ZEEK_WEIRD_WINDOW,
+                 burst: int = ZEEK_WEIRD_BURST,
+                 reannounce: float = ZEEK_WEIRD_REANNOUNCE,
+                 max_keys: int = ZEEK_MAX_WEIRD_KEYS):
+        self.window = window
+        self.burst = burst
+        self.reannounce = reannounce
+        self.max_keys = max_keys
+        # (name, src) -> {"hits": [ts...], "last_alert": ts}
+        self._keys: OrderedDict[tuple[str, str], dict] = OrderedDict()
+
+    def observe(self, name: str, src: str, now: float) -> dict | None:
+        if not name:
+            return None
+        key = (name, src or "")
+        st = self._keys.get(key)
+        if st is None:
+            if len(self._keys) >= self.max_keys:
+                self._keys.popitem(last=False)
+            st = {"hits": [], "last_alert": 0.0}
+            self._keys[key] = st
+        self._keys.move_to_end(key)
+        st["hits"].append(now)
+        cutoff = now - self.window
+        while st["hits"] and st["hits"][0] < cutoff:
+            st["hits"].pop(0)
+        if len(st["hits"]) < self.burst:
+            return None
+        if (now - st["last_alert"]) < self.reannounce:
+            return None
+        st["last_alert"] = now
+        count = len(st["hits"])
+        st["hits"].clear()
+        return {"name": name, "src": src or "?", "count": count,
+                "window": self.window}
+
+    def tracked(self) -> int:
+        return len(self._keys)
+
+
+def format_weird_message(burst: dict) -> str:
+    return (f"Zeek protocol anomaly burst: {burst['count']}x "
+            f"{burst['name']} from {burst['src']} in "
+            f"{burst['window']:.0f}s (weird.log)")
+
+
+def zeek_blind(conn_records: int, watch_started: float, now: float,
+               threshold: float = ZEEK_LIVENESS_SECONDS) -> bool:
+    """True when Zeek has been watched long enough to expect SOMETHING.
+
+    Zeek tailing a live log directory that produces zero connection records
+    for ten minutes is the Suricata-with-no-rules failure wearing a different
+    hat: it looks exactly like a calm network from the operator's chair. The
+    conn.log count is the cheapest honest liveness signal available, which is
+    the only thing conn.log is used for here.
+    """
+    if watch_started <= 0:
+        return False
+    return conn_records == 0 and (now - watch_started) >= threshold
+
+
+# ===========================================================================
+# PURE: what each tier actually means
+# ===========================================================================
+
+def tier_plan(tier: str, rules_usable: bool, live_ifaces=None) -> dict:
+    """The desired system state for a tier. No side effects, fully testable.
+
+    Tier 0 — passive. Nothing is started, no gate file, no packets, no
+      listeners, no canaries. The deck observes only what it is already being
+      handed: orionx-scanwatch keeps reading the firewall's own drop log
+      (DEC-PHASE12-022), which costs nothing and sends nothing.
+
+    Tier 1 — active monitoring. Create the DEC-PHASE11-008 gate file, start
+      Suricata, ingest eve.json, publish alerts with ATT&CK context.
+
+    Tier 2 — everything in Tier 1, plus local deception: listening decoys and
+      canary files on this host, and only this host (DEC-PHASE9-008 opt-in).
+
+    Note Suricata is started at Tier 1/2 even with no threat rules. Refusing
+    to start would trade one silence for another; the protocol-anomaly rules
+    and flow records still have value. What must never happen is starting it
+    quietly — hence warn_no_rules, which the caller is required to announce.
+
+    zeek_ingest is True at EVERY tier, including Tier 0, and is stated here
+    rather than left implicit so `--print-plan` answers the question honestly
+    (DEC-PHASE12-028). Reading a log file Zeek has already written costs
+    nothing, opens nothing and sends nothing — the same reasoning that puts
+    orionx-scanwatch at Tier 0. A Tier 0 deck with Zeek running would
+    otherwise throw away detections it already has, which is not what "passive"
+    is supposed to mean. Whether anything is actually ingested still depends on
+    Zeek being installed and its logs being readable, which is a RUNTIME
+    question re-asked every cycle, not a tier decision.
+    """
+    tier = tier if tier in TIERS else "0"
+    ids = tier in ("1", "2")
+
+    # DEC-PHASE12-038. `live_ifaces` is the measured set of interfaces
+    # carrying packets. Three states, not two:
+    #
+    #   None  — the heartbeat has not reported yet. Only reachable through
+    #           --print-plan before the first sample and through callers that
+    #           predate this parameter; the plan then describes the tier's
+    #           INTENT, exactly as it did before, and says capture is unknown.
+    #   ()    — measured, and nothing is carrying traffic. Suricata is NOT
+    #           started: with an empty af-packet list it exits 1 immediately
+    #           ("No interface found in config for af-packet", measured on
+    #           7.0.10), so starting it would buy a restart storm and a lie.
+    #   (...) — start, capturing on exactly these.
+    #
+    # The daemon always passes a measured value, so the None branch never
+    # decides anything on real hardware. It exists so the pure function has
+    # one honest answer for "nobody has measured yet" instead of guessing.
+    known = live_ifaces is not None
+    chosen = tuple(sorted(set(live_ifaces))) if known else ()
+    capture_ok = (not known) or bool(chosen)
+
+    return {
+        "tier": tier,
+        "label": TIER_LABEL[tier],
+        "gate_file": ids,
+        "suricata": ids and capture_ok,
+        "eve_ingest": ids,
+        "zeek_ingest": True,
+        "nebula_context": ids,
+        "deception": tier == "2",
+        "warn_no_rules": ids and not rules_usable,
+        # Interfaces Suricata should capture on. Empty at Tier 0 because Tier
+        # 0 starts nothing and sends nothing.
+        "capture_ifaces": chosen if ids else (),
+        # True only when we have MEASURED that there is nothing to capture.
+        "warn_no_capture": bool(ids and known and not chosen),
+    }
+
+
+def plan_actions(prev: dict | None, new: dict) -> list[tuple]:
+    """Ordered actions to move from `prev` state to `new`.
+
+    Ordering is load-bearing in both directions: on the way up the gate file
+    must exist before systemd is asked to start the unit (ConditionPathExists
+    is evaluated at start, and a start attempted first is a silent no-op — the
+    exact trap that made Tier 2 do nothing). On the way down the unit is
+    stopped before the gate is removed, so the gate never disappears from
+    under a running service.
+    """
+    prev = prev or {"gate_file": False, "suricata": False, "eve_ingest": False,
+                    "zeek_ingest": False, "deception": False,
+                    "warn_no_rules": False, "tier": None,
+                    "capture_ifaces": ()}
+    up: list[tuple] = []
+    down: list[tuple] = []
+
+    # Zeek ingest is tier-independent, so in practice this fires once on the
+    # first plan and never again. It goes through the action machinery anyway
+    # rather than being started off to the side, so there is one place that
+    # starts and stops ingestion and `--print-plan` shows it.
+    if new.get("zeek_ingest") and not prev.get("zeek_ingest"):
+        up.append(("zeek", "start"))
+    if prev.get("zeek_ingest") and not new.get("zeek_ingest"):
+        down.append(("zeek", "stop"))
+
+    if new["gate_file"] and not prev.get("gate_file"):
+        up.append(("gate", "create"))
+
+    # DEC-PHASE12-038. The interface list must be on disk BEFORE systemd is
+    # asked to start the unit, for the same reason the gate file must: the
+    # engine reads its config once, at start. Writing it afterwards would
+    # mean the first start captured the previous set and nobody noticed
+    # until the next restart.
+    prev_ifaces = tuple(prev.get("capture_ifaces") or ())
+    new_ifaces = tuple(new.get("capture_ifaces") or ())
+    starting = new["suricata"] and not prev.get("suricata")
+    changed = (new["suricata"] and prev.get("suricata")
+               and new_ifaces != prev_ifaces)
+    if new_ifaces and (starting or changed):
+        up.append(("capture", "write", new_ifaces))
+    if starting:
+        up.append(("service", "start", SURICATA_UNIT))
+    elif changed:
+        # Not stop+start: a restart is one systemd transaction, so there is
+        # no window in which the unit is enabled with no process and the
+        # reassert loop sees it as crashed and spends a recovery attempt.
+        up.append(("service", "restart", SURICATA_UNIT))
+    if new["eve_ingest"] and not prev.get("eve_ingest"):
+        up.append(("eve", "start"))
+    if new["deception"] and not prev.get("deception"):
+        up.append(("deception", "arm"))
+
+    if prev.get("deception") and not new["deception"]:
+        down.append(("deception", "disarm"))
+    if prev.get("eve_ingest") and not new["eve_ingest"]:
+        down.append(("eve", "stop"))
+    if prev.get("suricata") and not new["suricata"]:
+        down.append(("service", "stop", SURICATA_UNIT))
+    if prev.get("gate_file") and not new["gate_file"]:
+        down.append(("gate", "remove"))
+
+    actions = down + up
+    if new["warn_no_rules"]:
+        actions.append(("warn", "no-rules"))
+    if new.get("warn_no_capture"):
+        actions.append(("warn", "no-capture"))
+    return actions
+
+
+# ===========================================================================
+# PURE: Nebula contextualizer prompt/response
+# ===========================================================================
+
+NEBULA_SYSTEM = (
+    "You are a concise SOC analyst on an offline incident-response laptop. "
+    "Explain one IDS alert in at most two plain-English sentences for a tired "
+    "operator at 3am: what the alert means and what to check first. "
+    "No preamble, no markdown, no speculation beyond the data given."
+)
+
+
+def build_context_prompt(alert: dict, technique: tuple[str, str]) -> str:
+    tech = f"{technique[0]} ({technique[1]})" if technique[0] else "unmapped"
+    return (
+        f"Suricata alert: {alert.get('signature', '')}\n"
+        f"Classification: {alert.get('classtype', 'unknown')}\n"
+        f"MITRE ATT&CK: {tech}\n"
+        f"Source: {alert.get('src_ip', '?')}:{alert.get('src_port', '?')}\n"
+        f"Destination: {alert.get('dest_ip', '?')}:{alert.get('dest_port', '?')}\n"
+        f"Protocol: {alert.get('proto', '?')}\n"
+        f"Suricata severity: {alert.get('eve_severity', '?')} (1 = highest)\n"
+    )
+
+
+def parse_nebula_response(body: str | bytes | None) -> str | None:
+    """Pull the text out of an ollama /api/generate response; None if absent."""
+    if not body:
+        return None
+    if isinstance(body, bytes):
+        try:
+            body = body.decode("utf-8", errors="replace")
+        except (UnicodeError, AttributeError):
+            return None
+    try:
+        obj = json.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(obj, dict):
+        return None
+    text = obj.get("response")
+    if not isinstance(text, str):
+        return None
+    text = text.strip()
+    return text or None
+
+
+def condense(text: str | None, limit: int = 240) -> str | None:
+    """One tidy line; the bus caps messages at 512 chars and R.A.I.N. speaks them."""
+    if not text:
+        return None
+    flat = " ".join(str(text).split())
+    if not flat:
+        return None
+    return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
+
+
+# ===========================================================================
+# EFFECTS: the event bus
+# ===========================================================================
+
+def publish(severity: str, source: str, category: str, message: str,
+            dry_run: bool = False, detail: dict | None = None) -> None:
+    """Fire-and-forget onto the bus via the orionx-event CLI.
+
+    Same mechanism as orionx-scanwatch and the Control Center: subprocess to
+    the CLI rather than importing rain_lib, so there is one writer contract
+    and no import coupling between detectors and the bus implementation.
+
+    `detail` is structured evidence for the Cockpit drill-down: the
+    interfaces involved, the measured packet rates, the config path, the
+    exact thing that failed. A message tells the operator what happened; the
+    detail is what they need to act without reconstructing it by hand. An
+    unserialisable detail is dropped rather than losing the event with it.
+    """
+    if dry_run:
+        extra = f" {json.dumps(detail, sort_keys=True)}" if detail else ""
+        print(f"[{severity}] {source}/{category}: {message}{extra}",
+              flush=True)
+        return
+    argv = ["orionx-event", "--severity", severity, "--source", source,
+            "--category", category]
+    if detail:
+        try:
+            argv += ["--detail", json.dumps(detail, sort_keys=True,
+                                            default=str)]
+        except (TypeError, ValueError):
+            pass
+    argv.append(message)
+    try:
+        subprocess.Popen(argv, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+def tail_bus_lines(path: Path = BUS, max_lines: int = 400) -> list[str]:
+    """Last N lines of the bus, for scan-source de-duplication. Never raises."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            return fh.readlines()[-max_lines:]
+    except OSError:
+        return []
+
+
+# ===========================================================================
+# EFFECTS: Nebula contextualizer (best-effort, never gates an alert)
+# ===========================================================================
+
+def ollama_generate(prompt: str, base_url: str = NEBULA_URL,
+                    timeout: float = NEBULA_TIMEOUT) -> str | None:
+    """One non-streaming completion from the on-box model. None on any failure.
+
+    Imported lazily so that a deck without urllib quirks, or a unit test with
+    no network stack, never pays for it. DEC-006: 127.0.0.1 only, always.
+    """
+    import urllib.error  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+    try:
+        with urllib.request.urlopen(  # noqa: S310 - fixed localhost URL
+            urllib.request.Request(f"{base_url}/api/tags", method="GET"),
+            timeout=3,
+        ) as resp:
+            tags = json.loads(resp.read().decode("utf-8"))
+        models = tags.get("models") or []
+        if not models:
+            return None
+        model = str(models[0].get("name", ""))
+        if not model:
+            return None
+        payload = json.dumps({
+            "model": model,
+            "prompt": prompt,
+            "system": NEBULA_SYSTEM,
+            "stream": False,
+            "options": {"temperature": 0.2, "num_predict": 120},
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base_url}/api/generate", data=payload, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            return parse_nebula_response(resp.read())
+    except (urllib.error.URLError, urllib.error.HTTPError, OSError,
+            ValueError, TypeError):
+        return None
+
+
+class Contextualizer:
+    """Asks the local model to explain an alert, on a worker thread.
+
+    Everything about this class is subordinate to one rule: THE MODEL NEVER
+    GATES AN ALERT. The caller publishes the detection first and offers it
+    here afterwards. The queue is small and non-blocking, so when the model is
+    slow the requests are dropped rather than allowed to back-pressure the
+    ingest loop. When it is absent, one notice is emitted and the rest are
+    silent — an operator should be told once that explanations are off, not
+    once per alert.
+    """
+
+    def __init__(self, transport=ollama_generate, dry_run: bool = False,
+                 maxsize: int = NEBULA_QUEUE_MAX):
+        self.transport = transport
+        self.dry_run = dry_run
+        self._q: queue.Queue = queue.Queue(maxsize=maxsize)
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._unavailable_announced = False
+        self.dropped = 0
+        self.contextualised = 0
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, name="nebula-ctx",
+                                        daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        try:
+            self._q.put_nowait(None)
+        except queue.Full:
+            pass
+        self._thread = None
+
+    def offer(self, alert: dict, technique: tuple[str, str]) -> bool:
+        """Queue an alert for explanation. Never blocks; False if dropped."""
+        try:
+            self._q.put_nowait((alert, technique))
+            return True
+        except queue.Full:
+            self.dropped += 1
+            return False
+
+    def explain(self, alert: dict, technique: tuple[str, str]) -> str | None:
+        """Synchronous single explanation. Degrades to None, never raises."""
+        try:
+            return condense(self.transport(build_context_prompt(alert, technique)))
+        except Exception:  # noqa: BLE001 - a broken model must not kill detection
+            return None
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                item = self._q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if item is None:
+                break
+            alert, technique = item
+            text = self.explain(alert, technique)
+            if text is None:
+                if not self._unavailable_announced:
+                    self._unavailable_announced = True
+                    # `tooling`, not `ids`: the message itself says detection
+                    # is unaffected, so it must not move the threat gauge.
+                    publish("notice", "nebula", "tooling",
+                            "Nebula contextualizer unavailable — IDS alerts are "
+                            "publishing WITHOUT plain-language explanations. "
+                            "Detection is unaffected.", dry_run=self.dry_run)
+                continue
+            self.contextualised += 1
+            # `tooling`, not `ids`. This is an annotation of an alert that was
+            # already published under `ids`; emitting it as `ids` too counted
+            # every real detection twice in the panel's scan widget and in
+            # pressure() — about 2x whenever Ollama was up, 1x when it was not,
+            # so the gauge moved according to model availability.
+            publish("info", "nebula", "tooling",
+                    f"Context for sid:{alert.get('signature_id', 0)} — {text}",
+                    dry_run=self.dry_run)
+
+
+# ===========================================================================
+# EFFECTS: Tier 2 deception — local, non-destructive, reversible
+# ===========================================================================
+#
+# Two kinds of bait, both entirely on this host:
+#
+#   1. Listening decoys. Plain TCP accept-and-stall sockets on ports an
+#      intruder tries early. They answer with a fake banner, then hold the
+#      connection open (a tarpit) up to a cap, costing the scanner time and
+#      costing us one idle socket. They never connect out, never probe back,
+#      never scan. The whole reply surface is a hard-coded banner string.
+#
+#   2. Canary files. Obviously-fake credentials in a known directory whose
+#      access time is watched. Reading one is a detection; the file is then
+#      rewritten to re-arm it. Nothing in them is a real secret — each token
+#      is generated at arm time and is inert.
+#
+# The base firewall DROPs everything not explicitly permitted, so a decoy
+# socket alone would never see a packet. The opening is therefore made at
+# runtime, as a single rule inserted into the RUNNING inet orionx_firewall
+# input chain and deleted by handle at disarm. /etc/nftables.conf is never
+# edited: it stays the single authority for base policy, and a reboot returns
+# the deck to it with no residue.
+
+NFT_TABLE = "inet orionx_firewall"
+NFT_CHAIN = "input"
+NFT_COMMENT = "orionx-deception"
+
+# Chosen as classic early-probe bait that does not collide with anything
+# Orion-X runs (ollama 11434, WireGuard 51820, Matrix 8008/8448, sshd 22).
+DECOY_PORTS = (23, 2121, 2222, 4444)
+DECOY_BANNERS = {
+    23: "\r\nDebian GNU/Linux 11\r\nlogin: ",
+    2121: "220 ProFTPD 1.3.6 Server (backup) [10.0.0.1]\r\n",
+    2222: "SSH-2.0-OpenSSH_7.9p1 Debian-10+deb10u2\r\n",
+    4444: "\r\nMicrosoft Windows [Version 10.0.19044.1288]\r\n\r\nC:\\> ",
+}
+DECOY_MAX_CONNECTIONS = 32     # bounded: a decoy must not exhaust the deck
+DECOY_HOLD_SECONDS = 120.0     # tarpit dwell cap, then close politely
+
+CANARY_MARKER = "ORIONX-CANARY-DO-NOT-USE"
+CANARY_FILES = ("credentials.txt", "wallet.dat", "id_rsa_backup",
+                ".git-credentials")
+
+
+def honeytoken(rng=None) -> str:
+    """A unique, inert, obviously-fake credential string.
+
+    Generated at arm time rather than stored as a literal for two reasons:
+    every deck's token is distinct, so a leaked one identifies which deck it
+    came from; and no credential-shaped literal ever lives in the repo where
+    a secret scanner would have to decide whether it is real.
+    """
+    rng = rng or random.SystemRandom()
+    body = "".join(rng.choice(string.ascii_uppercase + string.digits)
+                   for _ in range(16))
+    return f"AKIA{body}"
+
+
+def canary_content(name: str, token: str) -> str:
+    """Bait that is convincing to a grep and useless to an attacker."""
+    header = f"# {CANARY_MARKER} — Orion-X deception canary (DEC-PHASE12-024)\n"
+    if name == ".git-credentials":
+        return f"{header}https://svc-deploy:{token}@git.internal.example\n"
+    if name == "id_rsa_backup":
+        return (f"{header}-----BEGIN OPENSSH PRIVATE KEY-----\n{token}\n"
+                "-----END OPENSSH PRIVATE KEY-----\n")
+    if name == "wallet.dat":
+        return f"{header}wallet_seed={token}\nbalance=14.20183\n"
+    return (f"{header}aws_access_key_id={token}\n"
+            f"aws_secret_access_key={token}{token}\n"
+            "vpn_psk=orionx-lab-shared-secret\n")
+
+
+def canary_tripped(baseline_atime: float, current_atime: float) -> bool:
+    """True if the file has been read since it was armed.
+
+    Uses atime, which on a `relatime` mount (Debian's default) is updated when
+    the existing atime is not newer than mtime — true immediately after we
+    write the file, so the FIRST read is always caught. Later reads inside the
+    24h relatime window would not be, which is why a trip rewrites the file:
+    re-arming restores the atime == mtime condition that makes the next read
+    visible again.
+    """
+    return current_atime > baseline_atime
+
+
+def decoy_alert_message(port: int, peer: str) -> str:
+    tech = ATTACK_DECOY
+    return (f"DECEPTION TRIPPED — decoy service on tcp/{port} was contacted by "
+            f"{peer} [{tech[0]} {tech[1]}]. Nothing on this deck legitimately "
+            f"listens on tcp/{port}; this connection is unsolicited.")
+
+
+def canary_alert_message(path: str) -> str:
+    tech = ATTACK_CANARY
+    return (f"CANARY READ — honeytoken file {path} was opened "
+            f"[{tech[0]} {tech[1]}]. No Orion-X process reads this file; "
+            "something enumerated the filesystem for credentials.")
+
+
+class DecoyListener:
+    """One accept-and-stall TCP socket. Bounded, local, reply-only."""
+
+    def __init__(self, port: int, on_hit, bind: str = "0.0.0.0",
+                 hold: float = DECOY_HOLD_SECONDS,
+                 max_conns: int = DECOY_MAX_CONNECTIONS):
+        self.port = port
+        self.on_hit = on_hit
+        self.bind = bind
+        self.hold = hold
+        self._sem = threading.Semaphore(max_conns)
+        self._sock: socket.socket | None = None
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.hits = 0
+
+    def start(self) -> bool:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((self.bind, self.port))
+            sock.listen(16)
+            sock.settimeout(0.5)
+        except OSError:
+            return False
+        self._sock = sock
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._serve,
+                                        name=f"decoy-{self.port}", daemon=True)
+        self._thread.start()
+        return True
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._sock is not None:
+            try:
+                self._sock.close()
+            except OSError:
+                pass
+            self._sock = None
+        self._thread = None
+
+    def _serve(self) -> None:
+        while not self._stop.is_set() and self._sock is not None:
+            try:
+                conn, addr = self._sock.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            self.hits += 1
+            try:
+                self.on_hit(self.port, addr[0])
+            except Exception:  # noqa: BLE001 - a decoy must never kill the daemon
+                pass
+            if not self._sem.acquire(blocking=False):
+                # At the connection cap: report the hit, then close. Detection
+                # is the point; the tarpit is a bonus we decline to pay for.
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+                continue
+            threading.Thread(target=self._hold, args=(conn,),
+                             name=f"decoy-{self.port}-conn", daemon=True).start()
+
+    def _hold(self, conn: socket.socket) -> None:
+        """Send the banner, then stall. Never reads attacker data into logic."""
+        try:
+            conn.settimeout(1.0)
+            banner = DECOY_BANNERS.get(self.port, "\r\n")
+            try:
+                conn.sendall(banner.encode("utf-8", errors="replace"))
+            except OSError:
+                return
+            deadline = time.time() + self.hold
+            while time.time() < deadline and not self._stop.is_set():
+                time.sleep(1.0)
+                try:
+                    conn.sendall(b"\0")   # keep it warm, reveal nothing
+                except OSError:
+                    return
+        finally:
+            try:
+                conn.close()
+            except OSError:
+                pass
+            self._sem.release()
+
+
+class DeceptionField:
+    """Tier 2's whole footprint: decoys, canaries, and the runtime nft opening."""
+
+    def __init__(self, canary_dir: Path = CANARY_DIR,
+                 ports=DECOY_PORTS, dry_run: bool = False,
+                 runner=subprocess.run):
+        self.canary_dir = Path(canary_dir)
+        self.ports = tuple(ports)
+        self.dry_run = dry_run
+        self.runner = runner
+        self.listeners: list[DecoyListener] = []
+        self.baselines: dict[str, float] = {}
+        self.armed = False
+        self.firewall_open = False
+
+    # --- firewall opening (runtime only, reversible) ---
+    def _nft(self, args: list[str]) -> bool:
+        if self.dry_run:
+            print(f"[dry-run] nft {' '.join(args)}", flush=True)
+            return True
+        try:
+            res = self.runner(["nft", *args], capture_output=True, text=True,
+                              timeout=10, check=False)
+            return res.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+
+    def open_firewall(self) -> bool:
+        ports = ", ".join(str(p) for p in self.ports)
+        return self._nft(["insert", "rule", *NFT_TABLE.split(), NFT_CHAIN,
+                          "tcp", "dport", "{", ports, "}", "accept",
+                          "comment", f'"{NFT_COMMENT}"'])
+
+    def close_firewall(self) -> bool:
+        """Delete our rule by handle. Leaves every other rule untouched."""
+        if self.dry_run:
+            print("[dry-run] nft delete deception rule", flush=True)
+            return True
+        try:
+            res = self.runner(["nft", "-a", "list", "chain", *NFT_TABLE.split(),
+                               NFT_CHAIN], capture_output=True, text=True,
+                              timeout=10, check=False)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        ok = True
+        for line in (res.stdout or "").splitlines():
+            if NFT_COMMENT not in line:
+                continue
+            m = re.search(r"#\s*handle\s+(\d+)", line)
+            if m:
+                ok = self._nft(["delete", "rule", *NFT_TABLE.split(), NFT_CHAIN,
+                                "handle", m.group(1)]) and ok
+        return ok
+
+    # --- canaries ---
+    def plant_canaries(self) -> list[Path]:
+        planted: list[Path] = []
+        if self.dry_run:
+            return [self.canary_dir / n for n in CANARY_FILES]
+        try:
+            self.canary_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return planted
+        for name in CANARY_FILES:
+            path = self.canary_dir / name
+            try:
+                path.write_text(canary_content(name, honeytoken()),
+                                encoding="utf-8")
+                os.chmod(path, 0o644)
+                self.baselines[str(path)] = path.stat().st_atime
+                planted.append(path)
+            except OSError:
+                continue
+        return planted
+
+    def remove_canaries(self) -> None:
+        if self.dry_run:
+            return
+        for key in list(self.baselines):
+            try:
+                Path(key).unlink()
+            except OSError:
+                pass
+            self.baselines.pop(key, None)
+
+    def check_canaries(self) -> list[str]:
+        """Return the canaries read since arming, and re-arm each one."""
+        tripped: list[str] = []
+        for key, baseline in list(self.baselines.items()):
+            path = Path(key)
+            try:
+                atime = path.stat().st_atime
+            except OSError:
+                continue
+            if not canary_tripped(baseline, atime):
+                continue
+            tripped.append(key)
+            try:
+                name = path.name
+                path.write_text(canary_content(name, honeytoken()),
+                                encoding="utf-8")
+                self.baselines[key] = path.stat().st_atime
+            except OSError:
+                self.baselines.pop(key, None)
+        return tripped
+
+    # --- lifecycle ---
+    def arm(self, on_decoy_hit) -> dict:
+        self.firewall_open = self.open_firewall()
+        planted = self.plant_canaries()
+        bound: list[int] = []
+        if not self.dry_run:
+            for port in self.ports:
+                listener = DecoyListener(port, on_decoy_hit)
+                if listener.start():
+                    self.listeners.append(listener)
+                    bound.append(port)
+        else:
+            bound = list(self.ports)
+        self.armed = True
+        return {"ports": bound, "canaries": [str(p) for p in planted],
+                "firewall_open": self.firewall_open}
+
+    def disarm(self) -> None:
+        for listener in self.listeners:
+            listener.stop()
+        self.listeners = []
+        self.remove_canaries()
+        self.close_firewall()
+        self.firewall_open = False
+        self.armed = False
+
+
+# ===========================================================================
+# EFFECTS: service + gate control
+# ===========================================================================
+
+def systemctl(verb: str, unit: str, dry_run: bool = False,
+              runner=subprocess.run) -> bool:
+    if dry_run:
+        print(f"[dry-run] systemctl {verb} {unit}", flush=True)
+        return True
+    try:
+        res = runner(["systemctl", verb, unit], capture_output=True,
+                     text=True, timeout=30, check=False)
+        return res.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def service_active(unit: str, runner=subprocess.run) -> bool:
+    try:
+        res = runner(["systemctl", "is-active", unit], capture_output=True,
+                     text=True, timeout=5, check=False)
+        return (res.stdout or "").strip() == "active"
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def set_gate(present: bool, path: Path = SURICATA_GATE,
+             dry_run: bool = False) -> bool:
+    """Create or remove the DEC-PHASE11-008 ConditionPathExists sentinel."""
+    if dry_run:
+        print(f"[dry-run] gate {'create' if present else 'remove'} {path}",
+              flush=True)
+        return True
+    try:
+        if present:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.touch()
+        elif path.exists():
+            path.unlink()
+        return True
+    except OSError:
+        return False
+
+
+# ===========================================================================
+# EFFECTS: log tailing (Suricata eve.json, Zeek logs)
+# ===========================================================================
+
+class LogTailer:
+    """Follow a log file from the end, surviving rotation and absence.
+
+    Starts at EOF: on entering Tier 1 the operator wants what happens next,
+    not a replay of a log that may be hours old. Rotation is detected by inode
+    change, and a missing file is a normal state (Suricata may not have
+    written one yet), retried quietly rather than treated as an error.
+
+    Used for BOTH Suricata's eve.json and Zeek's logs (DEC-PHASE12-028). This
+    class was already generic when it served only Suricata; giving Zeek a
+    second copy would have meant two rotation implementations to keep
+    correct, so it was renamed and reused rather than duplicated.
+
+    `on_open(path)` fires after each (re)open, before the seek to EOF. Zeek's
+    TSV format needs it: the column names live in a `#fields` header at the
+    top of the file, so a tailer that only ever sees the tail cannot decode a
+    single row. Re-firing on rotation is the point — a rotated log has a new
+    header, and decoding new rows with stale columns would silently mangle
+    every field.
+    """
+
+    def __init__(self, path: Path = EVE_JSON, on_line=None,
+                 poll: float = 1.0, on_open=None):
+        self.path = Path(path)
+        self.on_line = on_line
+        self.on_open = on_open
+        self.poll = poll
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.lines_read = 0
+        self.callback_errors = 0
+        self._last_error_log = -1e9
+
+    # @decision DEC-PHASE12-082
+    # @title A tail callback that raises is COUNTED and logged, not swallowed
+    # @status accepted
+    # @rationale QA round 1 (python P1-3): one bad tuning rule made every
+    #   _on_eve_line raise and `except Exception: pass` hid it - the IDS went
+    #   blind with no trace. The tail must survive (one bad line must not stop
+    #   the next), but the failure is written to the journal (rate-limited so a
+    #   per-line fault cannot flood it) and counted in posture-status.json.
+    def _callback_failed(self, exc: BaseException) -> None:
+        self.callback_errors += 1
+        now = time.monotonic()
+        if now - self._last_error_log >= 60.0:
+            self._last_error_log = now
+            print(f"orionx-postured: tail {self.path}: handler failed "
+                  f"({self.callback_errors} so far): {exc!r}", file=sys.stderr, flush=True)
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run,
+                                        name=f"tail-{self.path.name}",
+                                        daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread = None
+
+    def _run(self) -> None:
+        fh = None
+        inode = None
+        try:
+            while not self._stop.is_set():
+                if fh is None:
+                    try:
+                        if self.on_open is not None:
+                            try:
+                                self.on_open(self.path)
+                            except Exception:  # noqa: BLE001 - never kill tail
+                                pass
+                        fh = open(self.path, "r", encoding="utf-8",
+                                  errors="replace")
+                        fh.seek(0, os.SEEK_END)
+                        inode = os.fstat(fh.fileno()).st_ino
+                    except OSError:
+                        fh = None
+                        self._stop.wait(self.poll)
+                        continue
+                line = fh.readline()
+                if line:
+                    self.lines_read += 1
+                    if self.on_line is not None:
+                        try:
+                            self.on_line(line)
+                        except Exception as exc:  # noqa: BLE001 - never kill the tail
+                            self._callback_failed(exc)
+                    continue
+                try:
+                    if os.stat(self.path).st_ino != inode:
+                        fh.close()
+                        fh = None
+                        continue
+                except OSError:
+                    fh.close()
+                    fh = None
+                    continue
+                self._stop.wait(self.poll)
+        finally:
+            if fh is not None:
+                try:
+                    fh.close()
+                except OSError:
+                    pass
+
+
+# ===========================================================================
+# EFFECTS: Zeek ingest (DEC-PHASE12-028)
+# ===========================================================================
+
+class ZeekIngest:
+    """Tails the Zeek logs that carry signal, and re-checks whether Zeek exists.
+
+    SUBORDINATE BY CONSTRUCTION. It holds no tier, makes no posture decision,
+    and publishes nothing itself: it hands callbacks back to PostureDaemon,
+    which owns the bus voice and the de-duplication ledger. It can be started
+    and stopped, and the daemon is what decides when.
+
+    It owns exactly one piece of state the daemon does not: which Zeek log
+    directory is currently being read, and the tailers attached to it. When
+    Zeek appears, moves, or goes away, `sync()` reattaches — so a deck that
+    gains Zeek at 03:00 is ingesting it at 03:00 without a restart.
+    """
+
+    def __init__(self, on_notice=None, on_weird=None, on_conn=None,
+                 bin_candidates=ZEEK_BIN_CANDIDATES,
+                 log_dirs=ZEEK_LOG_DIRS, poll: float = 1.0,
+                 use_path: bool = True):
+        self.on_notice = on_notice
+        self.on_weird = on_weird
+        self.on_conn = on_conn
+        self.bin_candidates = bin_candidates
+        self.log_dirs = log_dirs
+        self.poll = poll
+        self.use_path = use_path
+        self.state = detect_zeek(bin_candidates, log_dirs, use_path)
+        self.active_dir: str = ""
+        self.running = False
+        self.conn_records = 0
+        self.notices_read = 0
+        self.weird_read = 0
+        self.watch_started = 0.0
+        self._tailers: list[LogTailer] = []
+        # Per-log TSV column names, refreshed on every (re)open.
+        self._fields: dict[str, list[str] | None] = {}
+
+    # --- detection ---
+    def refresh(self) -> dict:
+        """Re-ask whether Zeek is here. Cheap: a few stat() calls."""
+        self.state = detect_zeek(self.bin_candidates, self.log_dirs,
+                                 self.use_path)
+        return self.state
+
+    def state_fingerprint(self) -> tuple:
+        """What must change before the operator is told again."""
+        return (self.state["installed"], self.state["log_state"],
+                self.state["log_dir"])
+
+    # --- tailing ---
+    def _prime_fields(self, path) -> None:
+        self._fields[Path(path).name] = zeek_fields_from_file(path)
+
+    def _handle(self, name: str, line: str) -> None:
+        rec = zeek_record(line, self._fields.get(name))
+        if rec is None:
+            return
+        if name == ZEEK_NOTICE_LOG:
+            alert = parse_zeek_notice(rec)
+            if alert is not None:
+                self.notices_read += 1
+                if self.on_notice is not None:
+                    self.on_notice(alert)
+        elif name == ZEEK_WEIRD_LOG:
+            self.weird_read += 1
+            if self.on_weird is not None:
+                self.on_weird(
+                    str(rec.get("name") or ""),
+                    str(rec.get("id.orig_h") or rec.get("src") or ""))
+        elif name == ZEEK_CONN_LOG:
+            # Counted, never alerted on. This is the liveness signal that
+            # separates "Zeek sees a calm network" from "Zeek sees nothing".
+            self.conn_records += 1
+            if self.on_conn is not None:
+                self.on_conn(rec)
+
+    def sync(self) -> bool:
+        """Attach, reattach, or detach to match reality. True if attached.
+
+        Returns whether ingest is running afterwards, so the caller can
+        announce a transition without having to infer it.
+        """
+        self.refresh()
+        if not self.state["usable"]:
+            if self.running:
+                self.stop()
+            return False
+        if self.running and self.active_dir == self.state["log_dir"]:
+            return True
+        if self.running:
+            self.stop()
+        self.start()
+        return self.running
+
+    def start(self) -> bool:
+        if self.running or not self.state["usable"]:
+            return False
+        log_dir = Path(self.state["log_dir"])
+        for name in (ZEEK_NOTICE_LOG, ZEEK_WEIRD_LOG, ZEEK_CONN_LOG):
+            path = log_dir / name
+            if not path.is_file():
+                continue
+            self._prime_fields(path)
+            tailer = LogTailer(
+                path, poll=self.poll,
+                on_line=lambda line, n=name: self._handle(n, line),
+                on_open=self._prime_fields,
+            )
+            tailer.start()
+            self._tailers.append(tailer)
+        if not self._tailers:
+            return False
+        self.active_dir = str(log_dir)
+        self.watch_started = time.time()
+        self.running = True
+        return True
+
+    def stop(self) -> None:
+        for tailer in self._tailers:
+            tailer.stop()
+        self._tailers = []
+        self.running = False
+        self.active_dir = ""
+        self.watch_started = 0.0
+
+    def status(self) -> dict:
+        return {
+            "installed": self.state["installed"],
+            "binary": self.state["binary"],
+            "log_state": self.state["log_state"],
+            "log_dir": self.active_dir or self.state["log_dir"],
+            "ingesting": self.running,
+            "notices": self.notices_read,
+            "weird": self.weird_read,
+            "conn_records": self.conn_records,
+        }
+
+
+def capture_status(state_dir: Path = CAPTURE_STATE_DIR) -> list[dict]:
+    """Active PCAP captures, read from orionx-capture's runtime state.
+
+    Folded into this daemon's status file so the Cockpit reads ONE status
+    authority. orionx-capture owns the capture; this is a read.
+    """
+    out: list[dict] = []
+    try:
+        entries = sorted(Path(state_dir).glob("*.json"))
+    except OSError:
+        return out
+    for entry in entries:
+        if entry.name.endswith(".request.json"):
+            continue
+        try:
+            rec = json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(rec, dict):
+            out.append({"iface": rec.get("iface"),
+                        "budget_mb": rec.get("budget_mb"),
+                        "duration": rec.get("duration"),
+                        "started": rec.get("started"),
+                        "out_path": rec.get("out_path")})
+    return out
+
+
+# ===========================================================================
+# The enforcer — ties the pure plan to the effects
+# ===========================================================================
+
+class PostureDaemon:
+    def __init__(self, args):
+        # DEC-PHASE12-034: bounded Suricata restart state.
+        self._suricata_recovery = {"attempts": 0, "last_attempt": 0.0, "given_up": False}
+        self.args = args
+        self.dry_run = bool(args.dry_run)
+        self.posture_path = pick_posture_file(
+            posture_candidates(args.posture_file))
+        self.rules_dirs = [Path(d) for d in (args.rules_dir or RULES_DIRS)]
+        self.eve_path = Path(args.eve)
+        self.state: dict | None = None
+        self.rules = assess_rules(scan_rule_dirs(self.rules_dirs))
+        self.deduper = AlertDeduper()
+        self.scan_sources: set[str] = set()
+        self._scan_refreshed = 0.0
+        # One ledger for "who already reported this scan source", shared by
+        # the Suricata and Zeek paths (DEC-PHASE12-028).
+        self.scan_ledger = ScanLedger()
+        self.zeek = ZeekIngest(on_notice=self._on_zeek_notice,
+                               on_weird=self._on_zeek_weird,
+                               bin_candidates=[Path(d) for d in args.zeek_bin]
+                               if args.zeek_bin else ZEEK_BIN_CANDIDATES,
+                               log_dirs=[Path(d) for d in args.zeek_log_dir]
+                               if args.zeek_log_dir else ZEEK_LOG_DIRS,
+                               # An explicit --zeek-bin is authoritative.
+                               use_path=not args.zeek_bin)
+        self.weird = WeirdAggregator()
+        self._zeek_fingerprint: tuple | None = None
+        self._zeek_last_announce = 0.0
+        self._zeek_blind_announced = False
+        self.zeek_published = 0
+        self.zeek_suppressed = 0
+        self.last_no_rules_warn = 0.0
+        self.no_rules_announced = False
+        self.tailer = LogTailer(self.eve_path, on_line=self._on_eve_line)
+        self.deception = DeceptionField(Path(args.canary_dir),
+                                        dry_run=self.dry_run)
+        self.nebula = Contextualizer(dry_run=self.dry_run)
+        if args.no_nebula:
+            self.nebula = None
+        self.alerts_published = 0
+        self.alerts_suppressed = 0
+        # DEC-PHASE12-050: operator tuning. Bus-side for both engines; the
+        # Suricata threshold file is DERIVED from it and reloaded on change.
+        self.tuning = tuning_lib.TuningState(os.environ.get("ORIONX_TUNING_FILE"))
+        self.tuned_suppressed = 0
+        self._tuning_warned = 0.0
+        self._posture_refusal: str | None = None
+        # DEC-PHASE12-051: alerts whose SOURCE is this deck are labelled
+        # origin=self so the Cockpit says "this deck did this" instead of
+        # implying an intruder, and the threat gauge does not count them.
+        self.deck_addrs: set[str] = set()
+        self._deck_addrs_at = 0.0
+
+        # --- capture (DEC-PHASE12-038) ---
+        self.sysfs = Path(args.sysfs)
+        self.capture_yaml = Path(args.interfaces_yaml)
+        self.suricata_config = Path(args.suricata_config)
+        self.heartbeat = capture.InterfaceHeartbeat(
+            window=args.live_window, min_packets=args.live_packets,
+            quiet_demote=args.quiet_demote, max_ifaces=args.max_ifaces,
+            pinned=tuple(args.capture_iface or ()))
+        self.brake = capture.ReconfigureBrake(cooldown=args.reconfig_cooldown)
+        self._last_heartbeat = 0.0
+        self._verify_due = 0.0
+        self._verify: dict = {"verified": None, "attached": [],
+                              "reason": "not yet checked"}
+        self._capture_announced: dict[str, float] = {}
+        self._attached_since = 0.0
+        self._blind_announced = False
+        self._config_verdict: dict | None = None
+        self._brake_decision: dict = {"act": False, "reason": "no-sample"}
+        # One synchronous sample before anything is applied, so the very
+        # first plan is made against measured interfaces rather than a guess.
+        self.heartbeat_tick(time.time())
+
+    # --- bus helper ---
+    def _alert_detail(self, alert: dict, engine: str, technique: tuple) -> dict:
+        """Evidence for the drill-down, plus origin (DEC-PHASE12-051)."""
+        src = alert.get("src_ip") or ""
+        d: dict = {"engine": engine, "src_ip": src, "dest_ip": alert.get("dest_ip") or "",
+                   "proto": alert.get("proto") or ""}
+        if engine == "suricata":
+            d.update({"sid": alert.get("signature_id"), "signature": alert.get("signature") or "",
+                      "classtype": alert.get("classtype") or "",
+                      "src_port": alert.get("src_port"), "dest_port": alert.get("dest_port")})
+        else:
+            d.update({"note": alert.get("note") or "", "msg": alert.get("msg") or ""})
+        if technique and technique[0]:
+            d["technique"] = f"{technique[0]} {technique[1]}".strip()
+        if src and src in self.deck_addrs:
+            d["origin"] = "self"
+            d["origin_note"] = "this deck's own traffic; not an intruder"
+        return d
+
+    def _refresh_deck_addrs(self, now: float) -> None:
+        if now - self._deck_addrs_at < 30.0:
+            return
+        self._deck_addrs_at = now
+        addrs: set[str] = set()
+        try:
+            for it in deck_vitals.parse_ip_addr(deck_vitals._run(["ip", "-j", "addr"])):
+                for cidr in it.get("ipv4", []) + it.get("ipv6", []):
+                    addrs.add(cidr.split("/")[0])
+        except Exception:  # noqa: BLE001 - labelling must never break detection
+            addrs = set()
+        self.deck_addrs = addrs
+
+    def _refresh_tuning(self, now: float) -> None:
+        """Re-read tuning.json; on a change to the DERIVED Suricata text, write
+        the threshold file and reload the ruleset over the command socket."""
+        try:
+            changed = self.tuning.refresh(now)
+        except Exception as exc:  # noqa: BLE001 - say so; keep the last good rules
+            changed = False
+            if now - self._tuning_warned > 600:
+                self._tuning_warned = now
+                self.emit("warning", "health",
+                          f"tuning: cannot re-read the tuning file ({exc!r}); "
+                          "the previous rules stay in force",
+                          detail={"remedy": "orionx-tune status; journalctl -u orionx-postured"})
+        if self.tuning.errors_changed and self.tuning.errors:
+            # DEC-PHASE12-080: a rejected rule is said out loud, once per change
+            # of the file. The OTHER rules still apply; the rejected one silences
+            # nothing.
+            errs = self.tuning.errors
+            self.emit("warning", "health",
+                      f"tuning: {len(errs)} entr{'y' if len(errs) == 1 else 'ies'} ignored "
+                      f"(they silence nothing): {errs[0]}"[:300],
+                      detail={"errors": errs[:20], "file": str(self.tuning.path or ""),
+                              "remedy": "orionx-tune status; fix or remove the entry, "
+                                        "or orionx-tune remove <id>"})
+        if not changed or self.dry_run:
+            return
+        try:
+            tuning_lib.atomic_write_text(tuning_lib.THRESHOLD_FILE,
+                                         self.tuning.derived_text, 0o644)
+        except OSError as exc:
+            if now - self._tuning_warned > 600:
+                self._tuning_warned = now
+                self.emit("warning", "health",
+                          f"tuning: cannot write {tuning_lib.THRESHOLD_FILE} ({exc}); "
+                          "alerts are still filtered bus-side, Suricata keeps evaluating them",
+                          detail={"remedy": "ls -l /var/lib/suricata; journalctl -u orionx-postured"})
+            return
+        sock = getattr(capture, "COMMAND_SOCKET", Path("/var/lib/suricata/orionx-command.socket"))
+        if service_active(SURICATA_UNIT):
+            capture.suricatasc("ruleset-reload-nonblocking", Path(sock))
+
+    def emit(self, severity: str, category: str, message: str,
+             source: str = "postured", detail: dict | None = None) -> None:
+        publish(severity, source, category, message, dry_run=self.dry_run,
+                detail=detail)
+
+    # --- suricata recovery (DEC-PHASE12-034) -------------------------------
+    #
+    # This used to re-emit a warning and re-issue `systemctl start` on every
+    # 30s reassert, unconditionally. Observed on hardware: Suricata 7.0.10
+    # exits 1 immediately (no interface configured on a stock image), systemd
+    # hits "start request repeated too quickly", and the deck settles into a
+    # loop that did two kinds of damage.
+    #
+    # It flooded the bus. Every entry in the operator's event stream was this
+    # one message, so the Cockpit showed nothing else — the stream stopped
+    # being a record of what happened to the deck.
+    #
+    # Worse, it drove THREAT PRESSURE to "ELEVATED" on an idle machine with
+    # nothing attacking it, because the gauge weights by severity and these
+    # were warnings. A threat gauge inflated by the deck's own self-diagnosis
+    # teaches the operator to ignore it, which is the one thing it cannot
+    # afford.
+    #
+    # So: bounded attempts, exponential-ish backoff, one escalation, and a
+    # self-status category that is not a detection.
+    SURICATA_MAX_ATTEMPTS = 3
+    SURICATA_RETRY_BACKOFF = 300.0     # seconds between attempts after the first
+
+    def _suricata_recover(self, now: float) -> None:
+        st = self._suricata_recovery
+        if st["given_up"]:
+            return                      # already said it; silence beats a loop
+        if st["attempts"] and (now - st["last_attempt"]) < self.SURICATA_RETRY_BACKOFF:
+            return
+        st["attempts"] += 1
+        st["last_attempt"] = now
+        if st["attempts"] > self.SURICATA_MAX_ATTEMPTS:
+            st["given_up"] = True
+            self.emit("critical", "health",
+                      f"Suricata will not stay running after "
+                      f"{self.SURICATA_MAX_ATTEMPTS} attempts — IDS coverage is "
+                      f"OFF while {self.state['label']} is selected. Not retrying. "
+                      "Check: systemctl status suricata; journalctl -u suricata -n 50; "
+                      f"suricata -T -v -c {self.suricata_config}. "
+                      "Port-scan detection via orionx-scanwatch is unaffected.",
+                      detail={"reason": "suricata-gave-up",
+                              "attempts": self.SURICATA_MAX_ATTEMPTS,
+                              "capture_ifaces": list(
+                                  self.state.get("capture_ifaces") or ()),
+                              "config": str(self.suricata_config),
+                              "config_verdict": self._config_verdict})
+            return
+        ifaces = tuple(self.state.get("capture_ifaces") or ())
+        self.emit("warning", "health",
+                  f"Suricata is not running while {self.state['label']} is "
+                  f"selected — restart attempt {st['attempts']} of "
+                  f"{self.SURICATA_MAX_ATTEMPTS} "
+                  f"(capture: {', '.join(ifaces) or 'none'}).",
+                  detail={"reason": "suricata-restart",
+                          "attempt": st["attempts"],
+                          "max_attempts": self.SURICATA_MAX_ATTEMPTS,
+                          "capture_ifaces": list(ifaces)})
+        set_gate(True, dry_run=self.dry_run)
+        # Re-assert the interface list before retrying. A recovery that
+        # starts the engine against a stale config is a recovery that
+        # succeeds into the wrong state (DEC-PHASE12-038).
+        self.write_capture_config(ifaces, now)
+        systemctl("start", SURICATA_UNIT, dry_run=self.dry_run)
+        self._verify_due = now + capture.VERIFY_GRACE_SECONDS
+
+    def _suricata_recovery_reset(self) -> None:
+        """Called when the tier changes: a new posture earns a fresh attempt."""
+        self._suricata_recovery = {"attempts": 0, "last_attempt": 0.0,
+                                   "given_up": False}
+
+    # --- capture: heartbeat, config, verification (DEC-PHASE12-038) --------
+
+    def heartbeat_tick(self, now: float) -> tuple:
+        """Sample the kernel's interface counters. Cheap enough to do often.
+
+        Four sysfs reads per interface per tick, no subprocess, no netlink,
+        no network. This is the Loop stage for capture: an interface that
+        appears, disappears, wakes up or goes quiet changes the answer here
+        and nowhere else.
+        """
+        self._last_heartbeat = now
+        self.heartbeat.observe(capture.sample_interfaces(self.sysfs), now)
+        return self.heartbeat.selected(now)
+
+    def capture_target(self, now: float) -> tuple:
+        """What Suricata should capture on, after the anti-thrash brake.
+
+        The brake, not the heartbeat, has the last word: the heartbeat says
+        what is true, the brake says whether now is an acceptable moment to
+        restart a running IDS over it. When the brake says no, the plan keeps
+        describing the set already applied, so plan_actions() diffs to
+        nothing and no restart happens.
+        """
+        desired = self.heartbeat.selected(now)
+        decision = self.brake.decide(desired, now,
+                                     present=self.heartbeat.present)
+        self._brake_decision = decision
+        if decision["act"]:
+            return desired
+        return tuple(self.brake.applied or ())
+
+    def announce_capture(self, key: str, severity: str, message: str,
+                         detail: dict, now: float,
+                         repeat: float = CAPTURE_REANNOUNCE) -> None:
+        """Say it once per condition, then only on a timer or on a change.
+
+        Keyed by CONDITION rather than by message text, so a rate that
+        changes by one packet does not re-announce the same problem. Any
+        other key clears this one: moving from "no live interface" to
+        "capturing" is a change the operator must hear immediately, not at
+        the next repeat interval.
+        """
+        last = self._capture_announced.get(key)
+        if last is not None and (now - last) < repeat:
+            return
+        self._capture_announced = {key: now}
+        self.emit(severity, "health", message, source="suricata",
+                  detail=detail)
+
+    def capture_preflight(self, now: float) -> bool:
+        """Would Suricata accept this configuration? Ask it, do not assume.
+
+        Runs before the first start of a tier, not on every reassert: it
+        loads the full ruleset and costs seconds. Returns False only when the
+        engine positively rejected the config — "no rules" is a valid config
+        with nothing to match on, which DEC-PHASE12-024's own warning owns,
+        and refusing to start on it would mean a deck that has not fetched
+        ET-Open yet gets no protocol-anomaly detection either.
+        """
+        verdict = capture.check_config(self.suricata_config,
+                                       binary=capture.SURICATA_BIN)
+        self._config_verdict = verdict
+        if verdict["verdict"] == "absent":
+            sev, msg, detail = capture.absent_message(self.state["label"])
+            self.announce_capture("suricata-absent", sev, msg, detail, now)
+            return False
+        if verdict["verdict"] == "invalid":
+            sev, msg, detail = capture.invalid_config_message(
+                verdict, self.suricata_config)
+            self.announce_capture("config-rejected", sev, msg, detail, now)
+            return False
+        return True
+
+    def write_capture_config(self, ifaces, now: float) -> bool:
+        """Generate the af-packet include. Idempotent by content."""
+        res = capture.write_interfaces_yaml(ifaces, self.capture_yaml,
+                                            dry_run=self.dry_run)
+        if not res["ok"]:
+            self.announce_capture(
+                "config-unwritable", "critical",
+                f"Could not write the Suricata interface list "
+                f"{self.capture_yaml}: {res['error']}. Consequence: the IDS "
+                "will capture on the PREVIOUS interface set, or not start at "
+                "all. " + capture.SCANWATCH_NOTE + " Remedy: check that "
+                "/var/lib/suricata is writable and that orionx-postured.service "
+                "still lists it in ReadWritePaths (`systemctl cat "
+                "orionx-postured`).",
+                {"reason": "config-unwritable", "path": res["path"],
+                 "error": res["error"]}, now)
+            return False
+        return True
+
+    def verify_capture(self, now: float) -> dict:
+        """Ask the RUNNING engine what it attached to, and say so honestly.
+
+        This is the Check stage, and the reason this work exists. `systemctl
+        start suricata` exiting 0 means systemd forked a process. The engine's
+        own iface-list is the only thing that can say a capture socket was
+        opened on the interface Orion-X asked for.
+        """
+        desired = tuple(self.state.get("capture_ifaces") or ())
+        if not service_active(SURICATA_UNIT):
+            self._verify = {"verified": False, "attached": [],
+                            "reason": "suricata.service is not active"}
+            self._attached_since = 0.0
+            return self._verify
+
+        res = capture.verify_capture(desired)
+        self._verify = res
+
+        # Checked FIRST, and at critical: the engine is up, it answers, it
+        # lists the interface, and its capture socket never opened. Nothing
+        # else on the deck can see this failure.
+        if res.get("socket_errors"):
+            sev, msg, detail = capture.socket_error_message(res)
+            self.announce_capture("capture-socket-error", sev, msg, detail,
+                                  now)
+            self._attached_since = 0.0
+            return res
+
+        if res["verified"] is None:
+            sev, msg, detail = capture.unverified_message(res, desired)
+            self.announce_capture("capture-unverified", sev, msg, detail, now)
+            self._attached_since = 0.0
+            return res
+
+        if not res["verified"]:
+            sev, msg, detail = capture.capture_mismatch_message(
+                res, desired, self.state["label"])
+            self.announce_capture("iface-mismatch", sev, msg, detail, now)
+            self._attached_since = 0.0
+            return res
+
+        if not self._attached_since:
+            self._attached_since = now
+        if res["total_packets"] > 0:
+            self._blind_announced = False
+            sev, msg, detail = capture.capture_ok_message(
+                res, self.state["label"])
+            # Healthy state is announced on CHANGE, not on a timer: a working
+            # IDS that says so every fifteen minutes is noise that buries the
+            # one time it stops working.
+            self.announce_capture("capture-verified", sev, msg, detail, now,
+                                  repeat=float("inf"))
+        elif (not self._blind_announced
+              and (now - self._attached_since) >= capture.CAPTURE_BLIND_SECONDS):
+            self._blind_announced = True
+            sev, msg, detail = capture.capture_blind_message(
+                res, now - self._attached_since)
+            self.announce_capture("capture-blind", sev, msg, detail, now)
+        return res
+
+    def warn_no_capture(self, now: float) -> None:
+        """No interface is carrying traffic, so Suricata was not started."""
+        if self.heartbeat.warming_up(now):
+            # Not measured yet. Saying "no interface is carrying traffic" one
+            # second after start, on a deck whose NIC is fine, is a false
+            # alarm the operator pays for in trust.
+            return
+        status = self.heartbeat.status(now)
+        sev, msg, detail = capture.no_live_message(status,
+                                                   self.state["label"])
+        detail["tier"] = self.state["tier"]
+        self.announce_capture("no-live-interface", sev, msg, detail, now)
+
+    # --- rules ---
+    def refresh_rules(self) -> None:
+        self.rules = assess_rules(scan_rule_dirs(self.rules_dirs))
+
+    def warn_no_rules(self, tier: str, now: float) -> None:
+        """Say it loudly, say it first, and keep saying it.
+
+        Escalation is inverted on purpose: the FIRST announcement is critical
+        because the operator has just armed a tier believing they gained
+        coverage they do not have — that is the moment the truth matters most.
+        Repeats drop to warning so a permanently air-gapped deck nags rather
+        than screams, but it never stops nagging and never goes silent.
+        """
+        first = not self.no_rules_announced
+        if not first and (now - self.last_no_rules_warn) < NO_RULES_REANNOUNCE:
+            return
+        self.no_rules_announced = True
+        self.last_no_rules_warn = now
+        # Category `health`, NOT `ids`. A blind IDS is genuinely critical, so
+        # the severity policy above is unchanged — but it is a fact about this
+        # deck, not a detection. pressure() in cockpit_lib weights `ids` by
+        # severity and does not exclude it, so publishing this as `ids` drove
+        # THREAT PRESSURE to ELEVATED on an idle machine and re-spiked every
+        # NO_RULES_REANNOUNCE seconds, flashing the screen red and ticking the
+        # scan counter. That is byte-for-byte the incident DEC-PHASE12-034 was
+        # written to stop, thirty lines from its own fix. RESILIENCE.md rule 5:
+        # self-diagnosis is not a threat.
+        self.emit(NO_RULES_FIRST if first else NO_RULES_REPEAT, "health",
+                  no_rules_message(tier, self.rules))
+
+    # --- eve ingest ---
+    def _refresh_scan_sources(self, now: float) -> None:
+        if (now - self._scan_refreshed) < 10.0:
+            return
+        self._scan_refreshed = now
+        self.scan_sources = scan_sources_from_bus(tail_bus_lines(), now,
+                                                  sources=("firewall",))
+        # orionx-scanwatch is a separate process, so the bus is how we learn
+        # what it has said. Suricata and Zeek are this process, and record
+        # themselves directly.
+        self.scan_ledger.merge_bus("firewall", self.scan_sources, now)
+
+    def _on_eve_line(self, line: str) -> None:
+        alert = parse_eve_line(line)
+        if alert is None:
+            return
+        now = time.time()
+        self._refresh_scan_sources(now)
+        if should_suppress(alert, self.scan_sources):
+            # orionx-scanwatch already reported this source from the firewall
+            # drop log. One scan is one story.
+            self.alerts_suppressed += 1
+            return
+        rule = self.tuning.suppressed_by("suricata", alert.get("signature_id"), None,
+                                         alert.get("src_ip"), now)
+        if rule is not None:
+            # The operator said so (orionx-tune). COUNTED, so a silence nobody
+            # can account for is distinguishable from a detector that died.
+            self.tuned_suppressed += 1
+            return
+        if not self.deduper.should_publish(dedup_key(alert), now):
+            return
+        if is_scan_alert(alert):
+            # Claim this scan source for Suricata, so the Zeek path below does
+            # not tell the same story a third time.
+            self.scan_ledger.record("suricata", alert.get("src_ip", ""), now)
+        technique = attack_technique(alert.get("classtype"),
+                                     alert.get("signature"))
+        # Publish FIRST. The model is never in the path of a detection.
+        # Structured detail (DEC-PHASE12-029) so the Cockpit drill-down can
+        # show sid/signature/addresses and offer [s]quelch / [t]une on them.
+        self.emit(bus_severity(alert), "ids",
+                  format_alert_message(alert, technique), source="suricata",
+                  detail=self._alert_detail(alert, "suricata", technique))
+        self.alerts_published += 1
+        if self.nebula is not None and bus_severity(alert) in ("warning",
+                                                               "critical"):
+            self.nebula.offer(alert, technique)
+
+    # --- zeek callbacks (DEC-PHASE12-028) ---
+    def _on_zeek_notice(self, alert: dict) -> None:
+        """One Zeek notice -> at most one bus event.
+
+        The suppression check is what stops an nmap sweep being announced
+        three times: orionx-scanwatch owns it from the firewall drop log,
+        Suricata owns it next, and Zeek defers to both. The suppression is
+        COUNTED rather than merely skipped, because a suppression nobody can
+        account for looks exactly like a detector that quietly died.
+        """
+        now = time.time()
+        self._refresh_scan_sources(now)
+        note = alert.get("note", "")
+        if is_zeek_scan_notice(note):
+            owner = should_suppress_scan("zeek", alert.get("src_ip", ""),
+                                         self.scan_ledger, now)
+            if owner is not None:
+                self.zeek_suppressed += 1
+                return
+            self.scan_ledger.record("zeek", alert.get("src_ip", ""), now)
+        rule = self.tuning.suppressed_by("zeek", None, note, alert.get("src_ip"), now)
+        if rule is not None:
+            self.tuned_suppressed += 1
+            return
+        if not self.deduper.should_publish(zeek_dedup_key(alert), now):
+            return
+        technique = zeek_attack_technique(note)
+        severity = zeek_notice_severity(alert)
+        self.emit(severity, "ids", format_zeek_message(alert, technique),
+                  source="zeek", detail=self._alert_detail(alert, "zeek", technique))
+        self.zeek_published += 1
+        if note in ZEEK_BLINDNESS_NOTES:
+            # Zeek just said it is missing traffic. Do not let that be
+            # mistaken for a quiet network on the next liveness check.
+            self._zeek_blind_announced = True
+        if self.nebula is not None and severity in ("warning", "critical"):
+            self.nebula.offer(
+                {"signature": note, "src_ip": alert.get("src_ip"),
+                 "dest_ip": alert.get("dest_ip"),
+                 "dest_port": alert.get("dest_port"),
+                 "proto": alert.get("proto"), "classtype": "zeek-notice",
+                 "signature_id": 0}, technique)
+
+    def _on_zeek_weird(self, name: str, src: str) -> None:
+        burst = self.weird.observe(name, src, time.time())
+        if burst is None:
+            return
+        self.emit("notice", "ids", format_weird_message(burst), source="zeek")
+        self.zeek_published += 1
+
+    def _sync_zeek(self, now: float) -> None:
+        """Re-ask whether Zeek exists, and say so whenever the answer changes.
+
+        This is the whole "no rebuild, no restart" promise in one method: it
+        runs on every reassert cycle, so Zeek installed at any point after
+        boot is ingested from the next cycle, and the operator is TOLD, rather
+        than having to notice new event types appearing.
+        """
+        was_running = self.zeek.running
+        self.zeek.sync()
+        fingerprint = self.zeek.state_fingerprint()
+        changed = fingerprint != self._zeek_fingerprint
+        due = (now - self._zeek_last_announce) >= ZEEK_STATE_REANNOUNCE
+        severity, message = zeek_state_message(self.zeek.state)
+
+        # A degraded state repeats; a healthy one is announced on change only.
+        # An unreadable log directory must nag: that is active blindness.
+        repeat = due and self.zeek.state["log_state"] == "unreadable"
+        if changed or repeat:
+            self._zeek_fingerprint = fingerprint
+            self._zeek_last_announce = now
+            if self.zeek.running and not was_running and changed:
+                self._zeek_blind_announced = False
+            # `health`, not `ids`. zeek_state_message() describes THIS DECK's
+            # Zeek capability — installed, absent, logs unreadable — and not
+            # anything Zeek detected. Zeek's actual notices below are `ids`,
+            # because those are detections. RESILIENCE.md rule 5.
+            self.emit(severity, "health", message, source="zeek")
+
+        # Zeek attached to a live log directory that has produced no
+        # connection at all is the Suricata-with-no-rules failure again.
+        if (self.zeek.running and not self._zeek_blind_announced
+                and zeek_blind(self.zeek.conn_records,
+                               self.zeek.watch_started, now)):
+            self._zeek_blind_announced = True
+            # Self-diagnosis: a sensor reporting on itself, not a detection.
+            self.emit("warning", "health",
+                      f"Zeek has been reading {self.zeek.active_dir} for "
+                      f"{ZEEK_LIVENESS_SECONDS / 60:.0f} minutes and conn.log "
+                      "has produced ZERO connection records. That is not a "
+                      "quiet network, it is a sensor that is probably not "
+                      "attached to any traffic — check that Zeek is running "
+                      "against a live interface (`zeek -i <iface>`) and that "
+                      "the interface sees packets.", source="zeek")
+
+    # --- deception callbacks ---
+    def _on_decoy_hit(self, port: int, peer: str) -> None:
+        self.emit("critical", "deception", decoy_alert_message(port, peer))
+
+    def _check_canaries(self) -> None:
+        if not self.deception.armed:
+            return
+        for path in self.deception.check_canaries():
+            self.emit("critical", "deception", canary_alert_message(path))
+
+    # --- apply ---
+    def execute(self, actions: list[tuple], tier: str) -> list[str]:
+        done: list[str] = []
+        now = time.time()
+        for action in actions:
+            kind = action[0]
+            if kind == "gate":
+                set_gate(action[1] == "create", dry_run=self.dry_run)
+            elif kind == "capture":
+                self.write_capture_config(action[2], now)
+            elif kind == "service":
+                if action[1] in ("start", "restart"):
+                    # Check before Do: a config the engine will reject is
+                    # worth one clear message, not three silent exit-1s and
+                    # an exhausted attempt budget.
+                    if not self.capture_preflight(now):
+                        done.append("service:refused:" + action[2])
+                        continue
+                    self._attached_since = 0.0
+                    self._blind_announced = False
+                    self._verify_due = now + capture.VERIFY_GRACE_SECONDS
+                systemctl(action[1], action[2], dry_run=self.dry_run)
+            elif kind == "zeek":
+                if action[1] == "start":
+                    self._sync_zeek(now)
+                else:
+                    self.zeek.stop()
+            elif kind == "eve":
+                if action[1] == "start":
+                    self.tailer.start()
+                    if self.nebula is not None:
+                        self.nebula.start()
+                else:
+                    self.tailer.stop()
+                    if self.nebula is not None:
+                        self.nebula.stop()
+            elif kind == "deception":
+                if action[1] == "arm":
+                    info = self.deception.arm(self._on_decoy_hit)
+                    ports = ", ".join(f"tcp/{p}" for p in info["ports"])
+                    self.emit("warning", "deception",
+                              f"Tier 2 deception ARMED — decoys on {ports or 'none'}, "
+                              f"{len(info['canaries'])} canary file(s) in "
+                              f"{self.deception.canary_dir}. Local and "
+                              "non-destructive: nothing is sent to any other host.")
+                    if not info["firewall_open"]:
+                        self.emit("warning", "deception",
+                                  "Deception decoys are listening but the firewall "
+                                  "opening FAILED — the base DROP policy will absorb "
+                                  "probes before they reach a decoy. Canary files "
+                                  "are unaffected. Check `nft list ruleset`.")
+                else:
+                    self.deception.disarm()
+                    self.emit("notice", "deception",
+                              "Tier 2 deception disarmed — decoys closed, canaries "
+                              "removed, runtime firewall opening deleted.")
+            elif kind == "warn":
+                if action[1] == "no-capture":
+                    self.warn_no_capture(now)
+                else:
+                    self.warn_no_rules(tier, now)
+            done.append(":".join(str(a) for a in action))
+        return done
+
+    def write_status(self) -> None:
+        """Runtime truth for the Cockpit: what is actually enforced, right now."""
+        if self.dry_run or self.state is None:
+            return
+        payload = {
+            "ts": time.time(),
+            "tier": self.state["tier"],
+            "label": self.state["label"],
+            "ids_expected": self.state["suricata"],
+            "ids_active": (service_active(SURICATA_UNIT)
+                           if self.state["suricata"] else False),
+            "rules_usable": self.rules["usable"],
+            "threat_rule_files": self.rules["threat_files"],
+            "anomaly_rule_files": self.rules["anomaly_files"],
+            "deception_armed": self.deception.armed,
+            "alerts_published": self.alerts_published,
+            "alerts_suppressed": self.alerts_suppressed,
+            # DEC-PHASE12-050/051
+            "tuned_suppressed": self.tuned_suppressed,
+            "eve_handler_errors": self.tailer.callback_errors,
+            "tuning": self.tuning.status(time.time()),
+            "deck_addrs": sorted(self.deck_addrs),
+            "posture_file": str(self.posture_path or ""),
+            # DEC-PHASE12-028. Zeek ingest and PCAP capture are folded in here
+            # rather than given status files of their own, so the Cockpit has
+            # one runtime-truth authority to read instead of three.
+            "zeek": self.zeek.status(),
+            "zeek_published": self.zeek_published,
+            "zeek_suppressed": self.zeek_suppressed,
+            "capture": capture_status(),
+            # DEC-PHASE12-038. ids_capture is runtime truth about the IDS's
+            # own capture, kept separate from `capture`, which is
+            # orionx-capture's operator-requested PCAP state. Two different
+            # facts; one status file, two keys, no ambiguity.
+            "ids_capture": {
+                "desired": list(self.state.get("capture_ifaces") or ()),
+                "verified": self._verify.get("verified"),
+                "configured": self._verify.get("configured"),
+                "capturing": self._verify.get("capturing"),
+                "socket_errors": self._verify.get("socket_errors") or {},
+                "attached": self._verify.get("attached") or [],
+                "packets": self._verify.get("packets") or {},
+                "reason": self._verify.get("reason"),
+                "config": str(self.suricata_config),
+                "interfaces_file": str(self.capture_yaml),
+                "heartbeat": self.heartbeat.status(time.time()),
+                "brake": self.brake.status(),
+            },
+        }
+        try:
+            STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            tuning_lib.atomic_write_text(STATUS_FILE, json.dumps(payload), 0o644)
+        except OSError:
+            pass
+
+    def apply_tier(self, tier: str) -> list[str]:
+        now = time.time()
+        self.refresh_rules()
+        target = self.capture_target(now)
+        plan = tier_plan(tier, self.rules["usable"], live_ifaces=target)
+        actions = plan_actions(self.state, plan)
+        prev_ifaces = tuple((self.state or {}).get("capture_ifaces") or ())
+        tier_changed = self.state is None or self.state["tier"] != plan["tier"]
+        if tier_changed or prev_ifaces != tuple(plan["capture_ifaces"]):
+            # A deliberate posture change earns Suricata a fresh set of
+            # attempts, and so does a new interface set: "it would not start
+            # on eth0" is not evidence about wlan0, and refusing to try the
+            # NIC the operator just plugged in would be the daemon giving up
+            # on a situation it has never actually attempted.
+            self._suricata_recovery_reset()
+        if tier_changed:
+            self.emit("notice", "posture",
+                      f"Posture enforcement: {plan['label']} — "
+                      f"suricata={'on' if plan['suricata'] else 'off'}, "
+                      f"eve-ingest={'on' if plan['eve_ingest'] else 'off'}, "
+                      f"deception={'armed' if plan['deception'] else 'off'}",
+                      detail={"tier": plan["tier"],
+                              "capture_ifaces": list(plan["capture_ifaces"])})
+        # self.state is the plan being applied before execute() runs, so the
+        # messages execute() emits describe the state being entered rather
+        # than the one being left.
+        self.state = plan
+        done = self.execute(actions, plan["tier"])
+        if plan["suricata"]:
+            self.brake.note_applied(tuple(plan["capture_ifaces"]), now)
+        elif not plan["gate_file"]:
+            # Torn down. The next Tier 1 must be a first apply, not a diff
+            # against a set belonging to an engine that is no longer running.
+            self.brake.reset()
+        self.write_status()
+        return done
+
+    def run(self) -> int:
+        last_reassert = 0.0
+        last_canary = 0.0
+        tier = "0"
+        try:
+            while True:
+                self.posture_path = pick_posture_file(
+                    posture_candidates(self.args.posture_file))
+                new_tier, refusal = read_tier_report(self.posture_path)
+                now = time.time()
+                if refusal != self._posture_refusal:
+                    self._posture_refusal = refusal
+                    if refusal:
+                        self.emit("warning", "posture",
+                                  f"posture file refused, holding Tier 0: {refusal}"[:300],
+                                  detail={"remedy": "the posture file must be a regular file "
+                                                    f"owned by {DESKTOP_USER}, mode 0644 or "
+                                                    "stricter; re-select the tier in the Cockpit"})
+                self._refresh_tuning(now)
+                self._refresh_deck_addrs(now)
+                if (now - self._last_heartbeat) >= self.args.heartbeat:
+                    # DEC-PHASE12-038. The interface heartbeat runs on its own
+                    # cadence, faster than the 30s reassert, because a USB NIC
+                    # plugged in mid-incident should be watched in seconds and
+                    # a yanked one must leave the config before the engine is
+                    # next started against a device that no longer exists.
+                    self.heartbeat_tick(now)
+                    if self.state is not None and self.state["tier"] in ("1",
+                                                                         "2"):
+                        target = self.capture_target(now)
+                        if (tuple(self.state.get("capture_ifaces") or ())
+                                != target):
+                            self.apply_tier(self.state["tier"])
+                            last_reassert = now
+
+                if self.state is None or new_tier != self.state["tier"]:
+                    tier = new_tier
+                    self.apply_tier(tier)
+                    last_reassert = now
+                elif (now - last_reassert) >= REASSERT_SECONDS:
+                    last_reassert = now
+                    # Drift check: enforcement is continuous, not one-shot. If
+                    # something stopped Suricata behind our back, the tier is a
+                    # lie until we put it back — and we say so.
+                    self.refresh_rules()
+                    if self.state["suricata"] and not service_active(SURICATA_UNIT):
+                        self._suricata_recover(now)
+                    if self.state["suricata"] and not self.rules["usable"]:
+                        self.warn_no_rules(self.state["tier"], now)
+                    # DEC-PHASE12-038, the Check stage. Being "active" is not
+                    # being attached: ask the engine itself, on a cycle,
+                    # because an interface can go away under a running
+                    # process and nothing else would notice.
+                    if self.state["suricata"] and now >= self._verify_due:
+                        self._verify_due = now + CAPTURE_VERIFY_EVERY
+                        self.verify_capture(now)
+                    # A measured no-capture state keeps nagging. It is not a
+                    # transient: without an interface there is no IDS, and
+                    # the operator planning around one must hear that.
+                    if self.state.get("warn_no_capture"):
+                        self.warn_no_capture(now)
+                    # Zeek may have been installed since the last cycle, or
+                    # its log directory may have appeared, moved or become
+                    # unreadable. All three are runtime facts (DEC-PHASE12-028).
+                    self._sync_zeek(now)
+                    self.write_status()
+                if (now - last_canary) >= CANARY_POLL_SECONDS:
+                    last_canary = now
+                    self._check_canaries()
+                time.sleep(self.args.poll)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if self.deception.armed:
+                self.deception.disarm()
+            self.zeek.stop()
+            self.tailer.stop()
+            if self.nebula is not None:
+                self.nebula.stop()
+        return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The CLI, separated from main() so tests can construct a real args
+    object and drive the daemon in-process instead of reimplementing
+    defaults that would then drift from the ones that ship."""
+    ap = argparse.ArgumentParser(
+        prog="orionx-postured",
+        description="Enforce the Orion-X threat-posture tier and publish "
+                    "AI-contextualised IDS detections onto the R.A.I.N. bus.",
+    )
+    ap.add_argument("--posture-file", default=None,
+                    help="explicit threat-posture file (default: auto-discover)")
+    ap.add_argument("--eve", default=str(EVE_JSON),
+                    help="Suricata eve.json path (default: %(default)s)")
+    ap.add_argument("--rules-dir", action="append", default=None,
+                    help="rules directory to assess (repeatable)")
+    ap.add_argument("--canary-dir", default=str(CANARY_DIR),
+                    help="Tier 2 canary directory (default: %(default)s)")
+    ap.add_argument("--zeek-log-dir", action="append", default=None,
+                    help="Zeek log directory to watch (repeatable; default: "
+                         "auto-discover)")
+    ap.add_argument("--zeek-bin", action="append", default=None,
+                    help="candidate Zeek binary path (repeatable; default: "
+                         "auto-discover)")
+    ap.add_argument("--poll", type=float, default=POLL_SECONDS,
+                    help="posture poll interval in seconds (default: %(default)s)")
+    # --- capture (DEC-PHASE12-038) ---
+    ap.add_argument("--capture-iface", action="append", default=None,
+                    metavar="IFACE",
+                    help="always capture on this interface, live or not "
+                         "(repeatable). For a SPAN/monitor port that is "
+                         "deliberately silent between probes. It must still "
+                         "exist: one unopenable device fails the whole engine.")
+    ap.add_argument("--sysfs", default=str(capture.SYSFS_NET),
+                    help="interface counter root (default: %(default)s)")
+    ap.add_argument("--interfaces-yaml", default=str(capture.INTERFACES_YAML),
+                    help="generated af-packet include (default: %(default)s)")
+    ap.add_argument("--suricata-config", default=str(capture.ORIONX_YAML),
+                    help="Suricata config to validate (default: %(default)s)")
+    ap.add_argument("--heartbeat", type=float,
+                    default=capture.HEARTBEAT_SECONDS,
+                    help="interface sampling interval (default: %(default)s)")
+    ap.add_argument("--live-window", type=float, default=capture.LIVE_WINDOW,
+                    help="seconds a packet delta is measured over "
+                         "(default: %(default)s)")
+    ap.add_argument("--live-packets", type=int,
+                    default=capture.LIVE_MIN_PACKETS,
+                    help="packets within the window that mean 'live' "
+                         "(default: %(default)s)")
+    ap.add_argument("--quiet-demote", type=float,
+                    default=capture.QUIET_DEMOTE_SECONDS,
+                    help="seconds a captured interface may be quiet before "
+                         "it is dropped (default: %(default)s)")
+    ap.add_argument("--reconfig-cooldown", type=float,
+                    default=capture.RECONFIG_COOLDOWN,
+                    help="minimum seconds between Suricata reconfigures "
+                         "(default: %(default)s)")
+    ap.add_argument("--max-ifaces", type=int, default=capture.MAX_CAPTURE_IFACES,
+                    help="most interfaces captured at once (default: %(default)s)")
+    ap.add_argument("--no-nebula", action="store_true",
+                    help="disable the Nebula contextualizer entirely")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="print actions and events instead of performing them")
+    ap.add_argument("--once", action="store_true",
+                    help="apply the current tier once and exit")
+    ap.add_argument("--print-plan", action="store_true",
+                    help="print the JSON plan for the current tier and exit")
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+
+    daemon = PostureDaemon(args)
+    tier = read_tier(daemon.posture_path)
+
+    if args.print_plan:
+        now = time.time()
+        target = daemon.capture_target(now)
+        plan = tier_plan(tier, daemon.rules["usable"], live_ifaces=target)
+        print(json.dumps({"posture_file": str(daemon.posture_path or ""),
+                          "rules": daemon.rules,
+                          "zeek": daemon.zeek.state,
+                          "capture": capture_status(),
+                          "ids_capture": daemon.heartbeat.status(now),
+                          "suricata_config": capture.check_config(
+                              daemon.suricata_config),
+                          "plan": plan}, indent=2))
+        return 0
+
+    if args.once:
+        done = daemon.apply_tier(tier)
+        print(f"tier={tier} actions={done or ['none']}", flush=True)
+        return 0
+
+    return daemon.run()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

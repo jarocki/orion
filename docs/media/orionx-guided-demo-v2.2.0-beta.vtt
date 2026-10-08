@@ -1,70 +1,70 @@
 WEBVTT
 
-00:00:00.400 --> 00:00:09.636
+00:00:00.400 --> 00:00:09.403
 This is Orion-X Phoenix Edition, version 2.2.0 beta: a live USB cyberdeck for incident responders working in networks they cannot trust.
 
-00:00:09.636 --> 00:00:15.816
-It boots from a USB stick on Debian 13, runs entirely from RAM, and works fully air-gapped.
+00:00:09.403 --> 00:00:17.348
+It boots from a USB stick on Debian 13, runs from the stick with all changes held in memory, and works fully air-gapped.
 
-00:00:15.816 --> 00:00:20.094
-Nothing has to be installed on the machine you are standing at.
+00:00:17.348 --> 00:00:22.114
+Nothing is installed on, or written to, the machine you are standing at.
 
-00:00:21.490 --> 00:00:24.247
+00:00:23.510 --> 00:00:26.267
 The desktop is XFCE, themed as a cyberdeck.
 
-00:00:24.247 --> 00:00:34.763
+00:00:26.267 --> 00:00:36.783
 The panel shows what matters at a glance: the mesh you are joined to, scan and intrusion events seen on the event bus, and the number of hosts on the local network.
 
-00:00:34.763 --> 00:00:37.712
+00:00:36.783 --> 00:00:39.732
 Every Orion-X tool lives under one Orion menu.
 
-00:00:39.110 --> 00:00:42.202
+00:00:41.130 --> 00:00:44.222
 The Control Center is designed for your 3 a.m.
 
-00:00:42.202 --> 00:00:42.538
+00:00:44.222 --> 00:00:44.558
 self.
 
-00:00:42.538 --> 00:00:46.975
+00:00:44.558 --> 00:00:48.995
 Live health, the WireGuard mesh, and the firewall are on one page.
 
-00:00:46.975 --> 00:00:50.874
+00:00:48.995 --> 00:00:52.894
 Threat posture has three tiers, from passive to deception.
 
-00:00:50.874 --> 00:00:51.412
+00:00:52.894 --> 00:00:53.432
 R.A.I.N.
 
-00:00:51.412 --> 00:01:00.688
+00:00:53.432 --> 00:01:02.708
 — Real-time Audible Intrusion Notification — turns detections into severity-mapped sound cues, so an intrusion is heard, not just watched.
 
-00:01:02.090 --> 00:01:11.956
+00:01:04.110 --> 00:01:13.976
 Nebula is the on-device assistant: ollama serving Qwen 2.5 3B, verified at boot by a SHA-256 integrity gate before it is allowed to start.
 
-00:01:11.956 --> 00:01:22.107
+00:01:13.976 --> 00:01:24.127
 It can reach twelve local MCP tools — pcap summaries, artifact analysis, OAST decoding, nuclei-template lookups — and nothing leaves the deck.
 
-00:01:23.510 --> 00:01:36.104
+00:01:25.530 --> 00:01:38.124
 The Cockpit is where you see and hear the cyber activity around you: a scrolling event stream, a threat-pressure gauge that decays over time, a network sparkline, subsystem lights and the current posture.
 
-00:01:36.104 --> 00:01:40.857
+00:01:38.124 --> 00:01:42.877
 This feed is synthetic demo traffic; on a real deck it is the live event bus.
 
-00:01:42.260 --> 00:01:58.491
+00:01:44.280 --> 00:02:00.511
 Underneath is a curated forensics toolkit: Wireshark and Zeek for the wire, Volatility 3 for memory, capa and YARA for binaries, go-roast for out-of-band payloads, and nucleotide, which maps URLs to nuclei templates from a lookup table built into the image.
 
-00:01:59.890 --> 00:02:03.069
+00:02:01.910 --> 00:02:05.089
 Pivotglass is the adversary-infrastructure hunting deck.
 
-00:02:03.069 --> 00:02:13.626
+00:02:05.089 --> 00:02:15.646
 It runs locally in the browser, keeps hypotheses, evidence and contradictions as separate records, and ships with an offline learning case so you can practise without any network at all.
 
-00:02:15.030 --> 00:02:19.259
+00:02:17.050 --> 00:02:21.279
 The full User Guide is rendered into the image and on GitHub.
 
-00:02:19.259 --> 00:02:32.571
+00:02:21.279 --> 00:02:34.591
 The beta ISO is 3.09 gigabytes, published as seven parts because of GitHub's two-gigabyte limit: download them, concatenate, verify the SHA-256, and write the image to an eight-gigabyte stick.
 
-00:02:32.571 --> 00:02:35.067
+00:02:34.591 --> 00:02:37.087
 Beta means we want your bug reports.
 
-00:02:35.067 --> 00:02:36.177
+00:02:37.087 --> 00:02:38.197
 That is Orion-X.

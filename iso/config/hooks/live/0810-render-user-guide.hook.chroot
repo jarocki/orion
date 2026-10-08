@@ -14,22 +14,56 @@
 #   the .html is a build-time derived surface regenerated on every build (never
 #   hand-edited). If python3-markdown is somehow unavailable, we still emit a valid
 #   HTML page wrapping the raw text in <pre> so the launcher always has an .html.
+#
+# @decision DEC-PHASE12-130
+# @title The rendered guide takes its release string from /etc/orionx-version
+# @status accepted
+# @rationale QA round 1 (UX-07, UX-33, release-tests F-07): rc6 through rc9
+#   shipped a guide that said "rc5" because the literal was bumped by hand and
+#   the step was skipped. The guide now marks its release string as
+#   <!--orionx:release-->vX.Y.Z<!--/orionx:release--> (invisible on GitHub);
+#   this hook fills every marked slot, and the HTML <title>, from the
+#   ISO_VERSION that 0700 baked, so the guide the desktop icon opens cannot
+#   disagree with the image. Only the derived .html is changed: the baked .md
+#   stays byte-identical to the repository, which the release check diffs.
+#   If the version file is missing the repo text is kept and a WARN is logged.
+#   The ORIONX_GUIDE_*/ORIONX_VERSION_FILE variables exist so
+#   tests/unit/test_operator_surfaces.sh can run this hook on a scratch copy.
 set -euo pipefail
 
-MD="/usr/share/doc/orionx/User_Guide.md"
-HTML="/usr/share/doc/orionx/User_Guide.html"
+MD="${ORIONX_GUIDE_MD:-/usr/share/doc/orionx/User_Guide.md}"
+HTML="${ORIONX_GUIDE_HTML:-/usr/share/doc/orionx/User_Guide.html}"
+VERSION_FILE="${ORIONX_VERSION_FILE:-/etc/orionx-version}"
 
 if [[ ! -f "$MD" ]]; then
     echo "[render-user-guide] WARN: $MD not found — skipping"
     exit 0
 fi
 
-python3 - "$MD" "$HTML" <<'PY'
+python3 - "$MD" "$HTML" "$VERSION_FILE" <<'PY'
+import html as _html
+import re
 import sys
 
-md_path, html_path = sys.argv[1], sys.argv[2]
+md_path, html_path, version_path = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(md_path, encoding="utf-8") as fh:
     text = fh.read()
+
+# DEC-PHASE12-130: the baked release identity fills every marked slot.
+OPEN, CLOSE = "<!--orionx:release-->", "<!--/orionx:release-->"
+SLOT = re.compile(re.escape(OPEN) + r"([^<]*)" + re.escape(CLOSE))
+release = ""
+try:
+    with open(version_path, encoding="utf-8") as fh:
+        for line in fh:
+            if line.startswith("ISO_VERSION="):
+                release = line.split("=", 1)[1].strip()
+                break
+except OSError as exc:
+    print(f"[render-user-guide] WARN: cannot read {version_path}: {exc} — keeping the guide's own release text")
+if release:
+    text, n = SLOT.subn(OPEN + release + CLOSE, text)
+    print(f"[render-user-guide] release {release} written into {n} slot(s)")
 
 try:
     import markdown
@@ -49,8 +83,11 @@ try:
         _exts = ["extra", "toc", "sane_lists", "fenced_code", "tables"]
     body = markdown.markdown(text, extensions=_exts)
 except Exception:  # markdown missing/broken — fall back to a readable <pre>
-    import html as _html
     body = "<pre>" + _html.escape(text) + "</pre>"
+    # keep the release markers as real comments, as the markdown path does
+    body = body.replace(_html.escape(OPEN), OPEN).replace(_html.escape(CLOSE), CLOSE)
+
+title = "Orion-X User Guide" + (f" — {release}" if release else "")
 
 STYLE = """
   :root { color-scheme: dark; }
@@ -92,7 +129,7 @@ STYLE = """
 doc = (
     "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
     "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-    "<title>Orion-X User Guide</title><style>" + STYLE + "</style></head>"
+    "<title>" + _html.escape(title) + "</title><style>" + STYLE + "</style></head>"
     "<body><div class='wrap'>"
     "<div class='brand'>ORION-X · PHOENIX EDITION</div>" + body +
     "</div></body></html>"

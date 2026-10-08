@@ -2,9 +2,9 @@ name: Lint & Test
 
 on:
   push:
-    branches: [develop]
+    branches: [develop, 'release/**']
   pull_request:
-    branches: [develop]
+    branches: [develop, 'release/**']
 
 jobs:
   lint:
@@ -18,10 +18,10 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
 
       - name: Install Python tools
-        run: pip install ruff pytest
+        run: pip install ruff pytest pyyaml
 
       - name: Lint
         run: make lint

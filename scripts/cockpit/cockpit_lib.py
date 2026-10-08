@@ -31,6 +31,7 @@ import json
 import math
 import os
 import shutil
+import re
 import subprocess
 import time
 from collections import deque
@@ -57,6 +58,11 @@ SEVERITIES = ("info", "notice", "warning", "critical")
 
 EVENT_LOG = Path("/run/orionx/events.jsonl")
 POSTURE_FILE = Path.home() / ".config" / "orionx" / "threat-posture"
+# Runtime truth written by orionx-postured (DEC-PHASE12-024): what the tier is
+# actually enforcing, as opposed to what it was set to. The distinction is the
+# whole point — a tier can be selected while the IDS behind it carries no
+# threat rules and therefore detects nothing.
+POSTURE_STATUS_FILE = Path("/run/orionx/posture-status.json")
 PRESSURE_HALF_LIFE = 60.0   # seconds for an event's contribution to halve
 
 
@@ -81,12 +87,23 @@ def parse_event(line: str) -> dict[str, Any] | None:
         ts = float(obj.get("ts", 0.0))
     except (TypeError, ValueError):
         ts = 0.0
+    # Structured detail (DEC-PHASE12-029) rides through untruncated so the
+    # drill-down view can show the source IP, signature, matching content and
+    # triggering rule. The message is kept WHOLE here too: the stream row clips
+    # it at draw time, the drill-down wraps all of it. Clipping at parse time
+    # meant the drill-down could never show more than the stream (reference
+    # deck, 2026-10-05).
+    detail = obj.get("detail")
+    if not isinstance(detail, dict):
+        detail = {}
     return {
         "ts": ts,
         "severity": sev,
         "source": str(obj.get("source", "?"))[:24],
         "category": str(obj.get("category", ""))[:24],
-        "message": str(obj.get("message", ""))[:160],
+        "message": str(obj.get("message", "")),
+        "id": str(obj.get("id", ""))[:32],
+        "detail": detail,
     }
 
 
@@ -106,8 +123,16 @@ class EventTail:
         self._fh = None
         self._inode = -1
         self._pos = 0
+        # @decision DEC-PHASE12-066
+        # @title A bus line read before its writer finished is completed, not dropped
+        # @status accepted
+        # @rationale python.md P1-6: readline() can return a line with no
+        #   trailing newline while a writer is mid-append; it failed to parse,
+        #   _pos moved past it, and that event never reached the stream. Such
+        #   a fragment is held here and prefixed to the next read.
+        self._partial = ""
 
-    def _open(self) -> bool:
+    def _open(self, from_start: bool = False) -> bool:
         try:
             st = self.path.stat()
         except OSError:
@@ -118,11 +143,19 @@ class EventTail:
             return False
         self._fh = fh
         self._inode = st.st_ino
-        # Backfill the last N events, then continue from EOF.
+        if from_start:
+            # A rotated/recreated/truncated bus: everything in the NEW file
+            # is unseen, so read it from the top (it used to be skipped).
+            self._pos = 0
+            return True
+        # First open: backfill the last N events, then continue from EOF.
         try:
-            tail = fh.readlines()[-self._backfill:] if self._backfill else []
+            lines = fh.readlines()
         except OSError:
-            tail = []
+            lines = []
+        if lines and not lines[-1].endswith("\n"):
+            self._partial = lines.pop()
+        tail = lines[-self._backfill:] if self._backfill else []
         for ln in tail:
             ev = parse_event(ln)
             if ev:
@@ -134,14 +167,16 @@ class EventTail:
         """Return events appended since the last poll (possibly empty)."""
         if self._fh is None and not self._open():
             return []
-        # Rotation / truncation: reopen from the top.
+        # Rotation / recreation / truncation: reopen and read the new file from
+        # the top. A deleted bus (stat fails) keeps the old handle until a new
+        # file appears; the poll simply returns nothing meanwhile.
         try:
             st = self.path.stat()
             if st.st_ino != self._inode or st.st_size < self._pos:
                 self._fh.close()
                 self._fh = None
-                self._backfill = 0
-                if not self._open():
+                self._partial = ""
+                if not self._open(from_start=True):
                     return []
         except OSError:
             return []
@@ -151,6 +186,10 @@ class EventTail:
                 line = self._fh.readline()
                 if not line:
                     break
+                if not line.endswith("\n"):
+                    self._partial += line      # writer is mid-line: finish it next poll
+                    break
+                line, self._partial = self._partial + line, ""
                 ev = parse_event(line)
                 if ev:
                     new.append(ev)
@@ -159,6 +198,39 @@ class EventTail:
         except OSError:
             pass
         return new
+
+
+# Categories that describe the DECK's own condition rather than a threat to it
+# (DEC-PHASE12-034). These are excluded from threat pressure.
+#
+# Observed on hardware: Suricata was failing to start, orionx-postured warned
+# about it every 30s, and the gauge read "5.1 ELEVATED" on an idle machine with
+# nothing attacking it. The deck was frightening itself with its own
+# self-diagnosis. A threat gauge that rises because a service is unhealthy
+# teaches the operator that the gauge means nothing, which is the one thing it
+# cannot afford to teach.
+#
+# Health events still appear in the stream, still carry their severity, still
+# sound the R.A.I.N. cue. They just do not count as threat, because they are
+# not threat.
+# MIRROR of rain_lib.STATUS_CATEGORIES — rain_lib is the single authority
+# (DEC-PHASE12-040). A literal rather than an import, deliberately: the
+# Cockpit is launched in several ways and an import with a fallback would let
+# the two sets drift behind a silently successful fallback, which is the exact
+# failure mode this constant exists to prevent. The invariant is enforced by
+# test instead, where drift is loud: tests/unit/test_event_detail.sh asserts
+# this equals rain_lib.STATUS_CATEGORIES exactly.
+#
+# Categories here describe the DECK's own condition rather than a threat to
+# it, and are excluded from threat pressure. Observed before this existed:
+# Suricata failing to start made orionx-postured warn every 30s and the gauge
+# read "5.1 ELEVATED" on an idle machine — the deck frightening itself with
+# its own self-diagnosis. Health events still appear in the stream and still
+# sound the R.A.I.N. cue; they are simply not threat.
+SELF_STATUS_CATEGORIES = frozenset({
+    "health", "posture", "service", "tooling", "heal", "capture",
+    "intel", "general",
+})
 
 
 def pressure(events, now: float, half_life: float = PRESSURE_HALF_LIFE) -> float:
@@ -170,6 +242,12 @@ def pressure(events, now: float, half_life: float = PRESSURE_HALF_LIFE) -> float
     """
     total = 0.0
     for ev in events:
+        if ev.get("category") in SELF_STATUS_CATEGORIES:
+            continue
+        # DEC-PHASE12-051: the deck's own traffic tripping a policy rule is
+        # not threat pressure (it was: archive.ph from the deck read as HOSTILE).
+        if (ev.get("detail") or {}).get("origin") == "self":
+            continue
         age = max(0.0, now - float(ev.get("ts", now)))
         w = SEVERITY_WEIGHT.get(ev.get("severity", "notice"), 8.0)
         total += w * (0.5 ** (age / half_life))
@@ -294,10 +372,6 @@ def process_running(name: str) -> bool:
         return False
 
 
-def mesh_up(sysfs: str = "/sys/class/net/wg0") -> bool:
-    return os.path.exists(sysfs)
-
-
 def posture_tier(path: Path = POSTURE_FILE) -> str:
     """Current threat-posture tier id ('0','1','2'); '0' if unset."""
     try:
@@ -308,6 +382,36 @@ def posture_tier(path: Path = POSTURE_FILE) -> str:
 
 
 POSTURE_LABEL = {"0": "TIER 0 · PASSIVE", "1": "TIER 1 · ACTIVE", "2": "TIER 2 · DECEPTION"}
+
+
+def posture_status(path: Path = POSTURE_STATUS_FILE) -> dict[str, Any]:
+    """Enforcement status from orionx-postured; {} if the daemon is not running."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def posture_badge(tier: str, status: dict[str, Any] | None = None) -> tuple[str, str]:
+    """(label, state) for the header badge, where state is ok|warn|blind.
+
+    'blind' is the honest answer for a tier that promises IDS coverage while
+    Suricata has no threat rules: the badge must not read like everything is
+    fine when nothing can be detected. 'warn' means the daemon that enforces
+    the tier is not reporting at all, so the badge is a wish, not a fact.
+    """
+    label = POSTURE_LABEL.get(tier, POSTURE_LABEL["0"])
+    status = status or {}
+    if tier == "0":
+        return label, "ok"
+    if not status:
+        return label + "  ⚠ UNENFORCED", "warn"
+    if status.get("ids_expected") and not status.get("rules_usable", False):
+        return label + "  ⚠ NO IDS RULES", "blind"
+    if status.get("ids_expected") and not status.get("ids_active", False):
+        return label + "  ⚠ IDS DOWN", "warn"
+    return label, "ok"
 
 
 def lerp(a: float, b: float, t: float) -> float:
@@ -323,6 +427,278 @@ __all__ = [
     "EMBER", "EMBER_DIM", "CYAN", "GREEN", "AMBER", "RED", "DIM", "BG_TOP", "BG_BOTTOM", "GRID",
     "SEVERITY_COLOR", "SEVERITY_WEIGHT", "SEVERITIES", "EVENT_LOG", "POSTURE_FILE",
     "parse_event", "EventTail", "pressure", "pressure_color", "read_net_bytes", "RateTracker",
-    "sparkline_points", "fmt_rate", "fmt_age", "service_active", "process_running", "mesh_up",
-    "posture_tier", "POSTURE_LABEL", "lerp", "now", "math",
+    "sparkline_points", "fmt_rate", "fmt_age", "service_active", "process_running",
+    "posture_tier", "POSTURE_LABEL", "POSTURE_STATUS_FILE", "posture_status",
+    "posture_badge", "lerp", "now", "math",
 ]
+
+# ---------------------------------------------------------------------------
+# Defensive / deceptive actions (DEC-PHASE12-029)
+#
+# The auto-healing engine (DEC-PHASE12-023) parks an action as "pending" when
+# the operator set that action class to `confirm`. Until now the only way to
+# see or approve one was `orionx-heal pending` / `orionx-heal confirm <id>` on
+# a terminal — which means the deck could be holding a blocked-IP decision
+# while the Cockpit, the thing the operator is actually watching, showed
+# nothing about it. These readers put that state on the dashboard.
+#
+# Reading is best-effort and never raises. The chain itself is root:0600, so
+# the Cockpit reads heald's world-readable snapshot (DEC-PHASE12-065).
+# ---------------------------------------------------------------------------
+
+# @decision DEC-PHASE12-065
+# @title The Cockpit reads healing state ONLY from heald's published snapshot
+# @status accepted
+# @rationale QA round 1 (python.md P1-1, P1-2). The Cockpit replayed the
+#   root:0600 hash chain itself. It could never open it as orionx-operator, and
+#   when it could (tests) it matched `status == "active"`, a value the engine
+#   never writes (it writes kind="applied"), so IN FORCE stayed empty while the
+#   deck was blocking a host. A second replay of the chain is a second
+#   authority. orionx-heald (root) now publishes /run/orionx/healing-status.json
+#   (0644, atomic) from the engine's own replay; that is the only thing read
+#   here. A missing, corrupt or stale (>30 s) snapshot is "state unknown —
+#   orionx-heald not publishing", never an empty list: "nothing pending" and "I
+#   could not look" must not look the same on a defensive dashboard.
+HEAL_STATUS = Path(os.environ.get("ORIONX_HEALING_STATUS", "/run/orionx/healing-status.json"))
+HEAL_STALE_AFTER = 30.0
+
+
+def _f(v: Any) -> float | None:
+    try:
+        return None if v is None or isinstance(v, bool) else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _heal_rec(r: Any, ts_key: str) -> dict[str, Any] | None:
+    if not isinstance(r, dict) or not str(r.get("id", "")).strip():
+        return None
+    out = {"id": str(r["id"]), "action": str(r.get("action", "?")),
+           "target": str(r.get("target", "?")), ts_key: _f(r.get(ts_key))}
+    if ts_key == "applied_ts":
+        out["expires_ts"] = _f(r.get("expires_ts"))
+    return out
+
+
+def healing_actions(path: Path = HEAL_STATUS, now: float | None = None,
+                    stale_after: float = HEAL_STALE_AFTER) -> dict[str, Any]:
+    """Healing state from orionx-heald's snapshot. Never raises.
+
+    Returns {'readable', 'pending', 'active', 'reason', 'age', 'chain_ok'}.
+    `readable` False means the panel must say "state unknown — <reason>".
+    """
+    now = time.time() if now is None else now
+    out: dict[str, Any] = {"readable": False, "pending": [], "active": [],
+                           "reason": "", "age": None, "chain_ok": None}
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        out["reason"] = f"orionx-heald not publishing ({path} missing)"
+        return out
+    except OSError as exc:
+        out["reason"] = f"orionx-heald snapshot unreadable ({exc.strerror or exc})"
+        return out
+    except ValueError:
+        out["reason"] = "orionx-heald snapshot is not valid JSON"
+        return out
+    if not isinstance(data, dict) or _f(data.get("ts")) is None:
+        out["reason"] = "orionx-heald snapshot has no timestamp"
+        return out
+    age = max(0.0, now - float(data["ts"]))
+    out["age"] = age
+    out["chain_ok"] = data.get("chain_ok") if isinstance(data.get("chain_ok"), bool) else None
+    if age > stale_after:
+        out["reason"] = f"orionx-heald not publishing (snapshot {age:.0f} s old)"
+        return out
+    if data.get("error") and out["chain_ok"] is not True:
+        out["reason"] = f"orionx-heald reports: {str(data['error'])[:100]}"
+        return out
+    if data.get("error"):
+        # chain verified: the actions are real; carry heald's warning alongside (QA round 2, P3-1)
+        out["warning"] = str(data["error"])[:100]
+    pend = [x for x in (_heal_rec(r, "proposed_ts") for r in data.get("pending") or []) if x]
+    act = [x for x in (_heal_rec(r, "applied_ts") for r in data.get("in_force") or []) if x]
+    pend.sort(key=lambda r: r["proposed_ts"] or 0.0, reverse=True)
+    act.sort(key=lambda r: r["applied_ts"] or 0.0, reverse=True)
+    out.update(readable=True, pending=pend, active=act)
+    return out
+
+
+def _heal_cli(args: list[str], timeout: float = 4.0) -> tuple[int, str]:
+    """Run orionx-heal, returning (rc, combined output). Never raises."""
+    try:
+        r = subprocess.run(["orionx-heal", *args], capture_output=True,
+                           text=True, timeout=timeout, check=False)
+        return r.returncode, (r.stdout or "") + (r.stderr or "")
+    except FileNotFoundError:
+        return 127, ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 1, str(exc)
+
+
+def tune_args(ev: dict[str, Any], mode: str) -> list[str] | None:
+    """orionx-tune argv for this event, or None if it is not tunable. Pure.
+
+    Only IDS events from an engine carry a sid or a Zeek note; anything else
+    (a health warning, a scan from scanwatch) has nothing to tune. The source
+    address is included so a squelch is as narrow as the evidence: this
+    signature FROM THIS HOST, not this signature from everyone.
+    """
+    if mode not in ("squelch", "tune"):
+        return None
+    d = ev.get("detail") or {}
+    src = str(ev.get("source", ""))
+    args = ["orionx-tune", mode]
+    if src == "suricata" or d.get("sid") is not None:
+        sid = d.get("sid")
+        if sid is None:
+            m = re.search(r"\bsid:(\d+)\b", str(ev.get("message", "")))
+            sid = int(m.group(1)) if m else None
+        if sid is None:
+            return None
+        args += ["--sid", str(int(sid))]
+        if d.get("signature"):
+            args += ["--signature", str(d["signature"])[:120]]
+    elif src == "zeek" and d.get("note"):
+        args += ["--note", str(d["note"])]
+    else:
+        return None
+    if d.get("src_ip"):
+        args += ["--src", str(d["src_ip"])]
+    args += ["--reason", "from the Cockpit drill-down"]
+    return args
+
+
+def tune_event(ev: dict[str, Any], mode: str) -> tuple[bool, str]:
+    """Run orionx-tune for this event. Returns (ok, the CLI's own words), which
+    include whether the rule survives a reboot (DEC-PHASE12-050)."""
+    args = tune_args(ev, mode)
+    if args is None:
+        return False, "not tunable: no IDS signature or Zeek note on this event"
+    try:
+        r = subprocess.run(args, capture_output=True, text=True, timeout=6.0, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, f"orionx-tune failed: {exc}"
+    out = tune_message((r.stdout or "") + "\n" + (r.stderr or ""))
+    return r.returncode == 0, out or f"orionx-tune exit {r.returncode}"
+
+
+def tune_message(text: str) -> str:
+    """orionx-tune's own lines, the reboot verdict FIRST (UX-10 / python.md P2-1).
+
+    The lines used to be joined into one string and cut at 160 chars; the
+    'survives reboot' verdict — the point of DEC-PHASE12-050 — started at
+    char ~134 and was the part that got cut. Lines are kept, not joined.
+    """
+    lines = [" ".join(ln.split()) for ln in (text or "").splitlines() if ln.strip()]
+    first = [ln for ln in lines if ln.lower().startswith("survives reboot")]
+    return "\n".join(first + [ln for ln in lines if ln not in first])
+
+
+# ---------------------------------------------------------------------------
+# LIVE layout and text fitting (DEC-PHASE12-073) — pure, so the 1366x768
+# reference deck can be proven in CI, not eyeballed.
+# ---------------------------------------------------------------------------
+# @decision DEC-PHASE12-073
+# @title The LIVE tab is laid out by a pure function and every string is fitted to its box
+# @status accepted
+# @rationale ux.md UX-10/16..23: at 1366x768 the window was taller than the
+#   screen, SYSTEMS labels fell 13 px below their panel, stream messages were
+#   clipped mid-word at ~63 chars with no ellipsis, the header hostname could
+#   overdraw the posture badge, the drill-down cut values at 74 chars, faded
+#   rows fell to ~2.4:1 contrast and severity was colour-only. live_layout()
+#   gives SYSTEMS a floor and lets the gauge absorb the rest; ellipsize()
+#   measures with the real font (the caller passes cairo's text_extents); the
+#   minimum font size is MIN_FONT; fade never drops below FADE_FLOOR; every
+#   row carries a severity word.
+MIN_FONT = 11.0
+FADE_FLOOR = 0.6
+SEVERITY_TAG = {"info": "INFO", "notice": "NOTE", "warning": "WARN", "critical": "CRIT"}
+SYSTEMS_MIN_H = 90
+
+
+def live_layout(W: float, H: float, pad: int = 16, header_h: int = 58,
+                deck_h: int = 118) -> dict[str, tuple[float, float, float, float]]:
+    """Panel rectangles (x, y, w, h) for a W x H drawing area."""
+    body_y = header_h + pad
+    body_h = max(0, H - header_h - pad * 2)
+    left_w = int(W * 0.58) - pad
+    out = {
+        "header": (0, 0, W, header_h),
+        "events": (pad, body_y, left_w, max(0, body_h - deck_h - pad)),
+        "deck": (pad, body_y + body_h - deck_h, left_w, deck_h),
+    }
+    rx = pad + left_w + pad
+    rw = W - rx - pad
+    avail = max(0, body_h - pad * 3)
+    a_h = int(avail * 0.30)
+    n_h = int(avail * 0.18)
+    s_h = max(SYSTEMS_MIN_H, int(avail * 0.17))
+    g_h = max(0, avail - a_h - n_h - s_h)
+    y = body_y
+    for name, h in (("actions", a_h), ("gauge", g_h), ("net", n_h), ("systems", s_h)):
+        out[name] = (rx, y, rw, h)
+        y += h + pad
+    return out
+
+
+def ellipsize(text: str, max_w: float, measure) -> str:
+    """Longest prefix of `text` (+ '…') whose measured width fits `max_w`."""
+    if measure(text) <= max_w:
+        return text
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if measure(text[:mid].rstrip() + "…") <= max_w:
+            lo = mid
+        else:
+            hi = mid - 1
+    return (text[:lo].rstrip() + "…") if lo else ""
+
+
+def fade_for(age: float) -> float:
+    """Row brightness by age; never below FADE_FLOOR (age is in its own column)."""
+    return max(FADE_FLOOR, 1.0 - min(max(age, 0.0), 600.0) / 800.0)
+
+
+def drill_rows(ev: dict[str, Any], chars: int) -> list[tuple[str, str]]:
+    """Every (label, text) row of the drill-down, values wrapped — never cut (UX-19)."""
+    import textwrap  # noqa: PLC0415
+    chars = max(20, int(chars))
+    rows: list[tuple[str, str]] = []
+    for i, line in enumerate(textwrap.wrap(str(ev.get("message", "")), width=chars + 18) or [""]):
+        rows.append(("message" if i == 0 else "", line))
+    d = ev.get("detail") or {}
+    order = ["src_ip", "dest_ip", "signature", "sid", "technique", "scan_kind",
+             "distinct_ports", "window_seconds", "protocols", "latest_dport",
+             "detector", "evidence", "triggering_rule", "ports_seen"]
+    for k in [k for k in order if k in d] + [k for k in sorted(d) if k not in order]:
+        v = d[k]
+        label = "full evidence" if k == "_full" else k.replace("_", " ")
+        if isinstance(v, list):
+            v = ", ".join(str(i) for i in v)
+        for i, part in enumerate(textwrap.wrap(str(v), width=chars, break_long_words=True) or [""]):
+            rows.append((label if i == 0 else "", part))
+    return rows
+
+
+def approve_action(action_id: str) -> tuple[bool, str]:
+    """Approve one pending action. Returns (ok, human-readable outcome).
+
+    Privilege is the interesting case: the chain is root-owned and the Cockpit
+    is not root. If escalation is unavailable we return the exact command for
+    the operator to run rather than failing silently — an approval that
+    quietly did nothing is indistinguishable from one that worked, and this
+    button arms real defensive actions.
+    """
+    aid = str(action_id).strip()
+    if not aid:
+        return False, "no action selected"
+    rc, out = _heal_cli(["confirm", aid])
+    if rc == 0:
+        return True, f"approved {aid}"
+    if rc == 127:
+        return False, "orionx-heal not found on PATH"
+    tail = (out or "").strip().splitlines()
+    why = tail[-1][:80] if tail else f"exit {rc}"
+    return False, f"not approved ({why}) — run: sudo orionx-heal confirm {aid}"

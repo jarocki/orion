@@ -1,0 +1,54 @@
+# @decision DEC-PHASE12-022
+# @title Port-scan detection daemon feeding the R.A.I.N. bus
+# @status accepted
+# @rationale The Cockpit reads /proc/net/dev byte counters, which show a scan
+#   as a throughput bump and nothing else. /etc/nftables.conf already logs
+#   every dropped packet with SRC/DPT/PROTO (DEC-SEC-001); this consumes that
+#   log and emits bus events, so the event stream, threat-pressure gauge and
+#   audible cue all respond. Passive — reads a log, sends no packets, opens no
+#   port — so it is correct at Tier 0.
+
+[Unit]
+Description=Orion-X Port Scan Watch (nftables drop log -> R.A.I.N.)
+Documentation=man:nft(8)
+# After heald: it creates the bus-signing key, so scanwatch's first events are signed (QA round 2, P3-2).
+After=orionx-firewall.service systemd-journald.service orionx-heald.service
+Wants=orionx-firewall.service
+
+[Service]
+Type=simple
+ExecStart=/opt/orionx/scripts/rain/orionx-scanwatch
+Restart=on-failure
+RestartSec=5s
+# Reads the kernel journal; writes only to the event bus under /run/orionx.
+User=root
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/run/orionx
+RestrictAddressFamilies=AF_UNIX
+# DEC-PHASE12-108 (security F19): scanwatch ran as root with the FULL
+# capability set. It needs none: it reads the journal (`journalctl --dmesg`,
+# root-owned files, no DAC override) and appends to /run/orionx/events.jsonl
+# through orionx-event. ProtectKernelLogs is NOT set: it reads kernel
+# messages (via the journal, but keep the intent obvious).
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+MemoryMax=64M
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

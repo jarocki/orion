@@ -1,0 +1,143 @@
+GODSEYE — vendored pre-built static bundle
+==========================================
+DEC-PHASE12-045 · /opt/orionx/osint/godseye/
+
+Source:    https://github.com/VrushankPatel/godseye
+Commit:    eb4b8db218cba9cc4aa1ac700676e8d5bff7b3ef  (2026-09-13T09:04:29+05:30)
+           Upstream publishes no tags; the commit is the pin.
+Version:   package.json "version": 1.0.0
+License:   Apache-2.0 (LICENSE.godseye alongside this file, copied verbatim)
+Vendored:  2026-10-03
+Contents:  ./app/  = the Vite production build, 402 files, verbatim except for
+           the two edits recorded below. MANIFEST.sha256 pins every byte.
+
+Dependency pin
+--------------
+package.json      sha256 65818d7cff3162b5175a5d16bc0522669587dfcc3abe7f7260c37fca20f9e709
+package-lock.json sha256 2060bc6be0e2df27aa854df3a5cf9a3eba7b53c6421b9e470bb0f01601bab7af
+                  (545 resolved packages; 376 installed directories)
+Built with        node v26.3.0, npm 11.16.0
+
+Key third-party code inside the bundle:
+  CesiumJS 1.139.x      Apache-2.0   app/cesium/
+  React 19, Zustand 5, Tailwind 4, satellite.js 6, hls.js 1.6, pbf 5
+
+Build command (reproduce exactly this tree)
+-------------------------------------------
+  git clone https://github.com/VrushankPatel/godseye
+  cd godseye && git checkout eb4b8db218cba9cc4aa1ac700676e8d5bff7b3ef
+  npm ci --no-audit --no-fund
+  npx vite build --base=./          # NOT `npm run build` — see below
+  # then: copy dist/ to app/, apply the two edits, regenerate MANIFEST.sha256
+  #       and HOSTS.txt (scripts/osint/godseye_hosts.py --write)
+
+Two deliberate departures from upstream's own build:
+
+  1. `npx vite build`, not `npm run build`. Upstream's build script first
+     runs `scripts/refresh-runtime-manifests.mjs`, which re-fetches the
+     satellite, CCTV, maritime and intel manifests from live feeds. That
+     makes the output depend on the day it was built and on what a dozen
+     remote services felt like returning. We build from the manifests
+     committed at the pinned commit instead, so this tree is a function of
+     the commit and nothing else. The cost is stated plainly on the
+     preflight page: the bundled satellite element set is frozen and goes
+     stale.
+
+  2. `--base=./`. Upstream builds for a site root; this is served under
+     /godseye/app/ by orionx-osint, so every asset reference has to be
+     relative. With upstream's default base the page 404s on its own
+     JavaScript.
+
+NO API KEY WAS SET AT BUILD TIME, AND NONE EVER MAY BE
+------------------------------------------------------
+GODSEYE reads its credentials from Vite `VITE_*` environment variables,
+which Vite *compiles into the output bundle*. A key supplied at build time
+is a key published, in cleartext, inside an ISO that is distributed in seven
+parts. This build was made with no `.env` and no VITE_* variables set, so
+every key-gated code path is compiled out and the corresponding layers are
+permanently disabled. The preflight page says so by name, layer by layer.
+
+An operator who wants those layers must rebuild the bundle themselves on
+their own machine with their own key. That is the correct place for it.
+
+The two edits to app/index.html, and one to app/cesium/Cesium.js
+-----------------------------------------------------------------
+Everything else under app/ is byte-for-byte what `vite build` produced.
+
+  3. (app/cesium/Cesium.js, DEC-PHASE12-124) BLANKED — CesiumJS's built-in
+     default Cesium ion access token (a JWT shared by every CesiumJS install,
+     the `defaultAccessToken` literal) is replaced with "". With no
+     VITE_CESIUM_ION_TOKEN compiled in (see above), that shared token was the
+     credential any ion-backed request from the globe would carry. Blanked,
+     ion requests fail closed instead of identifying as "a CesiumJS
+     default-token client" to api.cesium.com (security F23). The globe's
+     offline layers (NaturalEarthII tiles, ellipsoid) need no token.
+     MANIFEST.sha256 pins the edited file.
+
+CesiumJS licence: LICENSE.cesium beside this file is CesiumJS 1.139.1's own
+LICENSE.md (Apache-2.0 plus its third-party notices), fetched verbatim from
+https://raw.githubusercontent.com/CesiumGS/cesium/1.139.1/LICENSE.md on
+2026-10-07. The copyright header in app/cesium/Cesium.js also ships.
+
+  1. REMOVED — three <link> elements pulling Google Fonts:
+         <link rel="preconnect" href="https://fonts.googleapis.com">
+         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+         <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono…"
+               rel="stylesheet">
+     A page on this deck that contacts Google merely to render itself is a
+     page that announces the deck before the operator has clicked anything,
+     and it is the one rule the whole investigation surface is built on
+     (DEC-PHASE12-043: zero external resources). The CSS font stack falls
+     back to the deck's local monospace faces.
+
+  2. ADDED — one line before the application's own <script>:
+         <script src="../overlay.js"></script>
+     The Orion-X honesty overlay. It names the layers that cannot work on
+     this deck, and it covers the globe if the posture rises or the route
+     drops while the page is open. See overlay.js.
+
+Verify both, and that nothing else moved:
+  diff <(npx vite build --base=./ && cat dist/index.html) app/index.html
+  sha256sum -c MANIFEST.sha256        # from inside this directory
+
+How it is wired in
+------------------
+  orionx-osint --page godseye   serves /godseye/ on 127.0.0.1 (no new server,
+                                no new port, no second posture authority)
+  /godseye/                     the Orion-X preflight (index.html + gate.js)
+  /godseye/app/                 the vendored bundle; orionx-osint answers 503
+                                here whenever outbound_verdict() says the deck
+                                may not reach out
+  /api/flights, /api/cctv/*,    upstream's Node backend routes. Orion-X runs
+  /api/radio/*, /api/traffic/*, no Node at runtime: these answer HTTP 501 and
+  /api/overpass                 name the layer, so the globe shows a reason
+                                instead of an empty layer
+  Orion menu                    "GODSEYE (globe)" .desktop
+  HOSTS.txt                     generated from these bytes; the unit suite
+                                fails if it drifts
+
+Why vendored, and not built in the Docker build container
+---------------------------------------------------------
+Building GODSEYE needs Node 18+, npm, and 376 installed packages (545
+resolved entries in the lock file, ~312 MiB of node_modules) fetched from
+the npm registry. Putting that in the ISO build container would make every
+Orion-X build depend on registry availability and on a transitive dependency
+tree this project does not control, and would make the image non-reproducible
+across days. The precedents here already point the other way: CyberChef is
+vendored as a pinned extracted release (osint/cyberchef/), and Pivotglass
+ships "the committed Next.js static export; no Node at build or run time".
+
+The cost of vendoring is honest and worth naming: this bundle goes stale,
+and refreshing it is a manual act. The command sequence above is the whole
+procedure, and MANIFEST.sha256 plus the HOSTS.txt drift test make a careless
+refresh fail loudly rather than quietly.
+
+To update
+---------
+  1. re-clone, check out the new commit, `npm ci`, `npx vite build --base=./`
+  2. replace ./app/ wholesale; re-apply the two index.html edits
+  3. (cd .. && find godseye/app -type f | sort | xargs shasum -a 256) > MANIFEST.sha256
+     — or simply rerun the generator in tests/unit/test_godseye.sh's remedy line
+  4. python3 scripts/osint/godseye_hosts.py --write
+  5. read the diff of HOSTS.txt and classify every new host in sections A-G
+  6. bash tests/unit/test_godseye.sh

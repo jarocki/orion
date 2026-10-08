@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orion-X Attack Map</title>
+<!--
+  Orion-X Phoenix Edition — local attack map.
+  @decision DEC-PHASE12-043
+
+  Inspired by IPew (hrbrmstr/pewpew, CC BY-SA 4.0). None of its code is here
+  and that is deliberate: upstream loads five libraries from CDNs, which an
+  offline deck cannot do, and it INVENTS attacks and places them at country
+  centroids, which an incident-response tool must not do.
+
+  Every source on this map came from /run/orionx/events.jsonl. There is no
+  demo feed and no random generator. There is no world outline, because
+  without a geolocation database there is nothing truthful to draw on one —
+  and the ring here is layout, labelled as layout, not geography.
+-->
+<style>
+:root{
+  --bg:#07080b; --panel:#11141b; --panel2:#161a23; --line:#232935; --line2:#2f3747;
+  --fg:#e6e8ec; --dim:#9aa0a6; --faint:#6b7280;
+  --phoenix:#ff6a13; --go:#34ff9e; --warn:#ffb300; --stop:#ff5f56; --cool:#7ab8ff;
+  --mono:"DejaVu Sans Mono","Hack",ui-monospace,monospace;
+  --sans:"DejaVu Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%}
+body{
+  background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:14px;
+  display:flex;flex-direction:column;min-height:100%;
+}
+a{color:var(--cool)}
+.mono{font-family:var(--mono)}
+
+header{
+  display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+  padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);
+}
+header h1{
+  margin:0;font-size:.85rem;letter-spacing:.2em;text-transform:uppercase;
+  font-weight:700;white-space:nowrap;
+}
+header h1 .x{color:var(--phoenix)}
+header .spacer{flex:1 1 auto}
+.ctl{
+  background:var(--panel2);color:var(--dim);border:1px solid var(--line2);
+  border-radius:7px;padding:5px 10px;font-size:.76rem;font-family:var(--mono);
+  cursor:pointer;
+}
+.ctl[aria-pressed=true]{color:var(--phoenix);border-color:var(--phoenix)}
+select.ctl{cursor:pointer}
+.chip{
+  display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);
+  font-size:.72rem;color:var(--dim);background:var(--panel2);
+  border:1px solid var(--line);border-radius:999px;padding:4px 10px;
+}
+.chip b{color:var(--fg)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--faint)}
+.dot.go{background:var(--go)} .dot.warn{background:var(--warn)}
+.dot.stop{background:var(--stop)}
+
+#alerts{padding:0 16px}
+.banner{
+  border:1px solid var(--line2);border-left-width:4px;border-radius:9px;
+  background:var(--panel);padding:11px 14px;margin:10px 0;
+}
+.banner.stop{border-left-color:var(--stop)}
+.banner.warn{border-left-color:var(--warn)}
+.banner.info{border-left-color:var(--cool)}
+.banner h3{margin:0 0 4px;font-size:.88rem}
+.banner p{margin:0;color:var(--dim);font-size:.82rem}
+.banner code{
+  display:block;margin-top:7px;font-family:var(--mono);font-size:.78rem;
+  background:#0a0c10;border:1px solid var(--line);border-radius:6px;
+  padding:7px 9px;color:#ffb15c;overflow-x:auto;
+}
+
+main{flex:1 1 auto;display:flex;min-height:0;flex-wrap:wrap}
+#stage{flex:1 1 520px;position:relative;min-height:420px;min-width:0}
+#sky{display:block;width:100%;height:100%}
+#layout-note{
+  position:absolute;left:12px;bottom:10px;font-family:var(--mono);
+  font-size:.68rem;color:var(--faint);max-width:46ch;line-height:1.45;
+  pointer-events:none;
+}
+
+aside{
+  flex:0 1 380px;min-width:290px;border-left:1px solid var(--line);
+  background:var(--panel);overflow-y:auto;max-height:70vh;
+}
+aside h2{
+  margin:0;padding:11px 14px;font-size:.72rem;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--phoenix);border-bottom:1px solid var(--line);
+  position:sticky;top:0;background:var(--panel);z-index:1;
+}
+.src{padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+.src:hover,.src.on{background:var(--panel2)}
+.src .l1{display:flex;align-items:baseline;gap:8px;justify-content:space-between}
+.src .ip{font-family:var(--mono);font-size:.84rem;font-weight:600}
+.src .meta{font-family:var(--mono);font-size:.7rem;color:var(--faint);margin-top:3px;
+  line-height:1.5;overflow-wrap:anywhere}
+.tag{
+  font-family:var(--mono);font-size:.62rem;letter-spacing:.09em;text-transform:uppercase;
+  border:1px solid currentColor;border-radius:3px;padding:1px 5px;white-space:nowrap;
+}
+.tag.private{color:var(--cool)} .tag.cgnat{color:#c08cff}
+.tag.public{color:var(--phoenix)} .tag.loopback{color:var(--faint)}
+.tag.other{color:var(--faint)}
+.tag.unlocated{color:var(--warn)}
+.tag.located{color:var(--go)}
+.tag.critical{color:var(--stop)} .tag.warning{color:var(--warn)}
+.tag.notice{color:var(--cool)} .tag.info{color:var(--faint)}
+.empty{padding:16px 14px;color:var(--faint);font-size:.82rem;line-height:1.6}
+footer{
+  padding:9px 16px;border-top:1px solid var(--line);color:var(--faint);
+  font-size:.72rem;line-height:1.6;
+}
+footer a{color:var(--dim)}
+@media (max-width:860px){
+  aside{flex:1 1 100%;border-left:none;border-top:1px solid var(--line);max-height:none}
+  #stage{min-height:360px}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Orion&#8209;<span class="x">X</span> &middot; Attack Map</h1>
+  <span class="chip"><span class="dot" id="d-bus"></span>bus <b id="v-bus">&hellip;</b></span>
+  <span class="chip"><span class="dot" id="d-src"></span>sources <b id="v-src">0</b></span>
+  <span class="chip"><span class="dot warn" id="d-geo"></span>geoip <b id="v-geo">&hellip;</b></span>
+  <span class="spacer"></span>
+  <label class="chip" for="window">window
+    <select class="ctl" id="window" aria-label="Look-back window">
+      <option value="300">5 min</option>
+      <option value="900" selected>15 min</option>
+      <option value="3600">1 hour</option>
+      <option value="21600">6 hours</option>
+    </select>
+  </label>
+  <button class="ctl" id="sound" type="button" aria-pressed="false"
+          title="R.A.I.N. is this deck's alert channel. This is just the page.">sound off</button>
+  <button class="ctl" id="pause" type="button" aria-pressed="false">pause</button>
+  <a class="ctl" href="../" style="text-decoration:none">&larr; surface</a>
+</header>
+
+<div id="alerts"></div>
+
+<main>
+  <div id="stage">
+    <canvas id="sky"></canvas>
+    <div id="layout-note"></div>
+  </div>
+  <aside>
+    <h2>Sources <span id="count-note" style="color:var(--faint);letter-spacing:0;text-transform:none"></span></h2>
+    <div id="list"></div>
+  </aside>
+</main>
+
+<footer id="foot"></footer>
+
+<audio id="pew" preload="auto" src="pew.mp3"></audio>
+<script src="map.js"></script>
+</body>
+</html>

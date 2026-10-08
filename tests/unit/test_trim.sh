@@ -35,7 +35,7 @@ grep -q "DEC-PHASE12-015" "$EXT" && pass "DEC-PHASE12-015 annotated in 0500" || 
 section "0900 trim hook: purge list"
 [[ -x "$TRIM" ]] && pass "0900-trim hook present + executable" || fail "0900 hook" "missing/not +x"
 bash -n "$TRIM" 2>/dev/null && pass "0900 hook bash syntax" || fail "0900 syntax" "bash -n failed"
-for p in zeek-zkg zeek-spicy-dev zeek-btest-data python3-scipy python3-matplotlib python3-pyqtgraph ukui-polkit mesa-vulkan-drivers firmware-nvidia-graphics unhide.rb gcc-14 g++-14; do
+for p in zeek-zkg zeek-spicy-dev zeek-btest-data python3-scipy python3-matplotlib python3-pyqtgraph ukui-polkit light-locker mesa-vulkan-drivers firmware-nvidia-graphics unhide.rb gcc-14 g++-14; do
     purge_list | grep -qxF -- "$p" && pass "purge list names $p" || fail "purge list: $p" "missing"
 done
 for p in cpp cpp-14 cpp-14-x86-64-linux-gnu; do
@@ -112,6 +112,15 @@ if grep -qE "^ukui-polkit$" "$PKGS"; then fail "ukui-polkit not listed" "listed"
 section "Hook ordering"
 ls "$REPO_ROOT/iso/config/hooks/live/" | sort | awk '/0900-trim/{t=NR} /0810-render/{r=NR} /0700-orionx/{s=NR} END{exit !(t>r && t>s)}' \
     && pass "0900-trim runs after 0700 (symlinks) and 0810 (guide render)" || fail "hook ordering" "trim must be last"
+
+section "Orphaned Qt5 (packages-build P2-9)"
+PL="$(purge_list)"
+for q in python3-pyqt5 python3-pyqt5.sip qtwayland5 qt5-gtk-platformtheme; do
+    grep -qx "$q" <<<"$PL" && pass "purge target: $q" || fail "Qt5 purge target" "$q not in PURGE_WANTED"
+done
+for keep in python3-gi python3-pyperclip python3-cmd2; do
+    grep -qx "$keep" <<<"$PL" && fail "must keep $keep" "listed for purge" || pass "$keep is not a purge target (Pivotglass/cmd2 clipboard path)"
+done
 
 printf "\n===========================================\n"
 printf "  Results: ${GREEN}%d passed${NC}, ${RED}%d failed${NC}\n" "$PASS" "$FAIL"

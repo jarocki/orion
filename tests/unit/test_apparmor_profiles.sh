@@ -77,7 +77,7 @@ assert_file_contains() {
 # Profile paths
 # ============================================================
 PROFILES_DIR="iso/config/includes.chroot/etc/apparmor.d"
-SYNAPSE_PROFILE="$PROFILES_DIR/usr.bin.synapse"
+# SYNAPSE_PROFILE="$PROFILES_DIR/usr.bin.synapse"
 WIREGUARD_PROFILE="$PROFILES_DIR/usr.sbin.wg"
 VOLATILITY_PROFILE="$PROFILES_DIR/usr.bin.volatility3"
 BULKEXT_PROFILE="$PROFILES_DIR/usr.bin.bulk_extractor"
@@ -90,7 +90,6 @@ PACKAGE_LIST="iso/config/package-lists/orionx.list.chroot"
 # ============================================================
 echo "=== Test Group 1: Profile File Existence ==="
 
-assert_file_exists "$SYNAPSE_PROFILE" "Synapse profile exists"
 assert_file_exists "$WIREGUARD_PROFILE" "WireGuard profile exists"
 assert_file_exists "$VOLATILITY_PROFILE" "Volatility3 profile exists"
 assert_file_exists "$BULKEXT_PROFILE" "bulk_extractor profile exists"
@@ -102,10 +101,10 @@ assert_file_exists "$TSHARK_PROFILE" "tshark profile exists"
 echo ""
 echo "=== Test Group 2: tunables/global Include ==="
 
-assert_file_contains "$SYNAPSE_PROFILE" "#include <tunables/global>" \
-    "Synapse profile includes tunables/global"
 assert_file_contains "$WIREGUARD_PROFILE" "#include <tunables/global>" \
     "WireGuard profile includes tunables/global"
+assert_file_contains "$WIREGUARD_PROFILE" "network netlink raw," \
+    "WireGuard profile permits generic netlink — wg set needs it (DEC-PHASE12-047)"
 assert_file_contains "$VOLATILITY_PROFILE" "#include <tunables/global>" \
     "Volatility3 profile includes tunables/global"
 assert_file_contains "$BULKEXT_PROFILE" "#include <tunables/global>" \
@@ -113,23 +112,8 @@ assert_file_contains "$BULKEXT_PROFILE" "#include <tunables/global>" \
 assert_file_contains "$TSHARK_PROFILE" "#include <tunables/global>" \
     "tshark profile includes tunables/global"
 
-# ============================================================
-# Test Group 3: Synapse profile rules
-# ============================================================
-echo ""
-echo "=== Test Group 3: Synapse Profile Rules ==="
-
-assert_file_contains "$SYNAPSE_PROFILE" "/etc/matrix-synapse/.*r," \
-    "Synapse profile allows /etc/matrix-synapse read"
-assert_file_contains "$SYNAPSE_PROFILE" "deny /home/.*rw," \
-    "Synapse profile denies /home"
-assert_file_contains "$SYNAPSE_PROFILE" "network inet tcp," \
-    "Synapse profile allows inet tcp"
-assert_file_contains "$SYNAPSE_PROFILE" "/var/lib/matrix-synapse/.*rw," \
-    "Synapse profile allows /var/lib/matrix-synapse rw"
-assert_file_contains "$SYNAPSE_PROFILE" "/var/log/matrix-synapse/.*rw," \
-    "Synapse profile allows /var/log/matrix-synapse rw"
-
+# Synapse profile removed (DEC-PHASE12-102): it could not attach without
+# confining every Python program; see tests/unit/test_matrix_systemd.sh.
 # ============================================================
 # Test Group 4: WireGuard profile rules
 # ============================================================
@@ -155,8 +139,8 @@ assert_file_contains "$VOLATILITY_PROFILE" "deny network," \
     "Volatility3 profile denies network"
 assert_file_contains "$VOLATILITY_PROFILE" "/opt/orionx/data/.*r," \
     "Volatility3 profile allows /opt/orionx/data read"
-assert_file_contains "$VOLATILITY_PROFILE" "/home/orionx/Analysis/.*rw," \
-    "Volatility3 profile allows /home/orionx/Analysis rw"
+assert_file_contains "$VOLATILITY_PROFILE" "/home/\*/Analysis/.*rw," \
+    "Volatility3 profile allows /home/*/Analysis rw"
 
 # ============================================================
 # Test Group 6: bulk_extractor profile rules
@@ -168,8 +152,8 @@ assert_file_contains "$BULKEXT_PROFILE" "deny network," \
     "bulk_extractor profile denies network"
 assert_file_contains "$BULKEXT_PROFILE" "/opt/orionx/data/.*r," \
     "bulk_extractor profile allows /opt/orionx/data read"
-assert_file_contains "$BULKEXT_PROFILE" "/home/orionx/Analysis/.*rw," \
-    "bulk_extractor profile allows /home/orionx/Analysis rw"
+assert_file_contains "$BULKEXT_PROFILE" "/home/\*/Analysis/.*rw," \
+    "bulk_extractor profile allows /home/*/Analysis rw"
 
 # ============================================================
 # Test Group 7: tshark profile rules
@@ -228,8 +212,6 @@ assert_file_contains "$HOOK_FILE" "#!/usr/bin/env bash" \
 echo ""
 echo "=== Test Group 10: Decision Annotations ==="
 
-assert_file_contains "$SYNAPSE_PROFILE" "@decision DEC-SEC-002" \
-    "Synapse profile has @decision DEC-SEC-002"
 assert_file_contains "$HOOK_FILE" "@decision DEC-SEC-002" \
     "Hook has @decision DEC-SEC-002"
 
@@ -247,6 +229,52 @@ if command -v shellcheck >/dev/null 2>&1; then
     fi
 else
     echo "  SKIP: shellcheck not installed"
+fi
+
+# ============================================================
+# AppArmor must be ACTIVE on a live boot, not merely staged
+# (DEC-PHASE12-031)
+#
+# Every assertion above checks that profiles are well-formed and staged. None
+# checked whether a single profile is ever LOADED — and on v2.2.0-rc3 none
+# were: aa-status reported "Failed to get profiles: 2", zero loaded, while the
+# README advertised ollama as confined. A profile that ships and never loads
+# is worse than no profile, because it is believed.
+#
+# Two independent causes, one assertion each.
+# ============================================================
+echo ""
+echo "--- Live-boot AppArmor activation ---"
+
+AUTO_CONFIG="$PROJECT_ROOT/iso/auto/config"
+if grep -q 'security=apparmor' "$AUTO_CONFIG" 2>/dev/null; then
+    pass "live cmdline carries security=apparmor (--bootappend-live, the single authority)"
+else
+    fail "live cmdline carries security=apparmor" \
+         "without it ConditionSecurity=apparmor fails and apparmor.service never starts; /etc/default/grub does NOT work for a live boot (DEC-PHASE11-012)"
+fi
+
+AA_UNIT="$PROJECT_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/orionx-apparmor-load.service"
+if [[ -f "$AA_UNIT" ]]; then
+    pass "orionx-apparmor-load.service present (live-boot profile loader)"
+else
+    fail "orionx-apparmor-load.service present" \
+         "Debian apparmor.service has ConditionPathExists=!/run/live/overlay/work, true on every live boot, so it skips itself"
+fi
+
+H615="$PROJECT_ROOT/iso/config/hooks/live/0615-install-systemd-units.hook.chroot"
+if [[ "$(grep -c 'orionx-apparmor-load.service' "$H615" 2>/dev/null)" -ge 2 ]]; then
+    pass "apparmor loader is both installed and autostarted"
+else
+    fail "apparmor loader is both installed and autostarted" \
+         "needs entries in BOTH UNIT_FILES and AUTOSTART_UNITS; staged-but-not-enabled loads nothing"
+fi
+
+# DEC-PHASE12-103: the load loop moved from the unit into the loader script.
+if grep -q '"$PARSER" -r' "$(dirname "$AA_UNIT")/../../../lib/orionx/orionx-apparmor-load" 2>/dev/null && grep -q '/sbin/apparmor_parser' "$(dirname "$AA_UNIT")/../../../lib/orionx/orionx-apparmor-load"; then
+    pass "loader replaces profiles idempotently (-r), safe beside apparmor.service"
+else
+    fail "loader uses apparmor_parser -r" "non-idempotent load conflicts on an installed system"
 fi
 
 # ============================================================

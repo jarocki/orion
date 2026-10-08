@@ -1,18 +1,43 @@
 #include <tunables/global>
 
-profile volatility3 /usr/bin/vol {
+# @decision DEC-PHASE12-100
+# @title volatility3 profile follows vol into the forensics venv and reads
+#   evidence from removable media
+# @status accepted
+# @rationale Two defects, one profile.
+#   1. B2 moves volatility3 into /opt/orionx/venv/forensics with
+#      /usr/local/bin/vol as a symlink. AppArmor attaches on the RESOLVED exec
+#      path, so the old `/usr/{,local/}bin/vol` attachment would stop matching
+#      and vol would run unconfined. The attachment now names all three homes.
+#      The script's interpreter (the venv python, itself a symlink to
+#      /usr/bin/python3.13) is inherited with `ix`, so it stays in this
+#      profile; nothing else on the deck runs as "volatility3".
+#   2. Memory images normally arrive on a USB stick. The profile allowed only
+#      ~/Analysis and /opt/orionx/data, so `vol -f /media/<stick>/mem.raw`
+#      was denied (system P3-9). Removable media is now readable (read only).
+#   It also only allowed /usr/lib/python3/**, while vol imports from
+#   /usr/local/lib/python3.13/dist-packages (rc9) and the venv (B2): both are
+#   now readable. Network stays denied.
+profile volatility3 /{usr/,usr/local/,opt/orionx/venv/forensics/}bin/vol {
   #include <abstractions/base>
   #include <abstractions/python>
 
   # Read evidence and sample data
   /opt/orionx/data/** r,
-  /home/orionx/Analysis/** rw,
+  /home/*/Analysis/** rw,
+  /media/** r,
+  /mnt/** r,
   /tmp/** rw,
 
   # No network access for forensic tools
   deny network,
 
-  # Python runtime
-  /usr/lib/python3/** r,
+  # Python runtime: system, /usr/local and the forensics venv
   /usr/bin/python3* rix,
+  /usr/lib/python3/** r,
+  /usr/lib/python3*/** r,
+  /usr/local/lib/python3*/** r,
+  /usr/lib/x86_64-linux-gnu/** rm,
+  /opt/orionx/venv/forensics/** r,
+  /opt/orionx/venv/forensics/bin/python* rix,
 }

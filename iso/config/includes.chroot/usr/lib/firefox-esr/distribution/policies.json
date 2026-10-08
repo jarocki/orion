@@ -1,0 +1,21 @@
+{
+  "policies": {
+    "DisableTelemetry": true,
+    "DisableFirefoxStudies": true,
+    "DontCheckDefaultBrowser": true,
+    "DisablePocket": true,
+    "CaptivePortal": false,
+    "NetworkPrediction": false,
+    "DNSOverHTTPS": {
+      "Enabled": false,
+      "Locked": true
+    },
+    "Preferences": {
+      "media.peerconnection.ice.default_address_only": { "Value": true, "Status": "locked" },
+      "media.peerconnection.ice.no_host": { "Value": true, "Status": "locked" },
+      "media.peerconnection.ice.proxy_only_if_behind_proxy": { "Value": true, "Status": "locked" },
+      "network.prefetch-next": { "Value": false, "Status": "locked" },
+      "browser.safebrowsing.downloads.remote.enabled": { "Value": false, "Status": "locked" }
+    }
+  }
+}

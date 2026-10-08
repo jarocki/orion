@@ -1,0 +1,139 @@
+# Orion-X on-demand PCAP capture, one instance per interface
+#
+# @decision DEC-PHASE12-028
+# @title orionx-capture@.service: a template unit so capture holds CAP_NET_RAW
+#   and nothing else, instead of inheriting a root login
+# @status accepted
+# @rationale Packet capture needs one privilege — CAP_NET_RAW — and an operator
+#   typing `sudo dumpcap ...` hands it every privilege root has, in a shell,
+#   with no bound on runtime. This unit is the alternative: the capability set
+#   is reduced to what capture actually requires, the process has no shell, and
+#   the bounds come from orionx-capture's plan (DEC-PHASE12-028), which refuses
+#   an unbounded request before systemd is ever asked to start anything.
+#
+#   A TEMPLATE (%i = interface) rather than one unit with a config file: the
+#   deck has many interfaces and an operator may legitimately capture on two at
+#   once. The instance name IS the interface, so `systemctl status
+#   orionx-capture@eth0` answers "is eth0 being captured" without parsing
+#   anything. Options that are not the interface cross into the unit through
+#   /run/orionx/capture/%i.request.json, written by `orionx-capture start`,
+#   so this unit stays parameterised by the interface alone and there is
+#   exactly one implementation of the bounds.
+#
+#   DELIBERATELY NOT in 0615's AUTOSTART_UNITS, and it cannot be: `systemctl
+#   enable` on a template without an instance fails. Capture is an operator
+#   action, not a boot posture — a deck that starts recording packets by itself
+#   is a deck that fills its own memory while nobody is watching.
+#
+#   NOT tier-gated, and that is a decision, not an omission. Capture is passive:
+#   it opens no port, sends no packet, answers nothing. It is correct at Tier 0
+#   for the same reason orionx-scanwatch is (DEC-PHASE12-022). orionx-postured
+#   (DEC-PHASE12-024) remains the single posture authority; orionx-capture only
+#   READS /run/orionx/posture-status.json, to record which posture a capture
+#   happened under. This unit therefore has no Wants= on orionx-postured: a
+#   capture must still work when the posture daemon is down, because that is
+#   precisely when an operator is likely to want one.
+#
+#   Sandboxing notes, each one load-bearing:
+#     AmbientCapabilities=CAP_NET_RAW — the whole privilege requirement. dumpcap
+#       needs CAP_NET_RAW to open a packet socket. CAP_NET_ADMIN is NOT granted:
+#       it would allow reconfiguring interfaces, and this unit's job is to
+#       listen, not to change the network. Promiscuous mode on an existing
+#       interface does not need it.
+#     CapabilityBoundingSet is the same single capability, so nothing in this
+#       unit's tree can acquire more, even via a setuid binary.
+#     ProtectSystem=strict + ReadWritePaths — the only writable paths are the
+#       capture directory and /run/orionx (state file + event bus). A capture
+#       process that is compromised cannot write to the system.
+#     ProtectHome=yes — PCAPs go to /var/lib/orionx/capture, never into the
+#       operator's home, and a capture process has no business reading keys or
+#       Matrix sessions. (Contrast orionx-postured, which needs read-only home
+#       access for the posture file.)
+#     RestrictAddressFamilies includes AF_PACKET because that IS the capture
+#       socket; AF_NETLINK because libpcap enumerates interfaces through it;
+#       AF_UNIX for the bus CLI. No AF_INET/AF_INET6: this unit never opens a
+#       network connection, it only listens on the wire.
+#     MemoryMax=192M — dumpcap's buffers plus the python wrapper. The pcap data
+#       goes to disk, not to memory, so this does not scale with the ring size.
+#     TimeoutStopSec=15 — dumpcap flushes its ring on SIGTERM; give it room to
+#       finish the file rather than truncating the evidence.
+#
+#   Restart=no, on purpose. Every other Orion-X daemon uses Restart=on-failure
+#   because it should be running continuously. This one terminates NORMALLY when
+#   its duration bound is reached, and a restart would defeat the time bound it
+#   exists to enforce — an auto-restarting capture is an unbounded capture with
+#   extra steps. A failed capture is reported on the R.A.I.N. bus by
+#   orionx-capture itself and left stopped.
+
+[Unit]
+Description=Orion-X bounded PCAP capture on %I
+Documentation=man:dumpcap(1)
+# The interface must exist before a capture can bind to it. A capture on an
+# interface that is DOWN is allowed (and warned about on the bus) because an
+# operator may legitimately start capturing before bringing a link up.
+After=network.target sys-subsystem-net-devices-%i.device
+# Deliberately no Wants=orionx-postured.service — see the rationale above.
+
+[Service]
+Type=simple
+ExecStart=/opt/orionx/scripts/awareness/orionx-capture run %I
+# Normal termination is reaching the duration bound. Do NOT restart: that would
+# convert a bounded capture into an unbounded one.
+Restart=no
+TimeoutStopSec=15
+KillSignal=SIGTERM
+
+User=root
+Group=root
+SupplementaryGroups=
+
+# --- privilege: exactly one capability, and no route to acquire another -----
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# DEC-PHASE12-107 (system P1-1): @privileged is NOT denied. dumpcap runs as
+# root, so it drops privileges itself with capset() and setres[ug]id(), which
+# are in @privileged; denying them killed every capture with 31/SYS (proven
+# under systemd 257 by the system QA: with this exact list the pcap is
+# written). @chown @clock @raw-io stay denied.
+SystemCallFilter=~@resources @mount @swap @reboot @module @obsolete @cpu-emulation @clock @raw-io @chown
+
+# --- filesystem: writable only where the evidence and the state go ----------
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# DEC-PHASE12-107 (system P2-1): /var/lib/orionx is not in the image;
+# naming a missing path in ReadWritePaths fails the unit with 226/NAMESPACE.
+# StateDirectory= creates it before the namespace is built.
+StateDirectory=orionx
+ReadWritePaths=/run/orionx
+UMask=0027
+
+# --- network: listen on the wire, open no connection ------------------------
+RestrictAddressFamilies=AF_PACKET AF_NETLINK AF_UNIX
+
+# --- resources: the ring goes to disk, so this does not scale with it -------
+MemoryMax=192M
+TasksMax=16
+CPUQuota=60%
+
+StandardOutput=journal
+StandardError=journal
+
+# No [Install] section: a template cannot be `systemctl enable`d without an
+# instance, and capture is an operator action rather than a boot posture. It is
+# staged by 0615 (UNIT_FILES) and deliberately absent from AUTOSTART_UNITS.

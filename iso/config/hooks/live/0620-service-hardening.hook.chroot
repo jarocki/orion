@@ -38,6 +38,38 @@ EOF
     echo "  SSH hardened: key-only, no root, MaxAuthTries=3"
 fi
 
+# 2b. sshd installed but NOT started at boot; apt and mail do not phone out.
+#
+# @decision DEC-PHASE12-104
+# @title sshd is not enabled at boot; nothing announces the deck unprompted
+# @status accepted
+# @rationale (lead decision; security F1/F14/F25, packages-build P2-3)
+#   - ssh.service was enabled by the package, so sshd answered on :22 on
+#     whatever LAN the deck was plugged into. It stays INSTALLED (an operator
+#     may want it) but is not enabled: the operator starts it deliberately
+#     (`sudo systemctl start ssh`), and the firewall admits 22 only on wg0.
+#     The only login path is key-based for the operator account over the
+#     mesh: PermitRootLogin no, PasswordAuthentication no (above). The old
+#     wizard "one-shot root key" is gone (DEC-PHASE12-105).
+#   - apt-daily / apt-daily-upgrade contacted Debian mirrors on their own
+#     after boot (OPSEC on a hostile network): masked. The operator updates
+#     explicitly.
+#   - exim4 arrived via rkhunter's Recommends (default-mta) and ran a setuid
+#     MTA that nothing on the deck uses: masked with its timer.
+#   Mask, not purge: reversible by the operator, and package removal belongs
+#   to the trim hook (0900), which another owner maintains.
+for unit in ssh.service ssh.socket; do
+    if systemctl list-unit-files "$unit" >/dev/null 2>&1; then
+        systemctl disable "$unit" 2>/dev/null || true
+        echo "  Not started at boot: $unit (operator runs: sudo systemctl start ssh)"
+    fi
+done
+for unit in apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service \
+            exim4.service exim4-base.timer exim4-base.service; do
+    systemctl mask "$unit" 2>/dev/null || true
+    echo "  Masked: $unit"
+done
+
 # 3. Kernel sysctl hardening
 cat > /etc/sysctl.d/60-orionx-hardening.conf << 'EOF'
 # Orion-X kernel hardening
@@ -57,18 +89,50 @@ kernel.yama.ptrace_scope = 1
 EOF
     echo "  Sysctl hardening applied"
 
-# 4. Add security directives to mesh systemd units if they exist
-for unit in /etc/systemd/system/orionx-mesh-*.service; do
-    if [ -f "$unit" ] && ! grep -q "ProtectSystem" "$unit"; then
-        cat >> "$unit" << 'EOF'
+# 4. Systemd unit hardening — REMOVED. It never ran, and could not have.
+#
+# @decision DEC-PHASE12-039
+# @title Unit hardening belongs in the unit file, not in a build-time injector
+# @status accepted
+# @rationale This hook used to append ProtectSystem=strict / NoNewPrivileges /
+#   ProtectHome to `/etc/systemd/system/orionx-mesh-*.service`. That glob has
+#   never matched anything. 0615-install-systemd-units.hook.chroot installs
+#   units to /lib/systemd/system (its TARGET_DIR), and `systemctl enable` only
+#   creates symlinks under /etc/systemd/system/<target>.wants/ — never
+#   /etc/systemd/system/<unit>.service. The loop body was dead on every build
+#   since the hook was written.
+#
+#   tests/unit/test_service_hardening.sh asserted the string
+#   "ProtectSystem=strict" appeared in THIS FILE's text, so it stayed green for
+#   the life of the project while the mesh units ran entirely unconfined. That
+#   is the AppArmor defect shape exactly (RESILIENCE.md rule 1).
+#
+#   Had it ever fired it would also have been wrong: ProtectSystem=strict
+#   makes the whole hierarchy read-only bar /dev, /proc and /sys, which breaks
+#   mesh-discover.sh's PID file, mesh-health.sh's counters, and wg-quick.
+#   A blind append could not have known that.
+#
+#   Two authorities decided one fact; this was the broken one. The unit files
+#   are the surviving authority, 0615 copies them verbatim, and the test
+#   asserts the directives in the units themselves.
+#
+# @decision DEC-PHASE12-041
+# @title The mesh-unit hardening gap recorded above is now CLOSED
+# @status accepted
+# @rationale orionx-mesh-health.service, orionx-mesh-discover.service and
+#   orionx-mesh-beacon.service now each carry a confinement block justified
+#   line by line against the script it confines (ProtectSystem=strict with a
+#   RuntimeDirectory and LogsDirectory for exactly what they write, and a
+#   CapabilityBoundingSet that differs per unit: CAP_NET_ADMIN+CAP_NET_RAW for
+#   health, CAP_NET_ADMIN for the listener, neither for the beacon, which only
+#   reads addresses and sends a datagram).
+#
+#   What made that possible was removing wg-quick from mesh-health.sh. wg-quick
+#   runs sysctl, iptables/nft and resolvconf, which is not boundable without a
+#   live wg0; `ip link set wg0 down/up` is, and it preserves the peers.
+#   ProtectKernelModules is deliberately NOT set, because interface restore
+#   relies on the kernel autoloading the wireguard module.
+#
+#   Still nothing is injected from here. The units remain the single authority.
 
-# Security hardening (added by 0620-service-hardening.hook.chroot)
-ProtectSystem=strict
-NoNewPrivileges=true
-ProtectHome=true
-EOF
-        echo "  Hardened: $(basename "$unit")"
-    fi
-done
-
-echo "[*] Service hardening complete"
+echo "[*] Service hardening complete (unit directives live in the unit files)"

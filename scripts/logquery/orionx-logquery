@@ -1,0 +1,699 @@
+#!/usr/bin/env python3
+"""orionx-logquery — forensic query and local threat correlation for Orion-X.
+
+@decision DEC-PHASE12-027
+@title logquery ported into Orion-X as a multi-source, intel-aged IR tool
+@status accepted
+@rationale Ported, with the owner's authorization, from jarocki-edge
+  scripts/logquery.py. The upstream tool's real value is not its SQL: it is
+  the judgement it makes from the operator's own history — did this source
+  come back on other days, did it also load real pages, is the thing it probed
+  something almost nothing else here has ever asked for. scanwatch
+  (DEC-PHASE12-022) can tell the Cockpit that one host touched 900 ports; it
+  cannot tell the operator whether that host is singling this deck out. This
+  tool can, and that gap is why it was worth porting.
+
+  Three things changed in the port, each with its own annotation in the
+  module that owns it:
+
+  - Sources (logquery_sources.py). Upstream fetches from R2 and re-ingests its
+    own NDJSON. Here local evidence is the default and needs no credentials,
+    with r2, s3 and api as equal peers.
+  - Intel (logquery_intel.py). Upstream reads a build-time file and never
+    mentions its age. Here the cache carries a recorded fetch time and every
+    run states it; a stale cache says so in the banner, in JSON output and on
+    the R.A.I.N. bus.
+  - Engine (logquery_engine.py). Upstream hard-requires DuckDB. Here stdlib
+    SQLite is the default and DuckDB is an opt-in accelerator, so a report
+    runs on a stock boot.
+
+@decision DEC-PHASE12-027
+@title Findings are published to the R.A.I.N. bus, not just printed
+@status accepted
+@rationale A forensic conclusion that exists only in a terminal an operator
+  has already closed is not part of the deck's awareness. Targeted verdicts
+  and a stale-intel warning are emitted via the orionx-event CLI, the same
+  fire-and-forget Popen pattern as orionx-nucleotide-watch and scanwatch, so
+  the event stream, the threat-pressure gauge and the audible cue all respond
+  without a second path into the UI.
+
+SECURITY MODEL (preserved from upstream)
+  - Credentials are read at runtime from an operator-owned file, mode-checked,
+    and never written to the repo, the bus, or any output.
+  - Sealed records are decrypted with an offline private key. No code path here
+    weakens, caches, or transmits key material; a decrypt failure is counted,
+    never echoed, because the exception text can carry ciphertext fragments.
+  - Decrypted plaintext stays in memory unless --keep is passed, and --keep
+    writes 0600 and says so.
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+import stat
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import logquery_correlate as correlate  # noqa: E402
+import logquery_engine as engine  # noqa: E402
+import logquery_intel as intel_mod  # noqa: E402
+import logquery_sources as sources  # noqa: E402
+
+PROG = "orionx-logquery"
+
+_COLOR = {"dim": "\033[2m", "red": "\033[31m", "grn": "\033[32m",
+          "yel": "\033[33m", "cyn": "\033[36m", "rst": "\033[0m"}
+if not sys.stderr.isatty() or os.environ.get("NO_COLOR"):
+    _COLOR = dict.fromkeys(_COLOR, "")
+
+
+def info(message: str) -> None:
+    print(f"{_COLOR['cyn']}·{_COLOR['rst']} {message}", file=sys.stderr)
+
+
+def warn(message: str) -> None:
+    print(f"{_COLOR['yel']}!{_COLOR['rst']} {message}", file=sys.stderr)
+
+
+def fail(message: str, hint: str = "") -> int:
+    print(f"{_COLOR['red']}x{_COLOR['rst']} {message}", file=sys.stderr)
+    if hint:
+        for line in hint.splitlines():
+            print(f"  {_COLOR['dim']}{line}{_COLOR['rst']}", file=sys.stderr)
+    return 1
+
+
+GUIDE = """\
+orionx-logquery — read the evidence, and judge targeted from widespread
+
+WHAT IT IS
+  It reads logs — yours, or a machine you are investigating — normalizes them,
+  enriches them with threat intel, and tells you which sources are probably
+  singling this host out versus which are internet background noise. It shows
+  its reasons every time, so you can disagree with it.
+
+START HERE (no credentials, no network, no setup)
+  orionx-logquery --path /var/log/nginx/access.log
+  orionx-logquery --path /var/log --report targeted
+  orionx-logquery --path /run/orionx/events.jsonl --report summary
+  journalctl --dmesg | orionx-logquery --path - --report ports
+
+WHERE EVIDENCE COMES FROM  (--source)
+  local  (default)  a file, a directory, or - for stdin. Needs nothing.
+  r2                Cloudflare R2 sealed archive   (needs python3-boto3 + key)
+  s3                any S3-compatible endpoint     (needs python3-boto3)
+  api               an HTTP endpoint serving NDJSON or JSON  (stdlib only)
+
+  Local reads three formats, sniffed per line, so a directory of mixed
+  evidence works: NDJSON/JSON (including the R.A.I.N. bus), Apache/nginx
+  access logs, and the kernel's nftables [ORIONX-DROP] lines.
+
+THE ONE THAT MATTERS
+  orionx-logquery --path /var/log --report targeted
+
+  It ranks every source by a visible signal and prints why: did it browse real
+  pages AND probe, did it come back on separate days, did it ask for something
+  almost nothing else here has ever asked for, does its user-agent disagree
+  with its network. Known research scanners (Censys, ShadowServer) are
+  downweighted, not hidden.
+
+READING THE ANSWERS
+  "widespread" means nothing matched the patterns this tool looks for. It does
+  NOT mean you are safe. Absence of evidence is not evidence of absence.
+  The intel line at the top of every run tells you how old the threat intel
+  was. If it says STALE, the CVE and KEV columns are history, not current.
+
+FOCUS ON ONE THING  (--focus, works on every report)
+  --focus 203.0.113.9           --focus 203.0.113.0/24      --focus AS14061
+  --focus cc:CN                 --focus path:/.env          --focus port:4444
+  --focus 203.0.113.9,AS14061   (comma-separated: matches any)
+
+INTEL
+  sudo orionx-freshen-intel      fetch the CISA KEV catalog (needs network)
+  orionx-logquery --intel-status  show what is cached and how old it is
+
+Full report list:  orionx-logquery --list-reports
+"""
+
+
+# ---------------------------------------------------------------------------
+# bus publishing (same fire-and-forget shape as scanwatch / nucleotide-watch)
+# ---------------------------------------------------------------------------
+def bus_severity(row: dict) -> str:
+    """Map a correlation verdict to a bus severity."""
+    if row["verdict"] == correlate.VERDICT_TARGETED:
+        return "critical" if row["signal"] >= 7 else "warning"
+    if row["verdict"] == correlate.VERDICT_ATTENTION:
+        return "notice"
+    return "info"
+
+
+def finding_message(row: dict) -> str:
+    """One line an operator can act on, with the reason attached."""
+    return (f"{row['verdict']}: {row['ip']} — signal {row['signal']}, "
+            f"{row['hits']} record(s) across {row['active_days']} day(s); "
+            f"{row['reasons'][0]}")
+
+
+def finding_detail(row: dict) -> dict:
+    """The evidence behind a verdict, for the Cockpit drill-down.
+
+    The message says what was concluded; this says what it was concluded
+    from, so an operator can judge the verdict instead of trusting it. Sent
+    whole: emit_event() budgets the line and spills the remainder to a
+    sidecar, so pre-truncating here would throw away evidence the bus was
+    prepared to keep.
+    """
+    return {
+        "ip": row["ip"],
+        "verdict": row["verdict"],
+        "signal": row["signal"],
+        "hits": row["hits"],
+        "active_days": row["active_days"],
+        "recurring": row["active_days"] > 1,
+        "browsed_real": bool(row["browsed_real"]),
+        "probed": bool(row["probed"]),
+        "locally_uncommon_probe": bool(row["local_rare"]),
+        "rare_paths": row["rare_paths"],
+        "intel_uncommon": bool(row["intel_uncommon"]),
+        "spoofed": bool(row["spoofed"]),
+        "distinct_paths": row["distinct_paths"],
+        "distinct_ports": row["ports"],
+        "tools": row["tools"],
+        "research_org": row["research_org"],
+        "first_seen": row["first_seen"],
+        "last_seen": row["last_seen"],
+        "reasons": row["reasons"],
+    }
+
+
+def publish(severity: str, category: str, message: str,
+            detail: dict | None = None, dry_run: bool = False) -> None:
+    if dry_run:
+        suffix = f" detail={json.dumps(detail, default=str)}" if detail else ""
+        print(f"[bus:{severity}/{category}] {message}{suffix}", file=sys.stderr)
+        return
+    argv = ["orionx-event", "--severity", severity, "--source", "logquery",
+            "--category", category]
+    if detail:
+        argv += ["--detail", json.dumps(detail, default=str)]
+    argv.append(message)
+    try:
+        subprocess.Popen(argv, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+def publish_findings(result: dict, freshness: dict, dry_run: bool = False) -> int:
+    """Emit stale-intel first, then each targeted/worth-a-look verdict.
+
+    Staleness goes first on purpose: if the findings that follow were judged
+    with month-old intel, the operator learns that before reading them.
+    """
+    published = 0
+    if freshness.get("warn"):
+        publish("warning", "intel",
+                f"logquery ran with degraded threat intel — {freshness['label']}",
+                detail={"state": freshness["state"],
+                        "age_days": freshness.get("age_days"),
+                        "remedy": "sudo orionx-freshen-intel"},
+                dry_run=dry_run)
+        published += 1
+    for row in result["rows"]:
+        if row["verdict"] in (correlate.VERDICT_TARGETED,
+                              correlate.VERDICT_ATTENTION):
+            publish(bus_severity(row), "forensics", finding_message(row),
+                    detail=finding_detail(row), dry_run=dry_run)
+            published += 1
+    return published
+
+
+# ---------------------------------------------------------------------------
+# output
+# ---------------------------------------------------------------------------
+def render_table(columns, rows, out=sys.stdout) -> None:
+    if not rows:
+        print("  (no rows)", file=out)
+        return
+    text = [[("" if v is None else str(v)) for v in row] for row in rows]
+    widths = [max(len(str(columns[i])), max(len(r[i]) for r in text))
+              for i in range(len(columns))]
+    widths = [min(w, 60) for w in widths]
+    header = "  ".join(str(c)[:widths[i]].ljust(widths[i])
+                       for i, c in enumerate(columns))
+    print("  " + header, file=out)
+    print("  " + "  ".join("-" * w for w in widths), file=out)
+    for row in text:
+        print("  " + "  ".join(row[i][:widths[i]].ljust(widths[i])
+                               for i in range(len(columns))), file=out)
+
+
+def render_rows(columns, rows, fmt: str, out=sys.stdout) -> None:
+    if fmt == "table":
+        render_table(columns, rows, out)
+    elif fmt == "csv":
+        writer = csv.writer(out)
+        writer.writerow(columns)
+        writer.writerows(rows)
+    elif fmt in ("json", "ndjson"):
+        for row in rows:
+            print(json.dumps(dict(zip(columns, row)), default=str), file=out)
+
+
+def render_targeted(result: dict, freshness: dict, fmt: str,
+                    out=sys.stdout) -> None:
+    if fmt in ("json", "ndjson"):
+        payload = dict(result)
+        payload["intel"] = freshness
+        print(json.dumps(payload, default=str,
+                         indent=2 if fmt == "json" else None), file=out)
+        return
+    if fmt == "csv":
+        columns = ["ip", "verdict", "signal", "hits", "active_days",
+                   "browsed_real", "local_rare", "intel_uncommon", "spoofed",
+                   "first_seen", "last_seen", "reasons"]
+        writer = csv.writer(out)
+        writer.writerow(columns)
+        for row in result["rows"]:
+            writer.writerow([row.get(c) if c != "reasons" else " | ".join(row["reasons"])
+                             for c in columns])
+        return
+
+    counts = result["verdict_counts"]
+    print(file=out)
+    print(f"  {result['records']} record(s) from {result['sources']} source(s), "
+          f"{result['distinct_paths']} distinct path(s)", file=out)
+    print(f"  {_COLOR['dim']}a path is 'locally rare' when at most "
+          f"{result['rare_threshold']} source(s) here ever asked for it"
+          f"{_COLOR['rst']}", file=out)
+    summary = ", ".join(f"{n} {v}" for v, n in sorted(counts.items()))
+    print(f"  verdicts: {summary or 'none'}", file=out)
+    print(file=out)
+    for row in result["rows"]:
+        if row["verdict"] == correlate.VERDICT_TARGETED:
+            colour = _COLOR["red"]
+        elif row["verdict"] == correlate.VERDICT_ATTENTION:
+            colour = _COLOR["yel"]
+        else:
+            colour = _COLOR["dim"]
+        org = f" ({row['org']})" if row.get("org") else ""
+        print(f"  {colour}{row['verdict']:<18}{_COLOR['rst']} {row['ip']}{org}"
+              f"  signal {row['signal']}, {row['hits']} record(s), "
+              f"{row['active_days']} day(s)", file=out)
+        for reason in row["reasons"]:
+            print(f"      · {reason}", file=out)
+        print(file=out)
+    print(f"  {_COLOR['dim']}'widespread' means nothing matched the patterns "
+          f"this tool looks for — not that you are safe.{_COLOR['rst']}", file=out)
+    print(f"  {_COLOR['dim']}{intel_mod.freshness_banner(freshness)}"
+          f"{_COLOR['rst']}", file=out)
+    print(file=out)
+
+
+def render_similarity(result: dict, fmt: str, out=sys.stdout) -> None:
+    if fmt in ("json", "ndjson"):
+        print(json.dumps(result, default=str, indent=2), file=out)
+        return
+    if not result["found"]:
+        print(f"\n  seed {result['seed']} does not appear in this evidence — "
+              f"widen the window or check the address.\n", file=out)
+        return
+    print(f"\n  Similarity to {result['seed']} "
+          f"({result['seed_hits']} record(s))\n", file=out)
+    for axis in result["inactive_axes"]:
+        print(f"  {_COLOR['dim']}inactive axis: {axis}{_COLOR['rst']}", file=out)
+    print(file=out)
+    if not result["matches"]:
+        print("  No other source shares 2+ behavioural features with this one.",
+              file=out)
+        print(f"  {_COLOR['dim']}That is a weak 'probably not a cluster' — "
+              f"not a guarantee.{_COLOR['rst']}\n", file=out)
+        return
+    for match in result["matches"]:
+        org = f" ({match['org']})" if match.get("org") else ""
+        print(f"  {_COLOR['grn']}{match['ip']}{_COLOR['rst']}{org}  "
+              f"{match['hits']} record(s)", file=out)
+        for feature in match["features"]:
+            print(f"      · {feature}", file=out)
+        print(file=out)
+
+
+# ---------------------------------------------------------------------------
+# record acquisition
+# ---------------------------------------------------------------------------
+def check_mode(path: Path) -> None:
+    """Warn on a group/world-readable credential or key file."""
+    try:
+        mode = path.stat().st_mode
+    except OSError:
+        return
+    if mode & (stat.S_IRWXG | stat.S_IRWXO):
+        warn(f"{path} is group/world accessible — run: chmod 600 {path}")
+
+
+def make_unsealer(key_path: Path):
+    """Build a decrypt callable from an offline private key, or raise.
+
+    The key is loaded once, held in memory for the run, and never written
+    anywhere. KEY_PASSPHRASE is read from the environment exactly as upstream.
+    """
+    try:
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+    except ImportError as exc:
+        raise sources.SourceError(
+            "sealed archives need python3-cryptography, which is not installed",
+            "install it (sudo apt-get install python3-cryptography), or work "
+            "from local evidence: --path <file>") from exc
+    if not key_path.exists():
+        raise sources.SourceError(f"private key not found: {key_path}",
+                                  "pass --key, or restore it from offline backup")
+    check_mode(key_path)
+    passphrase = os.environ.get("KEY_PASSPHRASE")
+    with open(key_path, "rb") as handle:
+        private_key = load_pem_private_key(
+            handle.read(),
+            password=passphrase.encode() if passphrase else None)
+
+    import base64
+
+    def unseal(envelope: dict) -> dict:
+        iv = base64.b64decode(envelope["iv"])
+        wrapped = base64.b64decode(envelope["wrappedKey"])
+        ciphertext = base64.b64decode(envelope["ciphertext"])
+        aes_key = private_key.decrypt(
+            wrapped,
+            padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                         algorithm=hashes.SHA256(), label=None))
+        return json.loads(AESGCM(aes_key).decrypt(iv, ciphertext, None))
+
+    return unseal
+
+
+def acquire(args, window) -> tuple[list[dict], list[str]]:
+    """Fetch records from the selected source. Returns (records, notes)."""
+    if args.source == "local":
+        return sources.read_local(args.path)
+
+    if args.source == "api":
+        token = None
+        if args.api_token_file:
+            token_path = Path(args.api_token_file).expanduser()
+            check_mode(token_path)
+            try:
+                token = token_path.read_text().strip()
+            except OSError as exc:
+                raise sources.SourceError(
+                    f"could not read the API token file: {token_path}",
+                    exc.strerror or "") from exc
+        if not args.api_url:
+            raise sources.SourceError("--source api needs --api-url",
+                                      "e.g. --api-url https://host/logs.ndjson")
+        return sources.read_api(args.api_url, token, timeout=args.timeout)
+
+    env_file = Path(args.env or sources.DEFAULT_ENV_FILE).expanduser()
+    if env_file and env_file.exists():
+        check_mode(env_file)
+    creds = sources.credentials_for(args.source, env_file)
+    unseal = None
+    if not args.no_decrypt:
+        try:
+            unseal = make_unsealer(Path(args.key).expanduser())
+        except sources.SourceError as exc:
+            if Path(args.key).expanduser().exists():
+                raise
+            warn(f"{exc} — reading objects as plaintext")
+    prefixes = sources.day_prefixes(window, args.prefix or "raw")
+    return sources.read_object_store(
+        args.source, creds, prefixes, unseal=unseal, limit=args.limit,
+        endpoint=args.endpoint_url)
+
+
+# ---------------------------------------------------------------------------
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog=PROG,
+        description="Query and correlate forensic logs. New here? "
+                    f"run: {PROG} --guide",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Reports: " + ", ".join(engine.ALL_REPORTS)
+               + f"\nPlain-language list: {PROG} --list-reports\n")
+
+    src = parser.add_argument_group("source")
+    src.add_argument("--source", choices=sources.SOURCES, default="local",
+                     help="where the evidence comes from (default: local)")
+    src.add_argument("--path", default="-",
+                     help="local file, directory, or - for stdin (default: -)")
+    src.add_argument("--api-url", help="HTTP(S) endpoint serving NDJSON or JSON")
+    src.add_argument("--api-token-file",
+                     help="file holding a bearer token (mode-checked, never logged)")
+    src.add_argument("--endpoint-url", help="S3-compatible endpoint URL")
+    src.add_argument("--env",
+                     help="credentials file for r2/s3 (KEY=value, chmod 600; "
+                          f"default: {sources.DEFAULT_ENV_FILE})")
+    src.add_argument("--key", default="~/.config/orionx/logquery/priv.pem",
+                     help="offline private key for sealed archives")
+    src.add_argument("--no-decrypt", action="store_true",
+                     help="treat fetched objects as plaintext JSON")
+    src.add_argument("--prefix", help="object-store key prefix (default: raw)")
+    src.add_argument("--limit", type=int, help="stop after N objects")
+    src.add_argument("--timeout", type=int, default=30, help="network timeout (s)")
+
+    win = parser.add_argument_group("time range")
+    win.add_argument("--last", metavar="24h|7d|4w", help="relative window")
+    win.add_argument("--since", metavar="YYYY-MM-DD", help="absolute start")
+
+    qry = parser.add_argument_group("query")
+    qry.add_argument("--report", choices=engine.ALL_REPORTS, metavar="NAME",
+                     help="preset report (see --list-reports)")
+    qry.add_argument("--focus", metavar="IOC",
+                     help="narrow to address/CIDR/range/ASN/country/path/port")
+    qry.add_argument("--sql", help="arbitrary SQL over table r")
+    qry.add_argument("--engine", choices=engine.ENGINES,
+                     default=engine.DEFAULT_ENGINE,
+                     help="SQL engine (default: %(default)s, stdlib)")
+    qry.add_argument("--format", choices=("table", "csv", "json", "ndjson"),
+                     default="table", help="output format (default: table)")
+
+    itl = parser.add_argument_group("intel")
+    itl.add_argument("--intel-dir", help="intel cache directory")
+    itl.add_argument("--no-enrich", action="store_true",
+                     help="skip enrichment entirely")
+    itl.add_argument("--intel-status", action="store_true",
+                     help="report what intel is cached and how old it is, then exit")
+
+    out = parser.add_argument_group("output")
+    out.add_argument("--publish", action="store_true",
+                     help="emit findings onto the R.A.I.N. event bus")
+    out.add_argument("--dry-run", action="store_true",
+                     help="print would-be bus events instead of publishing")
+    out.add_argument("--keep", help="write the normalized corpus to this file (0600)")
+
+    doc = parser.add_argument_group("help")
+    doc.add_argument("--guide", action="store_true",
+                     help="plain-language walkthrough, then exit")
+    doc.add_argument("--list-reports", action="store_true",
+                     help="describe every report, then exit")
+    return parser
+
+
+def cmd_intel_status(args) -> int:
+    intel = intel_mod.load_intel(args.intel_dir)
+    freshness = intel["freshness"]
+    payload = {
+        "cache_dir": intel["cache_dir"],
+        "base_version": intel["base_version"],
+        "signatures": len(intel["signatures"]),
+        "research_scanners": len(intel["research_scanners"]),
+        "notable_paths": len(intel["paths"]),
+        "kev_entries": intel["catalog_count"],
+        "freshness": freshness,
+        "metadata": intel["metadata"],
+    }
+    if args.format in ("json", "ndjson"):
+        print(json.dumps(payload, default=str, indent=2))
+    else:
+        print()
+        print(f"  intel cache      {intel['cache_dir']}")
+        print(f"  curated base     version {intel['base_version']} "
+              f"({len(intel['signatures'])} signatures, "
+              f"{len(intel['research_scanners'])} research scanners, "
+              f"{len(intel['paths'])} notable paths)")
+        print(f"  fetched catalog  {intel['catalog_count']} KEV entries")
+        print(f"  state            {freshness['state'].upper()}")
+        print(f"  {intel_mod.freshness_banner(freshness, intel['catalog_count'])}")
+        print()
+    return 1 if freshness["warn"] else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+
+    if args.guide:
+        print(GUIDE)
+        return 0
+    if args.list_reports:
+        print("\n  Reports (use with --report):\n")
+        for name in engine.ALL_REPORTS:
+            marker = " *" if name in engine.PYTHON_REPORTS else "  "
+            print(f"  {_COLOR['cyn']}{name:<12}{_COLOR['rst']}{marker} "
+                  f"{engine.REPORT_HELP.get(name, '')}")
+        print(f"\n  {_COLOR['dim']}* computed in pure Python — needs no SQL "
+              f"engine and no intel.{_COLOR['rst']}")
+        print("  Every report accepts --focus. Example:")
+        print(f"  {PROG} --path /var/log --report targeted --focus AS14061\n")
+        return 0
+    if args.intel_status:
+        return cmd_intel_status(args)
+
+    # --- window -----------------------------------------------------------
+    try:
+        window = sources.parse_window(args.last, args.since)
+    except sources.SourceError as exc:
+        return fail(str(exc), exc.hint)
+
+    # --- acquire ----------------------------------------------------------
+    try:
+        records, notes = acquire(args, window)
+    except sources.SourceError as exc:
+        return fail(str(exc), exc.hint)
+    except KeyboardInterrupt:
+        return 130
+
+    for note in notes:
+        info(note)
+    before = len(records)
+    records = sources.apply_window(records, window)
+    if window is not None and len(records) != before:
+        info(f"window kept {len(records)} of {before} record(s)")
+    undated = sum(1 for r in records if not r.get("ts"))
+    if undated:
+        warn(f"{undated} record(s) carry no parseable timestamp — kept, but "
+             "they cannot contribute to recurrence or timeline")
+
+    # The corpus before --focus narrows it. similarity() needs this: it
+    # compares a seed against everything else, so running it on the focused
+    # set would leave it comparing the seed with itself. Kept rather than
+    # re-fetched, because a second acquire() would re-read a stdin that is
+    # already consumed and would hit the network twice for --source api.
+    unfocused = list(records)
+
+    # --- focus ------------------------------------------------------------
+    predicate, described, skipped = sources.focus_predicate(args.focus)
+    for token in skipped:
+        warn(f"unrecognized --focus token, ignoring: {token}")
+    if described:
+        records = [r for r in records if predicate(r)]
+        info(f"focus: {described} — {len(records)} record(s)")
+
+    # --- intel ------------------------------------------------------------
+    intel = None
+    freshness = {"state": intel_mod.STATE_MISSING, "age_days": None,
+                 "warn": False, "label": "enrichment disabled (--no-enrich)"}
+    if not args.no_enrich:
+        intel = intel_mod.load_intel(args.intel_dir)
+        freshness = intel["freshness"]
+        banner = intel_mod.freshness_banner(freshness, intel["catalog_count"])
+        # Always stated, on every run, whatever the state. This is the whole
+        # point: stale intel is never presented as current.
+        (warn if freshness["warn"] else info)(banner)
+        intel_mod.enrich_all(records, intel)
+    else:
+        intel_mod.enrich_all(records, None)
+        warn("enrichment disabled — tool/CVE/KEV columns will be empty")
+
+    if not records:
+        warn("no records matched — widen --last/--since, or check --path/--focus")
+        return 0
+
+    if args.keep:
+        keep_path = Path(args.keep).expanduser()
+        keep_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(keep_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as handle:
+            for rec in records:
+                handle.write(json.dumps(rec, default=str) + "\n")
+        warn(f"normalized corpus retained at {keep_path} (0600) — "
+             "delete it when the case closes")
+
+    report = args.report or ("summary" if not args.sql else None)
+
+    # --- python-side correlation reports ---------------------------------
+    if report == "targeted":
+        result = correlate.correlate(records)
+        render_targeted(result, freshness, args.format)
+        if args.publish or args.dry_run:
+            count = publish_findings(result, freshness, dry_run=args.dry_run)
+            info(f"{count} event(s) {'would be ' if args.dry_run else ''}published")
+        return 0
+
+    if report == "similarity":
+        if not args.focus:
+            return fail("the 'similarity' report needs a seed address",
+                        "add: --focus <IP>")
+        seed = args.focus.split(",")[0].strip()
+        intel_mod.enrich_all(unfocused, intel if not args.no_enrich else None)
+        render_similarity(correlate.similarity(unfocused, seed), args.format)
+        return 0
+
+    if report == "cadence":
+        rows = correlate.cadence(records)
+        columns = ["ip", "requests", "mean_gap_s", "cv", "machine_regular", "org"]
+        render_rows(columns, [[r[c] for c in columns] for r in rows],
+                    args.format)
+        if args.format == "table":
+            print(f"\n  {_COLOR['dim']}Low variation (cv < 0.25) with steady "
+                  f"spacing suggests a script, not a person.{_COLOR['rst']}\n")
+        return 0
+
+    # --- SQL reports -------------------------------------------------------
+    if report in engine.INTEL_DEPENDENT and freshness["state"] in (
+            intel_mod.STATE_MISSING, intel_mod.STATE_STALE,
+            intel_mod.STATE_UNDATED):
+        warn(f"report '{report}' reads enrichment columns, and "
+             f"{freshness['label']}. Read its CVE/KEV columns accordingly.")
+
+    try:
+        connection = engine.make_engine(args.engine, records)
+    except engine.EngineUnavailable as exc:
+        return fail(str(exc), exc.hint)
+
+    if report in engine.SQL_NEEDS_REGEX and not connection.regex_available:
+        connection.close()
+        return fail(f"report '{report}' needs regex matching, which this "
+                    f"engine could not provide", connection.regex_note)
+
+    sql = args.sql or engine.SQL_REPORTS[report]
+    info(f"engine: {connection.name}, {len(records)} record(s)")
+    try:
+        columns, rows = connection.query(sql)
+    except Exception as exc:
+        connection.close()
+        return fail(f"query failed: {exc}",
+                    f"columns available on table r: {', '.join(engine.TABLE_COLUMNS)}")
+    render_rows(columns, rows, args.format)
+    connection.close()
+
+    if args.publish or args.dry_run:
+        result = correlate.correlate(records)
+        count = publish_findings(result, freshness, dry_run=args.dry_run)
+        info(f"{count} event(s) {'would be ' if args.dry_run else ''}published")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except BrokenPipeError:
+        raise SystemExit(0)
+    except KeyboardInterrupt:
+        raise SystemExit(130)

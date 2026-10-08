@@ -4,10 +4,22 @@ profile wireguard /usr/bin/wg {
   #include <abstractions/base>
 
   /etc/wireguard/** rw,
-  /var/run/orionx-mesh* rw,
+  # (system P3-4) The old `/var/run/orionx-mesh* rw` never matched: AppArmor
+  # sees /run/..., and wg itself writes nothing there. Removed.
 
   capability net_admin,
   capability net_raw,
+  # @decision DEC-PHASE12-047
+  # @title wg(8) needs generic netlink; the profile had never been enforced
+  # @status accepted
+  # @rationale wg configures the interface over NETLINK_GENERIC. Without this
+  #   rule `wg set` dies with "Unable to modify interface: Permission denied"
+  #   the moment the profile is actually loaded — which it never was before
+  #   3e48cfa fixed AppArmor loading zero profiles, so v2.2.0-rc5 was the first
+  #   image where `orionx-mesh join` could fail this way. Seen on the reference
+  #   deck 2026-10-05, as root, after the keys had been written: the denial
+  #   was AppArmor's, not Unix permissions'.
+  network netlink raw,
   network inet dgram,
   network inet6 dgram,
 

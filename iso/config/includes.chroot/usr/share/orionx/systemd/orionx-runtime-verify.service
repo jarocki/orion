@@ -26,6 +26,10 @@
 Description=Orion-X Runtime Verification (W7-4-B)
 After=multi-user.target
 Wants=multi-user.target
+# DEC-PHASE12-109 (system P2-2): a CI probe. It runs only in a VM (the QEMU
+# boot harness); on a deck it is skipped instead of writing to ttyS0 and
+# reporting a not-joined mesh as FAIL. Installed and enabled by 0615 only.
+ConditionVirtualization=vm
 
 [Service]
 Type=oneshot

@@ -1,5 +1,7 @@
-# Orion-X Phoenix Edition v2.1.0
-# Package list for live-build (Debian Bullseye)
+# Orion-X Phoenix Edition (Trixie line) — version-free on purpose: the release identity lives in ORIONX_VERSION
+# Package list for live-build (Debian 13 "trixie"). Packages commented with
+# "#85" (radare2, fonts-iosevka, nikto, bulk-extractor) are NOT in trixie and
+# must not be documented as shipped until an alternative source is chosen.
 #
 # @decision DEC-PHASE9-004
 # @title GUI networking stack: NetworkManager + nm-applet + firmware
@@ -60,7 +62,12 @@ mate-polkit
 #   pulseaudio        — desktop-session sound server (paplay honours per-cue volume)
 #   pulseaudio-utils  — provides paplay (preferred cue player)
 #   alsa-utils        — provides aplay (fallback when PulseAudio is absent)
-#   espeak-ng         — optional spoken voice cue (off by default)
+#   espeak-ng         — optional spoken voice cue (off by default), and the
+#                       SHIPPED text-to-speech engine for R.A.I.N. spoken
+#                       narration (DEC-PHASE12-046). Zero additional ISO
+#                       bytes. Natural voice is opt-in post-boot:
+#                       sudo /opt/orionx/optional/install-piper-voice.sh
+#                       (63,201,294 bytes of voice model, so NOT shipped)
 pulseaudio
 pulseaudio-utils
 alsa-utils
@@ -88,7 +95,15 @@ wireshark
 # 2026-08-07 ISO. tshark is the interface the MCP tool-server design and the
 # operator's `triage` verb actually call, so its absence is load-bearing.
 tshark
-# EXTERNAL: zeek             — install via https://zeek.org/get-zeek/
+# EXTERNAL: zeek — NOT in Debian 13 main. Two install paths, one package:
+#   build-time: iso/config/hooks/live/0500-install-external-tools.hook.chroot
+#     installs zeek-core from the OBS security:zeek/Debian_13 repo. SOFT-FAIL,
+#     so an ISO can legitimately ship without it (the 2026-09-27 image did).
+#   post-boot:  sudo /opt/orionx/optional/install-zeek.sh  (DEC-PHASE12-028)
+#     same package, same repo, plus a pinned signing-key fingerprint.
+# Either way orionx-postured DETECTS Zeek at runtime and starts ingesting its
+# logs with no rebuild (DEC-PHASE12-028), so absence here is not a dead end.
+# (The old pointer at zeek.org/get-zeek was never the path this deck uses.)
 
 # GUI Networking (rc4: Wi-Fi and wired connectivity via NetworkManager)
 # NM daemon + CLI; postinst enables NetworkManager.service automatically.
@@ -96,6 +111,12 @@ network-manager
 # nm-applet tray icon; ships /etc/xdg/autostart/nm-applet.desktop for
 # automatic startup in XFCE and any other XDG-compliant desktop session.
 network-manager-gnome
+# gnome-keyring: a Secret Service for the live session (DEC-PHASE12-061). Without
+# it Element (Electron) opens with "No encryption support … keyring
+# gnome_libsecret" and NetworkManager cannot keep Wi-Fi secrets per user.
+# ~4.7 MB + gcr/pinentry. The autologin session has no password to unlock a
+# keyring with, so the first secret may still prompt — documented in the Guide.
+gnome-keyring
 # WPA2/WPA3 supplicant (Debian package name is wpasupplicant, not wpa_supplicant)
 wpasupplicant
 # nl80211 wireless configuration CLI (iw, not wireless-tools/iwconfig)
@@ -309,12 +330,12 @@ lightdm-gtk-greeter
 # W11-9b: Desktop identity — fonts + GTK theme deps (DEC-PHASE11-013, DEC-PHASE11-010)
 #
 # @decision DEC-PHASE11-013
-# @title W11-9b: Font pair Iosevka (OFL-1.1) + Hack (Apache-2.0)
+# @title W11-9b: Font pair Iosevka (OFL-1.1) + Hack (MIT/Expat + Bitstream Vera)
 # @status accepted
 # @rationale Operator directive 2026-07-13: community-developed fonts only;
 #   no vendor-proprietary or vendor-adjacent monospace fonts permitted per
 #   DEC-PHASE11-013. Iosevka is an OFL-1.1 monospace coding font well-suited
-#   to the terminal aesthetic. Hack is an Apache-2.0 secondary fallback
+#   to the terminal aesthetic. Hack (MIT/Expat + Bitstream Vera) is the secondary fallback
 #   (formerly Bitstream Vera). Both are community-developed with no vendor
 #   telemetry surface (rejected alternatives: vendor-adjacent fonts — see
 #   MASTER_PLAN.md DEC-PHASE11-013 row for the full rejected-list rationale).
@@ -335,7 +356,7 @@ lightdm-gtk-greeter
 # iso/config/packages.chroot/, (b) upstream Iosevka .deb from GitHub release, or
 # (c) move base image to bookworm (larger project change). Tracked as GH issue #85.
 #fonts-iosevka
-# fonts-hack-otf: Hack OTF (Apache-2.0) — secondary monospace font
+# fonts-hack-otf: Hack OTF (MIT/Expat + Bitstream Vera) — secondary monospace font
 fonts-hack-otf
 # gtk2-engines-murrine: Murrine GTK2 engine (required for Adwaita-dark GTK2 variants)
 gtk2-engines-murrine
@@ -380,3 +401,17 @@ suricata
 # Custom packages (will be installed from config/packages.chroot/)
 # orionx-custom-tools
 # orionx-theme
+
+# DEC-PHASE12-043: MaxMind-format database reader for the attack map's
+# optional geolocation labels. The READER ships; the DATABASE does not.
+#
+# Splitting them this way is deliberate. GeoLite2 cannot be redistributed in
+# an image at all, and DB-IP Lite (CC BY 4.0) can but is republished monthly,
+# so a baked-in copy would rot silently inside an ISO built once and run for
+# months (/opt/orionx/osint/GEOIP.txt). The database therefore arrives via
+# /opt/orionx/optional/install-geoip.sh — or on a USB stick from another
+# machine, which only works if the reader is already here. ~150 KB.
+#
+# With neither reader nor database the map still works and still shows every
+# source; public sources are labelled UNLOCATED and never given a position.
+python3-maxminddb

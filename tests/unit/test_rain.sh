@@ -85,11 +85,11 @@ if grep -q "rain.json" "$AW" && grep -q "_build_rain_controls" "$AW"; then
 else
     fail "awareness.py R.A.I.N. controls" "missing controls or config path"
 fi
-# awareness.py must NOT import rain_lib (would drag in time/etc. past the allowlist)
-if grep -qE "^\s*import rain_lib|from .*rain_lib" "$AW"; then
-    fail "awareness.py stays within import allowlist" "imports rain_lib directly"
+# rain.json has ONE writer: awareness.py saves through rain_lib.save_config (python P2-5)
+if grep -q "rain_lib.save_config(" "$AW" && ! grep -qE "open\([^)]*rain\.json[^)]*['\"]w" "$AW"; then
+    pass "awareness.py writes rain.json only through rain_lib.save_config"
 else
-    pass "awareness.py does not import rain_lib (stays in allowlist)"
+    fail "rain.json single writer" "awareness.py writes rain.json itself"
 fi
 
 # ---------------------------------------------------------------------------
@@ -160,6 +160,13 @@ fi
 
 # ---------------------------------------------------------------------------
 printf "\n===========================================\n"
+# UX-12 (A2 handoff, lead 828f970): --test must exit non-zero when no cue played,
+# because the Cockpit toasts that exit status. Run with an empty PATH so no
+# player exists; the old code returned 0 regardless.
+_rt="$(mktemp -d)"; mkdir -p "$_rt/bin"; ln -s "$(command -v python3)" "$_rt/bin/python3"
+_out="$(cd "$REPO_ROOT/scripts/rain" && HOME="$_rt" PATH="$_rt/bin" PYTHONDONTWRITEBYTECODE=1 python3 orionx-rain --test warning 2>&1)"; _rc=$?
+if [[ $_rc -ne 0 && "$_out" == *"no warning cue played"* ]]; then pass "orionx-rain --test exits non-zero and says why when nothing could play (rc=$_rc)"; else fail "orionx-rain --test honesty" "rc=$_rc out=$_out"; fi
+rm -rf "$_rt"
 printf "  Results: ${GREEN}%d passed${NC}, ${RED}%d failed${NC}\n" "$PASS" "$FAIL"
 printf "===========================================\n"
 [[ $FAIL -eq 0 ]]

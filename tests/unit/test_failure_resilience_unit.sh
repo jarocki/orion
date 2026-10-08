@@ -262,7 +262,7 @@ fi
 section "Compound-interaction: integration test passes against frozen unit files"
 
 if bash "${INTEGRATION_TEST}" >/dev/null 2>&1; then
-    pass "integration test exits 0 against systemd/*.service + systemd/*.timer"
+    pass "integration test exits 0 against the shipped unit tree (includes.chroot/usr/share/orionx/systemd)"
 else
     RESULT="$(bash "${INTEGRATION_TEST}" 2>&1 || true)"
     fail "integration test exits 0 against frozen unit files" \

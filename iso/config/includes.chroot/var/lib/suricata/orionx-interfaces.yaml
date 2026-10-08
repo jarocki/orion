@@ -1,0 +1,29 @@
+%YAML 1.1
+---
+# @decision DEC-PHASE12-038
+# @title Generated af-packet interface list -- the one authority for what
+#   Suricata captures on
+# @status accepted
+# @rationale This file is REWRITTEN by orionx-postured from interfaces it has
+#   measured carrying packets (/sys/class/net/<if>/statistics/rx_packets
+#   deltas). Hand edits are lost on the next reconfigure. To pin an interface
+#   permanently, give the daemon --capture-iface <name> instead; a pinned
+#   interface bypasses the liveness test but must still exist.
+#
+#   This baseline is what ships in the image and what the file falls back to
+#   when NO interface is carrying traffic. It holds only the `default` entry,
+#   which supplies per-interface settings and is not itself a capture device.
+#   Suricata therefore reports
+#     E: suricata: No interface found in config for af-packet
+#   and exits 1 if it is started in this state -- which is why orionx-postured
+#   does not start it in this state, and announces the gap instead.
+#
+#   `suricata -T -c /etc/suricata/orionx.yaml` still exits 0 against this
+#   baseline: the config is valid, there is simply nothing to watch yet.
+af-packet:
+  - interface: default
+    cluster-type: cluster_flow
+    defrag: yes
+    use-mmap: yes
+    tpacket-v3: yes
+    checksum-checks: kernel

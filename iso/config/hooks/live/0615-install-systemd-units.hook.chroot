@@ -36,10 +36,17 @@ TARGET_DIR="/lib/systemd/system"
 UNIT_FILES=(
     "orionx-mesh-health.service"
     "orionx-mesh-health.timer"
+    # DEC-PHASE12-059: mesh status snapshot the Cockpit reads without sudo.
+    "orionx-mesh-status.service"
+    "orionx-mesh-status.timer"
     "orionx-mesh-discover.service"
     "orionx-mesh-discover.timer"
     "orionx-firewall.service"
     "orionx-first-boot.service"
+    # DEC-PHASE12-022: consumes the firewall's own drop log and emits scan
+    # events onto the R.A.I.N. bus. Pairs with orionx-firewall.service, which
+    # produces the log it reads.
+    "orionx-scanwatch.service"
     # W10-1: Nebula AI runtime units (DEC-PHASE10-009, DEC-PHASE11-033)
     # nebula-integrity-check: oneshot, runs at boot before nebula-runtime
     # nebula-runtime: ollama daemon, auto-started (ollama loads the 1.9GB model
@@ -50,6 +57,42 @@ UNIT_FILES=(
     "nebula-integrity-check.service"
     "nebula-runtime.service"
     "nebula-warmup.service"
+    # ---- W10-3/5/6 completion (DEC-PHASE12-023/024/025) --------------------
+    # orionx-heald: consumes the R.A.I.N. bus and the operator's autonomy grid
+    #   and executes the six healing playbooks. Sits in front of
+    #   orionx-firewall's table (its own table, priority -10).
+    # orionx-postured: enforces the threat-posture tier. Before this, the tier
+    #   selector persisted a value nothing consumed — elevating to Deception
+    #   changed a Cockpit label and started nothing.
+    # nebula-mcp: the confined MCP tool server (own uid, PrivateNetwork,
+    #   AppArmor). Serves a unix socket; never talks to ollama, so it is
+    #   deliberately NOT ordered on nebula-runtime.service.
+    "orionx-heald.service"
+    "orionx-postured.service"
+    "nebula-mcp.service"
+    # DEC-PHASE12-028: bounded on-demand PCAP capture, one instance per
+    # interface. A template unit — deliberately NOT in AUTOSTART_UNITS below:
+    # `systemctl enable` on a bare template fails, and more importantly a deck
+    # that starts recording by itself would fill its own memory unattended
+    # (the live overlay is RAM). Capture is an operator action.
+    "orionx-capture@.service"
+    # DEC-PHASE12-031: loads /etc/apparmor.d on a live boot, where Debian's
+    # own apparmor.service refuses (ConditionPathExists=!/run/live/overlay/work).
+    "orionx-apparmor-load.service"
+    # DEC-PHASE12-041: the outbound half of mesh peer discovery. It was never
+    # installed, while orionx-mesh-discover.timer (which IS installed and
+    # enabled) names it in Unit= — so every boot a live timer fired at a unit
+    # that did not exist, and because the timer names the beacon explicitly,
+    # orionx-mesh-discover.service was never triggered either. Both halves of
+    # discovery were dead.
+    "orionx-mesh-beacon.service"
+    # DEC-PHASE12-109: the CI runtime probes. They used to arrive through a
+    # SECOND install path (committed copies in includes.chroot/lib/systemd/system
+    # plus committed wants/ symlinks), outside this authority, and ran on every
+    # production boot. Installed here only; each carries
+    # ConditionVirtualization=vm, so on a deck they are skipped.
+    "orionx-perf-measure.service"
+    "orionx-runtime-verify.service"
 )
 
 # ---------------------------------------------------------------------------
@@ -60,8 +103,10 @@ UNIT_FILES=(
 AUTOSTART_UNITS=(
     "orionx-mesh-discover.timer"
     "orionx-mesh-health.timer"
+    "orionx-mesh-status.timer"
     "orionx-firewall.service"
     "orionx-first-boot.service"
+    "orionx-scanwatch.service"
     # W10-1 Nebula: enable integrity-check (boot gate) + nebula-runtime.service.
     # DEC-PHASE10-009: integrity-check must be autoenabled — it is the boot gate.
     # DEC-PHASE11-033: nebula-runtime.service is auto-started DIRECTLY. Socket
@@ -73,6 +118,30 @@ AUTOSTART_UNITS=(
     # nebula-warmup.service is deliberately NOT listed here (DEC-PHASE10-010 opt-in).
     "nebula-integrity-check.service"
     "nebula-runtime.service"
+    # All three fail closed, so autostarting them costs nothing on a deck whose
+    # operator never opens the relevant tab:
+    #   orionx-heald   — an absent or corrupt autonomy.json resolves to "off"
+    #                    for every action class, so it acts on nothing.
+    #   orionx-postured— an absent or corrupt threat-posture file resolves to
+    #                    Tier 0, which starts no services and sends no packets.
+    #   nebula-mcp     — loads no model; idle cost is negligible (unlike
+    #                    nebula-warmup, which stays opt-in per DEC-PHASE10-010).
+    "orionx-heald.service"
+    "orionx-postured.service"
+    "nebula-mcp.service"
+    # Must autostart: without it the deck runs with zero profiles loaded and
+    # every advertised confinement is fiction (observed on rc3).
+    "orionx-apparmor-load.service"
+    # DEC-PHASE12-041: the inbound listener. It is installed and carries
+    # [Install] WantedBy=multi-user.target, but only the .timer was enabled —
+    # and the timer names the beacon, so nothing ever started this. Safe to
+    # autostart: ConditionPathExists=/sys/class/net/wg0 makes it a clean no-op
+    # on a deck that has not joined a mesh.
+    "orionx-mesh-discover.service"
+    # DEC-PHASE12-109: enabled here (the only enablement authority); they run
+    # only under virtualization (the QEMU harness), never on a deck.
+    "orionx-perf-measure.service"
+    "orionx-runtime-verify.service"
 )
 
 echo "[install-systemd-units] Installing Orion-X systemd units from $SOURCE_DIR to $TARGET_DIR"

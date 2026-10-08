@@ -5,8 +5,8 @@
 # @title ISO build pipeline modernization for Phase 7 integration testing
 # @status accepted
 # @rationale W7-1 introduced --dry-run mode for path-resolution validation on
-#   non-Linux hosts, standardized the version string to v2.0.0-rc9 (current cut;
-#   per W11-2 hygiene pass issue #63), fixed the directory reference from legacy uppercase ISO/ to
+#   non-Linux hosts, made the version a single derived value (git describe,
+#   or ORIONX_VERSION / --version; DEC-PHASE11-VERSION-DEFAULT-001), fixed the directory reference from legacy uppercase ISO/ to
 #   lowercase iso/ (the actual live-build tree), and moved the logfile from a
 #   repo-root litter path to tmp/ per Sacred Practice 3. A single version
 #   constant (VERSION) is the sole authority — never duplicated. The script
@@ -20,11 +20,16 @@
 #                Exits 0 on success or non-zero on validation failure.
 #                Required for non-Linux hosts and CI path-resolution checks.
 #
-#   --version    Override VERSION (default: v2.0.0-rc9). Must start with 'v'.
+#   --version    Override VERSION (default: `git describe --tags --always --dirty`,
+#                else dev-unknown). Must start with 'v'. A release-looking version
+#                (vX.Y.Z[-rcN|-betaN|-alphaN]) needs its CHANGELOG.md section
+#                (DEC-PHASE12-114).
 #
 # Output:
 #   output/orionx-phoenix-edition-<VERSION>.iso (full build only)
 #   tmp/build-iso.log  (always)
+#   tmp/lb-build-<VERSION>.log  (full build: lb build output, checked for
+#                                stale stage skips, DEC-PHASE12-113)
 #
 # Prerequisites (full build, Linux only):
 #   live-build debootstrap squashfs-tools xorriso isolinux
@@ -32,6 +37,177 @@
 # Rollback: revert this single commit to restore prior state.
 
 set -euo pipefail
+
+# ===========================================================================
+# Library functions (pure, no side effects at definition time).
+#
+# Everything above the ORIONX_BUILD_ISO_LIB_ONLY guard below may be SOURCED:
+# the macOS wrapper's container step sources this file to publish the ISO,
+# and tests/unit/test_build_iso.sh sources it to exercise these functions
+# against canned inputs. Keep them free of global state and of `log` (which
+# is defined later and writes the build log).
+# ===========================================================================
+
+# The ISO filename is derived in exactly one place.
+iso_filename() { printf 'orionx-phoenix-edition-%s.iso' "$1"; }
+
+_sha256_check() {  # run in the directory holding the sidecar: _sha256_check <sidecar>
+    # No --quiet: macOS's sha256sum lacks it. Exit status is the verdict.
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum -c "$1" >/dev/null
+    else shasum -a 256 -c "$1" >/dev/null; fi
+}
+
+# ---------------------------------------------------------------------------
+# @decision DEC-PHASE12-111
+# @title Publish only the ISO this build produced, by exact name, only on success
+# @status accepted
+# @rationale The macOS wrapper copied /build/output/*.iso back to the host
+#   whatever happened. The volume's output/ is never cleared, so the rc9 run
+#   re-copied rc6, rc8 and a September dev9 ISO; and a FAILED build still
+#   copied, so a stale same-named ISO from an earlier attempt could overwrite
+#   the host's copy (packages-build P2-1). Now the wrapper removes this
+#   version's ISO + sidecar from the volume before building, and afterwards
+#   publishes exactly `iso_filename VERSION` + its .sha256, only when the
+#   build exited 0, after verifying the sidecar in the volume AND again on
+#   the host side. Any mismatch is a failure, never a warning.
+# ---------------------------------------------------------------------------
+publish_built_iso() {  # <src_dir> <dst_dir> <version> <build_rc>
+    local src="$1" dst="$2" version="$3" rc="$4" name
+    name="$(iso_filename "$version")"
+    if [[ "$rc" != "0" ]]; then
+        echo "[publish] build exited $rc: NOT publishing anything to $dst" >&2
+        return "$rc"
+    fi
+    if [[ ! -f "$src/$name" || ! -f "$src/$name.sha256" ]]; then
+        echo "[publish] ERROR: build exited 0 but $src/$name (+ .sha256) is missing" >&2
+        return 1
+    fi
+    if ! (cd "$src" && _sha256_check "$name.sha256"); then
+        echo "[publish] ERROR: $src/$name does not match its own .sha256" >&2
+        return 1
+    fi
+    cp -f "$src/$name" "$src/$name.sha256" "$dst/" || {
+        echo "[publish] ERROR: copy of $name to $dst failed" >&2; return 1; }
+    if ! (cd "$dst" && _sha256_check "$name.sha256"); then
+        echo "[publish] ERROR: copied $dst/$name fails its .sha256" >&2
+        return 1
+    fi
+    echo "[publish] Published to host: $dst/$name (SHA-256 verified)"
+}
+
+# ---------------------------------------------------------------------------
+# @decision DEC-PHASE12-113
+# @title Detect stale "already done" stage skips in the lb build output and fail
+# @status accepted
+# @rationale The DEC-PHASE11-029 clean guard PREVENTS stale skips only when it
+#   recognises the leftover state; nothing DETECTED them (shell P2-6). rc1-55
+#   shipped a byte-identical ISO because lb printed "Skipping chroot_hooks,
+#   already done" and reused the old chroot, and "0 hook-skips" has been a
+#   manual post-build check ever since. live-build prints
+#   `Skipping <stage>, already done` (functions/stagefile.sh). After lb build
+#   every such line must name a bootstrap* stage (the bootstrap cache is kept
+#   on purpose); anything else fails the build before an ISO is published.
+# ---------------------------------------------------------------------------
+check_no_stale_skips() {  # <lb build output log>
+    local log_file="$1" stale
+    if [[ ! -f "$log_file" ]]; then
+        echo "ERROR: lb build log $log_file not found; cannot prove the build was fresh" >&2
+        return 1
+    fi
+    stale="$(grep -oE 'Skipping [A-Za-z0-9_.-]+, already done' "$log_file" \
+             | grep -vE '^Skipping bootstrap[A-Za-z0-9_.-]*, already done$' || true)"
+    if [[ -n "$stale" ]]; then
+        echo "ERROR: lb build reused stale stages (the ISO would not contain this tree):" >&2
+        printf '         %s\n' "$stale" | sort -u >&2
+        echo "       Run with ORIONX_FULL_CLEAN=1, or lb clean inside the volume (DEC-PHASE12-113)." >&2
+        return 1
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# @decision DEC-PHASE12-114
+# @title A release-looking version needs its CHANGELOG section before it builds
+# @status accepted
+# @rationale The v2.2.0-beta shipped as v2.2.0-trixie-dev9, and QA found that a
+#   v3.0.0 tag on the rc9 bits would bake the wrong identity and publish an
+#   empty body (release-tests F-03, F-20). A version that LOOKS like a release
+#   (vMAJOR.MINOR.PATCH, optionally -rcN/-betaN/-alphaN, nothing else) is
+#   refused unless CHANGELOG.md has a non-empty `## [<version>]` section, as
+#   parsed by scripts/release/extract-release-notes.sh (the one parser; the
+#   release workflow uses the same script for the release body). git-describe
+#   versions (v2.2.0-rc9-3-gabc, -dirty), dev-unknown and other suffixed
+#   versions are development builds and are not checked.
+# ---------------------------------------------------------------------------
+is_release_version() { [[ "$1" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(rc|beta|alpha)[0-9]*)?$ ]]; }
+
+require_release_changelog() {  # <version> <repo_root>
+    local version="$1" root="$2" notes
+    is_release_version "$version" || return 0
+    if [[ ! -f "$root/CHANGELOG.md" || ! -f "$root/scripts/release/extract-release-notes.sh" ]]; then
+        echo "ERROR: $version is a release version but $root has no CHANGELOG.md or" >&2
+        echo "       scripts/release/extract-release-notes.sh to prove its notes exist (DEC-PHASE12-114)." >&2
+        return 1
+    fi
+    if ! notes="$(cd "$root" && CHANGELOG_PATH=CHANGELOG.md bash scripts/release/extract-release-notes.sh "$version" 2>&1)"; then
+        echo "ERROR: refusing to build release version $version: CHANGELOG.md has no" >&2
+        echo "       '## [$version]' section with content (DEC-PHASE12-114)." >&2
+        echo "       Write the section first, or build a development version." >&2
+        echo "       extract-release-notes.sh said: $notes" >&2
+        return 1
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# @decision DEC-PHASE12-112
+# @title live-build patches live in one place, and --allow-remove-essential is
+#   scoped to live-build's own temporary-package removal
+# @status accepted
+# @rationale Two patches to the build container's live-build were applied only
+#   by the macOS wrapper, so CI (release.yml, qemu-test.yml) built without
+#   them. One of them added --allow-remove-essential to the APT_OPTIONS
+#   DEFAULT (and the wrapper passed it in APT_OPTIONS too), which armed it for
+#   EVERY apt call live-build makes, including chroot_install-packages: a
+#   package-list change that made apt want to drop an essential package would
+#   have been obeyed silently (packages-build P2-2). The removal it exists for
+#   is Remove_packages (functions/packages.sh), where binary_grub-efi purges
+#   the grub-efi-amd64-signed/grub-common it installed temporarily. The flag
+#   is now inserted into that one apt-get command and nowhere else. Both
+#   patches are verified after sed; a live-build whose text no longer matches
+#   fails the build instead of silently building unpatched.
+# ---------------------------------------------------------------------------
+patch_live_build() {  # [functions_dir]
+    local fdir="${1:-/usr/share/live/build/functions}"
+    # -i.orig + rm: the one in-place form GNU and BSD sed both accept (tests run on macOS).
+    _sedi() { sed -i.orig "$1" "$2" && rm -f "$2.orig"; }
+    # cache.sh: Restore_package_cache hardlinks (cp -fl) across the chroot
+    # tmpfs boundary -> EXDEV. Force a plain copy.
+    _sedi 's|cp -fl|cp -f|g' "$fdir/cache.sh"
+    if grep -q 'cp -fl' "$fdir/cache.sh"; then
+        echo "ERROR: could not patch cp -fl out of $fdir/cache.sh" >&2; return 1
+    fi
+    # packages.sh: Remove_packages only.
+    if ! grep -q 'apt-get remove --auto-remove --purge --allow-remove-essential' "$fdir/packages.sh"; then
+        # shellcheck disable=SC2016  # ${APT_OPTIONS} is literal live-build text
+        _sedi 's|apt-get remove --auto-remove --purge \${APT_OPTIONS}|apt-get remove --auto-remove --purge --allow-remove-essential ${APT_OPTIONS}|' "$fdir/packages.sh"
+    fi
+    # shellcheck disable=SC2016  # literal text
+    if ! grep -q 'apt-get remove --auto-remove --purge --allow-remove-essential \${APT_OPTIONS}' "$fdir/packages.sh"; then
+        echo "ERROR: Remove_packages in $fdir/packages.sh no longer matches; --allow-remove-essential not applied" >&2
+        return 1
+    fi
+    if grep -q -- '--allow-remove-essential' "$fdir/configuration.sh" 2>/dev/null; then
+        echo "ERROR: $fdir/configuration.sh carries --allow-remove-essential in the APT_OPTIONS default" >&2
+        return 1
+    fi
+    return 0
+}
+
+if [[ "${ORIONX_BUILD_ISO_LIB_ONLY:-}" == "1" ]]; then
+    # shellcheck disable=SC2317  # reachable when sourced
+    return 0 2>/dev/null || exit 0
+fi
 
 # ---------------------------------------------------------------------------
 # @decision DEC-PHASE11-MACOS-BUILD-001
@@ -80,6 +256,7 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
         # -------------------------------------------------------------------
         _argv=("$@")
         _i=0
+        _host_version_arg=""
         while [[ $_i -lt ${#_argv[@]} ]]; do
             case "${_argv[$_i]}" in
                 --dry-run) ;;
@@ -89,6 +266,7 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
                         echo "ERROR: --version requires a value starting with 'v' (got: '${_argv[$_i]:-}')" >&2
                         exit 1
                     fi
+                    _host_version_arg="${_argv[$_i]}"
                     ;;
                 --help|-h)
                     grep '^#' "$0" | grep -v '#!/' | sed 's/^# \?//'
@@ -105,6 +283,18 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
         done
         unset _argv _i
 
+        REPO_ROOT_MACOS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+        # Guard 2 (DEC-PHASE12-014): only the REAL repo may be rsync --delete'd
+        # over the shared build volume. A fake/partial tree would wipe it.
+        # Runs BEFORE the Docker probes (release-tests F-16): it is cheaper, it
+        # needs no daemon, and a fake tree must be refused even when Docker is down.
+        if [[ ! -f "$REPO_ROOT_MACOS/iso/auto/config" || ! -d "$REPO_ROOT_MACOS/iso/config/package-lists" ]]; then
+            echo "ERROR: $REPO_ROOT_MACOS does not look like the Orion-X repo (missing iso/auto/config" >&2
+            echo "       or iso/config/package-lists). Refusing to delegate: syncing this tree into the" >&2
+            echo "       shared build volume would destroy it (DEC-PHASE12-014)." >&2
+            exit 1
+        fi
         if ! command -v docker >/dev/null 2>&1; then
             echo "ERROR: macOS host detected but 'docker' command not found." >&2
             echo "       Install Docker Desktop and start it, then re-run." >&2
@@ -113,16 +303,6 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
         fi
         if ! docker info >/dev/null 2>&1; then
             echo "ERROR: Docker daemon not reachable. Start Docker Desktop and re-run." >&2
-            exit 1
-        fi
-        REPO_ROOT_MACOS="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-        # Guard 2 (DEC-PHASE12-014): only the REAL repo may be rsync --delete'd
-        # over the shared build volume. A fake/partial tree would wipe it.
-        if [[ ! -f "$REPO_ROOT_MACOS/iso/auto/config" || ! -d "$REPO_ROOT_MACOS/iso/config/package-lists" ]]; then
-            echo "ERROR: $REPO_ROOT_MACOS does not look like the Orion-X repo (missing iso/auto/config" >&2
-            echo "       or iso/config/package-lists). Refusing to delegate: syncing this tree into the" >&2
-            echo "       shared build volume would destroy it (DEC-PHASE12-014)." >&2
             exit 1
         fi
         # Guard 3 (DEC-PHASE12-014): one build per volume at a time.
@@ -153,7 +333,9 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
         # Derive version on host — the rsync excludes .git, so `git describe`
         # inside the container returns nothing. We compute it here and pass via
         # env so ORIONX_VERSION inside the container reflects real repo state.
-        if [[ -z "${ORIONX_VERSION:-}" ]]; then
+        if [[ -n "$_host_version_arg" ]]; then
+            HOST_VERSION="$_host_version_arg"   # --version wins, as it does inside
+        elif [[ -z "${ORIONX_VERSION:-}" ]]; then
             if command -v git >/dev/null 2>&1 && \
                git -C "$REPO_ROOT_MACOS" rev-parse --git-dir >/dev/null 2>&1; then
                 _HOST_GIT_VERSION="$(git -C "$REPO_ROOT_MACOS" describe --tags --always --dirty 2>/dev/null || echo "")"
@@ -164,6 +346,9 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
         else
             HOST_VERSION="${ORIONX_VERSION}"
         fi
+        # DEC-PHASE12-114: refuse a release identity without release notes on
+        # the host, before a 35-minute container build.
+        require_release_changelog "$HOST_VERSION" "$REPO_ROOT_MACOS" || exit 1
         mkdir -p "$REPO_ROOT_MACOS/output"
 
         # Delete stale untracked live-build config outputs so `lb config` re-
@@ -197,8 +382,8 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
              -e ORIONX_GIT_SHA="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)" \
              -e ORIONX_GIT_TITLE="$(git log -1 --format=%s 2>/dev/null || echo unknown)" \
              -e ORIONX_PHASE_11_SLICES="${ORIONX_PHASE_11_SLICES:-W11-1,W11-2,W11-2b,W11-2c,W11-2d,W11-2e,W11-2f,W11-3,W11-4,W11-5,W11-6,W11-7,W11-8,W11-9a,W11-9a2,W11-9b,W11-11,W11-12,W11-13}" \
-             -e APT_OPTIONS="--yes -o Acquire::Retries=5 --allow-remove-essential${APT_VALID_UNTIL}" \
-             -e APTITUDE_OPTIONS="--assume-yes -o Acquire::Retries=5 --allow-remove-essential${APT_VALID_UNTIL}" \
+             -e APT_OPTIONS="--yes -o Acquire::Retries=5${APT_VALID_UNTIL}" \
+             -e APTITUDE_OPTIONS="--assume-yes -o Acquire::Retries=5${APT_VALID_UNTIL}" \
              debian:trixie-slim \
              bash -c '
                  set -e
@@ -228,21 +413,8 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
                      ca-certificates wget gnupg python3 \
                      squashfs-tools rsync cpio
 
-                 # live-build Restore_package_cache uses `cp -fl` (force hardlink)
-                 # when it sees cache/packages.<X>/ and chroot/var/cache/apt/archives/
-                 # on the same st_dev. When lb_chroot_tmpfs mounts a tmpfs inside
-                 # the chroot they end up on different filesystems → EXDEV. Force
-                 # the plain-copy branch unconditionally.
-                 sed -i "s|cp -fl|cp -f|g" /usr/share/live/build/functions/cache.sh
-
-                 # binary_grub-efi installs grub-efi-amd64-signed + shim-signed
-                 # temporarily to produce the EFI image, then Remove_packages
-                 # (functions/packages.sh) calls `apt-get remove --auto-remove
-                 # --purge $APT_OPTIONS $PACKAGES`. Newer apt (bullseye-security)
-                 # refuses to remove grub-common-adjacent essentials without
-                 # --allow-remove-essential. Inject it into APT_OPTIONS default.
-                 sed -i "s|Acquire::Retries=5|Acquire::Retries=5 --allow-remove-essential|" \
-                     /usr/share/live/build/functions/configuration.sh
+                 # live-build patches (cp -fl, Remove_packages) are applied by the
+                 # inner build-iso.sh itself: patch_live_build, DEC-PHASE12-112.
 
                  # Self-heal a stranded binary/ from a prior failed binary_iso
                  # run. binary_iso does `mv binary chroot` (into the chroot) so
@@ -270,20 +442,19 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
 
                  mkdir -p /build/output
 
+                 # DEC-PHASE12-111: the ISO for this version must come from THIS run.
+                 ORIONX_BUILD_ISO_LIB_ONLY=1 . /build/scripts/build-iso.sh
+                 _iso="$(iso_filename "$ORIONX_VERSION")"
+                 rm -f "/build/output/$_iso" "/build/output/$_iso.sha256"
+
                  # Run the build (do NOT exec — we need to publish the output after).
                  set +e
                  bash /build/scripts/build-iso.sh "$@"
                  rc=$?
                  set -e
 
-                 # Publish any produced ISO(s) to the host output/ directory.
-                 if compgen -G "/build/output/*.iso" > /dev/null; then
-                     cp -a /build/output/*.iso     /host-output/ 2>/dev/null || true
-                     cp -a /build/output/*.sha256  /host-output/ 2>/dev/null || true
-                     echo "[macOS-wrap] Published to host:"
-                     ls -la /host-output/*.iso 2>/dev/null || true
-                 fi
-
+                 # Publish exactly that ISO + sidecar, only on success, verified.
+                 publish_built_iso /build/output /host-output "$ORIONX_VERSION" "$rc" || exit $?
                  exit $rc
              ' -- "$@"
     fi
@@ -922,6 +1093,12 @@ label live
     initrd /live/initrd.img
     append $bootappend
 
+label live-noquestions
+    menu label Orion-X Live (no questions)
+    kernel /live/vmlinuz
+    initrd /live/initrd.img
+    append $bootappend orionx.wizard=0
+
 label live-failsafe
     menu label Orion-X Live (failsafe)
     kernel /live/vmlinuz
@@ -932,11 +1109,11 @@ ISOLINUX_EOF
     log "  Generated: $isolinux_cfg"
 
     # -----------------------------------------------------------------------
-    # Generate grub.cfg (UEFI bootloader) — PLAIN, READABLE text menu.
+    # Generate grub.cfg (UEFI bootloader) — graphical, ALWAYS READABLE menu.
     #
-    # @decision DEC-PHASE11-044
-    # @title Retire the GRUB gfxmenu theme; GRUB is a plain readable menu now
-    # @status accepted
+    # @decision DEC-PHASE11-044 (amended by DEC-PHASE12-042)
+    # @title Retire the GRUB gfxmenu THEME; the menu itself is graphical again
+    # @status accepted — amended
     # @rationale The GRUB gfxmenu theme (DEC-PHASE11-013/040/041) failed on real
     #   UEFI hardware twice: rc1-79 fell back to the text menu (no font loaded),
     #   and rc1-81 — even with the loadfont fix — errored out and rendered an
@@ -944,15 +1121,179 @@ ISOLINUX_EOF
     #   across firmware/panel combos. Per operator directive, the Phoenix boot
     #   identity moves to the Plymouth splash (DEC-PHASE11-044), which paints
     #   AFTER the kernel's i915 KMS comes up — far more reliable than GRUB
-    #   graphics. So GRUB drops gfxterm/gfxmenu/gfxmode/loadfont/`set theme`
-    #   entirely and uses its native text console: always readable, never errors,
-    #   no font dependency. The themed BIOS isolinux vesamenu menu stays
-    #   (DEC-PHASE11-042). The theme.txt/background.png assets under
-    #   includes.binary/boot/grub/themes/orionx/ are LEFT in place but unreferenced
-    #   (optionality: the menu-theme decision has oscillated; keep the assets so a
-    #   future revival needs only the generator lines back).
+    #   graphics. So GRUB dropped gfxterm/gfxmenu/gfxmode/loadfont/`set theme`
+    #   entirely and used its native text console.
+    #
+    #   AMENDED by DEC-PHASE12-042 (see the block below for the evidence):
+    #   `set theme` and the gfxmenu ENGINE stay retired by default — that is the
+    #   part that failed. gfxterm, a loaded font and a background_image come
+    #   back, gated on `if loadfont`, drawing GRUB's own menu. The distinction
+    #   is the whole decision: the theme engine is what rendered unreadably; a
+    #   picture behind GRUB's native menu cannot. The themed BIOS isolinux
+    #   vesamenu menu stays (DEC-PHASE11-042). theme.txt is still referenced
+    #   only under ORIONX_GRUB_THEME=1; background.png is now used by default.
     #   Single authority preserved (DEC-PHASE11-012): generated every build.
     # -----------------------------------------------------------------------
+    # ---------------------------------------------------------------------
+    # Phoenix UEFI graphics — ON by default (ORIONX_GRUB_GRAPHICS, default 1).
+    #
+    # @decision DEC-PHASE12-042
+    # @title Graphical UEFI boot menu via gfxterm + background_image, NOT gfxmenu
+    # @status accepted
+    # @rationale The operator asked for graphics at boot. UEFI was the one boot
+    #   surface still rendering plain text, because DEC-PHASE11-044 retired the
+    #   GRUB gfxmenu THEME after it failed on real hardware twice: rc1-79 loaded
+    #   no font and fell back, and rc1-81 -- "even with the loadfont fix" --
+    #   errored and rendered an unreadable menu. Both failures cost the operator
+    #   the failsafe entry, which exists for when things are already wrong.
+    #
+    #   Inspecting the shipped rc4 ISO explains the first failure outright. The
+    #   boot chain is:
+    #     efi.img:/EFI/boot/bootx64.efi
+    #       -> efi.img:/boot/grub/grub.cfg
+    #            search --set=root --file /.disk/info
+    #            set prefix=($root)/boot/grub
+    #            configfile ($root)/boot/grub/grub.cfg      <-- THIS generator
+    #   and the ISO's /boot/grub contains:
+    #     unicode.pf2, config.cfg, theme.cfg, splash.png, themes/orionx/,
+    #     live-theme/, x86_64-efi/*.mod
+    #   There is NO /boot/grub/fonts/ directory on the ISO. DEC-PHASE12-030's
+    #   revival block does `loadfont /boot/grub/fonts/unicode.pf2` -- a path
+    #   that has never existed in this image. loadfont therefore failed, and
+    #   `terminal_output gfxterm` ran with no font loaded. That IS the rc1-79
+    #   symptom, and it is also why rc1-81's gfxmenu theme rendered unreadably:
+    #   theme.txt asks for "DejaVu Sans Bold 16"/"Bold 14", GRUB resolves an
+    #   unavailable font name to whatever is loaded, and nothing was.
+    #   (Verified 2026-10-03 against output/orionx-phoenix-edition-v2.2.0-rc4.iso
+    #   and its efi.img; live-build's own /boot/grub/config.cfg resolves the font
+    #   as `unicode` or `$prefix/unicode.pf2` -- never under fonts/.)
+    #
+    #   So the default changes, but NOT to the thing that failed. This block:
+    #     - resolves the font exactly the way live-build's own config.cfg does,
+    #       which is the most field-tested resolution available for this image;
+    #     - GATES everything behind `if loadfont`, so the rc1-79 state (gfxterm
+    #       with no font) is now unreachable rather than merely unlikely;
+    #     - draws the menu with GRUB's NATIVE menu renderer over a
+    #       background_image, with explicit menu_color_* -- there is no theme
+    #       engine, no theme.txt, no absolute pixel layout, and no font named by
+    #       string. The rc1-81 failure mode has no code path left to occur in;
+    #     - falls back to solid-colour gfxterm if background_image fails, so a
+    #       missing or corrupt PNG costs the picture, never the menu;
+    #     - offers gfxmode candidates smallest-known-good first rather than
+    #       `auto`, keeping the text legible instead of 12px on a 4K panel.
+    #
+    #   Worst case at each step is "less pretty", and the menu entries stay
+    #   readable and selectable. That is the property DEC-PHASE11-044 was
+    #   protecting, and it is preserved here by construction rather than by
+    #   avoidance. ORIONX_GRUB_GRAPHICS=0 restores the bare text menu in one
+    #   env var if hardware still disagrees.
+    #
+    #   NOT set here: gfxpayload. Leaving it unset keeps GRUB's own default
+    #   handoff to the kernel. The Plymouth splash is the one boot surface that
+    #   is verified working on this hardware and it depends on that handoff;
+    #   pinning a payload mode would put an unverified variable in front of a
+    #   verified result.
+    #
+    #   ORDER MATTERS, twice over. The font must load before gfxterm is
+    #   selected (that ordering was never the bug, but it is still required),
+    #   and this block must come BEFORE the serial block: `terminal_output
+    #   gfxterm` REPLACES the output list, so a serial append has to follow it.
+    #   DEC-PHASE12-030's block sat after the serial lines and silently dropped
+    #   GRUB's serial console -- the console the QEMU CI gate reads.
+    # ---------------------------------------------------------------------
+    local grub_graphics_block=""
+    if [[ "${ORIONX_GRUB_GRAPHICS:-1}" == "1" ]]; then
+        log "  GRUB UEFI graphics ENABLED (default; ORIONX_GRUB_GRAPHICS=0 to disable) — DEC-PHASE12-042"
+        # shellcheck disable=SC2016  # literal grub.cfg text; $ belongs to GRUB.
+        grub_graphics_block='# --- Phoenix UEFI graphics (DEC-PHASE12-042) -------------------------------
+# Font resolution copied from live-build'"'"'s own /boot/grub/config.cfg. There is
+# no /boot/grub/fonts/ on this ISO; unicode.pf2 sits at the root of $prefix.
+if [ x$feature_default_font_path = xy ] ; then
+    set orionx_font=unicode
+else
+    set orionx_font=$prefix/unicode.pf2
+fi
+
+# Everything graphical is gated on the font actually loading. If it does not,
+# GRUB stays on its text console and the menu below is still readable.
+if loadfont $orionx_font ; then
+    insmod all_video
+    insmod gfxterm
+    insmod gfxterm_background
+    insmod png
+    set gfxmode=1024x768,800x600,auto
+    terminal_output gfxterm
+
+    # Phoenix background behind GRUB'"'"'s OWN menu renderer (no gfxmenu theme).
+    # In gfxterm a "black" background colour is drawn transparent, so the image
+    # shows through the menu text.
+    if background_image -m stretch $prefix/themes/orionx/background.png ; then
+        set color_normal=white/black
+        set color_highlight=black/red
+        set menu_color_normal=white/black
+        set menu_color_highlight=black/red
+    else
+        set color_normal=light-gray/black
+        set color_highlight=black/light-gray
+        set menu_color_normal=light-gray/black
+        set menu_color_highlight=black/light-gray
+    fi
+fi
+# --- end Phoenix UEFI graphics ---------------------------------------------
+'
+    else
+        log "  GRUB UEFI graphics DISABLED (ORIONX_GRUB_GRAPHICS=0) — plain text menu"
+    fi
+
+    # ---------------------------------------------------------------------
+    # Optional GRUB gfxmenu THEME revival — still OFF unless ORIONX_GRUB_THEME=1.
+    #
+    # @decision DEC-PHASE12-030 (amended by DEC-PHASE12-042)
+    # @title GRUB gfxmenu theme stays opt-in; its dead font path is fixed
+    # @status accepted
+    # @rationale DEC-PHASE11-044 retired the gfxmenu theme after two hardware
+    #   failures. DEC-PHASE12-042 explains the mechanism (loadfont pointed at
+    #   /boot/grub/fonts/unicode.pf2, which does not exist on the ISO) and
+    #   delivers the graphics the operator asked for without the theme engine.
+    #
+    #   This flag is NOT promoted to default. Fixing the font path makes the
+    #   gfxmenu path testable for the first time, but it does not make it
+    #   verified: theme.txt still lays the menu out in absolute pixels against a
+    #   gfxmode this code cannot predict, and still names DejaVu faces that are
+    #   not shipped as .pf2 in this image, so GRUB will substitute. "Probably
+    #   fine now" is not evidence, and the cost of being wrong is an unreadable
+    #   menu with no failsafe entry. It flips when someone boots an
+    #   ORIONX_GRUB_THEME=1 ISO on the reference deck and reports a readable
+    #   menu -- and then it is a one-line change with a hardware result behind it.
+    #
+    #   When enabled, this REPLACES the native-menu colours above with the
+    #   theme engine; the font load and gfxterm selection from the graphics
+    #   block are reused, so this block must stay after it.
+    # ---------------------------------------------------------------------
+    local grub_theme_block=""
+    if [[ "${ORIONX_GRUB_THEME:-0}" == "1" ]]; then
+        log "  GRUB gfxmenu THEME ENABLED (ORIONX_GRUB_THEME=1) — see DEC-PHASE12-030/042"
+        log "  NOTE: this path failed on UEFI hardware twice (DEC-PHASE11-044)."
+        log "        The dead font path (DEC-PHASE12-042) is fixed, but the theme is"
+        log "        still UNVERIFIED on hardware. Confirm the menu is READABLE"
+        log "        on the reference deck before shipping an image built this way."
+        if [[ "${ORIONX_GRUB_GRAPHICS:-1}" != "1" ]]; then
+            log "ERROR: ORIONX_GRUB_THEME=1 requires ORIONX_GRUB_GRAPHICS=1."
+            log "       The theme needs the font load and gfxterm selection that"
+            log "       the graphics block performs. Re-run without ORIONX_GRUB_GRAPHICS=0."
+            exit 1
+        fi
+        # shellcheck disable=SC2016  # literal grub.cfg text; $ belongs to GRUB.
+        grub_theme_block='# gfxmenu theme (ORIONX_GRUB_THEME=1, DEC-PHASE12-030). Applies only if the
+# graphics block above actually reached gfxterm — $orionx_font is set either
+# way, so re-test loadfont rather than assuming.
+if loadfont $orionx_font ; then
+    insmod gfxmenu
+    set theme=$prefix/themes/orionx/theme.txt
+fi
+'
+    fi
+
     cat > "$grub_cfg" << GRUB_EOF
 # GENERATED — do not edit — regenerate via scripts/build-iso.sh
 #
@@ -965,14 +1306,17 @@ ISOLINUX_EOF
 #   this file was hand-edited without effect on /proc/cmdline) is retired.
 #   References: DEC-PHASE11-012, DEC-PHASE10-018 (superseded), issue #64, issue #65.
 #
-# @decision DEC-PHASE11-044
-# @title Plain readable GRUB text menu (gfxmenu theme retired)
+# @decision DEC-PHASE11-044, amended by DEC-PHASE12-042
+# @title Graphical GRUB menu without the gfxmenu theme engine
 # @status accepted
-# @rationale The GRUB gfxmenu theme errored + rendered an unreadable font on
-#   real UEFI hardware (rc1-79/rc1-81). GRUB now uses its native text console —
-#   always readable, no font/gfx dependency. The Phoenix boot identity is the
-#   Plymouth splash (paints after i915 KMS), not the GRUB menu. No gfxterm,
-#   gfxmenu, gfxmode, loadfont, or 'set theme' here by design.
+# @rationale The GRUB gfxmenu THEME errored + rendered an unreadable font on
+#   real UEFI hardware (rc1-79/rc1-81); its loadfont pointed at
+#   /boot/grub/fonts/unicode.pf2, a path this ISO does not have. 'set theme'
+#   remains opt-in (ORIONX_GRUB_THEME=1). What is enabled by default is
+#   gfxterm + background_image behind GRUB's OWN menu renderer, gated on the
+#   font actually loading, so the worst case is a plain readable menu rather
+#   than an unreadable one. The Plymouth splash remains the primary Phoenix
+#   boot identity. ORIONX_GRUB_GRAPHICS=0 reverts to bare text.
 #
 # Generated from: iso/auto/config::--bootappend-live
 # Active cmdline (Orion-X Live menuentry):
@@ -980,7 +1324,11 @@ ISOLINUX_EOF
 #
 # set timeout=5: show the menu 5s (lets the operator pick failsafe), then
 #   auto-boot the default. set default=0: boot the first menuentry.
+# "(no questions)" appends orionx.wizard=0: the first-boot wizard takes every
+#   default without prompting (DEC-PHASE12-106; UX-14 — a responder booting
+#   on a hostile network at 3 a.m. should not be asked for a hostname).
 
+${grub_graphics_block}${grub_theme_block}
 serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1
 terminal_input --append serial
 terminal_output --append serial
@@ -990,6 +1338,11 @@ set default=0
 
 menuentry "Orion-X Live" {
     linux /live/vmlinuz $bootappend
+    initrd /live/initrd.img
+}
+
+menuentry "Orion-X Live (no questions)" {
+    linux /live/vmlinuz $bootappend orionx.wizard=0
     initrd /live/initrd.img
 }
 
@@ -1044,6 +1397,17 @@ GRUB_EOF
 prepare_build_env() {
     log "Preparing build environment..."
     mkdir -p "$OUTPUT_DIR"
+
+    # DEC-PHASE12-112: one authority for the live-build patches, CI and macOS alike.
+    # They edit the toolchain's own files, so they run only inside a build
+    # container (Docker sets /.dockerenv; the macOS wrap sets ORIONX_BUILD_IN_DOCKER).
+    if [[ -f /.dockerenv || -n "${ORIONX_BUILD_IN_DOCKER:-}" ]]; then
+        patch_live_build || exit 1
+        log "  live-build patched: cp -fl -> cp -f; --allow-remove-essential in Remove_packages only"
+    else
+        log "  WARN: not in a build container; live-build left unpatched (DEC-PHASE12-112)."
+        log "        binary_grub-efi's cleanup may stop on apt's essential-package guard."
+    fi
 
     # @decision DEC-PHASE11-029
     # @title Clean guard must detect the REAL live-build tree, not iso/build/
@@ -1112,7 +1476,11 @@ build_iso() {
     # swallow the code through set -e subshell propagation alone — we check
     # it ourselves so the error message is actionable.
     local lb_exit=0
-    (cd "$ISO_DIR" && lb build) || lb_exit=$?
+    local lb_log="$TMP_DIR/lb-build-${VERSION}.log"
+    set +e
+    (cd "$ISO_DIR" && lb build) 2>&1 | tee "$lb_log"
+    lb_exit=${PIPESTATUS[0]}
+    set -e
     if [[ $lb_exit -ne 0 ]]; then
         log "ERROR: lb build exited with code $lb_exit — no ISO was produced."
         log "       Check the live-build log above for package resolution errors."
@@ -1121,6 +1489,10 @@ build_iso() {
         exit 1
     fi
 
+    # DEC-PHASE12-113: a build that reused stale stages is not this tree.
+    check_no_stale_skips "$lb_log" || exit 1
+    log "  lb build output: no stale stage skips (bootstrap cache reuse only)"
+
     local built_iso="$ISO_DIR/live-image-amd64.hybrid.iso"
     if [[ ! -f "$built_iso" ]]; then
         log "ERROR: lb build exited 0 but ISO not found at $built_iso"
@@ -1128,7 +1500,8 @@ build_iso() {
         exit 1
     fi
 
-    local iso_name="orionx-phoenix-edition-${VERSION}.iso"
+    local iso_name
+    iso_name="$(iso_filename "$VERSION")"
     cp "$built_iso" "$OUTPUT_DIR/$iso_name"
 
     (cd "$OUTPUT_DIR" && sha256sum "$iso_name" > "${iso_name}.sha256")
@@ -1167,6 +1540,9 @@ log "========================================================"
 
 check_prerequisites
 
+# DEC-PHASE12-114: also in --dry-run, so CI and tests can prove the refusal.
+require_release_changelog "$VERSION" "$REPO_ROOT" || exit 1
+
 if "$DRY_RUN"; then
     log "[dry-run] All path and prerequisite checks passed."
     log "[dry-run] Full build requires: Linux host with live-build installed."
@@ -1190,10 +1566,11 @@ build_iso
 # with headroom for model + toolchain growth. A value over 7 GB requires
 # explicit investigation before the next RC cut.
 # ---------------------------------------------------------------------------
-iso_name="orionx-phoenix-edition-${VERSION}.iso"
+iso_name="$(iso_filename "$VERSION")"
 if [[ -f "$OUTPUT_DIR/$iso_name" ]]; then
     iso_size_bytes="$(stat --format="%s" "$OUTPUT_DIR/$iso_name" 2>/dev/null || stat -f "%z" "$OUTPUT_DIR/$iso_name" 2>/dev/null || echo 0)"
-    iso_size_gb="$(echo "scale=2; $iso_size_bytes / 1073741824" | bc 2>/dev/null || echo "unknown")"
+    # awk, not bc: bc is not in the build container (packages-build P3-4).
+    iso_size_gb="$(awk -v b="$iso_size_bytes" 'BEGIN { printf "%.2f", b / 1073741824 }')"
     log "ISO size: ${iso_size_gb} GB (${iso_size_bytes} bytes)"
     # 7 GB in bytes = 7 * 1024^3 = 7516192768
     if [[ "$iso_size_bytes" -gt 7516192768 ]]; then
@@ -1209,5 +1586,5 @@ cleanup
 
 log "========================================================"
 log "Orion-X Phoenix Edition ${VERSION} build complete!"
-log "ISO : $OUTPUT_DIR/orionx-phoenix-edition-${VERSION}.iso"
+log "ISO : $OUTPUT_DIR/$(iso_filename "$VERSION")"
 log "========================================================"

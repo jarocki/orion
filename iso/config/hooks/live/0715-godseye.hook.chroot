@@ -1,0 +1,142 @@
+#!/bin/bash
+# shellcheck shell=bash
+set -euo pipefail
+#
+# Orion-X Phoenix Edition — GODSEYE globe: verify the vendored bundle.
+#
+# @decision DEC-PHASE12-045
+# @title GODSEYE on Orion-X: vendored static globe, posture-gated at the server
+# @status accepted
+# @rationale Like 0710, this hook is almost entirely CHECK. It creates no
+#   symlink (0700 is the single authority for /usr/bin) and writes no .desktop
+#   from scratch (orionx-godseye.desktop is a static file in includes.chroot
+#   beside the other three); what it derives is the desktop-icon copy in
+#   /etc/skel/Desktop/, from the menu entry — one source in git, one derived
+#   surface (docs/RESILIENCE.md rule 7).
+#
+#   What it is allowed to do is fail the build. GODSEYE ships as 402 vendored
+#   files with no Node anywhere in the picture; the only evidence that the
+#   bytes in the image are the bytes that were reviewed is MANIFEST.sha256,
+#   and the only moment that evidence is worth anything is before the ISO is
+#   written. A menu entry labelled "GODSEYE (globe)" whose bundle did not
+#   arrive, or arrived corrupt, is the advertised-and-absent failure this
+#   project keeps paying for (DEC-PHASE11-018).
+#
+#   It also refuses an image that carries an API key. GODSEYE compiles its
+#   credentials into the bundle at build time, so a key here is a key
+#   published in cleartext inside a distributed ISO. There is no safe way to
+#   do that and no reason to; the check is cheap and the failure is loud.
+#
+# Position: 0715 — after 0710 verifies the rest of the investigation surface.
+#
+# Verify on a running deck with:
+#   orionx-osint --check
+
+ROOT="/opt/orionx/osint/godseye"
+APPS="/usr/share/applications"
+SKEL="/etc/skel/Desktop"
+
+echo "[godseye] Verifying the vendored GODSEYE bundle..."
+
+fail=0
+need() {
+    if [[ -e "$1" ]]; then
+        echo "  [godseye] ok: $1"
+    else
+        echo "  [godseye] MISSING: $1 — $2"
+        fail=$((fail + 1))
+    fi
+}
+
+need "$ROOT/index.html"       "the preflight page — the menu entry would open nothing"
+need "$ROOT/gate.js"          "the preflight renders nothing without it"
+need "$ROOT/overlay.js"       "the in-app honesty overlay the bundle loads"
+need "$ROOT/HOSTS.txt"        "the host inventory an operator reads before opening it"
+need "$ROOT/PROVENANCE.txt"   "upstream commit pin and the two recorded edits"
+need "$ROOT/MANIFEST.sha256"  "per-file checksums of the vendored bundle"
+need "$ROOT/LICENSE.godseye"  "Apache-2.0 text for the vendored build"
+need "$ROOT/LICENSE.cesium"   "CesiumJS licence + third-party notices (DEC-PHASE12-124)"
+need "$ROOT/app/index.html"   "the GODSEYE application itself"
+need "$ROOT/app/cesium/Cesium.js" "the CesiumJS runtime the globe is built on"
+need "$APPS/orionx-godseye.desktop" "menu entry"
+need "/opt/orionx/scripts/osint/godseye_hosts.py" "the host-inventory generator"
+
+# ---------------------------------------------------------------------------
+# Integrity. Build-time success elsewhere is not evidence about these bytes.
+# ---------------------------------------------------------------------------
+if [[ -f "$ROOT/MANIFEST.sha256" ]]; then
+    echo "[godseye] Verifying the vendored bundle against MANIFEST.sha256..."
+    if (cd "$ROOT" && sha256sum -c --quiet MANIFEST.sha256); then
+        echo "  [godseye] ok: $(wc -l < "$ROOT/MANIFEST.sha256") files match"
+    else
+        echo "  [godseye] CHECKSUM MISMATCH in $ROOT/app"
+        echo "  [godseye] The vendored bundle is not the one that was pinned."
+        echo "  [godseye] Re-vendor it per $ROOT/PROVENANCE.txt."
+        fail=$((fail + 1))
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# The two edits that make this bundle safe to serve here must still be in it.
+# A re-vendor that forgets either one ships a page that phones Google to
+# render itself, or a globe with no honesty overlay on it.
+# ---------------------------------------------------------------------------
+if [[ -f "$ROOT/app/index.html" ]]; then
+    if grep -q 'fonts\.googleapis\.com\|fonts\.gstatic\.com' "$ROOT/app/index.html"; then
+        echo "  [godseye] Google Fonts reference is back in app/index.html."
+        echo "  [godseye] That page would contact Google to render itself."
+        echo "  [godseye] Remove the three <link> elements (PROVENANCE.txt, edit 1)."
+        fail=$((fail + 1))
+    else
+        echo "  [godseye] ok: no external font fetch in app/index.html"
+    fi
+    if grep -q 'overlay\.js' "$ROOT/app/index.html"; then
+        echo "  [godseye] ok: the honesty overlay is loaded by app/index.html"
+    else
+        echo "  [godseye] app/index.html does not load ../overlay.js."
+        echo "  [godseye] The globe would keep drawing stale data after the"
+        echo "  [godseye] posture rises, with nothing on screen saying so."
+        fail=$((fail + 1))
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# No credential may ship. GODSEYE compiles VITE_* values into the bundle, so
+# a key in this tree is a key published inside the ISO.
+# ---------------------------------------------------------------------------
+if [[ -d "$ROOT/app" ]]; then
+    if grep -rlE 'AIza[0-9A-Za-z_-]{30,}|sk-[A-Za-z0-9]{32,}|pk\.ey[A-Za-z0-9._-]{30,}' \
+            "$ROOT/app" 2>/dev/null | grep -q .; then
+        echo "  [godseye] An API-key-shaped string is present in the bundle."
+        echo "  [godseye] Vite compiles VITE_* values in, so this would be"
+        echo "  [godseye] published in cleartext inside the ISO."
+        echo "  [godseye] Rebuild with no .env (PROVENANCE.txt)."
+        fail=$((fail + 1))
+    else
+        echo "  [godseye] ok: no API key in the vendored bundle"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# Derived surface: the desktop icon comes from the menu entry, never a copy.
+# ---------------------------------------------------------------------------
+if [[ -f "$APPS/orionx-godseye.desktop" ]]; then
+    mkdir -p "$SKEL"
+    cp "$APPS/orionx-godseye.desktop" "$SKEL/orionx-godseye.desktop"
+    chmod 0755 "$SKEL/orionx-godseye.desktop"
+    echo "[godseye] Desktop launcher derived into $SKEL/"
+fi
+
+# Web content is data, not programs.
+find "$ROOT" -type f -exec chmod 0644 {} + 2>/dev/null || true
+find "$ROOT" -type d -exec chmod 0755 {} + 2>/dev/null || true
+
+if [[ "$fail" -gt 0 ]]; then
+    echo "[godseye] FAILED: $fail problem(s)."
+    echo "[godseye] The menu would offer a globe that is missing, corrupt,"
+    echo "[godseye] phones a third party to render itself, or carries a key."
+    echo "[godseye] Refusing to produce an image that lies (DEC-PHASE11-018)."
+    exit 1
+fi
+
+echo "[godseye] GODSEYE bundle verified ($(wc -l < "$ROOT/MANIFEST.sha256") files)"

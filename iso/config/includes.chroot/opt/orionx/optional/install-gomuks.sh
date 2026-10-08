@@ -44,16 +44,22 @@ orionx_log_info "  Mission: defend — terminal Matrix client for encrypted team
 
 # ---------------------------------------------------------------------------
 # Download gomuks static binary
-# DEC-PHASE10-008 trust-on-first-use: SHA-256 pin deferred to first green
-# CI build of W11-8; a follow-up MICRO-SLICE pins the digest before v2.1.0 tag.
+# DEC-PHASE12-122: NO PIN, so this installer refuses. Checked 2026-10-07: the
+# URL below returns 404 (the terminal client's v0.3.1 asset no longer exists;
+# the project moved to github.com/gomuks/gomuks, whose releases ship a desktop
+# .deb, not a static terminal binary). An unpinned binary is not run as root.
+# Choosing a replacement artifact (and pinning it) is an owner decision.
 # ---------------------------------------------------------------------------
 GOMUKS_VERSION="v0.3.1"
+GOMUKS_SHA256=""
 GOMUKS_URL="https://github.com/mautrix/gomuks/releases/download/${GOMUKS_VERSION}/gomuks-linux-amd64"
 GOMUKS_BIN="/usr/local/bin/gomuks"
 
 orionx_log_info "Downloading gomuks ${GOMUKS_VERSION}..."
-wget -q -O "$GOMUKS_BIN" "$GOMUKS_URL"
-chmod +x "$GOMUKS_BIN"
+gomuks_tmp="$(mktemp)"
+orionx_download_verified "$GOMUKS_URL" "$gomuks_tmp" "$GOMUKS_SHA256"
+install -m 0755 "$gomuks_tmp" "$GOMUKS_BIN"
+rm -f "$gomuks_tmp"
 
 # ---------------------------------------------------------------------------
 # .desktop launcher

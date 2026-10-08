@@ -1,0 +1,70 @@
+CyberChef — vendored static build
+=================================
+DEC-PHASE12-043 · Orion-X OSINT & investigation surface
+
+Source:    https://github.com/gchq/CyberChef
+Release:   v11.5.0  (published 2026-09-18)
+Asset:     CyberChef_8cd426dd4f40f1423912d5fad91b578a86a65112.zip
+URL:       https://github.com/gchq/CyberChef/releases/download/v11.5.0/CyberChef_8cd426dd4f40f1423912d5fad91b578a86a65112.zip
+SHA-256:   f6478925d3eaa16ec08626a85f5b85eed10d531a5e18700615fed7ecb024cccf
+           (of the release ZIP as downloaded; verified 2026-10-03)
+License:   Apache-2.0 (./LICENSE, copied from the v11.5.0 tag)
+           Bundled dependency notices are the *.LICENSE.txt files that
+           webpack emitted beside each chunk; they are shipped verbatim.
+
+What is here
+------------
+The upstream ZIP, extracted, with exactly two changes:
+
+  1. CyberChef_v11.5.0.html renamed to index.html.
+     Upstream ships the page twice: as CyberChef_v11.5.0.html and as the
+     pre-compressed index.html.gz / index.html.br. `gunzip -c index.html.gz`
+     is byte-identical to CyberChef_v11.5.0.html (checked), so one copy is
+     kept and named what a web server will serve by default.
+
+  2. All *.gz and *.br files removed (59 files, 33,264 KB).
+     Those exist so a production web server can do content-encoding
+     negotiation. orionx-osint is a stdlib http.server on 127.0.0.1 and does
+     no negotiation, so they would have been bytes nobody could reach.
+
+Nothing in assets/, modules/ or images/ is modified. The integrity of this
+tree is what tests/unit/test_osint_surface.sh checks against MANIFEST.sha256.
+
+Size
+----
+on disk            49,968,963 bytes (74 files)
+squashfs estimate  ~8,272,024 bytes (sum of per-file `xz -9`; the ISO's
+                   squashfs is xz with independent blocks, so this is the
+                   right order of magnitude, not the zip's 83 MB)
+
+Offline
+-------
+Fully self-contained. No network at build time or run time: every asset
+reference in index.html is relative, there is no CDN script tag, and the
+operation modules load from ./modules/ on demand.
+
+It MUST be served over HTTP, not opened as file://. CyberChef runs its
+operations in Web Workers, and browsers refuse to construct a Worker from a
+file:// origin. /usr/bin/orionx-osint exists for exactly this reason: it
+binds a loopback-only static server and opens the browser at it.
+
+"Fully configured" means
+------------------------
+A stock CyberChef opens with an empty recipe and no history. The Orion-X
+build adds ../recipes.json — an Orion-X-owned catalogue of IR recipes, each
+expressed as the `#recipe=...&input=...` URL fragment CyberChef already
+understands. The launcher page renders them as one-click entries. No
+CyberChef file is patched to do this, which is why the checksum above can
+still be verified against upstream.
+
+To update
+---------
+  1. Download the new release ZIP; record its SHA-256 here.
+  2. Extract, delete *.gz and *.br, rename CyberChef_vX.Y.Z.html to index.html.
+  3. Refresh ./LICENSE from the matching tag.
+  4. Regenerate MANIFEST.sha256:
+       cd <this dir> && find . -type f ! -name MANIFEST.sha256 -print0 \
+         | sort -z | xargs -0 sha256sum > MANIFEST.sha256
+  5. Re-check the recipe fragments in ../recipes.json still resolve: CyberChef
+     renames operations between majors, and a renamed operation makes a saved
+     recipe load as an empty one.

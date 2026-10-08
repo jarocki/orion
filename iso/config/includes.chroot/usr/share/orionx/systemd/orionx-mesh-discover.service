@@ -1,8 +1,39 @@
+# Orion-X Mesh Peer Discovery Listener — confined (DEC-PHASE12-041)
+#
+# @decision DEC-PHASE12-041
+# @title Confinement for the discovery listener, justified per directive
+# @status accepted
+# @rationale See orionx-mesh-health.service for why this lives in the unit
+#   file rather than in 0620. What `mesh-discover.sh listen` actually does:
+#
+#     socat UDP-RECVFROM:55555,broadcast,reuseaddr,fork -> AF_INET, port
+#       above 1024, so no CAP_NET_BIND_SERVICE
+#     wg show <iface> peers (dedup)       -> read-only genetlink
+#     mesh_add_peer -> wg set             -> CAP_NET_ADMIN
+#     read /etc/wireguard/mesh-private.key (0600) -> CAP_DAC_OVERRIDE
+#     PID file                            -> RuntimeDirectory /run/orionx-mesh
+#     mesh.log                            -> LogsDirectory=orionx
+#     jq / sed / grep / awk               -> no privilege
+#
+#   This unit accepts unauthenticated UDP from the local segment and feeds
+#   it to `wg set`, which makes it the most exposed thing in the mesh and
+#   the one that most deserves RestrictAddressFamilies: a compromised socat
+#   cannot open AF_PACKET and start sniffing.
+#
+#   ProtectKernelModules=yes is omitted here for the same reason as in
+#   orionx-mesh-health.service: shared RuntimeDirectory, shared assumptions.
+
 [Unit]
 Description=Orion-X Mesh Peer Discovery Listener
 # W11-14f offline-safe: no network-online pull; gated on mesh interface.
 After=network.target
 ConditionPathExists=/sys/class/net/wg0
+# Bound the restarts. An unbounded Restart=on-failure is the shape
+# DEC-PHASE12-034 was written about. These are [Unit] keys: in [Service]
+# systemd 257 ignores them ("Unknown key", system P3-2) and the default 10 s
+# window with RestartSec=5 could never trip.
+StartLimitIntervalSec=120
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -12,6 +43,24 @@ Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
+
+# --- state: the PID file mesh-health.sh reads to prove this is alive --------
+RuntimeDirectory=orionx-mesh
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+
+# --- filesystem -------------------------------------------------------------
+ProtectSystem=strict
+ProtectHome=yes
+LogsDirectory=orionx
+
+# --- privilege --------------------------------------------------------------
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_OVERRIDE
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target

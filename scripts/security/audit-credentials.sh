@@ -77,14 +77,36 @@ report_finding() {
 # ---------------------------------------------------------------------------
 # Credential patterns (extended regex)
 # ---------------------------------------------------------------------------
-# Each pattern is a grep -E regex. We search for assignment patterns that
-# could indicate hardcoded secrets, then filter out known-safe exclusions.
+# A finding requires a literal VALUE on the right-hand side, not a keyword
+# argument name. `password=True`, `api_key=api_key` and `on_token=on_token`
+# are code, not credentials; `password="hunter2"` is a credential.
+#
+# Matching is case-sensitive (line 173 uses `grep -nE`, no -i), so both cases
+# are spelled out.
+#
+# The PEM pattern must not begin with a literal '-': line 173 passes the
+# pattern as `grep -nE "$pattern"` with no `-e` and no `--`, so the old
+# '-----BEGIN.*KEY-----' was consumed by grep as options and NEVER MATCHED.
+# Leading '[-]' is the same character as a bracket expression, so grep parses
+# it as a pattern. The old form also matched '-----BEGIN PUBLIC KEY-----',
+# which is not a secret.
+# PWD is deliberately NOT a key. It is the shell's working-directory
+# variable, not a password abbreviation: `PWD=/home/admin` in a syslog line
+# is a path. `passwd` covers the real abbreviation.
+_Kl='(password|passwd|secret|token|api_key|apikey|access_key|secret_key|private_key)'
+_Ku='(PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|APIKEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY)'
+
 PATTERNS=(
-    'password=|passwd=|PASSWORD='
-    'token=|TOKEN='
-    'secret=|SECRET='
-    'api_key=|API_KEY='
-    '-----BEGIN.*KEY-----'
+    # key = "literal" / key: "literal"  — no $, backtick or {} (those are
+    # expansions or templates, not hardcoded values); at least 4 characters.
+    "(${_Kl}|${_Ku})[[:space:]]*[:=][[:space:]]*\"[^\"\$\`{}]{4,}\""
+    # key = 'literal'
+    "(${_Kl}|${_Ku})[[:space:]]*[:=][[:space:]]*'[^'\$\`{}]{4,}'"
+    # Shell constant: UPPERCASE_KEY=bareword. 6-char minimum keeps True/False
+    # out; uppercase keeps Python kwargs out under case-sensitive matching.
+    "[A-Z0-9_]*${_Ku}[A-Z0-9_]*=[^\"'\$\`[:space:]]{6,}"
+    # Private key block. See the note above about the leading '[-]'.
+    '[-]----BEGIN [A-Z ]*PRIVATE KEY-----'
 )
 
 # ---------------------------------------------------------------------------

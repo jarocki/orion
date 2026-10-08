@@ -12,17 +12,72 @@
 #   DEC-PHASE10-009 (boot gate), DEC-PHASE10-011 (AppArmor; ollama daemon is confined,
 #   not this check), DEC-PHASE10-005 (Control Center status surface).
 
+# @decision DEC-PHASE12-041
+# @title The integrity gate gets an explicit time bound, ordinary boot
+#   ordering, and a failure the operator can see
+# @status accepted
+# @rationale rc4: nebula-runtime.service was inactive and
+#   `journalctl -u nebula-runtime` printed "-- No entries --", i.e. it never
+#   attempted to start. This unit was still SHA-256-hashing the 1.93 GB model
+#   at 2min+ under emulation. Three separate problems, two of them real
+#   defects rather than "the emulator is slow":
+#
+#   1. NO TIME BOUND. TimeoutStartSec was unset, so systemd's default (90s,
+#      DefaultTimeoutStartSec) applied — to a job already MEASURED at over
+#      twice that. Past 90s systemd SIGTERMs integrity.py and marks this unit
+#      failed; nebula-runtime's Requires= then refuses to start it, for good.
+#      A slow disk became a permanently absent LLM. Worse, the kill lands
+#      mid-hash, so integrity.py never wrote the status file at all and the
+#      Control Center had nothing to show. RESILIENCE rule 8: a capability
+#      that is advertised and absent is worse than one never claimed.
+#
+#      TimeoutStartSec=900 is now explicit. Basis: SHA-256 over 1.93 GB is
+#      ~50s on a slow SD card (~40 MB/s) and ~130s at the ~15 MB/s this
+#      measured under emulation; 900s is a ~7x margin on the worst measured
+#      case and still a BOUND, not `infinity`.
+#
+#   2. DefaultDependencies=no. This pushed a two-minute, I/O-bound job into
+#      the pre-basic.target window, where it competes with the rest of early
+#      boot for the same slow disk, and left the unit with no shutdown
+#      ordering (a reboot during the hash SIGKILLs it). Nothing needs this
+#      check before basic.target — only nebula-runtime needs it before
+#      ITSELF, which Before= + the runtime's Requires=/After= already
+#      guarantee. Default dependencies are restored.
+#
+#   3. A DEAD REFERENCE. Before= named nebula-runtime.socket, which
+#      DEC-PHASE11-033 deleted. Harmless to systemd, but it is the same class
+#      as orionx-mesh-discover.timer pointing at an uninstalled beacon, and
+#      tests/unit/test_unit_reference_closure.sh now forbids it.
+#
+#   The DEC-PHASE10-009 guarantee is unchanged: this unit still exits
+#   non-zero on a hash mismatch, nebula-runtime still Requires= it, and a
+#   tampered model still cannot run. What changed is that a slow disk no
+#   longer looks like tampering, and that a failure is now announced on the
+#   R.A.I.N. bus by integrity.py rather than only landing in a log file.
+#
+#   NOT changed, and still worth the operator's judgement: this unit is
+#   WantedBy=multi-user.target, so multi-user.target is not reached until the
+#   hash completes. getty and the display manager are not ordered after
+#   multi-user.target and so are not themselves delayed, but anything that is
+#   ordered after it will be. Whether a full re-hash belongs on every boot at
+#   all — as opposed to, say, verifying on first boot and on model change —
+#   is a design question this change does not settle.
+
 [Unit]
 Description=Nebula AI Model Integrity Check
 Documentation=file:///opt/orionx/scripts/nebula/integrity.py
-# Run before nebula-runtime so an integrity failure prevents ollama from starting.
-# nebula-runtime.service (and the socket unit) pull this in via Requires=.
-Before=nebula-runtime.service nebula-runtime.socket
-DefaultDependencies=no
+# Run before nebula-runtime so an integrity failure prevents ollama from
+# starting. nebula-runtime.service pulls this in via Requires=.
+# (nebula-runtime.socket was deleted by DEC-PHASE11-033 and is no longer named.)
+Before=nebula-runtime.service
 After=local-fs.target systemd-tmpfiles-setup.service
 
 [Service]
 Type=oneshot
+# Explicit, generous, BOUNDED. See the DEC-PHASE12-041 note above: the
+# implicit 90s default was shorter than the measured runtime, which turned a
+# slow disk into a failed gate and a dead runtime.
+TimeoutStartSec=900
 # Use absolute path — no PATH dependency at boot (DEC-PHASE10-009 requirement).
 ExecStart=/usr/bin/python3 /opt/orionx/scripts/nebula/integrity.py \
     --models-dir /opt/orionx/nebula/models \

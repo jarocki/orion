@@ -1,31 +1,39 @@
 #include <tunables/global>
 
 # @decision DEC-PHASE10-011
-# @title AppArmor profile: ollama daemon sandboxed to loopback-only network + model read-only
-# @status accepted
-# @rationale DEC-007 (MCP tool server sandboxed) + DEC-006 (ALL AI processing LOCAL) require
-#   that the ollama daemon cannot make outbound network calls. This profile enforces:
-#   - Network: ONLY localhost (127.0.0.1/8) connections; no inet6; no raw sockets.
-#     The explicit deny rules cover inet and inet6 for anything non-loopback.
-#     Note: AppArmor 3.x on Bullseye cannot express "localhost peers only" as a single
-#     network rule; we use the deny-all-then-allow-loopback pattern instead.
-#     If this proves insufficient for a specific kernel version, the fallback is
-#     nftables localhost-only OUTPUT enforcement in orionx-firewall (DEC-PHASE10-011 fallback).
+# @title AppArmor profile: ollama daemon file/exec confinement, model read-only
+# @status accepted (amended by DEC-PHASE12-101)
+# @rationale DEC-007 (MCP tool server sandboxed) + DEC-006 (ALL AI processing LOCAL).
 #   - Model files: read-only access to /opt/orionx/nebula/models/** only.
-#   - Logs: read-write to /var/log/orionx/ for the runtime log.
-#   - No access to /home/** (write denied; matches existing Phase 7 convention).
-#   - No execution of unknown binaries (implicit deny from AppArmor default-deny).
+#   - No access to /home/**.
+#   - Exec: only ollama itself (its model runner) and its vendored libraries.
 #   Style follows usr.bin.tshark (Phase 7 AppArmor convention).
-#   References: DEC-007, DEC-006, DEC-PHASE10-011.
-
-# ATTACHMENT PATH (2026-08-15 fix): ollama lives at /usr/local/bin/ollama, not
-# /usr/bin/ollama. Hook 0500 installs it by extracting the official .tar.zst into
-# /usr/local/ — W10-1 iter-7 changed the distribution form from a (never-existent)
-# .deb to .tar.zst but did not update this profile's attachment path or
-# nebula-runtime.service's ExecStart. AppArmor keys profiles by executable path, so
-# this profile silently never attached: ollama has run unconfined on every build to
-# date, and the DEC-006 LOCAL-ONLY / DEC-007 sandbox guarantees were not enforced.
-# Keep this path in sync with nebula-runtime.service ExecStart=.
+#
+# @decision DEC-PHASE12-101
+# @title ollama may exec its own runner; egress is enforced by systemd, not
+#   claimed by AppArmor
+# @status accepted
+# @rationale Two false claims in the old profile (system P1-4, security F8):
+#   1. It granted no `x` permission at all, while ollama launches its model
+#      runner by re-executing itself (os.Executable(); `strings` on the rc9
+#      binary shows "starting mlx runner", "llama-server startup failed",
+#      the `runner` subcommand). Under enforcement that exec is EACCES and
+#      the first /api/chat fails "llama runner process has terminated".
+#      Now: `/usr/local/bin/ollama mrix` (the runner stays in this profile)
+#      and `ix` on the vendored /usr/local/lib/ollama tree. It also named
+#      /usr/bin/ollama (does not exist) and denied all writes under /root
+#      while ollama runs with HOME=/root and keeps its keypair and cache in
+#      /root/.ollama (baked into the image); that one directory is allowed.
+#   2. It said ollama "cannot make outbound network calls" while granting
+#      `network inet stream`. AppArmor network rules cannot match a peer
+#      address, so "loopback only" is NOT expressible here. The property is
+#      made true by nebula-runtime.service instead (IPAddressDeny=any +
+#      IPAddressAllow=localhost, a cgroup BPF filter the kernel enforces on
+#      every socket of the unit). This profile keeps inet (it must, to serve
+#      127.0.0.1:11434) and denies inet6/raw/packet.
+#   Not verified on a deck: run `curl -s localhost:11434/api/generate -d
+#   '{"model":"<model>","prompt":"hi"}'; journalctl -k | grep DENIED` and
+#   expect a reply and no ollama denials.
 profile ollama /usr/local/bin/ollama {
   #include <abstractions/base>
 
@@ -38,14 +46,22 @@ profile ollama /usr/local/bin/ollama {
   /var/log/orionx/ rw,
   /var/log/orionx/** rw,
 
-  # ollama needs to read its own binary and shared libraries
-  /usr/bin/ollama r,
+  # ollama itself: the server re-executes this binary as its model runner.
+  /usr/local/bin/ollama mrix,
+  # Vendored runtime libraries and helper binaries shipped in the tarball.
+  /usr/local/lib/ollama/ r,
+  /usr/local/lib/ollama/** mrix,
   /usr/lib/** rm,
   /usr/local/lib/** rm,
   /lib/** rm,
 
+  # HOME=/root (nebula-runtime.service): keypair, cache, history.
+  owner /root/.ollama/ rw,
+  owner /root/.ollama/** rwk,
+
   # ollama runtime state (PID file, socket path, etc.)
   /tmp/ollama** rw,
+  /tmp/ r,
   /run/ollama/ rw,
   /run/ollama/** rw,
   /run/orionx/ rw,
@@ -55,33 +71,33 @@ profile ollama /usr/local/bin/ollama {
   /proc/cpuinfo r,
   /proc/meminfo r,
   /proc/*/status r,
+  @{PROC}/@{pid}/{stat,maps,mountinfo,cgroup,cmdline} r,
+  @{PROC}/sys/kernel/** r,
+  /sys/fs/cgroup/** r,
   /sys/class/dma/** r,
   /sys/devices/** r,
+  /etc/os-release r,
+  /usr/lib/os-release r,
 
   # llama.cpp GPU detection (Metal/CUDA/Vulkan probes; may soft-fail on CPU-only)
   /dev/dri/** rw,
   /dev/kfd rw,
 
-  # Network: localhost ONLY (DEC-PHASE10-011 + DEC-006 LOCAL-ONLY)
-  # Allow loopback connections (127.0.0.1:11434 is the ollama API port)
+  # Network: inet is needed to serve 127.0.0.1:11434. WHICH peers it may talk
+  # to is enforced by nebula-runtime.service (IPAddressAllow=localhost), not
+  # here — see DEC-PHASE12-101.
   network inet stream,
   network inet dgram,
-  # Explicitly deny any non-loopback network egress.
-  # These deny rules override the broad 'network inet stream/dgram' above for
-  # non-localhost connections via the AppArmor precedence rules:
-  # "deny" with specificity wins over "allow" when the addressed peer is external.
-  # The operator-facing fallback if AppArmor semantics cannot enforce peer address
-  # filtering is nftables OUTPUT drop (DEC-PHASE10-011 fallback, orionx-firewall).
+  network netlink raw,
   deny network inet6,
   deny network raw,
   deny network packet,
 
-  # No access to user home directories (write) — Phase 7 convention
+  # No access to user home directories
   deny /home/** w,
-  deny /root/** w,
+  deny /home/** r,
 
-  # No execution of arbitrary binaries (AppArmor default-deny covers unknown paths,
-  # but make the intent explicit for audit clarity)
+  # No execution of system binaries (intent made explicit for audit clarity)
   deny /bin/** x,
   deny /sbin/** x,
   deny /usr/sbin/** x,

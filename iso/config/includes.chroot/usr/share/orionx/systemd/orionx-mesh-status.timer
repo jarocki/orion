@@ -1,0 +1,11 @@
+[Unit]
+Description=Orion-X Mesh status snapshot timer (DEC-PHASE12-059)
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=10s
+AccuracySec=2s
+Unit=orionx-mesh-status.service
+
+[Install]
+WantedBy=timers.target

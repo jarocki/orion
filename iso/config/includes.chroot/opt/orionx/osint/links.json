@@ -1,0 +1,730 @@
+{
+  "schema": 1,
+  "decision": "DEC-PHASE12-043",
+  "title": "Orion Workbench",
+  "note": "Hand-maintained. tests/unit/test_osint_surface.sh is the gate: it fails if a local entry points at something that does not ship.",
+  "online_verified": "2026-10-03",
+  "online_method": "Every URL below was fetched with curl -L and returned HTTP 200 at its final effective address on 2026-10-03. Nothing that returned 403, 404, 000 or an unexpected redirect was kept. The list is deliberately shorter than it could be.",
+  "local": [
+    {
+      "id": "cyberchef",
+      "name": "CyberChef 11.5.0",
+      "category": "transform",
+      "blurb": "The cyber swiss-army knife, vendored and served from this deck. Defang, decode, decompress, carve, hash — ~500 operations, no upload, no network.",
+      "kind": "page",
+      "launch": "/cyberchef/",
+      "runtime_path": "/opt/orionx/osint/cyberchef/index.html"
+    },
+    {
+      "id": "pewpew",
+      "name": "Orion-X Attack Map",
+      "category": "visualise",
+      "blurb": "Live tracers from this deck's own event bus. Sources it cannot locate are labelled UNLOCATED, never placed.",
+      "kind": "page",
+      "launch": "/pewpew/",
+      "runtime_path": "/opt/orionx/osint/pewpew/index.html"
+    },
+    {
+      "id": "godseye",
+      "name": "GODSEYE (globe)",
+      "category": "visualise",
+      "blurb": "3-D globe of live public feeds — aircraft, satellites, seismic, weather, hazards. NEEDS THE INTERNET: it caches nothing, so with no route there is no map, and orionx-osint refuses to serve it at a raised posture. Opens a preflight that names every dead layer and every host it would contact.",
+      "kind": "page",
+      "launch": "/godseye/",
+      "runtime_path": "/opt/orionx/osint/godseye/index.html"
+    },
+    {
+      "id": "logquery",
+      "name": "orionx-logquery",
+      "category": "correlate",
+      "blurb": "Forensic log correlation across journald, Suricata, Zeek and the nftables drop log, with preset IR reports.",
+      "kind": "command",
+      "command": "orionx-logquery --report summary",
+      "runtime_path": "/opt/orionx/scripts/logquery/orionx-logquery"
+    },
+    {
+      "id": "pivotglass",
+      "name": "Pivotglass (ap)",
+      "category": "pivot",
+      "blurb": "Adversary-infrastructure hunting: workspaces, evidence, provenance, a relationship graph and STIX 2 export. `ap web` serves its own local cockpit.",
+      "kind": "command",
+      "command": "ap web",
+      "runtime_path": "/opt/orionx/scripts/pivotglass/ap"
+    },
+    {
+      "id": "nucleotide",
+      "name": "nucleotide",
+      "category": "fingerprint",
+      "blurb": "Attribution and fingerprinting over Nuclei scan output — what is this host, and who else looks like it.",
+      "kind": "command",
+      "command": "nucleotide --help",
+      "runtime_path": "/opt/orionx/scripts/nucleotide/nucleotide-cli"
+    },
+    {
+      "id": "artifact",
+      "name": "artifact-analyzer.py",
+      "category": "analyse",
+      "blurb": "Triage a dropped artifact: type, hashes, strings, embedded structure.",
+      "kind": "command",
+      "command": "artifact-analyzer.py --help",
+      "runtime_path": "/opt/orionx/scripts/artifact-analyzer.py"
+    },
+    {
+      "id": "pcap",
+      "name": "pcap-analyzer.py",
+      "category": "analyse",
+      "blurb": "Summarise a capture: conversations, protocols, DNS, HTTP, TLS SNI. Wraps tshark.",
+      "kind": "command",
+      "command": "pcap-analyzer.py --help",
+      "runtime_path": "/opt/orionx/scripts/pcap-analyzer.py"
+    },
+    {
+      "id": "capture",
+      "name": "orionx-capture",
+      "category": "acquire",
+      "blurb": "Bounded on-demand PCAP capture — size- and time-limited, so a capture cannot fill the disk under you.",
+      "kind": "command",
+      "command": "sudo orionx-capture status",
+      "runtime_path": "/opt/orionx/scripts/awareness/orionx-capture"
+    },
+    {
+      "id": "cockpit",
+      "name": "Orion Cockpit",
+      "category": "visualise",
+      "blurb": "The live event stream, threat gauge and network sparkline the map's data comes from.",
+      "kind": "command",
+      "command": "orionx-cockpit",
+      "runtime_path": "/opt/orionx/scripts/cockpit/orionx-cockpit"
+    },
+    {
+      "id": "storyboard",
+      "name": "storyboard-gen.py",
+      "category": "report",
+      "blurb": "Turn findings into an intelligence storyboard you can hand to someone else.",
+      "kind": "command",
+      "command": "storyboard-gen.py --help",
+      "runtime_path": "/opt/orionx/scripts/storyboard-gen.py"
+    },
+    {
+      "id": "diag",
+      "name": "orionx-diag",
+      "category": "verify",
+      "blurb": "Does this deck actually have what it claims? Compares the running system against the build manifest.",
+      "kind": "command",
+      "command": "sudo orionx-diag",
+      "runtime_path": "/opt/orionx/scripts/orionx-diag"
+    },
+    {
+      "id": "freshen-intel",
+      "name": "orionx-freshen-intel",
+      "category": "intel",
+      "blurb": "Refresh the local CISA KEV / threat-intel snapshot. Deliberately manual: when this deck reaches out is your decision.",
+      "kind": "command",
+      "command": "sudo orionx-freshen-intel",
+      "runtime_path": "/opt/orionx/scripts/logquery/orionx-freshen-intel"
+    },
+    {
+      "id": "exiftool",
+      "name": "exiftool",
+      "category": "metadata",
+      "blurb": "Read and strip metadata from images, documents and video — locally, which is the point. Never upload evidence to a web metadata service you did not have to.",
+      "kind": "command",
+      "command": "exiftool -a -u -G1 <file>",
+      "runtime_path": "pkg:libimage-exiftool-perl"
+    },
+    {
+      "id": "whois",
+      "name": "whois",
+      "category": "infrastructure",
+      "blurb": "Registration data for a domain, IP range or ASN, straight from the registry.",
+      "kind": "command",
+      "command": "whois 203.0.113.0",
+      "runtime_path": "pkg:whois"
+    },
+    {
+      "id": "dig",
+      "name": "dig / dnsutils",
+      "category": "infrastructure",
+      "blurb": "DNS by hand: ANY, AXFR attempts, specific resolvers, DNSSEC.",
+      "kind": "command",
+      "command": "dig +short MX example.org",
+      "runtime_path": "pkg:dnsutils"
+    },
+    {
+      "id": "nmap",
+      "name": "nmap",
+      "category": "infrastructure",
+      "blurb": "Host and service discovery. Remember the posture you are in before you scan anything.",
+      "kind": "command",
+      "command": "nmap -sV -Pn <target>",
+      "runtime_path": "pkg:nmap"
+    },
+    {
+      "id": "tshark",
+      "name": "tshark / wireshark",
+      "category": "analyse",
+      "blurb": "Full packet dissection on a capture you already took.",
+      "kind": "command",
+      "command": "tshark -r capture.pcap -q -z conv,ip",
+      "runtime_path": "pkg:tshark"
+    },
+    {
+      "id": "yara",
+      "name": "yara",
+      "category": "malware",
+      "blurb": "Run signature rules against files or memory. Rulesets live in /opt/orionx/yara (orionx-freshen-yara fills them).",
+      "kind": "command",
+      "command": "yara -r /opt/orionx/yara/rules-*/ <path>",
+      "runtime_path": "pkg:yara"
+    },
+    {
+      "id": "ssdeep",
+      "name": "ssdeep",
+      "category": "malware",
+      "blurb": "Fuzzy hashing — find the file that is almost the same as the one you already know.",
+      "kind": "command",
+      "command": "ssdeep -b <file>",
+      "runtime_path": "pkg:ssdeep"
+    },
+    {
+      "id": "foremost",
+      "name": "foremost",
+      "category": "carve",
+      "blurb": "Carve files out of a disk image or an unstructured blob by header signature.",
+      "kind": "command",
+      "command": "foremost -i image.dd -o carved/",
+      "runtime_path": "pkg:foremost"
+    },
+    {
+      "id": "binwalk",
+      "name": "binwalk",
+      "category": "carve",
+      "blurb": "Find and extract embedded filesystems and compressed blobs inside firmware.",
+      "kind": "command",
+      "command": "binwalk -e firmware.bin",
+      "runtime_path": "pkg:binwalk"
+    },
+    {
+      "id": "sleuthkit",
+      "name": "The Sleuth Kit",
+      "category": "forensics",
+      "blurb": "Filesystem-level forensics on an acquired image: fls, icat, mactime.",
+      "kind": "command",
+      "command": "fls -r -m / image.dd",
+      "runtime_path": "pkg:sleuthkit"
+    },
+    {
+      "id": "openssl",
+      "name": "openssl",
+      "category": "transform",
+      "blurb": "Inspect a certificate chain, decode a PEM, check a TLS endpoint's presented cert.",
+      "kind": "command",
+      "command": "openssl s_client -connect host:443 -servername host </dev/null | openssl x509 -noout -text",
+      "runtime_path": "pkg:openssl"
+    },
+    {
+      "id": "firefox",
+      "name": "Firefox ESR",
+      "category": "browse",
+      "blurb": "The deck's browser. Everything on the ONLINE list opens here, when the posture allows it.",
+      "kind": "command",
+      "command": "firefox-esr",
+      "runtime_path": "pkg:firefox-esr"
+    }
+  ],
+  "installable": [
+    {
+      "id": "geoip",
+      "name": "GeoIP country + ASN labels",
+      "command": "sudo /opt/orionx/optional/install-geoip.sh",
+      "runtime_path": "/opt/orionx/optional/install-geoip.sh",
+      "blurb": "DB-IP Lite (CC BY 4.0). Adds country and ASN LABELS to the attack map's sources. It does not add coordinates and the map still places nothing. ~10 MB, monthly data.",
+      "probe": []
+    },
+    {
+      "id": "zeek",
+      "name": "Zeek network security monitor",
+      "command": "sudo /opt/orionx/optional/install-zeek.sh",
+      "runtime_path": "/opt/orionx/optional/install-zeek.sh",
+      "blurb": "Protocol-level logging and notices; orionx-postured ingests its notice/weird/conn logs into the bus the map reads.",
+      "probe": [
+        "/opt/zeek/bin/zeek"
+      ]
+    },
+    {
+      "id": "ghidra",
+      "name": "Ghidra",
+      "command": "sudo /opt/orionx/optional/install-ghidra.sh",
+      "runtime_path": "/opt/orionx/optional/install-ghidra.sh",
+      "blurb": "NSA's reverse-engineering suite. Deferred off the base image for size (DEC-PHASE11-004).",
+      "probe": [
+        "/opt/ghidra"
+      ]
+    },
+    {
+      "id": "floss",
+      "name": "FLOSS",
+      "command": "sudo /opt/orionx/optional/install-floss.sh",
+      "runtime_path": "/opt/orionx/optional/install-floss.sh",
+      "blurb": "Mandiant's obfuscated-string extractor — the strings a packed sample does not hand you.",
+      "probe": [
+        "/opt/orionx/floss"
+      ]
+    },
+    {
+      "id": "trid",
+      "name": "TrID",
+      "command": "sudo /opt/orionx/optional/install-trid.sh",
+      "runtime_path": "/opt/orionx/optional/install-trid.sh",
+      "blurb": "File-type identification by signature when `file` shrugs.",
+      "probe": [
+        "/opt/orionx/trid"
+      ]
+    },
+    {
+      "id": "clamav",
+      "name": "ClamAV",
+      "command": "sudo /opt/orionx/optional/install-clamav.sh",
+      "runtime_path": "/opt/orionx/optional/install-clamav.sh",
+      "blurb": "Signature scanning. Off the base image at -350 MB (DEC-PHASE11-009).",
+      "probe": [
+        "/usr/bin/clamscan"
+      ]
+    },
+    {
+      "id": "duckdb",
+      "name": "DuckDB",
+      "command": "sudo /opt/orionx/optional/install-duckdb.sh",
+      "runtime_path": "/opt/orionx/optional/install-duckdb.sh",
+      "blurb": "Columnar acceleration for orionx-logquery on very large captures. Not required.",
+      "probe": [
+        "python:duckdb"
+      ]
+    },
+    {
+      "id": "piper-voice",
+      "name": "Piper natural voice for R.A.I.N. narration",
+      "command": "sudo /opt/orionx/optional/install-piper-voice.sh",
+      "runtime_path": "/opt/orionx/optional/install-piper-voice.sh",
+      "blurb": "espeak-ng speaks today (robotic, zero added bytes). This adds en_US-lessac-medium — a 63 MB voice model plus onnxruntime, SHA-256-pinned; the installer synthesises real audio and checks the WAV before it declares success. R.A.I.N. discovers it by itself; nothing to configure. On a small CPU synthesis takes seconds: narration is bounded and never delays the alert tone. Turn narration on with `orionx-rain --speech on`.",
+      "probe": [
+        "/usr/share/orionx/voices/en_US-lessac-medium.onnx"
+      ]
+    },
+    {
+      "id": "element",
+      "name": "Element desktop (Matrix client)",
+      "command": "sudo /opt/orionx/optional/install-element.sh",
+      "runtime_path": "/opt/orionx/optional/install-element.sh",
+      "blurb": "Encrypted team communications over Matrix. Adds Element's repository and installs element-desktop; a Synapse server for the team is `sudo setup-matrix.sh --mode server`.",
+      "probe": [
+        "/usr/bin/element-desktop"
+      ]
+    },
+    {
+      "id": "gomuks",
+      "name": "gomuks (Matrix client, terminal)",
+      "command": "sudo /opt/orionx/optional/install-gomuks.sh",
+      "runtime_path": "/opt/orionx/optional/install-gomuks.sh",
+      "blurb": "A terminal Matrix client for a deck without a desktop session, or over SSH.",
+      "probe": [
+        "/usr/local/bin/gomuks"
+      ]
+    }
+  ],
+  "online": [
+    {
+      "name": "Bellingcat Online Investigation Toolkit",
+      "url": "https://bellingcat.gitbook.io/toolkit",
+      "category": "methodology",
+      "note": "Bellingcat's curated, categorised index of open-source investigation tools with use cases and stated limitations.",
+      "verified": "2026-10-03",
+      "featured": true
+    },
+    {
+      "name": "Bellingcat Guides & How-Tos",
+      "url": "https://www.bellingcat.com/category/resources/how-tos/",
+      "category": "methodology",
+      "note": "Worked-example tutorials showing the actual technique behind published investigations.",
+      "verified": "2026-10-03",
+      "featured": true
+    },
+    {
+      "name": "OSINT Framework",
+      "url": "https://osintframework.com/",
+      "category": "methodology",
+      "note": "Tree-structured map of OSINT tools organised by the kind of selector you start from.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "OSINT Curious",
+      "url": "https://www.osintcurio.us/",
+      "category": "methodology",
+      "note": "Practitioner blog and webcast covering tradecraft, ethics and new technique write-ups.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "OSINT Dojo",
+      "url": "https://www.osintdojo.com/",
+      "category": "methodology",
+      "note": "Free training path and practice exercises for building investigator skills from scratch.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Google Fact Check Explorer",
+      "url": "https://toolbox.google.com/factcheck/explorer",
+      "category": "verification",
+      "note": "Searches claims already rated by participating fact-checking organisations worldwide.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Snopes",
+      "url": "https://www.snopes.com/",
+      "category": "verification",
+      "note": "Long-running debunking archive useful for recycled rumours and viral claims.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "PolitiFact",
+      "url": "https://politifact.com/",
+      "category": "verification",
+      "note": "Sourced rulings on political statements, with the evidence trail shown.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Full Fact",
+      "url": "https://fullfact.org/",
+      "category": "verification",
+      "note": "UK-focused independent fact-checking with published methodology and corrections.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "IFCN signatory directory (Poynter)",
+      "url": "https://www.poynter.org/ifcn/",
+      "category": "verification",
+      "note": "Directory of signatory fact-checkers for finding a credible checker in a given country.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Google Maps",
+      "url": "https://www.google.com/maps",
+      "category": "geolocation",
+      "note": "Baseline satellite, Street View and historical imagery for geolocating a scene.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "OpenStreetMap",
+      "url": "https://www.openstreetmap.org/",
+      "category": "geolocation",
+      "note": "Open map data with queryable tags and full edit history for each feature.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Bing Maps",
+      "url": "https://www.bing.com/maps",
+      "category": "geolocation",
+      "note": "Second satellite/oblique imagery source, often from a different capture date than Google.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Esri World Imagery Wayback",
+      "url": "https://livingatlas.arcgis.com/wayback/",
+      "category": "geolocation",
+      "note": "Steps through archived global satellite basemaps to date a change on the ground.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Sentinel Hub EO Browser",
+      "url": "https://apps.sentinel-hub.com/eo-browser/",
+      "category": "geolocation",
+      "note": "Free Sentinel/Landsat imagery by date and band combination for before/after comparison.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "NASA Worldview",
+      "url": "https://worldview.earthdata.nasa.gov/",
+      "category": "geolocation",
+      "note": "Near-real-time daily satellite layers including fire, smoke and flood detection.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "SunCalc",
+      "url": "https://www.suncalc.org/",
+      "category": "geolocation",
+      "note": "Derives sun position and shadow direction for a coordinate and time, to chronolocate a photo.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Overpass Turbo",
+      "url": "https://overpass-turbo.eu/",
+      "category": "geolocation",
+      "note": "Queries OpenStreetMap for every feature matching a tag within an area.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Google Images (reverse)",
+      "url": "https://images.google.com/",
+      "category": "image-video-forensics",
+      "note": "Reverse image search for earlier publications of a supposedly new photo.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Yandex Images (reverse)",
+      "url": "https://yandex.com/images/",
+      "category": "image-video-forensics",
+      "note": "Reverse image search, notably strong on faces, buildings and Eastern European content.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Forensically (29a.ch)",
+      "url": "https://29a.ch/photo-forensics/",
+      "category": "image-video-forensics",
+      "note": "Error-level analysis, clone and noise detection. Runs in the browser; the image is not uploaded.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "FotoForensics",
+      "url": "https://fotoforensics.com/",
+      "category": "image-video-forensics",
+      "note": "ELA and metadata inspection for spotting edited regions in a JPEG.",
+      "verified": "2026-10-03",
+      "caution": "Uploads the image to a third party, which keeps it. Use exiftool and Forensically locally first."
+    },
+    {
+      "name": "ExifTool (upstream)",
+      "url": "https://exiftool.org/",
+      "category": "image-video-forensics",
+      "note": "Documentation for the tool already installed on this deck. Read it here, run it locally.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "YouTube Metadata (mattw.io)",
+      "url": "https://mattw.io/youtube-metadata/",
+      "category": "image-video-forensics",
+      "note": "Exact upload timestamp, geotag and comment history for a YouTube video.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "OpenCorporates",
+      "url": "https://opencorporates.com/",
+      "category": "corporate-records",
+      "note": "Cross-jurisdiction company register search linking officers and addresses across entities.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "ICIJ Offshore Leaks Database",
+      "url": "https://offshoreleaks.icij.org/",
+      "category": "corporate-records",
+      "note": "Searchable graph of offshore entities and officers from the Panama/Paradise/Pandora leaks.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "OCCRP Aleph",
+      "url": "https://aleph.occrp.org/",
+      "category": "corporate-records",
+      "note": "Cross-searches hundreds of leaks, registries and sanctions lists from one query box.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "UK Companies House",
+      "url": "https://find-and-update.company-information.service.gov.uk/",
+      "category": "corporate-records",
+      "note": "Free authoritative UK filings, directors and beneficial-ownership records.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "OFAC Sanctions List Search",
+      "url": "https://sanctionssearch.ofac.treas.gov/",
+      "category": "corporate-records",
+      "note": "Official US Treasury check of a name against SDN and consolidated sanctions lists.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "OpenSanctions",
+      "url": "https://www.opensanctions.org/",
+      "category": "corporate-records",
+      "note": "Merged global sanctions, PEP and watchlist data with provenance for each record.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Internet Archive Wayback Machine",
+      "url": "https://web.archive.org/",
+      "category": "archives",
+      "note": "Historical snapshots of a page after the live version is altered or deleted.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "archive.today",
+      "url": "https://archive.ph/",
+      "category": "archives",
+      "note": "On-demand frozen snapshots that capture content Wayback often misses or is blocked from.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Archive-It",
+      "url": "https://archive-it.org/",
+      "category": "archives",
+      "note": "Curated institutional web collections, useful for government and conflict-related sites.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Arquivo.pt",
+      "url": "https://arquivo.pt/",
+      "category": "archives",
+      "note": "Portuguese national web archive with full-text search across historical page content.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "crt.sh",
+      "url": "https://crt.sh/",
+      "category": "infrastructure",
+      "note": "Certificate Transparency search that exposes subdomains an organisation never advertised.",
+      "verified": "2026-10-03",
+      "caution": "Returned HTTP 502 on 2 of 5 checks during verification. If it is down, use the Google CT entry below."
+    },
+    {
+      "name": "Google Transparency Report — Certificates",
+      "url": "https://transparencyreport.google.com/https/certificates",
+      "category": "infrastructure",
+      "note": "Second independent Certificate Transparency search, for when crt.sh is unavailable.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "urlscan.io",
+      "url": "https://urlscan.io/",
+      "category": "infrastructure",
+      "note": "Sandboxed page loads showing redirect chains, resources and screenshots without visiting the site.",
+      "verified": "2026-10-03",
+      "caution": "Public scans are visible to everyone. Choose an unlisted scan when the URL itself is sensitive."
+    },
+    {
+      "name": "Hurricane Electric BGP Toolkit",
+      "url": "https://bgp.he.net/",
+      "category": "infrastructure",
+      "note": "ASN, prefix and peering lookups for attributing IP space to an operator.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "RIPEstat",
+      "url": "https://stat.ripe.net/",
+      "category": "infrastructure",
+      "note": "Registry, routing-history and geolocation data for any IP, prefix or ASN.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "DNSDumpster",
+      "url": "https://dnsdumpster.com/",
+      "category": "infrastructure",
+      "note": "Passive DNS and subdomain mapping for a domain's visible attack surface.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "ICANN Lookup",
+      "url": "https://lookup.icann.org/",
+      "category": "infrastructure",
+      "note": "Official registration-data lookup for domain creation dates and registrar of record.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Shodan",
+      "url": "https://www.shodan.io/",
+      "category": "infrastructure",
+      "note": "Searches internet-exposed services by banner, product and location.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "ADS-B Exchange Globe",
+      "url": "https://globe.adsbexchange.com/",
+      "category": "transport-tracking",
+      "note": "Unfiltered live aircraft tracking that does not honour owner block lists.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "OpenSky Network",
+      "url": "https://opensky-network.org/",
+      "category": "transport-tracking",
+      "note": "Research-grade historical ADS-B archive for reconstructing past flights.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "FlightAware",
+      "url": "https://www.flightaware.com/",
+      "category": "transport-tracking",
+      "note": "Flight history by tail number or route, including airport activity records.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "VesselFinder",
+      "url": "https://www.vesselfinder.com/",
+      "category": "transport-tracking",
+      "note": "Live AIS ship positions plus vessel particulars, owner and port-call history.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Have I Been Pwned",
+      "url": "https://haveibeenpwned.com/",
+      "category": "social-people",
+      "note": "Whether an address appears in known breach corpora, to pivot to exposure sources.",
+      "verified": "2026-10-03",
+      "caution": "You are typing a subject's address into someone else's search box."
+    },
+    {
+      "name": "WhatsMyName",
+      "url": "https://whatsmyname.app/",
+      "category": "social-people",
+      "note": "Enumerates a username across hundreds of platforms using validated detection rules.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Sherlock (source)",
+      "url": "https://github.com/sherlock-project/sherlock",
+      "category": "social-people",
+      "note": "Open-source CLI username enumerator. Clone it and run it from this deck rather than using a web front end.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "VirusTotal",
+      "url": "https://www.virustotal.com/gui/home/upload",
+      "category": "malware-intel",
+      "note": "Multi-engine file, URL and hash reputation with pivotable relationship graphs.",
+      "verified": "2026-10-03",
+      "caution": "Uploading a sample publishes it. Search the SHA-256 first; upload only when you accept that the adversary may see it."
+    },
+    {
+      "name": "MalwareBazaar",
+      "url": "https://bazaar.abuse.ch/",
+      "category": "malware-intel",
+      "note": "Free sample repository searchable by hash, YARA rule, tag or family.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "URLhaus",
+      "url": "https://urlhaus.abuse.ch/",
+      "category": "malware-intel",
+      "note": "Community feed of URLs actively distributing malware, with payload hashes.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "Malpedia",
+      "url": "https://malpedia.caad.fkie.fraunhofer.de/",
+      "category": "malware-intel",
+      "note": "Curated, citation-backed encyclopedia of malware families and threat-actor aliases.",
+      "verified": "2026-10-03"
+    },
+    {
+      "name": "ANY.RUN",
+      "url": "https://any.run/",
+      "category": "malware-intel",
+      "note": "Interactive sandbox for observing a sample's runtime behaviour and network callbacks.",
+      "verified": "2026-10-03",
+      "caution": "Free-tier submissions are public. Treat every upload as disclosure."
+    },
+    {
+      "name": "AlienVault OTX",
+      "url": "https://otx.alienvault.com/",
+      "category": "malware-intel",
+      "note": "Community threat-intel pulses linking indicators to campaigns and reports.",
+      "verified": "2026-10-03"
+    }
+  ]
+}

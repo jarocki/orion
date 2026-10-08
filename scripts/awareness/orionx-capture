@@ -1,0 +1,844 @@
+#!/usr/bin/env python3
+"""orionx-capture — bounded, on-demand PCAP capture on any reachable interface.
+
+@decision DEC-PHASE12-028
+@title On-demand PCAP capture that is bounded by construction, and Zeek ingest
+  that discovers Zeek at runtime instead of at build time
+@status accepted
+@rationale The deck could analyse a PCAP (scripts/artifact-analyzer.py, tshark,
+  the `triage` verb) but could not PRODUCE one. An operator watching something
+  happen had to remember dumpcap's flags under pressure, on a live image whose
+  writable layer is RAM, with no bound on either size or time. The predictable
+  outcome of that is a deck that fills its own memory during an incident.
+
+  So the bound is not an option here, it is the contract:
+
+    - A capture MUST have a ring-file cap AND a duration cap. `--files 0` and
+      `--duration 0` are refused, loudly, not interpreted as "unlimited".
+      dumpcap is happy to run forever; this tool is not.
+    - The worst-case disk cost is computed before anything starts
+      (file_mb x files) and REFUSED if the filesystem does not hold it with
+      FREE_SPACE_FACTOR headroom. The numbers go in the refusal.
+    - The budget is announced on the R.A.I.N. bus in the same breath as the
+      start, so "what is this capture allowed to consume" is never a question
+      the operator has to go and answer.
+    - A RAM-backed target (the live overlay) is called out at warning, because
+      a 512 MB budget on tmpfs is 512 MB of this deck's memory. It is not
+      silently downsized -- that would be deciding for the operator.
+
+  dumpcap, not tcpdump: it is the privilege-separated capture binary Wireshark
+  ships for exactly this, it already lives at /usr/bin/dumpcap (verified in
+  iso/chroot.files), and its -b ring-buffer options ARE the bounding mechanism,
+  so the bound is enforced by the capture process rather than by a watchdog
+  this tool would otherwise have to become. If dumpcap is missing, capture is
+  reported unavailable on the bus; there is no second-best fallback path,
+  because two capture mechanisms would mean two sets of bounds to trust.
+
+  Privilege: the operator-facing verbs shell out to
+  `systemctl start orionx-capture@<iface>` so the capture runs under the
+  hardened template unit (CAP_NET_RAW only, no shell, ProtectSystem=strict)
+  rather than inheriting a root login's full authority. `orionx-capture run`
+  is the in-unit entry point and is what actually execs dumpcap. Options cross
+  that boundary through a request file, so the unit stays parameterised by the
+  interface alone and there is exactly one implementation of the bounds.
+
+  Posture: capture is NOT tier-gated, and that is deliberate. It is passive --
+  it opens no port, sends no packet, and answers nothing. It is correct at
+  Tier 0 for the same reason orionx-scanwatch is (DEC-PHASE12-022). This tool
+  READS /run/orionx/posture-status.json to annotate its events with the tier
+  in force; it never writes it and never decides it. orionx-postured
+  (DEC-PHASE12-024) remains the single posture authority.
+
+Usage:
+    orionx-capture list                        # interfaces, with capturability
+    sudo orionx-capture start eth0             # bounded capture via systemd
+    sudo orionx-capture start eth0 --duration 300 --max-file-mb 32 --files 4
+    orionx-capture status                      # what is running, and its bounds
+    sudo orionx-capture stop eth0
+    orionx-capture plan eth0                   # print the plan, change nothing
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+# --- Paths (single authorities, all overridable for tests) ------------------
+
+SYS_CLASS_NET = Path("/sys/class/net")
+PROC_MOUNTS = Path("/proc/mounts")
+CAPTURE_ROOT = Path("/var/lib/orionx/capture")
+STATE_DIR = Path("/run/orionx/capture")
+POSTURE_STATUS = Path("/run/orionx/posture-status.json")
+DUMPCAP = "dumpcap"
+UNIT_FOR = "orionx-capture@{iface}.service".format
+
+# --- Bounds -----------------------------------------------------------------
+# Defaults chosen against the live image's writable layer, not against a
+# workstation's disk: 8 x 64 MB = 512 MB worst case, 15 minutes. Long enough to
+# cover an incident window an operator is actively watching, small enough that
+# the default can be accepted without thinking on a RAM-backed overlay.
+
+DEFAULT_FILE_MB = 64
+DEFAULT_FILES = 8
+DEFAULT_DURATION = 900
+
+# A single capture may not budget more than this, whatever the operator asks
+# for. --force does not exist for this: a deck that lets one command reserve
+# 40 GB has no bound, it has a suggestion.
+HARD_CEILING_MB = 4096
+
+# Refuse unless the filesystem holds the whole budget with this much headroom.
+# 1.25 rather than 1.0 because pcapng index/metadata and the rest of the system
+# also need room, and a capture that fills the disk to the last byte takes the
+# journal and the event bus down with it.
+FREE_SPACE_FACTOR = 1.25
+
+# Filesystems whose "free space" is this deck's memory.
+RAM_FSTYPES = frozenset({"tmpfs", "ramfs", "overlay"})
+
+IFF_UP = 0x1  # linux/if.h
+
+# Refusal reasons — named so tests assert on the reason, not on prose.
+R_OK = "ok"
+R_UNKNOWN_IFACE = "unknown-interface"
+R_UNBOUNDED_TIME = "unbounded-duration-refused"
+R_UNBOUNDED_SIZE = "unbounded-ring-refused"
+R_OVER_CEILING = "budget-over-ceiling"
+R_NO_SPACE = "insufficient-space"
+R_NO_DUMPCAP = "dumpcap-missing"
+
+
+# ===========================================================================
+# PURE: interface enumeration
+# ===========================================================================
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def enumerate_interfaces(root: Path = SYS_CLASS_NET) -> list[dict]:
+    """Every interface this deck can reach, from the kernel's own list.
+
+    /sys/class/net is the authority. `ip link` would need iproute2 to be
+    present and parseable; the sysfs tree is always there, is stable, and gives
+    operstate/flags/type without spawning anything.
+
+    Sorted for stable output. An unreadable sysfs yields [] rather than raising,
+    but the caller is expected to treat [] as "cannot enumerate", which is a
+    loud condition, not an empty network.
+    """
+    out: list[dict] = []
+    try:
+        entries = sorted(p for p in root.iterdir())
+    except OSError:
+        return out
+    for entry in entries:
+        name = entry.name
+        if name.startswith("."):
+            continue
+        flags_raw = _read_text(entry / "flags")
+        try:
+            flags = int(flags_raw, 16) if flags_raw else 0
+        except ValueError:
+            flags = 0
+        try:
+            iftype = int(_read_text(entry / "type") or "-1")
+        except ValueError:
+            iftype = -1
+        out.append({
+            "name": name,
+            "operstate": _read_text(entry / "operstate") or "unknown",
+            "up": bool(flags & IFF_UP),
+            "type": iftype,
+            "address": _read_text(entry / "address"),
+            "loopback": name == "lo",
+        })
+    return out
+
+
+def interface_names(interfaces: list[dict]) -> list[str]:
+    return [i["name"] for i in interfaces]
+
+
+def find_interface(name: str, interfaces: list[dict]) -> dict | None:
+    for i in interfaces:
+        if i["name"] == name:
+            return i
+    return None
+
+
+def format_interface(iface: dict) -> str:
+    link = "UP" if iface["up"] else "DOWN"
+    mac = iface["address"] or "-"
+    return (f"{iface['name']:<16} {link:<5} operstate={iface['operstate']:<8} "
+            f"mac={mac}")
+
+
+# ===========================================================================
+# PURE: is the capture target's free space actually memory?
+# ===========================================================================
+
+def parse_mounts(text: str) -> list[tuple[str, str]]:
+    """(mountpoint, fstype) pairs from /proc/mounts content. Never raises."""
+    pairs: list[tuple[str, str]] = []
+    for line in (text or "").splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        # /proc/mounts octal-escapes spaces in mountpoints.
+        pairs.append((parts[1].replace("\\040", " "), parts[2]))
+    return pairs
+
+
+def fs_type_for(path: str | os.PathLike, mounts: list[tuple[str, str]]) -> str:
+    """fstype of the filesystem holding `path`: the longest matching mountpoint.
+
+    Longest-prefix, not first-match, because / matches everything and would
+    otherwise mask the overlay or tmpfs that actually backs the target.
+    """
+    target = os.path.abspath(str(path))
+    best = ""
+    best_type = ""
+    for mountpoint, fstype in mounts:
+        mp = os.path.abspath(mountpoint)
+        if target == mp or target.startswith(mp.rstrip("/") + "/"):
+            if len(mp) >= len(best):
+                best, best_type = mp, fstype
+    return best_type
+
+
+def is_ram_backed(path: str | os.PathLike,
+                  mounts_text: str | None = None) -> bool:
+    """True if writing to `path` consumes RAM rather than storage.
+
+    On a live ISO the writable layer is an overlay whose upper dir is tmpfs, so
+    this is the normal case for Orion-X, not the exception. It does not block a
+    capture -- it is announced, because the operator is the one who knows
+    whether spending 512 MB of memory is acceptable right now.
+    """
+    if mounts_text is None:
+        try:
+            mounts_text = PROC_MOUNTS.read_text(encoding="utf-8",
+                                                errors="replace")
+        except OSError:
+            return False
+    return fs_type_for(path, parse_mounts(mounts_text)) in RAM_FSTYPES
+
+
+# ===========================================================================
+# PURE: the plan — the ONE place a capture's bounds are decided
+# ===========================================================================
+
+def dumpcap_argv(iface: str, out_path: str | os.PathLike, *,
+                 file_mb: int, files: int, duration: int,
+                 snaplen: int = 0, bpf: str = "") -> list[str]:
+    """The exact dumpcap command line, bounds included.
+
+    -b filesize: is in kB, so MB is multiplied by 1024 here and nowhere else.
+    -b files:N  is the RING: dumpcap reuses the oldest file, which is what caps
+                total disk at file_mb * files.
+    -a duration:N stops the WHOLE capture (-b duration: would only rotate).
+    -q          no per-packet chatter on a journal-backed stdout.
+    -n          never resolve names: a capture must not generate traffic.
+    """
+    argv = [
+        DUMPCAP, "-i", str(iface), "-w", str(out_path),
+        "-b", f"filesize:{int(file_mb) * 1024}",
+        "-b", f"files:{int(files)}",
+        "-a", f"duration:{int(duration)}",
+        "-q", "-n",
+    ]
+    if snaplen and int(snaplen) > 0:
+        argv += ["-s", str(int(snaplen))]
+    if bpf:
+        argv += ["-f", str(bpf)]
+    return argv
+
+
+def plan_capture(iface: str, interfaces: list[dict], *,
+                 file_mb: int = DEFAULT_FILE_MB,
+                 files: int = DEFAULT_FILES,
+                 duration: int = DEFAULT_DURATION,
+                 free_mb: float | None = None,
+                 out_dir: str | os.PathLike = CAPTURE_ROOT,
+                 ram_backed: bool = False,
+                 have_dumpcap: bool = True,
+                 snaplen: int = 0, bpf: str = "") -> dict:
+    """Decide whether this capture may run, and on what budget. No side effects.
+
+    Every refusal carries a named `reason` and a message that states the
+    numbers, because "capture failed" is the kind of report that teaches an
+    operator nothing. Warnings are for conditions that do not stop the capture
+    but that the operator must be told about in the same breath.
+    """
+    warnings: list[str] = []
+    names = interface_names(interfaces)
+
+    def refuse(reason: str, message: str) -> dict:
+        return {"ok": False, "reason": reason, "message": message,
+                "iface": iface, "warnings": warnings, "budget_mb": 0,
+                "argv": [], "out_path": "", "file_mb": file_mb,
+                "files": files, "duration": duration}
+
+    if not have_dumpcap:
+        return refuse(
+            R_NO_DUMPCAP,
+            "PCAP capture is unavailable: dumpcap is not installed. It ships in "
+            "wireshark-common; install it with `sudo apt-get install "
+            "wireshark-common`. No capture was started.")
+
+    if not names:
+        return refuse(
+            R_UNKNOWN_IFACE,
+            "Cannot enumerate interfaces: /sys/class/net is empty or "
+            "unreadable. This is a broken deck, not a quiet network. No "
+            "capture was started.")
+
+    target = find_interface(iface, interfaces)
+    if target is None:
+        return refuse(
+            R_UNKNOWN_IFACE,
+            f"No interface named '{iface}' on this deck. Available: "
+            f"{', '.join(names)}. No capture was started.")
+
+    # Bounds are mandatory. Zero does not mean "unlimited" here; it means the
+    # operator asked for something this tool does not offer, and is told so.
+    if int(duration) <= 0:
+        return refuse(
+            R_UNBOUNDED_TIME,
+            "Refusing a capture with no time bound (--duration must be > 0). "
+            "An unbounded capture on this deck's RAM-backed overlay is how the "
+            f"deck runs itself out of memory. Default is {DEFAULT_DURATION}s.")
+    if int(files) <= 0:
+        return refuse(
+            R_UNBOUNDED_SIZE,
+            "Refusing a capture with no ring-file bound (--files must be > 0). "
+            f"Without a ring there is no cap on disk. Default is {DEFAULT_FILES}.")
+    if int(file_mb) <= 0:
+        return refuse(
+            R_UNBOUNDED_SIZE,
+            "Refusing a capture with no per-file size bound (--max-file-mb "
+            f"must be > 0). Default is {DEFAULT_FILE_MB} MB.")
+
+    budget_mb = int(file_mb) * int(files)
+    if budget_mb > HARD_CEILING_MB:
+        return refuse(
+            R_OVER_CEILING,
+            f"Refusing a {budget_mb} MB capture budget: the per-capture ceiling "
+            f"is {HARD_CEILING_MB} MB ({file_mb} MB x {files} files). Lower "
+            "--max-file-mb or --files.")
+
+    if free_mb is not None:
+        needed = budget_mb * FREE_SPACE_FACTOR
+        if float(free_mb) < needed:
+            return refuse(
+                R_NO_SPACE,
+                f"Refusing a {budget_mb} MB capture on {out_dir}: only "
+                f"{float(free_mb):.0f} MB free, and {needed:.0f} MB is required "
+                f"({budget_mb} MB budget x {FREE_SPACE_FACTOR} headroom so a "
+                "capture cannot take the event bus down with the disk). Lower "
+                "the budget or use --dir on storage with room.")
+
+    if ram_backed:
+        warnings.append(
+            f"{out_dir} is on a RAM-backed filesystem (live overlay/tmpfs): "
+            f"this capture's {budget_mb} MB budget comes out of this deck's "
+            "MEMORY, not its disk. Use --dir on persistent storage for "
+            "anything long-running.")
+    if not target["up"]:
+        warnings.append(
+            f"{iface} is DOWN (operstate={target['operstate']}): the capture "
+            "will start and record nothing until the link comes up.")
+    if target["loopback"]:
+        warnings.append(
+            f"{iface} is the loopback interface: this captures only traffic "
+            "this deck sends to itself, not network traffic.")
+
+    out_path = Path(out_dir) / iface / f"{iface}.pcapng"
+    return {
+        "ok": True, "reason": R_OK, "iface": iface,
+        "budget_mb": budget_mb, "file_mb": int(file_mb), "files": int(files),
+        "duration": int(duration), "warnings": warnings,
+        "out_path": str(out_path),
+        "argv": dumpcap_argv(iface, out_path, file_mb=file_mb, files=files,
+                             duration=duration, snaplen=snaplen, bpf=bpf),
+        "message": format_bounds(iface, int(file_mb), int(files),
+                                 int(duration), budget_mb, out_path),
+    }
+
+
+def format_bounds(iface: str, file_mb: int, files: int, duration: int,
+                  budget_mb: int, out_path: str | os.PathLike) -> str:
+    """The sentence that makes the bound impossible to miss."""
+    mins = duration / 60.0
+    return (f"PCAP capture on {iface} — ring {files} x {file_mb} MB "
+            f"(hard cap {budget_mb} MB, oldest file overwritten), auto-stop "
+            f"after {duration}s ({mins:.0f} min) → {out_path}")
+
+
+# ===========================================================================
+# EFFECTS: the bus, posture read-only, state and request files
+# ===========================================================================
+
+# "capture", not "health" (DEC-PHASE12-040). Both are in
+# rain_lib.STATUS_CATEGORIES and so both are excluded from THREAT PRESSURE —
+# the gauge safety no longer depends on choosing the generic label. Given
+# that, the specific one is better: it lets the Cockpit filter capture
+# activity distinctly instead of lumping it with every other self-report.
+def publish(severity: str, message: str, category: str = "capture",
+            source: str = "capture", dry_run: bool = False) -> None:
+    """Fire-and-forget onto the bus via the orionx-event CLI.
+
+    Same contract as orionx-scanwatch and orionx-postured: subprocess to the
+    CLI rather than importing rain_lib, so there is one writer convention.
+
+    The default category is `health`, and it used to be `capture`. Every one
+    of this file's events is a statement about the deck's OWN capture
+    instrumentation — it started, it stopped, it could not enumerate
+    interfaces — and not one of them is a detection. pressure() in
+    cockpit_lib weights by severity and excludes `health`, `posture`,
+    `service` and `tooling`; it did not exclude `capture`, so a failed
+    capture added +20 to THREAT PRESSURE and flashed the screen red, and a
+    few in a row read ELEVATED on a deck nothing was attacking.
+    RESILIENCE.md rule 5: self-diagnosis is not a threat. Keeping it as the
+    DEFAULT rather than editing eleven call sites means there is one place
+    this is decided, so a twelfth site cannot reintroduce it by omission.
+    """
+    if dry_run:
+        print(f"[{severity}] {source}/{category}: {message}", flush=True)
+        return
+    try:
+        subprocess.Popen(
+            ["orionx-event", "--severity", severity, "--source", source,
+             "--category", category, message],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        pass
+
+
+def current_tier_label(path: Path = POSTURE_STATUS) -> str:
+    """The tier orionx-postured says is in force. READ ONLY.
+
+    This tool has no opinion about the tier and never writes this file.
+    orionx-postured (DEC-PHASE12-024) is the single posture authority; this is
+    a consumer, so that a capture event says which posture it happened under.
+    """
+    try:
+        rec = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(rec, dict):
+            return str(rec.get("label") or rec.get("tier") or "unknown")
+    except (OSError, ValueError):
+        pass
+    return "unknown"
+
+
+def state_path(iface: str, state_dir: Path = STATE_DIR) -> Path:
+    return Path(state_dir) / f"{iface}.json"
+
+
+def request_path(iface: str, state_dir: Path = STATE_DIR) -> Path:
+    return Path(state_dir) / f"{iface}.request.json"
+
+
+def write_json(path: Path, payload: dict) -> bool:
+    """Atomic write. A half-written state file would be a lie about the deck."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        os.replace(tmp, path)
+        return True
+    except OSError:
+        return False
+
+
+def read_json(path: Path) -> dict | None:
+    try:
+        rec = json.loads(Path(path).read_text(encoding="utf-8"))
+        return rec if isinstance(rec, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def active_captures(state_dir: Path = STATE_DIR) -> list[dict]:
+    """Every capture with live state, for `status` and for the Cockpit.
+
+    orionx-postured folds this into /run/orionx/posture-status.json so the
+    Cockpit has one status authority to read, not two.
+    """
+    out: list[dict] = []
+    try:
+        entries = sorted(Path(state_dir).glob("*.json"))
+    except OSError:
+        return out
+    for entry in entries:
+        if entry.name.endswith(".request.json"):
+            continue
+        rec = read_json(entry)
+        if rec:
+            out.append(rec)
+    return out
+
+
+def free_mb_for(path: str | os.PathLike) -> float | None:
+    """Free MB on the filesystem that will hold the capture.
+
+    Walks up to the nearest existing ancestor, because the per-interface
+    directory does not exist until the capture starts.
+    """
+    p = Path(path)
+    while not p.exists() and p != p.parent:
+        p = p.parent
+    try:
+        return shutil.disk_usage(p).free / (1024.0 * 1024.0)
+    except OSError:
+        return None
+
+
+def systemctl(verb: str, unit: str, dry_run: bool = False,
+              runner=subprocess.run) -> bool:
+    if dry_run:
+        print(f"[dry-run] systemctl {verb} {unit}", flush=True)
+        return True
+    try:
+        res = runner(["systemctl", verb, unit], capture_output=True,
+                     text=True, timeout=30, check=False)
+        return res.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+# ===========================================================================
+# VERBS
+# ===========================================================================
+
+def build_plan(iface: str, args, *, sysfs: Path | None = None) -> dict:
+    """Assemble a plan for `iface` from live system facts plus the args."""
+    interfaces = enumerate_interfaces(sysfs or Path(args.sysfs))
+    out_dir = Path(args.dir)
+    return plan_capture(
+        iface, interfaces,
+        file_mb=args.max_file_mb, files=args.files, duration=args.duration,
+        free_mb=free_mb_for(out_dir), out_dir=out_dir,
+        ram_backed=is_ram_backed(out_dir),
+        have_dumpcap=shutil.which(DUMPCAP) is not None,
+        snaplen=args.snaplen, bpf=args.filter,
+    )
+
+
+def announce(plan: dict, dry_run: bool = False) -> None:
+    """Say what is about to happen, or why it will not, on the bus.
+
+    A refusal is a warning-severity BUS event, not just a non-zero exit: an
+    operator who asked for a capture and did not get one must be told by the
+    same channel that would have told them about the capture. A refusal that
+    only shows up on a terminal nobody is reading is a silent failure.
+    """
+    tier = current_tier_label()
+    if not plan["ok"]:
+        publish("warning", f"{plan['message']} [posture: {tier}]",
+                dry_run=dry_run)
+        return
+    publish("notice", f"{plan['message']} [posture: {tier}]", dry_run=dry_run)
+    for warn in plan["warnings"]:
+        publish("warning", warn, dry_run=dry_run)
+
+
+def cmd_list(args) -> int:
+    interfaces = enumerate_interfaces(Path(args.sysfs))
+    if args.json:
+        print(json.dumps(interfaces, indent=2))
+        return 0
+    if not interfaces:
+        print(f"No interfaces found under {args.sysfs}. This is a broken deck, "
+              "not a quiet network.", file=sys.stderr)
+        publish("warning", f"Interface enumeration FAILED: {args.sysfs} is "
+                "empty or unreadable. PCAP capture cannot be targeted.",
+                dry_run=args.dry_run)
+        return 1
+    have = shutil.which(DUMPCAP)
+    print(f"dumpcap: {have or 'MISSING — capture unavailable'}")
+    print(f"posture: {current_tier_label()}  (capture is passive; allowed at "
+          "every tier)")
+    print(f"{'INTERFACE':<16} {'LINK':<5} {'STATE':<17} MAC")
+    for iface in interfaces:
+        print(format_interface(iface))
+    return 0
+
+
+def cmd_plan(args) -> int:
+    plan = build_plan(args.iface, args)
+    if args.json:
+        print(json.dumps(plan, indent=2))
+        return 0 if plan["ok"] else 1
+    if not plan["ok"]:
+        print(f"REFUSED ({plan['reason']}): {plan['message']}", file=sys.stderr)
+        return 1
+    print(plan["message"])
+    for warn in plan["warnings"]:
+        print(f"WARNING: {warn}")
+    print("command: " + " ".join(plan["argv"]))
+    return 0
+
+
+def cmd_start(args) -> int:
+    """Validate, then hand off to the hardened template unit.
+
+    The plan is built HERE, before systemd is involved, so a refusal costs
+    nothing and is reported by this process rather than buried in a unit's
+    journal. The request file carries the bounds across the boundary.
+    """
+    plan = build_plan(args.iface, args)
+    if not plan["ok"]:
+        announce(plan, dry_run=args.dry_run)
+        print(f"REFUSED ({plan['reason']}): {plan['message']}", file=sys.stderr)
+        return 1
+
+    existing = read_json(state_path(args.iface, Path(args.state_dir)))
+    if existing and not args.restart:
+        print(f"A capture is already recorded on {args.iface} "
+              f"(started {time.ctime(existing.get('started', 0))}). "
+              "Use --restart to replace it, or `orionx-capture stop "
+              f"{args.iface}` first.", file=sys.stderr)
+        return 1
+
+    if not write_json(request_path(args.iface, Path(args.state_dir)), {
+        "iface": args.iface, "file_mb": plan["file_mb"],
+        "files": plan["files"], "duration": plan["duration"],
+        "dir": str(args.dir), "snaplen": args.snaplen, "filter": args.filter,
+        "requested": time.time(),
+    }):
+        print(f"Could not write the capture request under {args.state_dir}.",
+              file=sys.stderr)
+        publish("warning", f"PCAP capture on {args.iface} could not start: the "
+                f"request file under {args.state_dir} is not writable.",
+                dry_run=args.dry_run)
+        return 1
+
+    if args.direct:
+        return cmd_run(args)
+
+    unit = UNIT_FOR(iface=args.iface)
+    if not systemctl("restart" if args.restart else "start", unit,
+                     dry_run=args.dry_run):
+        publish("warning", f"PCAP capture on {args.iface} FAILED to start: "
+                f"systemctl could not start {unit}. Check `systemctl status "
+                f"{unit}`.", dry_run=args.dry_run)
+        print(f"systemctl could not start {unit}", file=sys.stderr)
+        return 1
+    print(plan["message"])
+    for warn in plan["warnings"]:
+        print(f"WARNING: {warn}")
+    print(f"unit: {unit}  (stop with: sudo orionx-capture stop {args.iface})")
+    return 0
+
+
+def cmd_stop(args) -> int:
+    unit = UNIT_FOR(iface=args.iface)
+    ok = systemctl("stop", unit, dry_run=args.dry_run)
+    st = read_json(state_path(args.iface, Path(args.state_dir)))
+    for path in (state_path(args.iface, Path(args.state_dir)),
+                 request_path(args.iface, Path(args.state_dir))):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    written = ""
+    if st:
+        out = Path(st.get("out_path", ""))
+        try:
+            total = sum(p.stat().st_size for p in out.parent.glob(f"{out.stem}*"))
+            written = f", {total / (1024.0 * 1024.0):.1f} MB on disk"
+        except OSError:
+            written = ""
+    publish("notice", f"PCAP capture on {args.iface} stopped by the operator"
+            f"{written}.", dry_run=args.dry_run)
+    print(f"stopped {unit}{written}")
+    return 0 if ok else 1
+
+
+def cmd_status(args) -> int:
+    captures = active_captures(Path(args.state_dir))
+    if args.json:
+        print(json.dumps(captures, indent=2))
+        return 0
+    if not captures:
+        print("No PCAP capture is running.")
+        print(f"dumpcap: {shutil.which(DUMPCAP) or 'MISSING'}")
+        return 0
+    for rec in captures:
+        unit = UNIT_FOR(iface=rec.get("iface", "?"))
+        age = time.time() - float(rec.get("started", 0) or 0)
+        print(f"{rec.get('iface')}: ring {rec.get('files')} x "
+              f"{rec.get('file_mb')} MB (cap {rec.get('budget_mb')} MB), "
+              f"stops after {rec.get('duration')}s, running {age:.0f}s")
+        print(f"  -> {rec.get('out_path')}")
+        print(f"  unit {unit}")
+    return 0
+
+
+def cmd_run(args) -> int:
+    """The in-unit entry point: exec dumpcap under the plan's bounds.
+
+    This is what orionx-capture@.service runs. It re-derives the plan from the
+    request file rather than trusting the unit's environment, so the bounds are
+    computed by the same function in both paths -- there is no "systemd path"
+    and "manual path" with two ideas of what is allowed.
+    """
+    req = read_json(request_path(args.iface, Path(args.state_dir))) or {}
+    for key, attr in (("file_mb", "max_file_mb"), ("files", "files"),
+                      ("duration", "duration"), ("snaplen", "snaplen")):
+        if key in req:
+            try:
+                setattr(args, attr, int(req[key]))
+            except (TypeError, ValueError):
+                pass
+    if req.get("dir"):
+        args.dir = req["dir"]
+    if req.get("filter"):
+        args.filter = str(req["filter"])
+
+    plan = build_plan(args.iface, args)
+    if not plan["ok"]:
+        announce(plan, dry_run=args.dry_run)
+        print(f"REFUSED ({plan['reason']}): {plan['message']}", file=sys.stderr)
+        return 1
+
+    out = Path(plan["out_path"])
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        publish("warning", f"PCAP capture on {args.iface} could not start: "
+                f"{out.parent} is not writable ({exc}).", dry_run=args.dry_run)
+        print(f"cannot create {out.parent}: {exc}", file=sys.stderr)
+        return 1
+
+    started = time.time()
+    write_json(state_path(args.iface, Path(args.state_dir)), {
+        "iface": args.iface, "started": started, "out_path": str(out),
+        "file_mb": plan["file_mb"], "files": plan["files"],
+        "duration": plan["duration"], "budget_mb": plan["budget_mb"],
+        "argv": plan["argv"], "posture": current_tier_label(),
+        "ram_backed": bool(plan["warnings"] and "RAM-backed" in
+                           plan["warnings"][0]),
+    })
+    announce(plan, dry_run=args.dry_run)
+
+    if args.dry_run:
+        print("[dry-run] " + " ".join(plan["argv"]), flush=True)
+        return 0
+
+    rc = 1
+    try:
+        rc = subprocess.call(plan["argv"])
+    except OSError as exc:
+        publish("warning", f"PCAP capture on {args.iface} FAILED to exec "
+                f"dumpcap: {exc}", dry_run=args.dry_run)
+        print(f"could not exec dumpcap: {exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        rc = 0
+    finally:
+        elapsed = time.time() - started
+        try:
+            total = sum(p.stat().st_size
+                        for p in out.parent.glob(f"{out.stem}*"))
+            size = f"{total / (1024.0 * 1024.0):.1f} MB"
+        except OSError:
+            size = "unknown size"
+        try:
+            state_path(args.iface, Path(args.state_dir)).unlink()
+        except OSError:
+            pass
+        if rc == 0:
+            publish("notice", f"PCAP capture on {args.iface} finished after "
+                    f"{elapsed:.0f}s — {size} written to {out.parent} "
+                    f"(bound: {plan['budget_mb']} MB / {plan['duration']}s). "
+                    f"Analyse with: zeek -r {out}  or  tshark -r {out}",
+                    dry_run=args.dry_run)
+        else:
+            publish("warning", f"PCAP capture on {args.iface} EXITED {rc} after "
+                    f"{elapsed:.0f}s ({size} written). dumpcap failed — check "
+                    f"`journalctl -u {UNIT_FOR(iface=args.iface)}`. Capture is "
+                    "NOT running.", dry_run=args.dry_run)
+    return rc
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="orionx-capture",
+        description="Bounded, on-demand PCAP capture feeding the R.A.I.N. bus.",
+        epilog="Every capture is bounded in BOTH size and time. There is no "
+               "unbounded mode.",
+    )
+    # Shared options live on a PARENT parser, not on the top-level parser, so
+    # that `orionx-capture start eth0 --duration 300` works. argparse only
+    # accepts top-level options BEFORE the subcommand, and options-after-verb is
+    # what an operator under pressure actually types (and what this tool's own
+    # --help documents), so the flags belong on every subparser.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--state-dir", default=str(STATE_DIR),
+                        help="runtime state directory (default: %(default)s)")
+    common.add_argument("--sysfs", default=str(SYS_CLASS_NET),
+                        help="interface sysfs root (default: %(default)s)")
+    common.add_argument("--dir", default=str(CAPTURE_ROOT),
+                        help="where PCAPs are written (default: %(default)s)")
+    common.add_argument("--max-file-mb", type=int, default=DEFAULT_FILE_MB,
+                        help="per-file size before rotation (default: %(default)s)")
+    common.add_argument("--files", type=int, default=DEFAULT_FILES,
+                        help="ring size; total cap is files x max-file-mb "
+                             "(default: %(default)s)")
+    common.add_argument("--duration", type=int, default=DEFAULT_DURATION,
+                        help="stop the capture after N seconds "
+                             "(default: %(default)s)")
+    common.add_argument("--snaplen", type=int, default=0,
+                        help="bytes captured per packet, 0 = full (default: 0)")
+    common.add_argument("--filter", default="",
+                        help="BPF capture filter, e.g. 'not port 22'")
+    common.add_argument("--json", action="store_true",
+                        help="machine-readable output")
+    common.add_argument("--dry-run", action="store_true",
+                        help="print the plan and the events, change nothing")
+    sub = ap.add_subparsers(dest="verb", required=True)
+
+    sub.add_parser("list", parents=[common],
+                   help="enumerate interfaces and capture readiness")
+    sub.add_parser("status", parents=[common],
+                   help="what is capturing, and under what bounds")
+    for verb, helptext in (("plan", "print the plan without starting anything"),
+                           ("start", "start a bounded capture"),
+                           ("stop", "stop the capture on an interface"),
+                           ("run", "in-unit entry point (execs dumpcap)")):
+        p = sub.add_parser(verb, parents=[common], help=helptext)
+        p.add_argument("iface", help="interface name, e.g. eth0")
+        if verb == "start":
+            p.add_argument("--restart", action="store_true",
+                           help="replace a capture already running")
+            p.add_argument("--direct", action="store_true",
+                           help="run dumpcap here instead of via systemd "
+                                "(no unit hardening; for debugging)")
+
+    args = ap.parse_args(argv)
+    if not hasattr(args, "restart"):
+        args.restart = False
+    if not hasattr(args, "direct"):
+        args.direct = False
+
+    return {
+        "list": cmd_list, "status": cmd_status, "plan": cmd_plan,
+        "start": cmd_start, "stop": cmd_stop, "run": cmd_run,
+    }[args.verb](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

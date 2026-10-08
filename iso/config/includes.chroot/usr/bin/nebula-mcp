@@ -1,0 +1,37 @@
+#!/usr/bin/python3
+"""nebula-mcp — entrypoint for the confined Nebula MCP tool server.
+
+@decision DEC-PHASE12-025
+@title A real executable at /usr/bin/nebula-mcp, not a PATH symlink
+@status accepted
+@rationale Two reasons this is a file and not another 0700 SCRIPT_MAP symlink.
+
+  (1) ATTACHMENT PATH. /etc/apparmor.d/usr.bin.nebula-mcp is named for this
+  path, and the unit file, the profile and the docs all agree on it. A symlink
+  into /opt would make the profile's attachment path a lie. Note the honest
+  limit: AppArmor keys a profile on the *interpreter* for a #!-script, so the
+  attachment line alone would never confine this — /usr/bin/python3 is what
+  the kernel execs. That is exactly the bug that left ollama unconfined on
+  every build until 2026-08-15 (see usr.bin.ollama). The load-bearing
+  mechanism here is AppArmorProfile=nebula-mcp in nebula-mcp.service, which
+  calls aa_change_onexec() and does not care about paths at all.
+
+  (2) tests/unit/test_orionx_setup_hook_unit.sh asserts that 0700's SCRIPT_MAP
+  contains no ["nebula-mcp"] entry. Shipping the entrypoint via
+  includes.chroot keeps that assertion true and keeps this slice out of a hook
+  two other agents are editing.
+
+Interpreter is /usr/bin/python3, not /usr/bin/env python3: under the
+confinement profile there is no reason to let PATH decide which interpreter
+runs as nebula-mcp.
+"""
+from __future__ import annotations
+
+import sys
+
+sys.path.insert(0, "/opt/orionx/scripts/nebula")
+
+from mcp_server import main  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,270 +1,93 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
 #
-# Test suite for Matrix Synapse systemd unit file (W2-2)
+# Matrix Synapse: ONE unit authority (DEC-PHASE12-102)
 #
-# Validates the systemd service unit for Matrix Synapse with WireGuard mesh
-# dependency. Static analysis only — no systemd runtime required.
-# If systemd-analyze is available, runs structural verification.
+# The package's matrix-synapse.service is the only Synapse unit. Orion-X
+# hardens it with a drop-in and ships no unit and no AppArmor profile of its
+# own. Every consumer that names the unit (setup-matrix.sh, runtime-verify,
+# the Cockpit) must name the same one.
 #
 # Usage: bash tests/unit/test_matrix_systemd.sh
-#
 
 set -euo pipefail
 
-# --- Test framework (mirrors test_matrix_docker.sh pattern) ---
-TESTS_RUN=0
-TESTS_PASSED=0
-TESTS_FAILED=0
-
-# Resolve project root (this script lives in tests/unit/)
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PASS=0; FAIL=0
+pass() { PASS=$((PASS+1)); echo "  PASS: $1"; }
+fail() { FAIL=$((FAIL+1)); echo "  FAIL: $1"; [[ -n "${2:-}" ]] && echo "        $2"; return 0; }
 
-pass() {
-    (( TESTS_PASSED++ )) || true
-    (( TESTS_RUN++ )) || true
-    echo "  PASS: $1"
-}
+INC="$PROJECT_ROOT/iso/config/includes.chroot"
+DROPIN="$INC/etc/systemd/system/matrix-synapse.service.d/orionx.conf"
+HOOK="$PROJECT_ROOT/iso/config/hooks/live/0615-install-systemd-units.hook.chroot"
 
-fail() {
-    (( TESTS_FAILED++ )) || true
-    (( TESTS_RUN++ )) || true
-    echo "  FAIL: $1"
-    if [[ -n "${2:-}" ]]; then
-        echo "        $2"
-    fi
-}
+echo "=== Single Synapse unit authority ==="
 
-assert_file_exists() {
-    local file="$1"
-    local desc="${2:-$file exists}"
-    if [[ -f "$PROJECT_ROOT/$file" ]]; then
-        pass "$desc"
-    else
-        fail "$desc" "File not found: $file"
-    fi
-}
-
-assert_file_contains() {
-    local file="$1"
-    local pattern="$2"
-    local desc="${3:-$file contains \"$pattern\"}"
-    if grep -qE "$pattern" "$PROJECT_ROOT/$file" 2>/dev/null; then
-        pass "$desc"
-    else
-        fail "$desc" "Pattern not found in $file: $pattern"
-    fi
-}
-
-# W11-14f: assert an ACTIVE directive (non-comment line) is ABSENT.
-assert_file_not_contains() {
-    local file="$1"
-    local pattern="$2"
-    local desc="${3:-$file lacks \"$pattern\"}"
-    if grep -vE "^[[:space:]]*#" "$PROJECT_ROOT/$file" 2>/dev/null | grep -qE "$pattern"; then
-        fail "$desc" "Unexpected active directive in $file: $pattern"
-    else
-        pass "$desc"
-    fi
-}
-
-# ============================================================
-# Test Group 1: File Existence
-# ============================================================
-echo "=== Test Group 1: File Existence ==="
-
-UNIT_FILE="systemd/matrix-synapse-orionx.service"
-
-assert_file_exists "$UNIT_FILE" \
-    "matrix-synapse-orionx.service exists"
-
-# ============================================================
-# Test Group 2: Unit Section
-# ============================================================
-echo ""
-echo "=== Test Group 2: [Unit] Section ==="
-
-assert_file_contains "$UNIT_FILE" '^\[Unit\]' \
-    "Has [Unit] section"
-
-assert_file_contains "$UNIT_FILE" 'Description=.*Matrix Synapse' \
-    "Has Matrix Synapse description"
-
-# W11-14f offline-safe: Matrix must NOT pull network-online (blocks offline boot)
-assert_file_not_contains "$UNIT_FILE" '^(After|Wants|Requires)=.*network-online' \
-    "No active network-online dependency (offline-boot safe)"
-
-assert_file_contains "$UNIT_FILE" 'After=wg-quick@wg0\.service' \
-    "Has After=wg-quick@wg0.service (ordering preserved)"
-
-# Opt-in + bounded: only start when configured; never loop forever
-assert_file_contains "$UNIT_FILE" 'ConditionPathExists=/etc/matrix-synapse/homeserver\.yaml' \
-    "Gated on homeserver.yaml (opt-in, does not run unconfigured)"
-assert_file_contains "$UNIT_FILE" 'StartLimitBurst=' \
-    "Has StartLimit (bounded restart, no infinite loop)"
-
-# rc4 fix (DEC-PHASE9-006): wg-quick dependency downgraded from Requires= to Wants=
-# mesh-join.sh uses raw ip/wg (not wg-quick), so wg-quick@wg0 never activates.
-# Hard Requires= caused Matrix to fail to start. Wants= is the correct soft dep.
-assert_file_contains "$UNIT_FILE" 'Wants=wg-quick@wg0\.service' \
-    "rc4: Has Wants=wg-quick@wg0.service (soft dependency, DEC-PHASE9-006)"
-
-# Verify hard Requires= on wg-quick is gone (would block Matrix when mesh-join is used)
-if grep -qE '^Requires=wg-quick@wg0' "$PROJECT_ROOT/$UNIT_FILE" 2>/dev/null; then
-    fail "rc4: no hard Requires=wg-quick@wg0.service (DEC-PHASE9-006)" \
-         "Hard Requires= still present — downgrade to Wants= so Matrix starts when mesh-join manages wg0"
+if [[ -e "$INC/usr/share/orionx/systemd/matrix-synapse-orionx.service" ]]; then
+    fail "no Orion-X Synapse unit is shipped (it was never installed; system P1-2)"
 else
-    pass "rc4: no hard Requires=wg-quick@wg0.service (soft Wants= only)"
+    pass "no Orion-X Synapse unit is shipped"
 fi
 
-# Both the canonical includes.chroot copy and the repo-root reference copy must agree
-CANONICAL_UNIT="iso/config/includes.chroot/usr/share/orionx/systemd/matrix-synapse-orionx.service"
-if [[ -f "$PROJECT_ROOT/$CANONICAL_UNIT" ]]; then
-    if grep -qE '^Wants=wg-quick@wg0' "$PROJECT_ROOT/$CANONICAL_UNIT" 2>/dev/null; then
-        pass "rc4: canonical includes.chroot copy also uses Wants=wg-quick@wg0"
-    else
-        fail "rc4: canonical includes.chroot copy also uses Wants=wg-quick@wg0" \
-             "Sync $CANONICAL_UNIT with $UNIT_FILE"
-    fi
-    if grep -qE '^Requires=wg-quick@wg0' "$PROJECT_ROOT/$CANONICAL_UNIT" 2>/dev/null; then
-        fail "rc4: canonical copy has no hard Requires=wg-quick@wg0" \
-             "Hard Requires= still in $CANONICAL_UNIT"
-    else
-        pass "rc4: canonical includes.chroot copy has no hard Requires=wg-quick@wg0"
-    fi
+# Every live (non-comment) reference in shipped code/config names the package
+# unit. git grep: tracked files only, so a local 1.8 GB model blob under
+# includes.chroot is not read on every run.
+STALE="$(git -C "$PROJECT_ROOT" grep -n 'matrix-synapse-orionx' -- scripts iso/config/includes.chroot iso/config/hooks 2>/dev/null | grep -vE ':[0-9]+:[[:space:]]*#' || true)"
+if [[ -z "$STALE" ]]; then
+    pass "nothing shipped names matrix-synapse-orionx.service"
 else
-    fail "rc4: canonical includes.chroot unit file exists" \
-         "Missing: $CANONICAL_UNIT"
+    fail "nothing shipped names matrix-synapse-orionx.service" "$STALE"
 fi
 
-# ============================================================
-# Test Group 3: Service Section
-# ============================================================
-echo ""
-echo "=== Test Group 3: [Service] Section ==="
+for f in "$PROJECT_ROOT/scripts/setup-matrix.sh" "$INC/usr/lib/orionx/runtime-verify.sh"; do
+    if grep -q 'matrix-synapse\.service' "$f"; then
+        pass "$(basename "$f") names matrix-synapse.service"
+    else
+        fail "$(basename "$f") names matrix-synapse.service"
+    fi
+done
 
-assert_file_contains "$UNIT_FILE" '^\[Service\]' \
-    "Has [Service] section"
+if grep -q 'matrix-synapse' "$HOOK"; then
+    fail "0615 does not install or enable any Synapse unit (the package owns it)"
+else
+    pass "0615 does not install or enable any Synapse unit"
+fi
 
-assert_file_contains "$UNIT_FILE" 'Type=notify' \
-    "Has Type=notify for Synapse readiness signaling"
+echo "=== Drop-in ==="
+if [[ -f "$DROPIN" ]]; then pass "drop-in exists"; else fail "drop-in exists" "$DROPIN"; fi
+for d in 'NoNewPrivileges=yes' 'ProtectSystem=strict' 'ProtectHome=yes' 'PrivateTmp=yes' 'CapabilityBoundingSet=$' \
+         'ReadWritePaths=.*/var/lib/matrix-synapse' 'ReadWritePaths=.*/etc/matrix-synapse' '@decision DEC-PHASE12-102'; do
+    if grep -qE "^$d|^# *$d|$d" "$DROPIN" 2>/dev/null && grep -E "$d" "$DROPIN" >/dev/null; then
+        pass "drop-in has $d"
+    else
+        fail "drop-in has $d"
+    fi
+done
+# The package ExecStart already uses the venv python; overriding it would be a
+# second authority for the command line.
+if grep -qE '^ExecStart' "$DROPIN"; then
+    fail "drop-in does not override ExecStart/ExecStartPre"
+else
+    pass "drop-in does not override ExecStart/ExecStartPre"
+fi
 
-assert_file_contains "$UNIT_FILE" 'User=matrix-synapse' \
-    "Has User=matrix-synapse"
-
-assert_file_contains "$UNIT_FILE" 'Group=matrix-synapse' \
-    "Has Group=matrix-synapse"
-
-assert_file_contains "$UNIT_FILE" 'Restart=on-failure' \
-    "Has Restart=on-failure"
-
-assert_file_contains "$UNIT_FILE" 'RestartSec=10' \
-    "Has RestartSec=10"
-
-assert_file_contains "$UNIT_FILE" 'synapse\.app\.homeserver' \
-    "ExecStart references synapse.app.homeserver"
-
-assert_file_contains "$UNIT_FILE" 'ExecStartPre=.*wireguard' \
-    "ExecStartPre checks WireGuard config"
-
-assert_file_contains "$UNIT_FILE" 'StandardOutput=journal' \
-    "Has StandardOutput=journal"
-
-assert_file_contains "$UNIT_FILE" 'StandardError=journal' \
-    "Has StandardError=journal"
-
-assert_file_contains "$UNIT_FILE" 'SyslogIdentifier=matrix-synapse' \
-    "Has SyslogIdentifier=matrix-synapse"
-
-assert_file_contains "$UNIT_FILE" 'NotifyAccess=main' \
-    "Has NotifyAccess=main"
-
-assert_file_contains "$UNIT_FILE" 'WorkingDirectory=/var/lib/matrix-synapse' \
-    "Has WorkingDirectory=/var/lib/matrix-synapse"
-
-# ============================================================
-# Test Group 4: Security Hardening
-# ============================================================
-echo ""
-echo "=== Test Group 4: Security Hardening ==="
-
-assert_file_contains "$UNIT_FILE" 'ProtectSystem=strict' \
-    "Has ProtectSystem=strict"
-
-assert_file_contains "$UNIT_FILE" 'ProtectHome=true' \
-    "Has ProtectHome=true"
-
-assert_file_contains "$UNIT_FILE" 'NoNewPrivileges=true' \
-    "Has NoNewPrivileges=true"
-
-assert_file_contains "$UNIT_FILE" 'ReadWritePaths=.*/var/lib/matrix-synapse' \
-    "Has ReadWritePaths for /var/lib/matrix-synapse"
-
-assert_file_contains "$UNIT_FILE" 'ReadWritePaths=.*/var/log/matrix-synapse' \
-    "Has ReadWritePaths for /var/log/matrix-synapse"
-
-# ============================================================
-# Test Group 5: Install Section
-# ============================================================
-echo ""
-echo "=== Test Group 5: [Install] Section ==="
-
-assert_file_contains "$UNIT_FILE" '^\[Install\]' \
-    "Has [Install] section"
-
-assert_file_contains "$UNIT_FILE" 'WantedBy=multi-user\.target' \
-    "Has WantedBy=multi-user.target"
-
-# ============================================================
-# Test Group 6: Decision Annotation
-# ============================================================
-echo ""
-echo "=== Test Group 6: Decision Annotation ==="
-
-assert_file_contains "$UNIT_FILE" '@decision DEC-MATRIX-005' \
-    "Has @decision DEC-MATRIX-005 annotation"
-
-assert_file_contains "$UNIT_FILE" '@title' \
-    "Has @title in decision annotation"
-
-assert_file_contains "$UNIT_FILE" '@status accepted' \
-    "Has @status accepted in decision annotation"
-
-assert_file_contains "$UNIT_FILE" '@rationale' \
-    "Has @rationale in decision annotation"
-
-# ============================================================
-# Test Group 7: systemd-analyze verify (Linux only)
-# ============================================================
-echo ""
-echo "=== Test Group 7: systemd-analyze verify ==="
+echo "=== AppArmor ==="
+if [[ -e "$INC/etc/apparmor.d/usr.bin.synapse" ]]; then
+    fail "no dead Synapse AppArmor profile (venv python resolves to /usr/bin/python3.13; system P2-6)"
+else
+    pass "no dead Synapse AppArmor profile"
+fi
+if grep -rqE '^profile [^ ]+ /usr/bin/python3' "$INC/etc/apparmor.d" 2>/dev/null; then
+    fail "no profile attaches to the shared system python"
+else
+    pass "no profile attaches to the shared system python"
+fi
 
 if command -v systemd-analyze >/dev/null 2>&1; then
-    # systemd-analyze verify checks unit file syntax
-    if systemd-analyze verify "$PROJECT_ROOT/$UNIT_FILE" 2>&1; then
-        pass "systemd-analyze verify passes"
-    else
-        # Some warnings are expected (missing user, etc.) — only fail on errors
-        verify_output="$(systemd-analyze verify "$PROJECT_ROOT/$UNIT_FILE" 2>&1 || true)"
-        if echo "$verify_output" | grep -qi "error"; then
-            fail "systemd-analyze verify passes" "Errors found: $verify_output"
-        else
-            pass "systemd-analyze verify passes (warnings only)"
-        fi
-    fi
-else
-    echo "  SKIP: systemd-analyze not available (macOS or missing systemd)"
+    out="$(systemd-analyze verify "$DROPIN" 2>&1 || true)"
+    if grep -qi 'unknown key\|invalid' <<< "$out"; then fail "systemd-analyze: drop-in keys valid" "$out"; else pass "systemd-analyze: drop-in keys valid"; fi
 fi
 
-# ============================================================
-# Summary
-# ============================================================
 echo ""
-echo "============================================"
-echo "Results: $TESTS_PASSED passed, $TESTS_FAILED failed, $TESTS_RUN total"
-echo "============================================"
-
-if [[ "$TESTS_FAILED" -gt 0 ]]; then
-    exit 1
-fi
-exit 0
+echo "Results: $PASS passed, $FAIL failed"
+[[ $FAIL -eq 0 ]]

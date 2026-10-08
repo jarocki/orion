@@ -195,11 +195,141 @@ assert_contains "sysctl: ptrace_scope = 1" "kernel.yama.ptrace_scope = 1" "$HOOK
 echo ""
 
 # ---------------------------------------------------------------------------
-# 13. Systemd unit hardening — ProtectSystem=strict
+# 13. Systemd unit hardening — asserted on the UNITS, not on this hook's text
+#
+# @decision DEC-PHASE12-039
+# This used to be:
+#     assert_contains "references ProtectSystem=strict" \
+#                     "ProtectSystem=strict" "$HOOK_CONTENT"
+# i.e. "the string ProtectSystem=strict appears somewhere in the hook." It
+# passed for the life of the project while the mesh units ran completely
+# unconfined, because the hook's injection loop globbed
+# /etc/systemd/system/orionx-mesh-*.service and 0615 installs to
+# /lib/systemd/system. The glob matched nothing, every build. Same shape as
+# the AppArmor defect: a test that verified a write, not a state.
+#
+# The injector is now deleted, so the only place a directive can come from is
+# the unit file 0615 copies verbatim. Assert it there.
 # ---------------------------------------------------------------------------
 echo "--- Systemd unit hardening ---"
 
-assert_contains "references ProtectSystem=strict" "ProtectSystem=strict" "$HOOK_CONTENT"
+UNITDIR="$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd"
+
+# The dead authority must not come back.
+if grep -qE '^\s*for unit in /etc/systemd/system/orionx-' "$HOOK_FILE"; then
+    echo "  FAIL: hook re-introduces the dead /etc/systemd/system injection loop"
+    echo "        0615 installs to /lib/systemd/system; that glob matches nothing"
+    (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: no build-time unit injection (units are the single authority)"
+    (( PASS_COUNT++ )) || true
+fi
+
+# Units that ARE hardened must really carry the directives. If someone strips
+# NoNewPrivileges from nebula-mcp.service tomorrow, this goes red.
+for _u in nebula-mcp.service orionx-heald.service orionx-postured.service \
+          orionx-scanwatch.service "orionx-capture@.service"; do
+    _f="$UNITDIR/$_u"
+    if [[ ! -f "$_f" ]]; then
+        echo "  FAIL: $_u not staged at $UNITDIR"
+        (( FAIL_COUNT++ )) || true
+        continue
+    fi
+    _missing=""
+    for _d in NoNewPrivileges ProtectSystem ProtectHome; do
+        grep -qE "^${_d}=" "$_f" || _missing="$_missing $_d"
+    done
+    if [[ -z "$_missing" ]]; then
+        echo "  PASS: $_u carries its hardening directives in the unit file"
+        (( PASS_COUNT++ )) || true
+    else
+        echo "  FAIL: $_u is missing:$_missing"
+        (( FAIL_COUNT++ )) || true
+    fi
+done
+
+# The DEC-PHASE12-039 tracked gap is CLOSED (DEC-PHASE12-041). The mesh units
+# now carry their own confinement, which was only scopeable once the wg-quick
+# calls came out of mesh-health.sh — wg-quick runs sysctl, iptables and
+# resolvconf, and none of that can be bounded off-box.
+#
+# This block replaces the old "assert they are still unhardened" expectation.
+# If someone strips these directives, this goes red.
+for _u in orionx-mesh-discover.service orionx-mesh-health.service \
+          orionx-mesh-beacon.service; do
+    _f="$UNITDIR/$_u"
+    if [[ ! -f "$_f" ]]; then
+        echo "  FAIL: $_u not staged at $UNITDIR"
+        (( FAIL_COUNT++ )) || true
+        continue
+    fi
+    _missing=""
+    for _d in NoNewPrivileges ProtectSystem ProtectHome CapabilityBoundingSet \
+              RestrictAddressFamilies LockPersonality RestrictSUIDSGID; do
+        grep -qE "^${_d}=" "$_f" || _missing="$_missing $_d"
+    done
+    if [[ -z "$_missing" ]]; then
+        echo "  PASS: $_u carries its hardening directives in the unit file"
+        (( PASS_COUNT++ )) || true
+    else
+        echo "  FAIL: $_u is missing:$_missing"
+        (( FAIL_COUNT++ )) || true
+    fi
+done
+
+# Each bounding set must be the MINIMUM the script needs, not a copy-paste of
+# the next unit's. The beacon only reads interface addresses and sends a UDP
+# datagram; granting it CAP_NET_ADMIN would be unjustified, so assert the
+# difference rather than the presence.
+if grep -qE '^CapabilityBoundingSet=.*CAP_NET_ADMIN' "$UNITDIR/orionx-mesh-beacon.service"; then
+    echo "  FAIL: orionx-mesh-beacon.service has CAP_NET_ADMIN — the send path"
+    echo "        only READS addresses and sends a datagram; it configures nothing."
+    (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: beacon bounding set excludes CAP_NET_ADMIN (it administers nothing)"
+    (( PASS_COUNT++ )) || true
+fi
+
+# CAP_NET_RAW is for `ping`, which only mesh-health.sh runs.
+if grep -qE '^CapabilityBoundingSet=.*CAP_NET_RAW' "$UNITDIR/orionx-mesh-health.service"; then
+    echo "  PASS: health bounding set includes CAP_NET_RAW (it pings peers)"
+    (( PASS_COUNT++ )) || true
+else
+    echo "  FAIL: orionx-mesh-health.service needs CAP_NET_RAW for its ping check"
+    (( FAIL_COUNT++ )) || true
+fi
+for _u in orionx-mesh-discover.service orionx-mesh-beacon.service; do
+    if grep -qE '^CapabilityBoundingSet=.*CAP_NET_RAW' "$UNITDIR/$_u"; then
+        echo "  FAIL: $_u has CAP_NET_RAW but never opens a raw socket"
+        (( FAIL_COUNT++ )) || true
+    else
+        echo "  PASS: $_u excludes CAP_NET_RAW (no raw socket in its path)"
+        (( PASS_COUNT++ )) || true
+    fi
+done
+
+# The one directive that MUST NOT appear: health_check_interface restores a
+# missing wg0 with `ip link add type wireguard`, which needs module autoload.
+if grep -qE '^ProtectKernelModules=yes' "$UNITDIR/orionx-mesh-health.service"; then
+    echo "  FAIL: ProtectKernelModules=yes blocks the wireguard module autoload"
+    echo "        that interface restore depends on — a recoverable outage"
+    echo "        would become a permanent one."
+    (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: ProtectKernelModules absent (wg0 restore can autoload the module)"
+    (( PASS_COUNT++ )) || true
+fi
+
+# The heal budget lives in the RuntimeDirectory. Without Preserve=yes systemd
+# deletes it when the oneshot exits and the bound silently stops bounding.
+if grep -qE '^RuntimeDirectoryPreserve=yes' "$UNITDIR/orionx-mesh-health.service"; then
+    echo "  PASS: heal-budget RuntimeDirectory survives the oneshot exit"
+    (( PASS_COUNT++ )) || true
+else
+    echo "  FAIL: orionx-mesh-health.service needs RuntimeDirectoryPreserve=yes,"
+    echo "        or the DEC-PHASE12-041 heal budget resets every 60 seconds"
+    (( FAIL_COUNT++ )) || true
+fi
 
 echo ""
 
@@ -220,6 +350,36 @@ else
     echo "  SKIP: shellcheck not installed"
 fi
 
+echo ""
+
+# =========================================================================
+# DEC-PHASE12-104: EXECUTE the hook (in a throwaway trixie container, with a
+# recording systemctl) and check what it actually disables and masks.
+# =========================================================================
+echo "--- Hook execution: sshd off at boot, apt timers and exim masked ---"
+if [[ "${ORIONX_SKIP_DOCKER:-0}" != 1 ]] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    CALLS="$(docker run --rm -v "$HOOK_FILE:/hook:ro" debian:trixie-slim bash -c '
+        mkdir -p /stub /etc/ssh/sshd_config.d /etc/sysctl.d; touch /etc/ssh/sshd_config
+        printf "#!/bin/sh\necho \"\$*\" >> /tmp/calls\nexit 0\n" > /stub/systemctl; chmod +x /stub/systemctl
+        PATH=/stub:$PATH bash /hook >/dev/null 2>&1; echo "rc=$?"; cat /tmp/calls; echo "--conf"; cat /etc/ssh/sshd_config.d/orionx-hardening.conf' 2>&1)"
+    assert_contains "hook exits 0" "rc=0" "$CALLS"
+    assert_contains "ssh.service is disabled at boot" "disable ssh.service" "$CALLS"
+    for u in apt-daily.timer apt-daily-upgrade.timer exim4.service exim4-base.timer; do
+        assert_contains "$u is masked" "mask $u" "$CALLS"
+    done
+    assert_contains "root login stays refused" "PermitRootLogin no" "$CALLS"
+    assert_contains "password auth stays off" "PasswordAuthentication no" "$CALLS"
+    if [[ "$CALLS" == *"enable ssh"* ]]; then
+        echo "  FAIL: nothing enables ssh"; (( FAIL_COUNT++ )) || true
+    else
+        echo "  PASS: nothing enables ssh"; (( PASS_COUNT++ )) || true
+    fi
+else
+    echo "  SKIP: docker unavailable — hook not executed"
+fi
+NMCONF="$REPO_ROOT/iso/config/includes.chroot/etc/NetworkManager/conf.d/90-orionx-no-hostname.conf"
+assert_contains "NetworkManager does not send the hostname in DHCPv4 (F14)" "ipv4.dhcp-send-hostname=false" "$(cat "$NMCONF" 2>/dev/null)"
+assert_contains "NetworkManager does not send the hostname in DHCPv6 (F14)" "ipv6.dhcp-send-hostname=false" "$(cat "$NMCONF" 2>/dev/null)"
 echo ""
 
 # =========================================================================

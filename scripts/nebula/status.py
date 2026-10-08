@@ -109,9 +109,21 @@ def _model_size_from_manifest(manifest_file: Path = MANIFEST_FILE) -> Optional[i
     return None
 
 
-def collect_status() -> dict[str, Any]:
-    """Collect and return the full Nebula runtime status as a dict."""
-    running = is_running()
+def collect_status(probe_daemon: bool = True) -> dict[str, Any]:
+    """Collect and return the full Nebula runtime status as a dict.
+
+    @decision DEC-PHASE12-025
+    @title collect_status(probe_daemon=False) for callers with no loopback
+    @status accepted
+    @rationale The confined MCP tool server (nebula-mcp.service,
+      PrivateNetwork=yes) has no route to 127.0.0.1:11434, so the daemon probe
+      cannot succeed there. Reporting "Runtime: down" would be a false
+      statement about the host, not a true one about the sandbox. With
+      probe_daemon=False the daemon fields are None and the summary says the
+      probe was skipped, so the answer stays true at the cost of being less
+      complete.
+    """
+    running = is_running() if probe_daemon else False
     version = get_version() if running else None
     models = list_models() if running else []
 
@@ -128,7 +140,10 @@ def collect_status() -> dict[str, Any]:
     model_size_gb = f"{model_size / 1024 / 1024 / 1024:.1f} GB" if model_size else None
 
     # Compose a human-readable summary line (the Control Center renders this)
-    if not running:
+    if not probe_daemon:
+        badge = f"integrity {integrity_state}"
+        summary = f"Runtime: not probed (no loopback in this sandbox), {badge}"
+    elif not running:
         summary = "Runtime: down"
     elif integrity_state == "FAIL":
         summary = "Runtime: integrity-failed"
@@ -139,7 +154,8 @@ def collect_status() -> dict[str, Any]:
         summary = f"Runtime: ready, model: {name_part}{size_part}, {integrity_badge}"
 
     return {
-        "ollama_running": running,
+        "daemon_probed": probe_daemon,
+        "ollama_running": running if probe_daemon else None,
         "ollama_version": version,
         "integrity_state": integrity_state,
         "integrity_detail": integrity_detail,
@@ -152,8 +168,10 @@ def collect_status() -> dict[str, Any]:
 
 def main(argv: Optional[list[str]] = None) -> int:
     """CLI entrypoint — prints JSON status to stdout and exits 0."""
+    args = list(sys.argv[1:] if argv is None else argv)
+    probe = "--offline" not in args
     try:
-        data = collect_status()
+        data = collect_status(probe_daemon=probe)
         print(json.dumps(data, indent=2))
         return 0
     except Exception as exc:  # noqa: BLE001

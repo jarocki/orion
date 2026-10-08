@@ -1,12 +1,12 @@
 #!/bin/bash
 # shellcheck shell=bash
-# Install tools not available in Debian Bullseye standard repos
-# These are installed from upstream sources during ISO build
+# Install tools the Debian 13 (trixie) archive does not provide, or provides
+# unusably, from upstream sources during the ISO build.
 #
 # @decision DEC-PHASE10-007
 # @title ollama .deb staging: fail-LOUD on fetch/verify failure
 # @status accepted
-# @rationale Debian Bullseye does not ship ollama via apt. The binary .deb is
+# @rationale Debian does not ship ollama via apt (true of bullseye and trixie). The binary .deb is
 #   downloaded and installed here during the chroot phase so ollama ends up in
 #   the squashfs image. Unlike zeek (soft-fail, warn-and-continue), ollama is
 #   LOAD-BEARING for the v2.0.0 Nebula AI headline feature: if ollama is absent,
@@ -27,57 +27,145 @@
 
 set -euo pipefail
 
-echo "=== Installing external tools ==="
-
-# Volatility3 (Python package)
-# Trixie's system Python is PEP 668 "externally managed" (DEC-PHASE12-001), so a
-# bare `pip3 install` is refused with "externally-managed-environment" and
-# volatility3 silently does not install (observed on the trixie-dev1 build). This
-# is a build-time install into a chroot we fully control, so --break-system-packages
-# is the correct escape hatch; --no-input keeps it non-interactive. (DEC-PHASE12-003)
-pip3 install --break-system-packages --no-input volatility3 \
-    || echo "WARNING: volatility3 install failed"
-
-# Pivotglass deps that trixie apt cannot provide correctly (roadmap #90,
-# DEC-PHASE12-013), pure Python, same PEP 668 escape hatch as volatility3:
-#   stix2     — absent from trixie (+ stix2-patterns, antlr4 runtime); its other
-#               transitive deps (requests, pytz, simplejson) come from apt.
-#   pyfiglet  — PRESENT in trixie but as a +dfsg repack that strips the
-#               contributed fonts; `ap tui`/`ap chat` load "ansi_shadow" at import
-#               and die with pyfiglet.FontNotFound. Upstream pip ships all fonts.
-# Soft-fail, but say so loudly: without these, `ap` cannot start / the TUI dies.
-pip3 install --break-system-packages --no-input stix2 pyfiglet \
-    && python3 -c "import stix2, stix2patterns, pyfiglet; pyfiglet.Figlet(font='ansi_shadow')" \
-    || echo "WARNING: stix2/pyfiglet install failed — Pivotglass (ap) will be broken on this image"
-
-# Zeek (OpenSUSE Build Service repo).
-# DEC-PHASE12-003: on the trixie base the repo path must be Debian_13 (Debian_11
-# 404s — that was the #33 cascade on the trixie-dev1 build). Still soft-fail +
-# clean up if the Debian_13 build is not yet published, so a missing repo never
-# leaves a dangling sources.list.d entry that would abort the binary stage.
-{
-    # Try to fetch the key first. If this fails, abort before touching
-    # apt sources at all.  wget replaces curl (curl not in build container).
-    wget -qO- https://download.opensuse.org/repositories/security:zeek/Debian_13/Release.key \
-        | gpg --dearmor > /etc/apt/trusted.gpg.d/zeek.gpg
-    # Key fetch succeeded; now safe to add the source list and install.
-    echo 'deb http://download.opensuse.org/repositories/security:/zeek/Debian_13/ /' \
-        > /etc/apt/sources.list.d/zeek.list
-    apt-get update
+# --- Library (sourceable: ORIONX_0500_LIB_ONLY=1 stops after the definitions,
+# so tests/unit/test_external_tools_hook.sh can exercise them with stubs) ---
+PIP_LOCKS="${PIP_LOCKS:-/usr/share/orionx/pip}"
+pip_locked() {  # <pip executable> <set> [extra pip args...]
+    local pip="$1" set="$2"; shift 2
+    if [[ ! -f "$PIP_LOCKS/$set.txt" ]]; then
+        echo "FATAL: pip lock $PIP_LOCKS/$set.txt missing (DEC-PHASE12-116)" >&2
+        return 1
+    fi
+    "$pip" install --no-input --require-hashes --no-deps "$@" -r "$PIP_LOCKS/$set.txt"
+}
+make_venv() {  # <dir>
+    python3 -m venv "$1" || { echo "FATAL: venv creation failed for $1" >&2; return 1; }
+    [[ -x "$1/bin/pip" ]] || { echo "FATAL: venv $1 has no pip (python3-venv missing?)" >&2; return 1; }
+}
+ZEEK_INSTALLER="${ZEEK_INSTALLER:-/opt/orionx/optional/install-zeek.sh}"
+zeek_pin() { sed -n "s/^$1=\"\\(.*\\)\"\$/\\1/p" "$ZEEK_INSTALLER" | head -1; }
+install_zeek() {
+    local fpr_pin key_url base keyring source_list key actual
+    fpr_pin="$(zeek_pin ZEEK_REPO_KEY_FPR)"; key_url="$(zeek_pin ZEEK_REPO_KEY_URL)"
+    base="$(zeek_pin ZEEK_REPO_BASE)"; keyring="$(zeek_pin ZEEK_KEYRING)"
+    source_list="$(zeek_pin ZEEK_SOURCE_LIST)"
+    [[ -n "$fpr_pin" && -n "$key_url" && -n "$base" && -n "$keyring" && -n "$source_list" ]] || {
+        echo "[zeek] pins not readable from $ZEEK_INSTALLER" >&2; return 1; }
+    key="$(mktemp)"
+    wget -qO "$key" "$key_url" || { echo "[zeek] key fetch failed: $key_url" >&2; rm -f "$key"; return 1; }
+    actual="$(gpg --show-keys --with-colons "$key" 2>/dev/null | awk -F: '$1=="fpr" {print $10; exit}')"
+    if [[ "$actual" != "$fpr_pin" ]]; then
+        echo "[zeek] KEY FINGERPRINT MISMATCH: expected $fpr_pin, got ${actual:-none}" >&2
+        rm -f "$key"; return 1
+    fi
+    gpg --dearmor < "$key" > "$keyring" || { rm -f "$key"; return 1; }
+    rm -f "$key"
+    chmod 0644 "$keyring" || return 1
+    printf '# Written by 0500 at build time; managed by %s.\ndeb [signed-by=%s] %s/ /\n' \
+        "$ZEEK_INSTALLER" "$keyring" "$base" > "$source_list" || return 1
+    apt-get update || return 1
     # zeek-core, NOT the `zeek` metapackage: the latter pulls zeek-zkg (plugin
     # package manager) → zeek-spicy-dev (194 MB) + btest-data (40 MB) + a full
     # gcc/g++ toolchain + git — plugin-building kit that an air-gapped live deck
     # never uses. zeek-core is the analyzer itself (/opt/zeek/bin/zeek, zeek-cut).
     # (DEC-PHASE12-015; leftovers are purged by 0900-trim as belt-and-suspenders.)
-    apt-get install -y --no-install-recommends zeek-core
-} || {
-    echo "WARNING: zeek install failed — OpenSUSE Debian_13 zeek repo unavailable (#33 cascade)"
-    # Belt + suspenders: remove any partial config so later apt-get update
-    # doesn't fail on a dangling source list.
-    rm -f /etc/apt/sources.list.d/zeek.list /etc/apt/trusted.gpg.d/zeek.gpg
-    # Refresh apt cache to clear any error state from the failed source
+    apt-get install -y --no-install-recommends zeek-core || return 1
+    /opt/zeek/bin/zeek --version || return 1
+}
+zeek_rollback() {  # leave no dangling apt source or keyring (incl. the pre-117 paths)
+    rm -f "$(zeek_pin ZEEK_SOURCE_LIST)" "$(zeek_pin ZEEK_KEYRING)" \
+          /etc/apt/sources.list.d/zeek.list /etc/apt/trusted.gpg.d/zeek.gpg
     apt-get update >/dev/null 2>&1 || true
 }
+
+if [[ "${ORIONX_0500_LIB_ONLY:-}" == "1" ]]; then
+    # shellcheck disable=SC2317  # reachable when sourced
+    return 0 2>/dev/null || exit 0
+fi
+
+echo "=== Installing external tools ==="
+
+# ---------------------------------------------------------------------------
+# @decision DEC-PHASE12-116
+# @title Hash-locked pip installs, hard-fail, and volatility3 out of system Python
+# @status accepted
+# @rationale Every pip install in this hook was unpinned (packages-build P2-4,
+#   security F13), and volatility3 + stix2/pyfiglet were SOFT-fail: one WARNING
+#   line among 11k and the build stayed green without a tool the README lists
+#   (P1-3). Now each install reads a committed lock from
+#   /usr/share/orionx/pip/<set>.txt (generated by scripts/release/pip-lock.py
+#   from the exact versions v2.2.0-rc9 resolved; it ships in the image as the
+#   record of what was installed) with --require-hashes --no-deps, and each is
+#   hard-fail with a run-the-tool check afterwards (the DEC-PHASE11-018 rule
+#   for capa applies to every README-promised tool):
+#     forensics  -> /opt/orionx/venv/forensics, vol/volshell symlinked into
+#                   /usr/local/bin (the User Guide and Cockpit call `vol`)
+#     pivotglass -> system Python, the one deliberate exception: `ap` runs
+#                   `python3 -m pivotglass` on apt-provided deps
+#                   (DEC-PHASE12-013); --no-deps keeps pip to these 4 packages
+#     re, comms  -> the capa and matrix-commander venvs, as before
+#   A PyPI outage now fails the build; that is the intended trade (an image
+#   without its forensics tools is not a release). Verified 2026-10-07 in
+#   debian:trixie-slim amd64: all four locks install, `vol -h`, `capa
+#   --version`, `matrix-commander --version` and the Pivotglass import + font
+#   probe pass, and no stdlib-shadowing module is left in the comms venv.
+# ---------------------------------------------------------------------------
+
+# Volatility3 -> its own venv; `vol` stays on PATH at /usr/local/bin/vol.
+echo "=== volatility3 -> /opt/orionx/venv/forensics (DEC-PHASE12-116) ==="
+make_venv /opt/orionx/venv/forensics || exit 1
+pip_locked /opt/orionx/venv/forensics/bin/pip forensics || {
+    echo "FATAL: volatility3 install failed — the README promises vol (DEC-PHASE12-116)" >&2; exit 1; }
+for b in vol volshell; do
+    [[ -x "/opt/orionx/venv/forensics/bin/$b" ]] || { echo "FATAL: venv has no $b" >&2; exit 1; }
+    ln -sf "/opt/orionx/venv/forensics/bin/$b" "/usr/local/bin/$b"
+done
+/usr/local/bin/vol -h >/dev/null || { echo "FATAL: vol -h does not run" >&2; exit 1; }
+echo "[volatility3] installed: $(/opt/orionx/venv/forensics/bin/python -c 'import volatility3.framework as f; print(f.constants.PACKAGE_VERSION)' 2>/dev/null || echo 'version unknown')"
+
+# Pivotglass deps that trixie apt cannot provide correctly (roadmap #90,
+# DEC-PHASE12-013):
+#   stix2     — absent from trixie (+ stix2-patterns, antlr4 runtime); its other
+#               transitive deps (requests, pytz, simplejson) come from apt.
+#   pyfiglet  — PRESENT in trixie but as a +dfsg repack that strips the
+#               contributed fonts; `ap tui`/`ap chat` load "ansi_shadow" at import
+#               and die with pyfiglet.FontNotFound. Upstream pip ships all fonts.
+# System Python by design (see DEC-PHASE12-116); hard-fail: without these `ap`
+# cannot start.
+echo "=== Pivotglass deps (stix2, pyfiglet) -> system Python, hash-locked ==="
+pip_locked pip3 pivotglass --break-system-packages || {
+    echo "FATAL: stix2/pyfiglet install failed — Pivotglass (ap) would be broken (DEC-PHASE12-116)" >&2; exit 1; }
+python3 -c "import stix2, stix2patterns, pyfiglet; pyfiglet.Figlet(font='ansi_shadow')" || {
+    echo "FATAL: stix2/pyfiglet installed but the import + ansi_shadow probe fails" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Zeek (OpenSUSE Build Service repo).
+#
+# @decision DEC-PHASE12-117
+# @title Zeek at build time: pinned key fingerprint, signed-by scope, and a
+#   soft-fail that actually rolls back
+# @status accepted
+# @rationale The old block piped the OBS key into /etc/apt/trusted.gpg.d/,
+#   which trusts it for EVERY repo, with no fingerprint check (security F11),
+#   and ran as `{ A; B; C; } || { cleanup; }`: errexit is suspended on the left,
+#   so a failed key fetch still wrote zeek.list and ran apt-get update, and the
+#   cleanup ran only if the LAST command failed (shell P2-2). Now the steps are
+#   a function where every step returns on failure; the key is accepted only if
+#   its fingerprint equals the pin, dearmored into its own keyring, and the
+#   source line is scoped with signed-by=. The pins (fingerprint, URLs, keyring
+#   and source paths) are READ from /opt/orionx/optional/install-zeek.sh, the
+#   one authority for them, so build time and the post-boot installer cannot
+#   drift. Still soft-fail (DEC-PHASE12-003: a third-party repo outage must not
+#   block the ISO), but loudly, and the content-presence gate fails a release
+#   image without /opt/zeek/bin/zeek.
+# ---------------------------------------------------------------------------
+if install_zeek; then
+    echo "[zeek] installed from the fingerprint-pinned OBS repo (DEC-PHASE12-117)"
+else
+    echo "SOFT-FAIL: zeek NOT installed — OBS Debian_13 repo or key unavailable or untrusted (DEC-PHASE12-117)." >&2
+    echo "           The release content-presence gate will fail this image; /opt/orionx/optional/install-zeek.sh installs it post-boot." >&2
+    zeek_rollback
+fi
 
 # Autopsy (requires Java, complex install — placeholder)
 echo "NOTE: Autopsy requires manual installation. See docs/INSTALL_AUTOPSY.md"
@@ -85,11 +173,11 @@ echo "NOTE: Autopsy requires manual installation. See docs/INSTALL_AUTOPSY.md"
 # ---------------------------------------------------------------------------
 # Ollama — Nebula AI runtime daemon (DEC-PHASE10-007)
 #
-# ollama is NOT in Debian Bullseye apt repos; we download the official
+# ollama is NOT in the Debian apt archive; we download the official
 # .tar.zst release archive from the ollama GitHub releases channel and
 # extract the binary to /usr/local/bin. This is a LOUD-FAILURE block: if
 # ollama cannot be installed, the build ABORTS (exit non-zero). This is an
-# intentional divergence from the soft-fail zeek/ghidra blocks above — see
+# intentional divergence from the soft-fail zeek block above — see
 # file header.
 #
 # NOTE: ollama never shipped a .deb for any release. The 0.3.x → 0.30.x
@@ -98,11 +186,11 @@ echo "NOTE: Autopsy requires manual installation. See docs/INSTALL_AUTOPSY.md"
 # v0.24.0+. This hook was updated from the non-existent .deb URL in iter-7
 # (W10-1) after CI reported a 404 on every build (closes #61 follow-up).
 #
-# Pinned version: 0.30.7 (2026-06 release; latest validated against
-#                 Bullseye amd64 at W10-1 iter-7 cut)
+# Pinned version: 0.30.7 (2026-06 release; SHA-256 pinned below, and shipped
+#                 on every trixie rc build since)
 # URL: https://github.com/ollama/ollama/releases/download/v0.30.7/ollama-linux-amd64.tar.zst
-# SHA-256: TBD-PIN-AT-FIRST-CI-BUILD (trust-on-first-use; re-applies #57
-#          commitment — pin the real hash after first successful build)
+# SHA-256: pinned in OLLAMA_TGZ_SHA256 below (the TBD sentinel path remains
+#          only for a deliberate version bump).
 #
 # Network requirement: this hook runs inside the live-build chroot which has
 # internet access during the binary build stage. ca-certificates must be
@@ -120,8 +208,7 @@ echo "[ollama] URL: ${OLLAMA_TGZ_URL}"
 
 # wget must succeed; follows redirects automatically.
 # Retry 3 times with 5-second delay between attempts, 120s connection timeout.
-# wget replaces curl (curl is not available in the debian:bullseye-slim
-# build container at the time this hook executes).
+# wget, not curl: curl is not in the build chroot when this hook executes.
 if ! wget -O "${OLLAMA_TMP}" \
           --tries=3 --waitretry=5 --timeout=120 \
           --no-verbose \
@@ -269,7 +356,7 @@ if [[ ! -x /opt/orionx/venv/re/bin/pip ]]; then
     echo "[W11-3]        from the base package list, so ensurepip could not run." >&2
     exit 1
 fi
-/opt/orionx/venv/re/bin/pip install --no-input flare-capa python-magic 2>&1 || {
+pip_locked /opt/orionx/venv/re/bin/pip re 2>&1 || {  # DEC-PHASE12-116 lock
     echo "[W11-3] FATAL: capa pip install failed — hard-failing build per DEC-PHASE11-018" >&2
     exit 1
 }
@@ -277,6 +364,8 @@ if [[ ! -x /opt/orionx/venv/re/bin/capa ]]; then
     echo "[W11-3] FATAL: pip reported success but /opt/orionx/venv/re/bin/capa is absent" >&2
     exit 1
 fi
+/opt/orionx/venv/re/bin/capa --version >/dev/null 2>&1 || {
+    echo "[W11-3] FATAL: capa is installed but 'capa --version' does not run" >&2; exit 1; }
 echo "[W11-3] capa installed: $(/opt/orionx/venv/re/bin/capa --version 2>&1 | head -1)"
 # Symlink for user convenience
 ln -sf /opt/orionx/venv/re/bin/capa /usr/bin/capa
@@ -309,7 +398,7 @@ if [[ ! -x /opt/orionx/venv/comms/bin/pip ]]; then
     echo "[W11-5]        python3-venv missing from base package list (ensurepip could not run)." >&2
     exit 1
 fi
-/opt/orionx/venv/comms/bin/pip install --no-input matrix-commander 2>&1 || {
+pip_locked /opt/orionx/venv/comms/bin/pip comms 2>&1 || {  # DEC-PHASE12-116 lock
     echo "[W11-5] FATAL: matrix-commander pip install failed — hard-failing build per DEC-PHASE11-018" >&2
     exit 1
 }
@@ -317,8 +406,10 @@ if [[ ! -x /opt/orionx/venv/comms/bin/matrix-commander ]]; then
     echo "[W11-5] FATAL: pip reported success but matrix-commander binary is absent" >&2
     exit 1
 fi
+/opt/orionx/venv/comms/bin/matrix-commander --version >/dev/null 2>&1 || {
+    echo "[W11-5] FATAL: matrix-commander is installed but '--version' does not run" >&2; exit 1; }
 ln -sf /opt/orionx/venv/comms/bin/matrix-commander /usr/local/bin/matrix-commander
-echo "[W11-5] matrix-commander installed"
+echo "[W11-5] matrix-commander installed: $(/opt/orionx/venv/comms/bin/matrix-commander --version 2>&1 | tail -1)"
 echo "=== W11-5 matrix-commander install complete ==="
 
 # ---------------------------------------------------------------------------

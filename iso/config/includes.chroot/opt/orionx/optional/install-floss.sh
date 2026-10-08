@@ -46,10 +46,11 @@ orionx_log_info "  Mission: triage — extract obfuscated strings from malware"
 
 # ---------------------------------------------------------------------------
 # Download and extract FLOSS
-# DEC-PHASE10-008 trust-on-first-use: SHA-256 pin deferred to first green
-# CI build of W11-8; a follow-up MICRO-SLICE pins the digest before v2.1.0 tag.
+# SHA-256 pinned (DEC-PHASE12-122): computed 2026-10-07 from the v3.1.0 release
+# asset (40,896,816 bytes). A mismatch refuses the install.
 # ---------------------------------------------------------------------------
 FLOSS_VERSION="3.1.0"
+FLOSS_SHA256="8cdd05d78e3ffa59360425c6b846a2f22933fd1923bdd326fceff82f7549d40a"
 FLOSS_URL="https://github.com/mandiant/flare-floss/releases/download/v${FLOSS_VERSION}/floss-v${FLOSS_VERSION}-linux.zip"
 FLOSS_DEST="/opt/orionx/floss"
 
@@ -59,7 +60,7 @@ orionx_apt_install unzip
 # FLOSS releases ship a bare binary in a zip (no top-level directory),
 # so we extract directly into the destination directory.
 local_tmp="$(mktemp)"
-wget -q -O "$local_tmp" "$FLOSS_URL"
+orionx_download_verified "$FLOSS_URL" "$local_tmp" "$FLOSS_SHA256"
 mkdir -p "$FLOSS_DEST"
 unzip -q -o "$local_tmp" -d "$FLOSS_DEST"
 rm -f "$local_tmp"

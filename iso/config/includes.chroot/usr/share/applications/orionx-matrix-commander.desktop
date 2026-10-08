@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Orion-X Matrix Comms (CLI)
-Comment=matrix-commander over Phase 4 Synapse / Phase 3 WireGuard mesh (DEC-PHASE11-006)
+Comment=Matrix team chat from the terminal (matrix-commander); shows its help — point it at your team's homeserver, over the mesh if you have one
 Exec=xfce4-terminal -e "bash -c 'matrix-commander --help; echo; read -p \"Press enter to close...\"'"
 Icon=terminal
 Terminal=false

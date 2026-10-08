@@ -119,6 +119,22 @@ PURGE_WANTED=(
     python3-fonttools unicode-data
     # stray polkit agent + its OpenCV/GDAL tail
     ukui-polkit
+    # @decision DEC-PHASE12-048 — no screen-lock mechanism on the live deck.
+    # light-locker arrives as a Recommends of xfce4-session/task-xfce-desktop
+    # on trixie and, after idle, hands the display to the LightDM greeter with
+    # a password box over the Phoenix wallpaper — indistinguishable from a
+    # failed autologin (reference deck, 2026-10-05). W11-2f (#76) disables
+    # xfce4-screensaver only. Purging the locker means no mechanism exists;
+    # xflock4 then finds no backend and locks nothing.
+    light-locker
+    # Orphaned Qt5 (packages-build P2-9). In a trixie container, `apt-cache
+    # rdepends` of every Qt5 package intersected with the rc9 manifest finds
+    # only qtwayland5 (Qt5 itself) and python3-pyperclip, whose dependency is
+    # `xclip | xsel | wl-clipboard | python3-gi | python3-pyqt5` and is met by
+    # python3-gi. Wireshark is Qt6. ~60 MB. Each target still passes the
+    # simulation guard below: if the plan would remove a protected package the
+    # target is SKIPped, not forced.
+    python3-pyqt5 python3-pyqt5.sip qtwayland5 qt5-gtk-platformtheme
     # misc
     unhide.rb ruby3.3 libruby3.3 ruby
     mesa-vulkan-drivers firmware-nvidia-graphics

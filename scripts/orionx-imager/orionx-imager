@@ -471,20 +471,32 @@ def _cli_main(args: argparse.Namespace) -> int:
         tag = args.iso_release
         print(f"Fetching release metadata ({tag})…")
         try:
-            release = _downloader.get_release(tag)
+            release = _downloader.get_release(tag, allow_prerelease=args.allow_prerelease)
         except RuntimeError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 1
 
-        print(f"Release: {release.get('tag_name', '?')}")
+        print(f"Release: {release.get('tag_name', '?')}"
+              + ("  (pre-release)" if release.get("prerelease") else ""))
+        if release.get("prerelease") and not args.allow_prerelease:
+            print("NOTE: this tag is a pre-release (beta). Expect rough edges; see the release notes.")
 
         if args.dry_run:
             # In dry-run we resolve metadata but skip actual download
-            asset = _downloader.find_iso_asset(release)
+            try:
+                asset = _downloader.find_iso_asset(release)
+            except RuntimeError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                return 1
             sha_asset = _downloader.find_sha256sums_asset(release)
+            if asset.get("parts"):
+                src = (f"{len(asset['parts'])} parts -> {asset['name']} "
+                       f"({asset['size'] // 1_000_000} MB total, reassembled locally)")
+            else:
+                src = asset["browser_download_url"]
             print(
                 f"\n[DRY RUN] NOT executing. Would:\n"
-                f"  1. Download  {asset['browser_download_url']}\n"
+                f"  1. Download  {src}\n"
                 f"  2. Verify    SHA256 against {sha_asset['browser_download_url'] if sha_asset else '(no SHA256SUMS in release)'}\n"
                 f"  3. Run:      sudo python3 raw_write.py <iso> {args.target}  (sector-aligned raw copy, reports exact progress)\n"
                 f"\nNo data written. Remove --dry-run to perform the actual write.\n"
@@ -571,7 +583,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--iso", metavar="PATH",
                         help="Path to a local ISO file to write")
     parser.add_argument("--iso-release", metavar="TAG",
-                        help="Download ISO from GitHub release (tag or 'latest')")
+                        help="Download ISO from GitHub release (tag or 'latest'). Releases "
+                             "published in parts (.iso.part-*) are reassembled and verified locally.")
+    parser.add_argument("--allow-prerelease", action="store_true",
+                        help="With --iso-release latest: consider pre-releases (betas) too. "
+                             "GitHub's 'latest' otherwise skips them.")
     parser.add_argument("--target", metavar="DEVICE",
                         help="Target block device (e.g. /dev/disk4, /dev/sdb)")
     parser.add_argument("--dry-run", action="store_true",

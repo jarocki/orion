@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orion Workbench</title>
+<!--
+  Orion-X Phoenix Edition — OSINT & investigation launcher.
+  @decision DEC-PHASE12-043
+
+  Zero external resources: no CDN, no webfont, no analytics, no image fetch.
+  A page on an incident-response deck that reaches out to the internet to
+  render itself is a page that announces the deck. Everything here is inline
+  or served from this origin by orionx-osint.
+
+  The page renders nothing it cannot source. Its three honest obligations:
+    1. Local tools are listed only if they ship (tests/unit/test_osint_surface.sh).
+    2. Off-deck links are marked off-deck, and are disabled — with the reason
+       and the remedy spelled out — whenever the deck has no route or is at a
+       posture where reaching out would be wrong.
+    3. Nothing claims to be installed that is merely installable.
+-->
+<style>
+:root{
+  --bg:#0b0d11; --bg2:#0f1116; --panel:#141821; --panel2:#171a21;
+  --line:#242a35; --line2:#303848;
+  --fg:#e6e8ec; --dim:#9aa0a6; --faint:#6b7280;
+  --phoenix:#ff6a13; --phoenix-soft:#ffb15c;
+  --go:#34ff9e; --warn:#ffb300; --stop:#ff5f56; --cool:#7ab8ff;
+  --radius:10px;
+  --mono:"DejaVu Sans Mono","Hack",ui-monospace,monospace;
+  --sans:"DejaVu Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg); color:var(--fg); font-family:var(--sans);
+  font-size:15px; line-height:1.5;
+  background-image:
+    radial-gradient(900px 500px at 12% -10%, rgba(255,106,19,.10), transparent 60%),
+    radial-gradient(700px 420px at 95% 0%, rgba(122,184,255,.07), transparent 60%);
+  background-attachment:fixed;
+}
+.wrap{max-width:1180px;margin:0 auto;padding:0 16px 72px}
+a{color:var(--cool)}
+code,kbd,.mono{font-family:var(--mono)}
+
+/* ---- masthead ---------------------------------------------------------- */
+header.mast{padding:28px 0 14px;border-bottom:1px solid var(--line)}
+.mast h1{
+  margin:0; font-size:1.55rem; letter-spacing:.14em; text-transform:uppercase;
+  font-weight:700;
+}
+.mast h1 .x{color:var(--phoenix)}
+.mast p.sub{margin:6px 0 0;color:var(--dim);font-size:.9rem;max-width:62ch}
+
+/* ---- status strip ------------------------------------------------------ */
+.strip{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 0}
+.chip{
+  display:inline-flex;align-items:center;gap:7px;
+  background:var(--panel);border:1px solid var(--line);border-radius:999px;
+  padding:5px 12px;font-size:.78rem;font-family:var(--mono);color:var(--dim);
+}
+.chip b{color:var(--fg);font-weight:600}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none}
+.dot.go{background:var(--go);box-shadow:0 0 8px rgba(52,255,158,.6)}
+.dot.warn{background:var(--warn);box-shadow:0 0 8px rgba(255,179,0,.5)}
+.dot.stop{background:var(--stop);box-shadow:0 0 8px rgba(255,95,86,.5)}
+
+/* ---- banners (rule 8: say what, so what, what still works, what to do) -- */
+.banner{
+  border:1px solid var(--line2);border-left-width:4px;border-radius:var(--radius);
+  background:var(--panel);padding:14px 16px;margin:16px 0;
+}
+.banner.stop{border-left-color:var(--stop)}
+.banner.warn{border-left-color:var(--warn)}
+.banner.info{border-left-color:var(--cool)}
+.banner.go{border-left-color:var(--go)}
+.banner h3{margin:0 0 6px;font-size:.95rem;letter-spacing:.03em}
+.banner p{margin:0 0 6px;color:var(--dim);font-size:.88rem}
+.banner .remedy{
+  display:block;margin-top:8px;font-family:var(--mono);font-size:.82rem;
+  background:#0a0c10;border:1px solid var(--line);border-radius:6px;
+  padding:8px 10px;color:var(--phoenix-soft);overflow-x:auto;white-space:pre-wrap;
+}
+.banner.hidden{display:none}
+
+/* ---- controls ---------------------------------------------------------- */
+.controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:20px 0 6px}
+.controls input[type=search]{
+  flex:1 1 260px;min-width:0;background:var(--panel2);color:var(--fg);
+  border:1px solid var(--line2);border-radius:8px;padding:9px 12px;
+  font-family:var(--mono);font-size:.86rem;
+}
+.controls input[type=search]:focus{outline:2px solid var(--phoenix);outline-offset:1px}
+.filters{display:flex;flex-wrap:wrap;gap:6px}
+.filters button{
+  background:var(--panel);color:var(--dim);border:1px solid var(--line);
+  border-radius:999px;padding:5px 11px;font-size:.76rem;cursor:pointer;
+  font-family:var(--mono);letter-spacing:.04em;
+}
+.filters button[aria-pressed=true]{
+  background:rgba(255,106,19,.14);color:var(--phoenix-soft);border-color:var(--phoenix);
+}
+
+/* ---- sections ---------------------------------------------------------- */
+section{margin:34px 0 0}
+section > h2{
+  margin:0 0 4px;font-size:.82rem;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--phoenix);font-weight:700;
+}
+section > p.lede{margin:0 0 14px;color:var(--dim);font-size:.86rem;max-width:78ch}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(290px,1fr))}
+
+/* ---- cards ------------------------------------------------------------- */
+.card{
+  position:relative;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--radius);padding:14px 15px;display:flex;flex-direction:column;gap:7px;
+}
+.card .top{display:flex;align-items:flex-start;gap:8px;justify-content:space-between}
+.card h3{margin:0;font-size:.98rem;font-weight:650;letter-spacing:.01em}
+.card p{margin:0;color:var(--dim);font-size:.84rem}
+.card .cmd{
+  font-family:var(--mono);font-size:.79rem;background:#0a0c10;color:var(--phoenix-soft);
+  border:1px solid var(--line);border-radius:6px;padding:7px 9px;
+  overflow-x:auto;white-space:pre;
+}
+.card .foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:2px}
+
+.badge{
+  font-family:var(--mono);font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;
+  border-radius:4px;padding:2px 6px;border:1px solid currentColor;flex:none;white-space:nowrap;
+}
+.badge.local{color:var(--go)}
+.badge.offdeck{color:var(--cool)}
+.badge.install{color:var(--warn)}
+.badge.installed{background:rgba(70,200,120,.16);color:#8fe3ad;border-color:rgba(70,200,120,.55)}
+.card.installed{border-color:rgba(70,200,120,.35)}
+.badge.caution{color:var(--stop)}
+.badge.cat{color:var(--faint);border-color:var(--line2)}
+
+/* local cards read as "this works now" */
+.card.local{border-left:3px solid var(--go)}
+.card.install{border-left:3px solid var(--warn)}
+.card.online{border-left:3px solid var(--cool)}
+.card.online.blocked{border-left-color:var(--faint);opacity:.72}
+
+.btn{
+  display:inline-block;border-radius:7px;padding:7px 13px;font-size:.82rem;
+  font-weight:600;text-decoration:none;cursor:pointer;border:1px solid transparent;
+  font-family:var(--sans);
+}
+.btn.go{background:rgba(52,255,158,.13);color:var(--go);border-color:rgba(52,255,158,.45)}
+.btn.go:hover{background:rgba(52,255,158,.22)}
+.btn.out{background:rgba(122,184,255,.12);color:var(--cool);border-color:rgba(122,184,255,.42)}
+.btn.out:hover{background:rgba(122,184,255,.2)}
+.btn.copy{background:var(--panel2);color:var(--dim);border-color:var(--line2)}
+.btn.copy:hover{color:var(--fg)}
+.btn.dead{background:#121620;color:var(--faint);border-color:var(--line);cursor:not-allowed}
+.url{
+  font-family:var(--mono);font-size:.74rem;color:var(--faint);
+  overflow-wrap:anywhere;user-select:all;
+}
+.why{font-size:.8rem;color:var(--faint);border-top:1px dashed var(--line);padding-top:6px}
+
+footer{
+  margin-top:48px;padding-top:18px;border-top:1px solid var(--line);
+  color:var(--faint);font-size:.78rem;
+}
+footer a{color:var(--dim)}
+.empty{color:var(--faint);font-size:.86rem;font-style:italic;padding:8px 0}
+@media (max-width:560px){
+  .mast h1{font-size:1.2rem}
+  .grid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="mast">
+  <h1>Orion&#8209;<span class="x">X</span> &middot; Workbench</h1>
+  <p class="sub">Open-source investigation and OSINT, from a deck that assumes
+  the network is hostile. Green entries run here, now, with no network. Blue
+  entries are somewhere else on the internet, and say so.</p>
+  <div class="strip" id="strip"></div>
+</header>
+
+<div id="banners"></div>
+
+<div class="controls">
+  <input type="search" id="q" placeholder="filter by name, note, category&hellip;"
+         aria-label="Filter entries">
+  <div class="filters" id="filters"></div>
+</div>
+
+<section id="sec-local">
+  <h2>On this deck</h2>
+  <p class="lede">Installed and runnable right now. Every entry here is checked
+  against the image by <span class="mono">tests/unit/test_osint_surface.sh</span>;
+  if it is listed, it shipped.</p>
+  <div class="grid" id="grid-local"></div>
+</section>
+
+<section id="sec-recipes">
+  <h2>CyberChef &middot; incident-response recipes</h2>
+  <p class="lede">One click loads the recipe and a worked example into the
+  local CyberChef. Nothing is uploaded anywhere &mdash; this is the copy served
+  from this deck.</p>
+  <div class="grid" id="grid-recipes"></div>
+</section>
+
+<section id="sec-install">
+  <h2>Optional &middot; install when you need it</h2>
+  <p class="lede">Deliberately off the base image, for size or licence. Each
+  needs a network and one command, and each card says whether it is already
+  on this deck &mdash; from the installer's own evidence, not a guess. Nothing
+  on this deck degrades if you never run any of them.</p>
+  <div class="grid" id="grid-install"></div>
+</section>
+
+<section id="sec-online">
+  <h2>Off&#8209;deck &middot; needs the internet</h2>
+  <p class="lede" id="online-lede"></p>
+  <div class="grid" id="grid-online"></div>
+</section>
+
+<footer id="footer"></footer>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

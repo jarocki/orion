@@ -70,6 +70,16 @@ fi
 # ---------------------------------------------------------------------------
 # Seed README so the operator sees the Analysis structure on first boot even
 # when no sample data was available at build time. Mode: 0644 (world-readable).
+#
+# @decision DEC-PHASE12-126
+# @title ~/Analysis README names only flags download-samples.sh accepts
+# @status accepted
+# @rationale The README told operators `sudo download-samples.sh --output
+#   ~/Analysis/`; the script accepts --samples-dir/--offline only, so the first
+#   command a newcomer copied failed (QA round 1, docs F01). sudo is dropped
+#   too: the target is the operator's own home, and a root run would leave
+#   root-owned files there. tests/unit/test_operator_surfaces.sh executes every
+#   download-samples.sh line of this README with --offline.
 # ---------------------------------------------------------------------------
 if [ ! -f "${SKEL_ANALYSIS_DIR}/README.txt" ]; then
     cat > "${SKEL_ANALYSIS_DIR}/README.txt" << 'SKELEOF'
@@ -82,13 +92,15 @@ This directory is pre-seeded by the ISO build. Subdirectories:
   logs/      — Log file collections
   firmware/  — Firmware images for binary analysis
 
-To populate with training/sample data post-boot:
-  sudo download-samples.sh --output ~/Analysis/
+To fetch public training samples post-boot (needs a network; no sudo):
+  download-samples.sh --samples-dir ~/Analysis/public
+Add --offline to write a few extra synthetic samples instead.
 
 Forensic workflow entry points (all in PATH):
   artifact-analyzer.py <file>   — automated triage
   pcap-analyzer.py <file>       — PCAP-focused analysis
-  yara -r /opt/orionx/yara/     — YARA scanning
+  sudo orionx-freshen-yara      — fetch YARA rulesets (network), then
+  yara -r <rules.yar> <dir>     — scan; see /opt/orionx/yara/README.md for the rule files
   nebula                        — Nebula AI assistant
 SKELEOF
     chmod 644 "${SKEL_ANALYSIS_DIR}/README.txt"

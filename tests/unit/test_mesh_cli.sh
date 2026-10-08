@@ -195,11 +195,13 @@ else
     fail "No args shows usage" "rc=$rc"
 fi
 
+# The banner takes the version from /etc/orionx-version (one authority); with no
+# manifest on the test host it must say unknown-build, never a hard-coded release.
 output=$(run_cli help)
-if echo "$output" | grep -q 'v2.0.0'; then
-    pass "Help shows version"
+if echo "$output" | grep -qE '^Orion-X Mesh Networking Tool (v[0-9][^ ]*|unknown-build)$' && ! echo "$output" | grep -q 'v2.0.0'; then
+    pass "Help banner shows the image version (or unknown-build), not a hard-coded v2.0.0"
 else
-    fail "Help shows version" "Missing v2.0.0"
+    fail "Help banner version" "$(echo "$output" | head -1)"
 fi
 
 for cmd in join status peers leave help; do

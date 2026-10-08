@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""orionx-heald — the Orion-X auto-healing daemon.
+
+Tails the R.A.I.N. event bus, maps events to playbooks through a static
+registry, and acts only as far as the operator's standing consent in
+~/.config/orionx/autonomy.json permits. Everything it does is reversible, has a
+rollback timer, and is sealed into a hash-chained audit ledger.
+
+    orionx-heald                 # normal operation (systemd)
+    orionx-heald --dry-run -v    # decide out loud, change nothing
+    orionx-heald --stdin         # feed it JSONL events for testing
+    orionx-heald --once          # one pass over the bus, then exit
+
+@decision DEC-PHASE12-023
+@title Auto-healing daemon consuming the existing event bus
+@status accepted
+@rationale The Control Center has offered the operator an autonomy grid since
+  W10-6's first slice, and nothing consumed it: an operator could set block_ip
+  to "autonomous" and be wrong about it during an incident. This daemon is the
+  consumer that makes the control real.
+
+  It reads /run/orionx/events.jsonl — the same bus R.A.I.N. hears and the
+  Cockpit shows (DEC-PHASE11-045) — rather than opening a second detection
+  path. Every detector already publishes there, so the engine inherits
+  scanwatch, nucleotide, YARA and Suricata without coupling to any of them,
+  and the three channels (hear, see, act) can never disagree about what
+  happened. It publishes its own actions back onto the same bus, which is why
+  match_event() refuses events whose source is "healing": on a shared bus, an
+  action that announces itself into its own trigger is a feedback loop.
+
+  Tailing uses the one bus reader, rain_lib.BusTail (DEC-PHASE12-083): start
+  at EOF (a daemon restart must not re-act on an hour of history), reopen on
+  deletion, inode change or truncation because the bus lives on tmpfs, and
+  never drop a line that was read before its newline arrived. No backfill,
+  unlike the Cockpit: a responder that backfilled would re-act on every event
+  since boot each time systemd restarted it.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from pathlib import Path
+
+_HERE = Path(__file__).resolve().parent
+for _p in (_HERE, _HERE.parent / "rain"):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
+
+import engine as eng  # noqa: E402
+import healing_lib as hl  # noqa: E402
+import rain_lib  # noqa: E402
+from rain_lib import BusTail  # noqa: E402  (the one bus reader, DEC-PHASE12-083)
+
+POLL_SECONDS = 1.0
+SWEEP_SECONDS = 30.0
+#: healing-status.json is refreshed on every chain append AND at least this
+#: often (the Cockpit contract says <= 10 s; DEC-PHASE12-085).
+STATUS_SECONDS = 5.0
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="orionx-heald",
+        description="Auto-healing engine: act on R.A.I.N. events within the "
+                    "operator's pre-approved autonomy.",
+    )
+    ap.add_argument("--dry-run", action="store_true",
+                    help="decide and print; perform no action, write no ledger")
+    ap.add_argument("-v", "--verbose", action="store_true",
+                    help="narrate every decision")
+    ap.add_argument("--stdin", action="store_true",
+                    help="read JSONL events from stdin instead of the bus")
+    ap.add_argument("--once", action="store_true",
+                    help="process the bus from the START, then exit (one-shot; "
+                         "unlike the daemon loop this DOES replay history)")
+    ap.add_argument("--bus", default=str(hl.EVENT_LOG),
+                    help="event bus path (default: %(default)s)")
+    ap.add_argument("--state-dir", default=str(hl.STATE_DIR),
+                    help="ledger + vault directory (default: %(default)s)")
+    ap.add_argument("--no-reconcile", action="store_true",
+                    help="skip re-asserting active blocks into nftables at start")
+    args = ap.parse_args(argv)
+
+    e = eng.Engine(dry_run=args.dry_run, verbose=args.verbose,
+                   state_dir=Path(args.state_dir))
+
+    if args.stdin:
+        # Test/feed mode: no host probing surprises, no nftables reconcile.
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(event, dict):
+                # The invoker vouches for its own stdin (it is not the shared
+                # bus); acting still needs root, guards and consent.
+                e.handle_event(event, trusted=True)
+        return 0
+
+    if not args.dry_run:
+        # DEC-PHASE12-084: make sure root producers have a key to sign with.
+        # A refused/unwritable key is reported, and every bus trigger then
+        # stays a suggestion (fail closed), rather than the daemon dying.
+        _key, why = rain_lib.ensure_bus_key(rain_lib.BUS_KEY)
+        if why:
+            print(f"orionx-heald: {why}; bus events cannot be verified and will "
+                  "not be acted on", file=sys.stderr, flush=True)
+    if not args.no_reconcile and not args.dry_run:
+        e.reconcile()
+    e.sweep()
+    e.publish_status()
+
+    tail = BusTail(Path(args.bus), at_end=True)
+    if args.once:
+        # One-shot mode reads from the beginning: "process what is already on
+        # the bus" is the whole point of it, and seeking to EOF first (which is
+        # right for the daemon, so a restart does not re-act on history) would
+        # make it silently process nothing at all.
+        tail.rewind()
+        for event in tail.poll_events():
+            e.handle_event(event)
+        return 0
+
+    e.publish("info", "auto-healing engine online; acting within "
+                      "~/.config/orionx/autonomy.json")
+    last_sweep = last_status = time.time()
+    try:
+        while True:
+            for event in tail.poll_events():
+                e.handle_event(event)
+            now = time.time()
+            if now - last_sweep >= SWEEP_SECONDS:
+                e.sweep(now)
+                last_sweep = now
+            if now - last_status >= STATUS_SECONDS:
+                e.publish_status(now)
+                last_status = now
+            time.sleep(POLL_SECONDS)
+    except KeyboardInterrupt:
+        return 0
+    except BrokenPipeError:
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

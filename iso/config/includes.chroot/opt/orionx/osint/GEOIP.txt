@@ -1,0 +1,110 @@
+Geolocation on the Orion-X attack map — the honest answer
+=========================================================
+DEC-PHASE12-043
+
+Short version
+-------------
+No GeoIP database ships on this ISO. The map therefore places NOTHING on a
+world outline, because it cannot. Every public source it shows is labelled
+UNLOCATED, and it says why, every time. If you want country and ASN labels:
+
+    sudo /opt/orionx/optional/install-geoip.sh
+
+Even then the map does not gain coordinates. See "What the installer adds".
+
+Why nothing ships
+-----------------
+Three separate reasons, any one of which is sufficient.
+
+1. Licensing. The database most people mean by "GeoIP" is MaxMind GeoLite2.
+   It is free to download with an account and a licence key, and its EULA
+   does not permit redistributing it inside a product image. Orion-X is a
+   redistributed image. That is the end of that option.
+
+   DB-IP's Lite databases ARE redistributable — CC BY 4.0, attribution
+   required — so the licence is not the blocker for DB-IP specifically. The
+   next two are.
+
+2. Staleness. IP-to-country data is republished monthly. An ISO is built
+   once and run for months. A baked-in database would start out wrong at the
+   edges and get worse silently, and "silently worse" is the failure mode
+   this project exists to avoid (docs/RESILIENCE.md). A database the operator
+   fetched, and can see the date of, is a database they can reason about.
+
+3. Honesty about accuracy. Country-level IP geolocation is a statement about
+   where an address block is *registered or announced*. It is not where the
+   attacker is. VPNs, hosting providers, CGNAT, hijacked prefixes and
+   compromised third parties all make the answer wrong in exactly the cases
+   an incident responder cares about. A world map with a dot on it reads as
+   evidence. A label that says "AS14061 · DE" reads as what it is: routing
+   metadata.
+
+So: no map outline, no coordinates, no dots.
+
+What the map shows with no GeoIP at all
+---------------------------------------
+Everything that is actually true about a source address without a database,
+which turns out to be most of what matters in the first ten minutes:
+
+  * that it exists at all, and when — first seen, last seen, event count
+  * its scope, derived from the address itself and nothing else:
+    loopback / private (RFC1918) / CGNAT (100.64.0.0/10) / link-local /
+    multicast / reserved / public. "This is coming from inside the house"
+    is a different incident from "this is coming from the internet", and
+    that distinction needs no database.
+  * severity, and which detector saw it — scanwatch, Suricata, Zeek
+  * distinct ports touched, protocols, and the scan kind scanwatch assigned
+  * relative volume, as tracer density and node size
+  * per-source arcs converging on the deck, animated in event order
+
+The ring the sources sit on is LAYOUT. Bearing carries no geography, the
+page says so on its face, and each scope gets its own labelled arc sector —
+so angle means classification, which is true, rather than direction, which
+would not be.
+
+Sources the map cannot locate are rendered. They are not hidden and they are
+not guessed at. They sit in the UNLOCATED sector with that word on them.
+
+What the installer adds
+-----------------------
+    sudo /opt/orionx/optional/install-geoip.sh
+
+Fetches two DB-IP Lite databases into /var/lib/orionx/geoip/ and installs
+python3-maxminddb if it is missing:
+
+    dbip-country-lite.mmdb   ~  4 MB download, ~10 MB on disk
+    dbip-asn-lite.mmdb       ~  5 MB download, ~12 MB on disk
+
+    Licence:  Creative Commons Attribution 4.0 International (CC BY 4.0)
+              "IP Geolocation by DB-IP" — https://db-ip.com
+              The attribution is required wherever the data is displayed and
+              is rendered in the map's footer whenever a database is loaded.
+    Refresh:  monthly. Re-run the installer; it fetches the current month and
+              reports the date it got. The map shows that date beside every
+              label, so a stale database is visible rather than assumed.
+
+With a database loaded, each PUBLIC source gains:
+
+    location.country      ISO 3166 code, e.g. "DE"
+    location.country_name "Germany"
+    location.asn          "AS14061"
+    location.as_org       the announcing organisation
+
+and nothing else. No latitude. No longitude. The map still does not place
+anything, and there is still no world outline behind it. If DB-IP has no
+record for an address, it stays UNLOCATED with reason
+"not-in-geoip-database" — the database answering "I don't know" is not the
+same as the database being absent, and the map distinguishes them.
+
+Private, loopback, CGNAT and reserved addresses are never looked up. There
+is no public location for 192.168.4.77 and claiming one would be the same
+defect as inventing coordinates.
+
+Where the rule lives in the code
+--------------------------------
+scripts/osint/pewpew_feed.py :: _unlocated()
+
+That function is the only shape an unlocated source may take, and it has no
+coordinate keys in it. tests/unit/test_osint_surface.sh mutates it to return
+invented coordinates and asserts the suite goes red. If you change it, that
+test is the thing you have to argue with.

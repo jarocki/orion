@@ -1,0 +1,15 @@
+[Desktop Entry]
+# Orion Workbench — the analyst toolbox (DEC-PHASE12-043; named "Investigation Surface" until 2026-10-05).
+# Static .desktop rather than one written by a hook: 0700 owns the hook-written
+# entries and this slice does not edit it; includes.chroot/usr/share/applications
+# carries the other static entries (orionx-matrix-commander and friends).
+# Icon: its own Orion-X-Icons glyph (DEC-PHASE12-127, QA UX-44).
+Type=Application
+Name=Orion Workbench
+GenericName=OSINT launcher
+Comment=OSINT and investigation launcher — local tools, CyberChef, attack map, verified off-deck resources
+Exec=/usr/bin/orionx-osint
+Icon=orionx-workbench
+Terminal=true
+Categories=X-Orion;
+Keywords=OSINT;investigation;Bellingcat;CyberChef;intelligence;

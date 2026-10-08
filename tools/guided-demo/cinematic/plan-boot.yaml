@@ -1,0 +1,29 @@
+# Final QEMU capture for the trailer: power-on -> first-boot wizard -> desktop.
+# Everything after the desktop is recorded from the imported rootfs
+# (record_scenes.py), which runs at native speed. See DEC-PHASE12-140.
+- {label: boot,        mark: boot, fps: 3}
+- {label: wizard-up,   wait: 'Starting orionx-first-boot', timeout: 900, required: true}
+- {label: show-vt1,    mark: config, fps: 3, sleep: 2}
+- {key: ctrl+alt+f1}
+- {sleep: 8}
+- {label: hostname,    type: "ox-alpha", delay: 0.18}
+- {sleep: 1.5}
+- {key: enter}
+- {sleep: 4}
+- {label: username,    key: enter}
+- {sleep: 4}
+- {label: password,    type: "live", delay: 0.2}
+- {key: enter}
+- {sleep: 2}
+- {type: "live", delay: 0.2}
+- {key: enter}
+- {label: wizard-rest, sleep: 25}
+- {label: serial-login, mark: x-desktop-wait, fps: 1, wait: 'orionx login:', history: true, timeout: 900, required: true}
+- {sleep: 3, send: "\n"}
+- {send: "orionx-operator\n"}
+- {wait: 'Password:', timeout: 60, send: "live\n"}
+- {sleep: 8}
+- {send: "export DISPLAY=:0; until xwininfo -root -tree 2>/dev/null | grep -q '\"xfdesktop\"'; do sleep 3; done; echo X-DESKTOP-UP\n"}
+- {wait: '(?m)^X-DESKTOP-UP', timeout: 1200, required: true}
+- {label: desktop,     mark: desktop, fps: 2, sleep: 45}
+- {label: end,         mark: x-end, sleep: 2}

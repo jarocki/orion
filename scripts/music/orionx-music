@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""orionx-music — headless control for the Orion-X generative techno bed.
+
+@decision DEC-PHASE12-044
+
+The DJ deck (orionx-dj) is the operator surface; this is the one for scripts,
+for proving the thing works without a GUI, and for anything that wants the
+music out of the way.
+
+  orionx-music status              what the audio path can and cannot do
+  orionx-music render OUT.wav      render offline — provable with no sound card
+  orionx-music play                stream to the speakers until Ctrl-C
+  orionx-music duck [--seconds N]  tell a running deck to shut up for N seconds
+  orionx-music set bpm=140 ...     edit ~/.config/orionx/music.json
+
+Music is OFF by default and nothing starts it but an operator.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from array import array
+from dataclasses import asdict
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import orionx_synth as synth     # noqa: E402
+
+
+def _state_from_args(args: argparse.Namespace) -> synth.DeckState:
+    state = synth.load_config()
+    for key in ("bpm", "cutoff", "resonance", "density", "intensity", "volume",
+                "pattern", "seed"):
+        value = getattr(args, key, None)
+        if value is not None:
+            setattr(state, key, value)
+    return state.clamp()
+
+
+def _add_knobs(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--bpm", type=float, help="tempo, 90-160")
+    parser.add_argument("--cutoff", type=float, help="filter cutoff, 0-1")
+    parser.add_argument("--resonance", type=float, help="filter Q, 0-1")
+    parser.add_argument("--density", type=float, help="pattern density, 0-1")
+    parser.add_argument("--intensity", type=float, help="intensity, 0-1")
+    parser.add_argument("--volume", type=float, help="master volume, 0-1")
+    parser.add_argument("--pattern", choices=synth.PATTERNS, help="pattern name")
+    parser.add_argument("--seed", type=int, help="pattern seed")
+
+
+# --- status -----------------------------------------------------------------
+def cmd_status(args: argparse.Namespace) -> int:
+    audio = synth.audio_report()
+    guard = synth.AlertGuard()
+    guard.poll()
+    state = synth.load_config()
+    degraded = guard.degradations()
+
+    payload = {
+        "enabled": state.enabled,
+        "config_file": str(synth.CONFIG_FILE),
+        "config_exists": synth.CONFIG_FILE.is_file(),
+        "audio": audio,
+        "duck_floor": synth.DUCK_FLOOR,
+        "duck_gate": str(synth.DUCK_GATE),
+        "event_bus": str(guard.event_log),
+        "event_bus_present": guard.event_log.exists(),
+        "rain_lib": guard._rain is not None,         # noqa: SLF001
+        "guard_healthy": guard.is_healthy(),
+        "music_gain_now": round(guard.music_gain(), 4),
+        "degradations": degraded,
+        "state": asdict(state),
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if audio["available"] else 1
+
+    print("Orion-X music — generative techno bed (DEC-PHASE12-044)")
+    print(f"  music enabled      : {'yes' if state.enabled else 'NO (default)'}")
+    print(f"  config             : {synth.CONFIG_FILE}"
+          f"{'' if synth.CONFIG_FILE.is_file() else '  (not written yet)'}")
+    if audio["available"]:
+        print(f"  audio player       : {audio['player']}")
+    else:
+        print(f"  audio player       : NONE — {audio['what']}")
+    print(f"  R.A.I.N. bus       : {guard.event_log}"
+          f"{'' if guard.event_log.exists() else '  (absent — no cues to duck for)'}")
+    print(f"  rain_lib severity  : {'imported' if payload['rain_lib'] else 'UNAVAILABLE'}")
+    print(f"  alert guard        : {'alive' if guard.is_healthy() else 'NOT WATCHING'}")
+    print(f"  duck floor         : {synth.DUCK_FLOOR:.2f}  (a cue plays into silence)")
+    print(f"  music gain now     : {guard.music_gain():.3f}")
+
+    if not audio["available"] or degraded:
+        print("\nDEGRADED:")
+        if not audio["available"]:
+            print(f"  * {audio['what']}")
+            print(f"    consequence: {audio['consequence']}")
+            print(f"    remedy     : {audio['remedy']}")
+        for item in degraded:
+            print(f"  * {item['what']}")
+            print(f"    consequence: {item['consequence']}")
+            print(f"    remedy     : {item['remedy']}")
+        return 1
+    print("\nAll good. Start the deck with:  orionx-dj     (or: orionx-music play)")
+    return 0
+
+
+# --- render -----------------------------------------------------------------
+def cmd_render(args: argparse.Namespace) -> int:
+    """Offline render. This is the command that makes every claim in the test
+    suite reproducible on a machine with no sound card at all."""
+    clock = [1_000_000.0]
+    scratch = Path(args.out).resolve().parent
+    guard = synth.AlertGuard(
+        event_log=Path(args.bus) if args.bus else scratch / ".orionx-music-render-bus",
+        gate=Path(args.gate) if args.gate else scratch / ".orionx-music-render-gate",
+        tone_dir=Path(args.tone_dir) if args.tone_dir else synth.TONE_DIR,
+        clock=lambda: clock[0],
+    )
+    guard.poll(clock[0])
+    state = _state_from_args(args)
+    state.enabled = True
+    engine = synth.SynthEngine(state, guard)
+
+    frames_per_block = synth.BLOCK_FRAMES
+    total = int(args.seconds * engine.sr)
+    out = array("h")
+    produced = 0
+    while produced < total:
+        now = clock[0]
+        if args.duck_at is not None and now - 1_000_000.0 >= args.duck_at > -1:
+            guard.duck.duck(now, args.duck_for)
+            args.duck_at = None
+        guard.poll(now)
+        out.extend(engine.render_block(frames_per_block))
+        produced += frames_per_block
+        clock[0] += frames_per_block / engine.sr
+    del out[total:]
+
+    synth.write_wav(Path(args.out), out, engine.sr)
+    print(f"{args.out}: {args.seconds:.2f}s  rms={synth.rms(out):.0f} "
+          f"peak={synth.peak(out)} brightness={synth.brightness(out):.0f} "
+          f"bpm={state.bpm:g} pattern={state.pattern}")
+    return 0
+
+
+# --- play -------------------------------------------------------------------
+def cmd_play(args: argparse.Namespace) -> int:
+    audio = synth.audio_report()
+    if not audio["available"]:
+        print(f"orionx-music: {audio['what']}", file=sys.stderr)
+        print(f"  consequence: {audio['consequence']}", file=sys.stderr)
+        print(f"  remedy     : {audio['remedy']}", file=sys.stderr)
+        return 1
+    state = _state_from_args(args)
+    state.enabled = True
+    guard = synth.AlertGuard()
+    engine = synth.SynthEngine(state, guard)
+    engine.ensure_bank()
+    player = synth.MusicPlayer(engine)
+    result = player.start()
+    if not result.ok:
+        print(f"orionx-music: {result.message()}", file=sys.stderr)
+        return 1
+    print(f"orionx-music: playing via {player.argv[0] if player.argv else '?'} "
+          f"({state.pattern}, {state.bpm:g} bpm). Ctrl-C to stop.")
+    try:
+        deadline = None if args.seconds is None else time.monotonic() + args.seconds
+        while player.running():
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            time.sleep(0.2)
+            if not player.result.ok:
+                print(f"orionx-music: {player.result.message()}", file=sys.stderr)
+                player.stop()
+                return 1
+    except KeyboardInterrupt:
+        pass
+    finally:
+        player.stop()
+    return 0
+
+
+# --- duck -------------------------------------------------------------------
+def cmd_duck(args: argparse.Namespace) -> int:
+    if synth.request_duck(args.seconds, gate=Path(args.gate) if args.gate else None):
+        print(f"orionx-music: ducked for {args.seconds:g}s "
+              f"(gate {args.gate or synth.DUCK_GATE})")
+        return 0
+    print(f"orionx-music: could not write the duck gate "
+          f"({args.gate or synth.DUCK_GATE})", file=sys.stderr)
+    print("  consequence: a running music deck will only duck when it sees the "
+          "event on the R.A.I.N. bus, which is slower", file=sys.stderr)
+    print(f"  remedy     : ls -ld {synth.DUCK_GATE.parent}", file=sys.stderr)
+    return 1
+
+
+# --- set --------------------------------------------------------------------
+def cmd_set(args: argparse.Namespace) -> int:
+    state = synth.load_config()
+    valid = set(asdict(state))
+    for pair in args.assignment:
+        if "=" not in pair:
+            print(f"orionx-music: not a key=value pair: {pair}", file=sys.stderr)
+            return 2
+        key, _, raw = pair.partition("=")
+        key = key.strip()
+        if key not in valid:
+            print(f"orionx-music: unknown key '{key}' "
+                  f"(known: {', '.join(sorted(valid))})", file=sys.stderr)
+            return 2
+        current = getattr(state, key)
+        if isinstance(current, bool):
+            value = raw.strip().lower() in ("1", "true", "yes", "on")
+        elif isinstance(current, int) and not isinstance(current, bool):
+            value = int(float(raw))
+        elif isinstance(current, float):
+            value = float(raw)
+        else:
+            value = raw.strip()
+        setattr(state, key, value)
+    state.clamp()
+    if not synth.save_config(state):
+        print(f"orionx-music: could not write {synth.CONFIG_FILE}", file=sys.stderr)
+        return 1
+    print(json.dumps(asdict(state), indent=2, sort_keys=True))
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="orionx-music",
+        description="Generative techno bed for the Orion-X deck. Off by default; "
+                    "always subordinate to R.A.I.N. intrusion cues.")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p = sub.add_parser("status", help="what the audio path can and cannot do")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("render", help="render to a WAV file (no audio device needed)")
+    p.add_argument("out")
+    p.add_argument("--seconds", type=float, default=8.0)
+    p.add_argument("--duck-at", type=float, default=None,
+                   help="seconds into the render at which to fire a duck")
+    p.add_argument("--duck-for", type=float, default=2.0)
+    p.add_argument("--bus", default=None, help="event bus path (testing)")
+    p.add_argument("--gate", default=None, help="duck gate path (testing)")
+    p.add_argument("--tone-dir", default=None, help="R.A.I.N. cue dir (testing)")
+    _add_knobs(p)
+    p.set_defaults(func=cmd_render)
+
+    p = sub.add_parser("play", help="stream to the speakers")
+    p.add_argument("--seconds", type=float, default=None)
+    _add_knobs(p)
+    p.set_defaults(func=cmd_play)
+
+    p = sub.add_parser("duck", help="ask a running deck to get out of the way")
+    p.add_argument("--seconds", type=float, default=synth.DUCK_FALLBACK_SECONDS)
+    p.add_argument("--gate", default=None)
+    p.set_defaults(func=cmd_duck)
+
+    p = sub.add_parser("set", help="edit ~/.config/orionx/music.json")
+    p.add_argument("assignment", nargs="+", metavar="KEY=VALUE")
+    p.set_defaults(func=cmd_set)
+
+    args = parser.parse_args(argv)
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -104,14 +104,26 @@ BOOT_SUCCESS_MARKERS=(
 # 1. Explicit --ovmf flag (set at arg-parse time, takes precedence)
 # 2. Debian/Ubuntu: apt install ovmf
 # 3. Fedora/RHEL:   dnf install edk2-ovmf
+# 4. macOS/Homebrew: brew install qemu (ships edk2-*.fd with the emulator)
+#
+# The macOS entries matter because the release ISO is built and verified on a
+# Mac. Without them UEFI mode SKIPped on every local run, so the hybrid ISO's
+# UEFI half — half of what DEC-PHASE7-019 exists to prove — was never actually
+# exercised outside CI. Homebrew names the payload edk2-x86_64-code.fd and
+# pairs it with edk2-i386-vars.fd (the vars blob is architecture-neutral; there
+# is no edk2-x86_64-vars.fd in the formula).
 # =========================================================================
 OVMF_SEARCH_PATHS=(
     "/usr/share/OVMF/OVMF_CODE.fd"
     "/usr/share/edk2/ovmf/OVMF_CODE.fd"
+    "/opt/homebrew/share/qemu/edk2-x86_64-code.fd"
+    "/usr/local/share/qemu/edk2-x86_64-code.fd"
 )
 OVMF_VARS_SEARCH_PATHS=(
     "/usr/share/OVMF/OVMF_VARS.fd"
     "/usr/share/edk2/ovmf/OVMF_VARS.fd"
+    "/opt/homebrew/share/qemu/edk2-i386-vars.fd"
+    "/usr/local/share/qemu/edk2-i386-vars.fd"
 )
 
 # =========================================================================

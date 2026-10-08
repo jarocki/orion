@@ -249,7 +249,7 @@ echo ""
 echo "--- 6. First-Boot Wizard ---"
 
 FIRSTBOOT_SCRIPT="$REPO_ROOT/scripts/first-boot-wizard.sh"
-FIRSTBOOT_SERVICE="$REPO_ROOT/systemd/orionx-first-boot.service"
+FIRSTBOOT_SERVICE="$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/orionx-first-boot.service"
 
 if [[ -f "$FIRSTBOOT_SCRIPT" ]]; then
     pass "first-boot-wizard.sh exists"

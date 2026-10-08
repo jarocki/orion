@@ -5,7 +5,7 @@ profile tshark /usr/bin/tshark {
 
   /dev/net/tun rw,
   /opt/orionx/data/** r,
-  /home/orionx/Analysis/** rw,
+  /home/*/Analysis/** rw,
 
   network packet raw,
   network inet dgram,

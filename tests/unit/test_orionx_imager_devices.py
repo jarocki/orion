@@ -369,5 +369,61 @@ class TestListDevicesLinuxUnaffected(unittest.TestCase):
         self.assertEqual(result[0]["path"], "/dev/sdb")
 
 
+class TestLinuxSystemDisk(unittest.TestCase):
+    """_is_linux_system_disk() must refuse the disk that holds / — whatever it
+    is called (sda, nvme0n1, mmcblk0) and even behind LUKS/LVM mapper devices
+    (beta audit M14: the prefix-only check let an NVMe root through)."""
+
+    @staticmethod
+    def _runner(root_source: str, parents: dict):
+        class R:
+            def __init__(self, out: str, rc: int = 0):
+                self.stdout, self.returncode = out, rc
+
+        def run(argv, **kw):
+            if argv[0] == "findmnt":
+                return R(root_source + "\n")
+            if argv[0] == "lsblk" and argv[1:3] == ["-no", "PKNAME"]:
+                return R(parents.get(argv[3], "") + "\n", 0 if argv[3] in parents else 1)
+            raise AssertionError(f"unexpected call {argv}")
+        return run
+
+    def test_nvme_root_partition_refuses_nvme_disk(self):
+        run = self._runner("/dev/nvme0n1p2", {"/dev/nvme0n1p2": "nvme0n1", "/dev/nvme0n1": ""})
+        with patch("devices.platform.system", return_value="Linux"), patch("devices.subprocess.run", side_effect=run):
+            self.assertTrue(devices.is_system_disk("/dev/nvme0n1"))
+            self.assertFalse(devices.is_system_disk("/dev/sda"), "a USB stick called sda is NOT the root disk here")
+            self.assertFalse(devices.is_system_disk("/dev/sdb"))
+
+    def test_luks_root_walks_mapper_to_disk(self):
+        run = self._runner("/dev/mapper/cryptroot",
+                           {"/dev/mapper/cryptroot": "nvme0n1p3", "/dev/nvme0n1p3": "nvme0n1", "/dev/nvme0n1": ""})
+        with patch("devices.platform.system", return_value="Linux"), patch("devices.subprocess.run", side_effect=run):
+            self.assertTrue(devices.is_system_disk("/dev/nvme0n1"))
+            self.assertFalse(devices.is_system_disk("/dev/sdb"))
+
+    def test_sda_root_still_refused_and_mmcblk(self):
+        run = self._runner("/dev/sda1", {"/dev/sda1": "sda", "/dev/sda": ""})
+        with patch("devices.platform.system", return_value="Linux"), patch("devices.subprocess.run", side_effect=run):
+            self.assertTrue(devices.is_system_disk("/dev/sda"))
+        run = self._runner("/dev/mmcblk0p2", {"/dev/mmcblk0p2": "mmcblk0", "/dev/mmcblk0": ""})
+        with patch("devices.platform.system", return_value="Linux"), patch("devices.subprocess.run", side_effect=run):
+            self.assertTrue(devices.is_system_disk("/dev/mmcblk0"))
+            self.assertFalse(devices.is_system_disk("/dev/sda"))
+
+    def test_findmnt_missing_falls_back_to_classic_names(self):
+        with patch("devices.platform.system", return_value="Linux"), \
+             patch("devices.subprocess.run", side_effect=FileNotFoundError("findmnt")):
+            self.assertTrue(devices.is_system_disk("/dev/sda"))
+            self.assertTrue(devices.is_system_disk("/dev/nvme0n1"))
+            self.assertFalse(devices.is_system_disk("/dev/sdc"))
+
+    def test_refuse_write_message_for_linux_root(self):
+        run = self._runner("/dev/nvme0n1p2", {"/dev/nvme0n1p2": "nvme0n1", "/dev/nvme0n1": ""})
+        with patch("devices.platform.system", return_value="Linux"), patch("devices.subprocess.run", side_effect=run):
+            self.assertIn("system/root disk", devices.refuse_write("/dev/nvme0n1") or "")
+            self.assertIsNone(devices.refuse_write("/dev/sdb"))
+
+
 if __name__ == "__main__":
     unittest.main()

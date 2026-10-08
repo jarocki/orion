@@ -284,43 +284,36 @@ for pattern in "${FORBIDDEN_AFTER_PATTERNS[@]}"; do
 done
 
 # ===========================================================================
-# 8. Compound-interaction: Option B installation coherence
-#    - unit present in lib/systemd/system/ (operative install, bypasses 0615)
-#    - symlink present in etc/systemd/system/multi-user.target.wants/
-#    - symlink target is the /lib/systemd/system/ path
-#    - staging and installed unit files are identical (no drift)
+# 7. DEC-PHASE12-109: ONE install authority (0615), VM-only
+#    The committed lib/systemd/system copy and wants/ symlink were a second
+#    install path that ran this CI probe on every production boot.
 # ===========================================================================
-section "Compound-interaction: Option B installation coherence"
+section "Single install authority (0615) and VM-only condition"
 
-if [[ -f "${SERVICE_INSTALLED}" ]]; then
-    pass "unit installed at lib/systemd/system/orionx-perf-measure.service"
+HOOK_0615="${REPO_ROOT}/iso/config/hooks/live/0615-install-systemd-units.hook.chroot"
+UNIT_NAME="$(basename "${SERVICE_STAGING}")"
+if [[ -e "${SERVICE_INSTALLED}" || -L "${SERVICE_SYMLINK}" ]]; then
+    fail "no second install path (includes.chroot lib/ copy or wants/ symlink)" "${SERVICE_INSTALLED} / ${SERVICE_SYMLINK}"
 else
-    fail "unit installed at lib/systemd/system/orionx-perf-measure.service" \
-         "Expected: ${SERVICE_INSTALLED}"
+    pass "no second install path (includes.chroot lib/ copy or wants/ symlink)"
 fi
-
-if [[ -L "${SERVICE_SYMLINK}" ]]; then
-    pass "enable symlink exists in multi-user.target.wants/"
-    SYMLINK_TARGET="$(readlink "${SERVICE_SYMLINK}")"
-    if [[ "${SYMLINK_TARGET}" == "/lib/systemd/system/orionx-perf-measure.service" ]]; then
-        pass "symlink target is /lib/systemd/system/orionx-perf-measure.service"
-    else
-        fail "symlink target is /lib/systemd/system/orionx-perf-measure.service" \
-             "Got: ${SYMLINK_TARGET}"
-    fi
+STRAY="$(find "${REPO_ROOT}/iso/config/includes.chroot/etc/systemd/system" -path '*.wants/orionx-*' 2>/dev/null || true)"
+if [[ -z "${STRAY}" ]]; then
+    pass "no committed orionx-* wants/ symlink anywhere (0615 is the only enabler)"
 else
-    fail "enable symlink exists in multi-user.target.wants/" \
-         "Expected: ${SERVICE_SYMLINK}"
+    fail "no committed orionx-* wants/ symlink anywhere" "${STRAY}"
 fi
-
-# Verify staging and installed unit are identical (no drift between copies)
-if [[ -f "${SERVICE_STAGING}" && -f "${SERVICE_INSTALLED}" ]]; then
-    if diff -q "${SERVICE_STAGING}" "${SERVICE_INSTALLED}" >/dev/null 2>&1; then
-        pass "staging and installed unit files are identical (no drift)"
-    else
-        fail "staging and installed unit files are identical (no drift)" \
-             "diff: $(diff "${SERVICE_STAGING}" "${SERVICE_INSTALLED}" | head -5)"
-    fi
+UF="$(sed -n '/^UNIT_FILES=(/,/^)/p' "${HOOK_0615}")"
+AU="$(sed -n '/^AUTOSTART_UNITS=(/,/^)/p' "${HOOK_0615}")"
+if grep -q "\"${UNIT_NAME}\"" <<< "${UF}" && grep -q "\"${UNIT_NAME}\"" <<< "${AU}"; then
+    pass "0615 installs and enables ${UNIT_NAME}"
+else
+    fail "0615 installs and enables ${UNIT_NAME}"
+fi
+if grep -qE '^ConditionVirtualization=vm$' "${SERVICE_STAGING}"; then
+    pass "${UNIT_NAME} runs only under virtualization (skipped on a deck)"
+else
+    fail "${UNIT_NAME} has ConditionVirtualization=vm"
 fi
 
 # ===========================================================================

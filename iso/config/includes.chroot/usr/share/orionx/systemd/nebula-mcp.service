@@ -1,0 +1,145 @@
+# Nebula MCP Tool Server — confined (DEC-007 / DEC-PHASE12-025)
+#
+# @decision DEC-PHASE12-025
+# @title nebula-mcp.service: unprivileged user + no network namespace + a unix
+#   socket the model's client can still reach
+# @status accepted
+# @rationale This unit is the third of the three authorities DEC-007 asks for:
+#   a uid boundary (User=nebula-mcp, created by
+#   0616-create-nebula-mcp-user.hook.chroot), a MAC policy
+#   (AppArmorProfile=nebula-mcp) and a namespace (PrivateNetwork, ProtectSystem,
+#   ProtectHome, PrivateTmp, PrivateDevices). No one of them is trusted alone.
+#
+#   PrivateNetwork=yes is the load-bearing line. The server gets an empty
+#   network namespace: no route out, and no route to ollama's 127.0.0.1:11434
+#   either. That second part is deliberate — a compromised tool server must not
+#   be able to turn around and drive the model. IPAddressDeny=any is belt on
+#   braces for the case where a future edit removes PrivateNetwork.
+#
+#   The transport is therefore a unix socket, not a port. AF_UNIX is a
+#   filesystem object and a network namespace has no opinion about it, so
+#   `nebula ask` (running as the operator, outside this sandbox) connects
+#   normally. RuntimeDirectory= gives us /run/nebula-mcp owned by the service
+#   user and reaped on stop; mcp_server._grant_socket_access() then chmods the
+#   socket 0660 and chgrps it to `sudo`, which is the group the operator is
+#   actually in — live-config creates orionx-operator at boot, so no
+#   chroot-time step can add it to a bespoke group. If the chgrp fails the
+#   socket stays 0660 nebula-mcp:nebula-mcp, i.e. it fails closed.
+#
+#   Socket activation was considered and rejected: DEC-PHASE11-033 records what
+#   happened the last time an Orion-X unit relied on it, and a self-bound
+#   socket can be exercised end-to-end by tests/unit/test_mcp_confinement.sh on
+#   a build host, which sd_listen_fds cannot.
+#
+#   NOT autostarted by default is wrong for this one: the Control Center and
+#   `nebula ask` both need the socket present, and the server costs nothing
+#   until a request arrives (no model is loaded here — that is ollama's job).
+#   It belongs in 0615 AUTOSTART_UNITS.
+#
+#   References: DEC-007, DEC-006, DEC-PHASE10-005, DEC-PHASE10-011, issue #53.
+
+[Unit]
+Description=Nebula MCP Tool Server (confined local tool access for the on-device model)
+Documentation=file:/usr/share/doc/orionx/User_Guide.md
+# Deliberately NOT ordered on nebula-runtime.service: this server never talks
+# to ollama. The client does. Ordering them would imply a dependency that the
+# confinement makes impossible.
+After=local-fs.target
+# AppArmor policy must be loaded before the profile transition can succeed.
+After=apparmor.service
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/nebula-mcp --socket /run/nebula-mcp/nebula-mcp.sock
+Restart=on-failure
+RestartSec=5s
+
+# --- identity: a dedicated, shell-less system user (0616 hook) --------------
+User=nebula-mcp
+Group=nebula-mcp
+# No supplementary groups. The evidence roots below are world-readable; nothing
+# here needs adm, sudo or netdev.
+SupplementaryGroups=
+
+# --- tools must know they are confined --------------------------------------
+# Declared, not sniffed: `wg_show` reports itself unavailable and
+# `nebula status` runs --offline rather than reporting a false "Runtime: down".
+Environment=NEBULA_MCP_CONFINED=1
+
+# --- mandatory access control ----------------------------------------------
+# This, not the profile's attachment path, is what actually confines a
+# #!-script (aa_change_onexec). No '-' prefix: if the policy cannot be applied
+# the service must fail, not run unconfined (the usr.bin.ollama lesson).
+AppArmorProfile=nebula-mcp
+
+# --- network: none. Not loopback-only. None. --------------------------------
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+
+# --- privilege --------------------------------------------------------------
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @swap @reboot @module @obsolete @debug @cpu-emulation
+
+# --- filesystem: read-only everywhere except the audit log ------------------
+ProtectSystem=strict
+# tmpfs, not yes: /home is replaced with an empty tmpfs, so the operator's
+# keys, Matrix sessions and chat history are not merely unwritable, they are
+# not there. The one directory the tools legitimately read is bound back in.
+ProtectHome=tmpfs
+BindReadOnlyPaths=-/home/orionx-operator/Analysis
+BindReadOnlyPaths=-/opt/orionx/data
+BindReadOnlyPaths=-/opt/orionx/nucleotide
+PrivateTmp=yes
+PrivateDevices=yes
+# The only writable path: the DEC-007 audit log. Created by the 0616 hook,
+# owned by nebula-mcp.
+ReadWritePaths=/var/log/orionx
+RuntimeDirectory=nebula-mcp
+RuntimeDirectoryMode=0750
+
+# DEC-PHASE12-033: the runtime directory is the access gate, not the socket.
+#
+# The `+` prefix runs this outside the sandbox (as root, no SystemCallFilter),
+# which is the point: the one privileged action this service needs happens
+# here, once, and the long-running server stays fully confined. Previously the
+# server itself tried to chgrp its socket — syscall 92, blocked by
+# ~@privileged, which killed it with SIGSYS rather than returning the OSError
+# its try/except expected (observed rc4: status=31/SYS, 3 restarts). It could
+# not have worked anyway: SupplementaryGroups= is empty, so chgrp to `sudo`
+# from uid nebula-mcp is EPERM.
+#
+# 0770 nebula-mcp:sudo — the server (owner) creates the socket, the operator
+# (member of sudo, which live-config grants) can traverse. Only root can
+# change this, and no mode on the socket inside can widen it.
+ExecStartPre=+/bin/sh -c 'chgrp sudo /run/nebula-mcp && chmod 0770 /run/nebula-mcp'
+UMask=0027
+
+# --- resources: bounded, on a deck that may be running on battery -----------
+MemoryMax=512M
+TasksMax=32
+CPUQuota=80%
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,38 @@
+# /usr/share/themes/Orion-X-Cyberdeck-Green/index.theme
+# Orion-X Phoenix Edition — phosphor-green window-decoration variant
+#
+# @decision DEC-PHASE12-042
+# @title A second xfwm4 theme so "toggle theme" changes something you can see
+# @status accepted
+# @rationale toggle-theme.sh claimed to switch between a "dark" and a "green"
+#   theme, but only ever rewrote a terminal rc file and a PS1 colour. Nothing
+#   about the desktop changed, which is why it read as a no-op on the reference
+#   deck. This theme gives the green state a real, visible window decoration:
+#   phosphor-green titlebar text and border instead of Phoenix orange.
+#
+#   SCOPE: this is an xfwm4-only theme (window decorations). It deliberately
+#   does NOT ship gtk-3.0/gtk.css, because a half-finished GTK theme is worse
+#   than none — GTK would fall back to its built-in default and the whole
+#   desktop would change colour unpredictably. Orion-X-Cyberdeck remains the
+#   single GTK theme (xsettings ThemeName); only the xfwm4 channel's
+#   /general/theme is toggled. Those are two independent xfconf facts, so this
+#   is not a second authority for the GTK theme.
+#
+#   The .xpm decoration pixmaps are seeded from the stock Default theme at
+#   build time by iso/config/hooks/live/0800-orionx-branding.hook.chroot, the
+#   same way Orion-X-Cyberdeck gets them (DEC-PHASE11-026). Without pixmaps
+#   xfwm4 renders NO decorations at all — confirmed on hardware 2026-09-09.
+#   License: original work (Orion-X project), same structure as Orion-X-Cyberdeck.
+
+[Desktop Entry]
+Type=X-GNOME-Metatheme
+Name=Orion-X-Cyberdeck-Green
+Comment=Orion-X cyberdeck phosphor-green theme — window decorations and GTK accent (DEC-PHASE12-042, DEC-PHASE12-058)
+Encoding=UTF-8
+
+[X-GNOME-Metatheme]
+GtkTheme=Orion-X-Cyberdeck-Green
+MetacityTheme=Orion-X-Cyberdeck-Green
+IconTheme=Orion-X-Icons
+CursorTheme=Orion-X-Cursor
+ButtonLayout=close,minimize,maximize:

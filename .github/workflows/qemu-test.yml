@@ -19,9 +19,9 @@ name: QEMU Boot Test
 
 on:
   push:
-    branches: [develop]
+    branches: [develop, 'release/**']
   pull_request:
-    branches: [develop]
+    branches: [develop, 'release/**']
 
 jobs:
   qemu-boot:
@@ -76,21 +76,21 @@ jobs:
       - name: Set up Python (for iso-build pre-checks)
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
 
       - name: Install Python packages
         run: pip install --quiet -r requirements.txt
 
-      # Build the ISO inside a debian:bullseye container so live-build sees a
-      # Debian host and bootstraps from deb.debian.org/bullseye, not from
+      # Build the ISO inside a debian:trixie container so live-build sees a
+      # Debian host and bootstraps from deb.debian.org/trixie, not from
       # archive.ubuntu.com/precise. Issue #25: ubuntu-latest runners' live-build
       # autodetects host distro and overrides --mode debian / --distribution
-      # bullseye in iso/auto/config, attempting to bootstrap Ubuntu instead.
-      # Running build-iso.sh inside debian:bullseye-slim with --privileged
+      # trixie in iso/auto/config, attempting to bootstrap Ubuntu instead.
+      # Running build-iso.sh inside debian:trixie-slim with --privileged
       # (needed for chroot operations) sidesteps the host detection entirely.
       # The resulting ISO is written to ${{ github.workspace }}/output/ via
       # the bind mount, so the host runner's QEMU step finds it normally.
-      - name: Build ISO in debian:bullseye container (W7-1 deliverable, issue #25)
+      - name: Build ISO in debian:trixie container (W7-1 deliverable, issue #25)
         run: |
           # set -o pipefail propagates docker run's non-zero exit through the tee
           # pipeline. Without it, the build step shows ✓ even when build-iso.sh
@@ -101,7 +101,7 @@ jobs:
           docker run --rm --privileged \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
-            debian:bullseye-slim \
+            debian:trixie-slim \
             bash -c '
               set -e
               apt-get update -q
@@ -221,7 +221,7 @@ jobs:
           PERF_WAIT: "90"
 
       # W7-6: Run host-side failure-resilience config inspection.
-      # Reads each of the 8 Orion-X systemd unit files from systemd/ and
+      # Reads each of the 8 Orion-X systemd unit files from iso/config/includes.chroot/usr/share/orionx/systemd/ and
       # asserts per-Type recovery configuration:
       #   - Long-running daemons (Type=notify, Type=simple) must declare
       #     Restart= with on-failure|always|on-abnormal.

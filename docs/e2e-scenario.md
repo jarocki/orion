@@ -80,11 +80,21 @@ Two back-to-back runs both succeed and leave zero leaked resources between runs.
 | DEC-PHASE7-011 | SYNAPSE_URL targets port 8108 | `tests/integration/test-e2e-scenario.sh` |
 | DEC-PHASE7-013 | CI workflow pre-creates `/var/log/orionx` with sudo to satisfy analyzer scripts (workaround pending analyzer log-path fix) | `.github/workflows/e2e-test.yml` |
 
-## W7-4 Integration Seam
+## What this does and does not prove
 
-W7-4 (QEMU runtime validation) will reuse this script to confirm the same
-7 steps pass when executed against a real booted QEMU VM rather than Docker
-containers. The seam is the `SYNAPSE_URL` variable and the compose project
-name — W7-4 can override `SYNAPSE_URL` to point at the QEMU VM's exposed
-port and skip Steps 1-3 (stack is already up) by invoking a subset of steps
-directly. No changes to this script are needed for W7-4 to consume it.
+The three nodes are `debian:bookworm-slim` containers built from
+`docker/Dockerfile.matrix-node` and `docker/Dockerfile.mesh-node`, not the
+Orion-X ISO. The scenario proves the mesh, Matrix and analysis *scripts* work
+end to end; it says nothing about the live image's packages, systemd units or
+first boot. Those are covered by the QEMU harness (`docs/qemu-boot-test.md`)
+and, on the booted system, by `orionx-diag`.
+
+## W7-4 Integration Seam (historical)
+
+W7-4 (QEMU runtime validation) was designed to reuse this script against a
+booted QEMU VM instead of Docker: the seam is the `SYNAPSE_URL` variable and
+the compose project name — override `SYNAPSE_URL` to point at the VM's
+exposed port and skip Steps 1-3 (stack already up) by invoking a subset of
+steps directly. W7-4-B landed as its own in-guest sentinel check
+(`tests/integration/test-w7-4-b-runtime-verify.sh`) rather than by driving
+this script; the seam remains available and unused.

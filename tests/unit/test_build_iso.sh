@@ -103,6 +103,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Docker shim (T42): this suite must never reach the real Docker daemon, and so
+# can never touch the shared orionx-lb-work build volume. Any docker call is
+# recorded and fails; T42 asserts the log stayed empty.
+DOCKER_SHIM_DIR="$SCRATCH/shim"
+DOCKER_SHIM_LOG="$SCRATCH/docker-calls.log"
+mkdir -p "$DOCKER_SHIM_DIR"; : > "$DOCKER_SHIM_LOG"
+printf '#!/bin/sh\necho "docker $*" >> "%s"\nexit 97\n' "$DOCKER_SHIM_LOG" > "$DOCKER_SHIM_DIR/docker"
+chmod +x "$DOCKER_SHIM_DIR/docker"
+export PATH="$DOCKER_SHIM_DIR:$PATH"
+
 # Helper: build a fake repo root with iso/ present (lowercase)
 make_fake_repo() {
     local root="$1"
@@ -213,7 +223,7 @@ echo "[T5] --dry-run with valid iso/ directory"
 FAKE_REPO_OK="$SCRATCH/repo_ok"
 make_fake_repo "$FAKE_REPO_OK"
 
-DRY_OUTPUT="$((cd "$FAKE_REPO_OK" && bash scripts/build-iso.sh --dry-run) 2>&1)"
+DRY_OUTPUT="$( (cd "$FAKE_REPO_OK" && bash scripts/build-iso.sh --dry-run) 2>&1)"
 run_test "--dry-run exits 0 with iso/ present" \
     "(cd '$FAKE_REPO_OK' && bash scripts/build-iso.sh --dry-run)"
 contains "--dry-run emits 'iso/ directory found'" "iso/ directory found" "$DRY_OUTPUT"
@@ -239,7 +249,7 @@ echo "[T6] --dry-run fails loudly when iso/ is absent"
 FAKE_REPO_NOISO="$SCRATCH/repo_noiso"
 make_fake_repo_no_iso "$FAKE_REPO_NOISO"
 
-MISSING_OUTPUT="$((cd "$FAKE_REPO_NOISO" && bash scripts/build-iso.sh --dry-run) 2>&1 || true)"
+MISSING_OUTPUT="$( (cd "$FAKE_REPO_NOISO" && bash scripts/build-iso.sh --dry-run) 2>&1 || true)"
 run_test_fail "--dry-run exits non-zero when iso/ missing" \
     "(cd '$FAKE_REPO_NOISO' && bash scripts/build-iso.sh --dry-run)"
 contains "error message mentions iso/ not found" "iso/ directory not found" "$MISSING_OUTPUT"
@@ -254,7 +264,7 @@ echo "[T7] --version override"
 FAKE_REPO_VER="$SCRATCH/repo_ver"
 make_fake_repo "$FAKE_REPO_VER"
 
-VER_OUTPUT="$((cd "$FAKE_REPO_VER" && bash scripts/build-iso.sh --dry-run --version v99.0.0-test) 2>&1)"
+VER_OUTPUT="$( (cd "$FAKE_REPO_VER" && bash scripts/build-iso.sh --dry-run --version v99.0.0-test) 2>&1)"
 run_test "--version override exits 0" \
     "(cd '$FAKE_REPO_VER' && bash scripts/build-iso.sh --dry-run --version v99.0.0-test)"
 contains "--version appears in output" "v99.0.0-test" "$VER_OUTPUT"
@@ -268,7 +278,7 @@ echo "[T8] ORIONX_VERSION env var"
 FAKE_REPO_ENV="$SCRATCH/repo_env"
 make_fake_repo "$FAKE_REPO_ENV"
 
-ENV_OUTPUT="$((cd "$FAKE_REPO_ENV" && ORIONX_VERSION=v3.0.0-env bash scripts/build-iso.sh --dry-run) 2>&1)"
+ENV_OUTPUT="$( (cd "$FAKE_REPO_ENV" && ORIONX_VERSION=v3.0.0-env bash scripts/build-iso.sh --dry-run) 2>&1)"
 run_test "ORIONX_VERSION env sets version, exits 0" \
     "(cd '$FAKE_REPO_ENV' && ORIONX_VERSION=v3.0.0-env bash scripts/build-iso.sh --dry-run)"
 contains "env version appears in output" "v3.0.0-env" "$ENV_OUTPUT"
@@ -382,13 +392,13 @@ FAKE_REPO_VPREFIX="$SCRATCH/repo_vprefix"
 make_fake_repo "$FAKE_REPO_VPREFIX"
 
 # No-prefix version must fail
-VPREFIX_OUTPUT="$((cd "$FAKE_REPO_VPREFIX" && bash scripts/build-iso.sh --dry-run --version 99.0.0-noprefix) 2>&1 || true)"
+VPREFIX_OUTPUT="$( (cd "$FAKE_REPO_VPREFIX" && bash scripts/build-iso.sh --dry-run --version 99.0.0-noprefix) 2>&1 || true)"
 run_test_fail "--version without v-prefix exits non-zero" \
     "(cd '$FAKE_REPO_VPREFIX' && bash scripts/build-iso.sh --dry-run --version 99.0.0-noprefix)"
 contains "error message mentions v-prefix requirement" "must start with" "$VPREFIX_OUTPUT"
 
 # With v-prefix must succeed
-VPREFIX_OK_OUTPUT="$((cd "$FAKE_REPO_VPREFIX" && bash scripts/build-iso.sh --dry-run --version v99.0.0-test) 2>&1)"
+VPREFIX_OK_OUTPUT="$( (cd "$FAKE_REPO_VPREFIX" && bash scripts/build-iso.sh --dry-run --version v99.0.0-test) 2>&1)"
 run_test "--version with v-prefix exits 0" \
     "(cd '$FAKE_REPO_VPREFIX' && bash scripts/build-iso.sh --dry-run --version v99.0.0-test)"
 contains "v-prefix version appears in output" "v99.0.0-test" "$VPREFIX_OK_OUTPUT"
@@ -841,7 +851,7 @@ echo ""
 #   the same regression class (silent pass-through on download failure)
 #   cannot reoccur without a test failure.
 #   The test also verifies wget is used (not curl) in stage_nebula_model(),
-#   because curl is absent from the debian:bullseye-slim build container.
+#   because curl is absent from the debian:trixie-slim build container.
 #   References: DEC-PHASE10-008, DEC-PHASE10-011, CI run 27248174302.
 # ---------------------------------------------------------------------------
 echo "[T33] W10-1 iter-3: stage_nebula_model exit 1 on failure + wget not curl (DEC-PHASE10-011)"
@@ -973,7 +983,7 @@ if [[ -f "$QEMU_WORKFLOW" ]]; then
     # for set -o pipefail appearing before the first `docker run` line in
     # that region, which is the requirement.
     BUILD_STEP_REGION="$(awk '
-        /Build ISO in debian:bullseye container/ { in_step=1 }
+        /Build ISO in debian:(bullseye|trixie) container/ { in_step=1 }
         in_step && /Restore workspace ownership/ { exit }
         in_step { print }
     ' "$QEMU_WORKFLOW")"
@@ -1068,20 +1078,221 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "[T36] Bootloader menus: plain GRUB text menu + BIOS vesamenu (DEC-PHASE11-044)"
 
-# T36.a: generator must NOT emit the gfxmenu `set theme=` directive (retired).
-if ! grep -qF "set theme=/boot/grub/themes/orionx/theme.txt" "$BUILD_SCRIPT"; then
-    pass "T36.a: GRUB gfxmenu 'set theme=' retired from generator (DEC-PHASE11-044)"
+# T36.a-b: these used to grep the GENERATOR SOURCE for strings. That is an
+# implementation test (RESILIENCE rule 1): it would pass unchanged if the
+# generator emitted the strings into the wrong file, in the wrong order, or
+# inside an `if` that is never taken. They now RUN generate_bootloader_configs()
+# in a sandbox and assert on the grub.cfg it actually produces.
+#
+# DELIBERATE CHANGE OF INVARIANT (DEC-PHASE12-042). T36.b previously asserted
+# that NO graphics directive (insmod gfxterm / set gfxmode / loadfont) appears
+# outside the ORIONX_GRUB_THEME guard — i.e. that the default UEFI menu is
+# plain text. That invariant is retired, and this is what replaces it.
+#
+# What it was protecting: an unreadable boot menu costs the operator the
+# failsafe entry. The two hardware failures behind DEC-PHASE11-044 were rc1-79
+# (gfxterm with no font loaded) and rc1-81 (gfxmenu theme rendering illegibly).
+#
+# Why it no longer fits: inspection of the shipped rc4 ISO shows the gfxmenu
+# revival's `loadfont /boot/grub/fonts/unicode.pf2` names a directory the image
+# does not contain — the font is at /boot/grub/unicode.pf2. The default path
+# now (i) resolves the font the way live-build's own config.cfg does, (ii)
+# gates every graphics step behind `if loadfont`, so "gfxterm with no font" is
+# unreachable, and (iii) draws GRUB's NATIVE menu over a background_image with
+# explicit colours, so there is no theme engine to render illegibly.
+#
+# The protected property is unchanged and is asserted directly below instead of
+# by proxy: in EVERY mode, the menu lists both entries, keeps a visible timeout,
+# and never reaches the theme engine unless ORIONX_GRUB_THEME=1.
+_t36_tmp="$REPO_ROOT/tmp/test_build_iso_grub_$$"
+_t36_fail=0
+mkdir -p "$_t36_tmp"
+
+# Extract the generator and run it against a throwaway ISO tree.
+sed -n '/^generate_bootloader_configs() {/,/^    log "Bootloader configs generated from single/p' \
+    "$BUILD_SCRIPT" > "$_t36_tmp/fn.sh"
+printf '}\n' >> "$_t36_tmp/fn.sh"
+
+_t36_gen() {  # $1=dest dir; remaining args are VAR=VAL overrides
+    local dest="$1"; shift
+    mkdir -p "$dest/auto" "$dest/config/includes.chroot/usr/share/grub/themes/orionx"
+    grep -- '--bootappend-live' "$REPO_ROOT/iso/auto/config" | grep -v '^[[:space:]]*#' | head -1 \
+        > "$dest/auto/config"
+    cp "$REPO_ROOT/iso/config/includes.chroot/usr/share/grub/themes/orionx/theme.txt" \
+       "$dest/config/includes.chroot/usr/share/grub/themes/orionx/" 2>/dev/null
+    env "$@" bash -c '
+        set -uo pipefail
+        ISO_DIR="$1"
+        log() { :; }
+        . "$2"
+        generate_bootloader_configs
+    ' _ "$dest" "$_t36_tmp/fn.sh" >/dev/null 2>&1
+}
+
+if _t36_gen "$_t36_tmp/default"; then
+    _T36_GRUB="$_t36_tmp/default/config/includes.binary/boot/grub/grub.cfg"
 else
-    fail "T36.a: generator still emits 'set theme=' — gfxmenu theme not retired"
+    _T36_GRUB=/dev/null
+    fail "T36.gen: generator failed to run in the default configuration" "cannot assert T36.a-b"
 fi
 
-# T36.b: generator GRUB menu must be plain — no gfxterm/gfxmenu/gfxmode/loadfont.
-# (These broke rendering on real hardware; the Plymouth splash carries identity.)
-if ! grep -qE "insmod gfxmenu|insmod gfxterm|set gfxmode|^\s*loadfont " "$BUILD_SCRIPT"; then
-    pass "T36.b: GRUB menu is plain text (no gfxterm/gfxmenu/gfxmode/loadfont — DEC-PHASE11-044)"
+# T36.a: the gfxmenu THEME ENGINE — the thing that rendered unreadably — must
+# not be in a default build.
+if ! grep -qE '^\s*(set theme=|insmod gfxmenu)' "$_T36_GRUB"; then
+    pass "T36.a: default grub.cfg does NOT load the gfxmenu theme engine (DEC-PHASE11-044 preserved)"
 else
-    fail "T36.b: generator still contains GRUB graphics directives — menu can error/unreadable"
+    fail "T36.a: default grub.cfg references 'set theme='/'insmod gfxmenu'" \
+         "the theme engine is the component that failed on hardware; it stays behind ORIONX_GRUB_THEME=1"
 fi
+
+# T36.b: the default menu IS graphical (the operator asked for graphics).
+# Strip comments first: the generated file's own @rationale header NAMES these
+# directives, so grepping the whole file would pass on a config that only talks
+# about graphics. (Caught by mutation G3 — removing background_image left the
+# word in the comment and the assertion stayed green.)
+_t36_code="$(grep -v '^[[:space:]]*#' "$_T36_GRUB" 2>/dev/null || true)"
+_t36_missing=""
+for _d in 'if loadfont $orionx_font ; then' 'insmod gfxterm' 'set gfxmode=' \
+          'terminal_output gfxterm' 'background_image ' 'set menu_color_highlight='; do
+    printf '%s' "$_t36_code" | grep -qF "$_d" || _t36_missing="$_t36_missing [$_d]"
+done
+if [[ -z "$_t36_missing" ]]; then
+    pass "T36.b: default grub.cfg is graphical — font-gated gfxterm + background_image + explicit menu colours (DEC-PHASE12-042)"
+else
+    fail "T36.b: default grub.cfg is missing graphics directives:$_t36_missing" \
+         "UEFI boot would show a plain text menu — see generate_bootloader_configs()"
+fi
+
+# NOTE: the three line-number lookups below end in `|| true`. Under the
+# suite's `set -euo pipefail` a grep that finds nothing aborts the whole
+# run, which would silently SKIP these assertions instead of failing them —
+# the test would then pass on broken code by never executing.
+# T36.b1: the SAFETY property. Everything graphical must sit after `if loadfont`,
+# because gfxterm with no font loaded is literally the rc1-79 failure.
+_t36_lf="$(printf '%s\n' "$_t36_code" | grep -n 'if loadfont' | head -1 | cut -d: -f1 || true)"
+_t36_gt="$(printf '%s\n' "$_t36_code" | grep -n 'terminal_output gfxterm' | head -1 | cut -d: -f1 || true)"
+if [[ -n "$_t36_lf" && -n "$_t36_gt" && "$_t36_gt" -gt "$_t36_lf" ]]; then
+    pass "T36.b1: gfxterm is selected only inside the 'if loadfont' gate (rc1-79 failure mode unreachable)"
+else
+    fail "T36.b1: 'terminal_output gfxterm' is not gated behind 'if loadfont'" \
+         "loadfont line=$_t36_lf gfxterm line=$_t36_gt — gfxterm with no font is the rc1-79 unreadable-menu bug"
+fi
+
+# T36.b2: the font path must never be /boot/grub/fonts/ — that directory does
+# not exist on the ISO (verified against output/*rc4.iso, 2026-10-03). This is
+# the regression that made the gfxmenu revival untestable.
+# Comments in both files DISCUSS the dead path on purpose, so strip them first:
+# what must not contain it is executable grub.cfg script and executable shell.
+_t36_live_grub="$(grep -v '^[[:space:]]*#' "$_T36_GRUB" 2>/dev/null || true)"
+_t36_live_gen="$(grep -v '^[[:space:]]*#' "$BUILD_SCRIPT" 2>/dev/null || true)"
+if ! printf '%s' "$_t36_live_grub" | grep -q '/boot/grub/fonts/' \
+   && ! printf '%s' "$_t36_live_gen" | grep -q '/boot/grub/fonts/'; then
+    pass "T36.b2: no reference to the non-existent /boot/grub/fonts/ path (DEC-PHASE12-042)"
+else
+    fail "T36.b2: /boot/grub/fonts/ referenced — loadfont will silently fail" \
+         "the ISO keeps unicode.pf2 at \$prefix/unicode.pf2; see live-build's own /boot/grub/config.cfg"
+fi
+
+# T36.b3: terminal_output gfxterm REPLACES the output list, so the serial
+# console must be re-appended after it or GRUB's output vanishes from the QEMU
+# CI capture. DEC-PHASE12-030's block sat after the serial lines and dropped it.
+# Compare the LAST of each: one gfxterm selection before the serial append is
+# fine, but ANY gfxterm selection after it drops serial from the output list.
+# (Mutation G6 added a second, later one and the first-occurrence form missed it.)
+_t36_ser="$(printf '%s\n' "$_t36_code" | grep -n 'terminal_output --append serial' | tail -1 | cut -d: -f1 || true)"
+_t36_gt_last="$(printf '%s\n' "$_t36_code" | grep -n 'terminal_output gfxterm' | tail -1 | cut -d: -f1 || true)"
+if [[ -n "$_t36_ser" && -n "$_t36_gt_last" && "$_t36_ser" -gt "$_t36_gt_last" ]]; then
+    pass "T36.b3: 'terminal_output --append serial' comes AFTER 'terminal_output gfxterm' (serial console survives)"
+else
+    fail "T36.b3: serial output is appended before gfxterm replaces the terminal list" \
+         "last gfxterm line=$_t36_gt_last serial line=$_t36_ser — GRUB serial output would be lost"
+fi
+
+# T36.b4: the kill switch works and yields the old plain menu.
+if _t36_gen "$_t36_tmp/plain" ORIONX_GRUB_GRAPHICS=0; then
+    _T36_PLAIN="$_t36_tmp/plain/config/includes.binary/boot/grub/grub.cfg"
+    _t36_plain_live="$(grep -v '^[[:space:]]*#' "$_T36_PLAIN" 2>/dev/null || true)"
+    if ! printf '%s' "$_t36_plain_live" | grep -qE 'gfxterm|loadfont|background_image|set gfxmode' \
+       && grep -qF 'menuentry "Orion-X Live (failsafe)"' "$_T36_PLAIN"; then
+        pass "T36.b4: ORIONX_GRUB_GRAPHICS=0 restores the bare text menu, failsafe entry intact"
+    else
+        fail "T36.b4: ORIONX_GRUB_GRAPHICS=0 did not produce a plain menu" \
+             "the one-env-var revert is the escape hatch if hardware rejects the graphics"
+    fi
+else
+    fail "T36.b4: generator failed with ORIONX_GRUB_GRAPHICS=0" "kill switch is broken"
+fi
+
+# T36.b5: the theme engine still defaults OFF and still turns ON with the flag.
+if _t36_gen "$_t36_tmp/themed" ORIONX_GRUB_THEME=1; then
+    _T36_THEMED="$_t36_tmp/themed/config/includes.binary/boot/grub/grub.cfg"
+    if grep -qF 'set theme=' "$_T36_THEMED" && grep -qF 'insmod gfxmenu' "$_T36_THEMED"; then
+        pass "T36.b5: ORIONX_GRUB_THEME=1 still revives the gfxmenu theme (opt-in preserved, DEC-PHASE12-030)"
+    else
+        fail "T36.b5: ORIONX_GRUB_THEME=1 did not emit the gfxmenu theme" \
+             "the revival path must stay testable on hardware"
+    fi
+else
+    fail "T36.b5: generator failed with ORIONX_GRUB_THEME=1" "opt-in theme path is broken"
+fi
+if grep -qF 'ORIONX_GRUB_THEME:-0' "$BUILD_SCRIPT"; then
+    pass "T36.b6: GRUB gfxmenu theme flag defaults to off"
+else
+    fail "T36.b6: ORIONX_GRUB_THEME must default to 0 — see DEC-PHASE12-030/042"
+fi
+
+# T36.b7: the gfxmenu theme needs the graphics block's font+gfxterm, so the
+# combination that would emit `set theme` with no font must be refused loudly
+# rather than producing an unreadable image.
+if ! _t36_gen "$_t36_tmp/conflict" ORIONX_GRUB_THEME=1 ORIONX_GRUB_GRAPHICS=0; then
+    pass "T36.b7: ORIONX_GRUB_THEME=1 with ORIONX_GRUB_GRAPHICS=0 is refused (would emit a theme with no font)"
+else
+    fail "T36.b7: the conflicting flag combination built an ISO config" \
+         "set theme= without a loaded font is exactly the rc1-81 unreadable menu"
+fi
+
+# T36.b8: the invariant DEC-PHASE11-044 actually protects — the operator can
+# always reach the failsafe entry — must hold in EVERY mode.
+_t36_modes_ok=1
+for _m in default plain themed; do
+    _f="$_t36_tmp/$_m/config/includes.binary/boot/grub/grub.cfg"
+    [[ -f "$_f" ]] || { _t36_modes_ok=0; continue; }
+    grep -qF 'menuentry "Orion-X Live (failsafe)"' "$_f" || _t36_modes_ok=0
+    grep -A1 -F 'menuentry "Orion-X Live (no questions)"' "$_f" | grep -q 'orionx.wizard=0' || _t36_modes_ok=0
+    grep -A4 -F 'label live-noquestions' "$(dirname "$(dirname "$(dirname "$_f")")")/isolinux/isolinux.cfg" | grep -q 'orionx.wizard=0' || _t36_modes_ok=0
+    grep -qF 'set timeout=5' "$_f" || _t36_modes_ok=0
+done
+if [[ "$_t36_modes_ok" -eq 1 ]]; then
+    pass "T36.b8: failsafe + no-questions (orionx.wizard=0) entries + 5s timeout present in default, plain and themed modes"
+else
+    fail "T36.b8: a GRUB mode lost the failsafe entry or the visible timeout" \
+         "that entry exists for when things are already wrong — it is not optional in any mode"
+fi
+
+# T36.b9: the COMMITTED generated artifacts must match what the generator emits
+# today. iso/config/includes.binary/*.cfg are derived surfaces; a stale copy in
+# git is a second, wrong authority that readers trust. (Both files were in fact
+# stale before DEC-PHASE12-042: they carried a pre-DEC-PHASE11-042 isolinux menu
+# and a cmdline missing apparmor=1 security=apparmor.)
+_t36_drift=""
+for _pair in "boot/grub/grub.cfg" "isolinux/isolinux.cfg"; do
+    _gen="$_t36_tmp/default/config/includes.binary/$_pair"
+    _com="$REPO_ROOT/iso/config/includes.binary/$_pair"
+    if [[ -f "$_gen" && -f "$_com" ]]; then
+        cmp -s "$_gen" "$_com" || _t36_drift="$_t36_drift $_pair"
+    else
+        _t36_drift="$_t36_drift $_pair(missing)"
+    fi
+done
+if [[ -z "$_t36_drift" ]]; then
+    pass "T36.b9: committed includes.binary bootloader cfgs match a fresh generator run (no derived-surface drift)"
+else
+    fail "T36.b9: committed bootloader cfg drifted from the generator:$_t36_drift" \
+         "regenerate them: they are GENERATED files (DEC-PHASE11-012), not hand-edited ones"
+fi
+
+rm -rf "$_t36_tmp"
+unset _t36_fail
 
 # T36.c: the readable GRUB menu still offers both entries + a visible timeout.
 if grep -qF 'menuentry "Orion-X Live"' "$BUILD_SCRIPT" && \
@@ -1217,6 +1428,121 @@ else
 fi
 rm -rf "$_t37_tmp"
 
+echo ""
+
+# ---------------------------------------------------------------------------
+# T38-T42: library functions, exercised by SOURCING build-iso.sh with
+# ORIONX_BUILD_ISO_LIB_ONLY=1 (DEC-PHASE12-111..114). Behavioural: canned
+# inputs in scratch dirs, real functions, observed outcomes.
+# ---------------------------------------------------------------------------
+_lib() {  # run a snippet with the build-iso.sh library loaded
+    ( ORIONX_BUILD_ISO_LIB_ONLY=1; export ORIONX_BUILD_ISO_LIB_ONLY
+      # shellcheck disable=SC1090
+      . "$BUILD_SCRIPT"; eval "$1" )
+}
+_mkiso() {  # <dir> <version> [content]
+    local n="orionx-phoenix-edition-$2.iso"
+    printf '%s' "${3:-iso-$2}" > "$1/$n"
+    (cd "$1" && { command -v sha256sum >/dev/null && sha256sum "$n" || shasum -a 256 "$n"; } > "$n.sha256")
+}
+
+echo "[T38] publish_built_iso: exact name, success only, verified (DEC-PHASE12-111)"
+_t38="$SCRATCH/t38"; mkdir -p "$_t38/src" "$_t38/dst"
+_mkiso "$_t38/src" v9.0.0-rc1
+_mkiso "$_t38/src" v8.0.0-rc6          # a stale ISO from an earlier build
+_mkiso "$_t38/src" v9.0.0-rc2
+if _lib 'publish_built_iso "'"$_t38/src"'" "'"$_t38/dst"'" v9.0.0-rc2 1' >/dev/null 2>&1; then
+    fail "T38.a: failed build (rc=1) reported publish success"
+else
+    pass "T38.a: failed build (rc=1) returns non-zero"
+fi
+[[ -z "$(ls -A "$_t38/dst")" ]] && pass "T38.b: failed build copies NOTHING to the host" \
+    || fail "T38.b: failed build copied: $(ls "$_t38/dst")"
+_t38_out="$(_lib 'publish_built_iso "'"$_t38/src"'" "'"$_t38/dst"'" v9.0.0-rc2 0' 2>&1)" \
+    && pass "T38.c: successful build publishes" || fail "T38.c: publish failed: $_t38_out"
+[[ "$(ls "$_t38/dst" | tr '\n' ' ')" == "orionx-phoenix-edition-v9.0.0-rc2.iso orionx-phoenix-edition-v9.0.0-rc2.iso.sha256 " ]] \
+    && pass "T38.d: only this version's ISO + sidecar reach the host (stale rc1/rc6 stay behind)" \
+    || fail "T38.d: host got: $(ls "$_t38/dst" | tr '\n' ' ')"
+rm -f "$_t38/dst"/*
+printf 'tampered' > "$_t38/src/orionx-phoenix-edition-v9.0.0-rc1.iso"
+_lib 'publish_built_iso "'"$_t38/src"'" "'"$_t38/dst"'" v9.0.0-rc1 0' >/dev/null 2>&1 \
+    && fail "T38.e: ISO not matching its sidecar was published" \
+    || pass "T38.e: ISO not matching its sidecar is refused"
+[[ -z "$(ls -A "$_t38/dst")" ]] && pass "T38.f: refused ISO is not copied" || fail "T38.f: copied anyway"
+_lib 'publish_built_iso "'"$_t38/src"'" "'"$_t38/dst"'" v7.7.7 0' >/dev/null 2>&1 \
+    && fail "T38.g: rc=0 with no ISO reported success" || pass "T38.g: rc=0 but no ISO of that name is a failure"
+_t38_wrap="$(sed -n '/bash -c .$/,/-- "\$@"/p' "$BUILD_SCRIPT")"
+contains "T38.h: wrapper container step publishes through publish_built_iso" 'publish_built_iso /build/output /host-output "$ORIONX_VERSION" "$rc"' "$_t38_wrap"
+not_contains "T38.i: wrapper no longer globs output/*.iso to the host" 'cp -a /build/output/*.iso' "$_t38_wrap"
+echo ""
+
+echo "[T39] check_no_stale_skips: fail on reused stages (DEC-PHASE12-113)"
+_t39="$SCRATCH/t39"; mkdir -p "$_t39"
+printf 'P: Begin\nW: Skipping bootstrap, already done\nW: Skipping bootstrap_cache, already done\nP: Executing hook 0500\n' > "$_t39/fresh.log"
+printf 'W: Skipping bootstrap, already done\nW: Skipping chroot_hooks, already done\nW: Skipping binary_iso, already done\n' > "$_t39/stale.log"
+_lib 'check_no_stale_skips "'"$_t39/fresh.log"'"' >/dev/null 2>&1 && pass "T39.a: bootstrap-only skips are allowed" \
+    || fail "T39.a: bootstrap-only log rejected"
+_t39_out="$(_lib 'check_no_stale_skips "'"$_t39/stale.log"'"' 2>&1)" && fail "T39.b: stale chroot_hooks/binary_iso skips accepted" \
+    || pass "T39.b: stale chroot/binary skips fail the build"
+contains "T39.c: the error names the stale stage" "Skipping chroot_hooks, already done" "$_t39_out"
+_lib 'check_no_stale_skips "'"$_t39/absent.log"'"' >/dev/null 2>&1 && fail "T39.d: missing log accepted" \
+    || pass "T39.d: a missing lb log is a failure (freshness unproven)"
+contains "T39.e: build_iso tees lb build and checks it" 'check_no_stale_skips "$lb_log" || exit 1' "$SCRIPT_CONTENT"
+echo ""
+
+echo "[T40] release identity needs its CHANGELOG section (DEC-PHASE12-114)"
+_t40="$SCRATCH/t40"; mkdir -p "$_t40/scripts/release"
+cp "$REPO_ROOT/scripts/release/extract-release-notes.sh" "$_t40/scripts/release/"
+printf '# Changelog\n\n## [v9.1.0-rc1] — 2026-01-01\n\n- notes\n\n## [v9.0.0] — 2025\n\n- old\n' > "$_t40/CHANGELOG.md"
+for v in v9.1.0 v9.1.0-rc2 v3.0.0; do
+    _lib 'require_release_changelog '"$v"' "'"$_t40"'"' >/dev/null 2>&1 \
+        && fail "T40.a: release $v without a CHANGELOG section was allowed" \
+        || pass "T40.a: release $v without a CHANGELOG section is refused"
+done
+for v in v9.1.0-rc1 v9.0.0; do
+    _lib 'require_release_changelog '"$v"' "'"$_t40"'"' >/dev/null 2>&1 \
+        && pass "T40.b: release $v with its section is allowed" || fail "T40.b: $v refused despite its section"
+done
+for v in v9.1.0-rc1-3-gabc1234 v9.1.0-dirty dev-unknown v99.0.0-test v3.0.0-env; do
+    _lib 'require_release_changelog '"$v"' "'"$_t40/nowhere"'"' >/dev/null 2>&1 \
+        && pass "T40.c: development version $v is not gated" || fail "T40.c: dev version $v refused"
+done
+printf '# Changelog\n\n## [v9.2.0]\n\n## [v9.1.0]\n\n- x\n' > "$_t40/CHANGELOG.md"
+_lib 'require_release_changelog v9.2.0 "'"$_t40"'"' >/dev/null 2>&1 \
+    && fail "T40.d: an EMPTY section was accepted" || pass "T40.d: an empty section is refused"
+FAKE_REPO_REL="$SCRATCH/repo_rel"; make_fake_repo "$FAKE_REPO_REL"
+_t40_out="$( (cd "$FAKE_REPO_REL" && ORIONX_VERSION=v3.0.0 bash scripts/build-iso.sh --dry-run) 2>&1 )" \
+    && fail "T40.e: --dry-run of v3.0.0 with no CHANGELOG passed" || pass "T40.e: build-iso.sh refuses v3.0.0 without its CHANGELOG section"
+contains "T40.f: refusal says why" "DEC-PHASE12-114" "$_t40_out"
+echo ""
+
+echo "[T41] patch_live_build: --allow-remove-essential only in Remove_packages (DEC-PHASE12-112)"
+_t41="$SCRATCH/t41"; mkdir -p "$_t41"
+# Fixtures carry the exact lines of live-build 1:20250505+deb13u1 (trixie).
+printf '%s\n' '				find "${DIRECTORY}" -name "*.deb" -print0 | xargs -0 --no-run-if-empty cp -fl -t chroot/var/cache/apt/archives' > "$_t41/cache.sh"
+printf '%s\n' '			apt|apt-get)' '				Chroot chroot "apt-get remove --auto-remove --purge ${APT_OPTIONS} ${PACKAGES}"' > "$_t41/packages.sh"
+printf '%s\n' '	APT_OPTIONS="${APT_OPTIONS:---yes -o Acquire::Retries=5}"' > "$_t41/configuration.sh"
+_lib 'patch_live_build "'"$_t41"'"' >/dev/null 2>&1 && pass "T41.a: patch applies to trixie live-build text" || fail "T41.a: patch failed"
+grep -q 'cp -fl' "$_t41/cache.sh" && fail "T41.b: cp -fl survived" || pass "T41.b: cp -fl -> cp -f"
+grep -qF 'apt-get remove --auto-remove --purge --allow-remove-essential ${APT_OPTIONS} ${PACKAGES}' "$_t41/packages.sh" \
+    && pass "T41.c: Remove_packages carries --allow-remove-essential" || fail "T41.c: Remove_packages not patched"
+grep -q -- '--allow-remove-essential' "$_t41/configuration.sh" && fail "T41.d: APT_OPTIONS default armed" \
+    || pass "T41.d: APT_OPTIONS default stays without --allow-remove-essential"
+_lib 'patch_live_build "'"$_t41"'"' >/dev/null 2>&1 && [[ "$(grep -o -- '--allow-remove-essential' "$_t41/packages.sh" | wc -l | tr -d ' ')" == "1" ]] \
+    && pass "T41.e: patch is idempotent" || fail "T41.e: second run failed or duplicated the flag"
+printf '%s\n' 'Chroot chroot "apt-get purge ${APT_OPTIONS} ${PACKAGES}"' > "$_t41/packages.sh"
+_lib 'patch_live_build "'"$_t41"'"' >/dev/null 2>&1 && fail "T41.f: drifted live-build accepted" \
+    || pass "T41.f: a live-build whose Remove_packages text drifted fails loudly"
+not_contains "T41.g: wrapper APT_OPTIONS no longer carries --allow-remove-essential" \
+    'APT_OPTIONS="--yes -o Acquire::Retries=5 --allow-remove-essential' "$SCRIPT_CONTENT"
+echo ""
+
+echo "[T42] the test run never reached Docker"
+if [[ -s "$DOCKER_SHIM_LOG" ]]; then
+    fail "T42: build-iso.sh invoked docker during the unit tests: $(cat "$DOCKER_SHIM_LOG")"
+else
+    pass "T42: no docker command was issued (the orionx-lb-work volume is untouchable from this suite)"
+fi
 echo ""
 
 # ---------------------------------------------------------------------------

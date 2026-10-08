@@ -1,0 +1,1073 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# @decision DEC-PHASE11-015
+# @title Orion-X in-ISO diagnostic tool — automated verification of running
+#   system against build manifest and expected slice content
+# @status accepted
+# @rationale Operator directive 2026-07-18: "Ship a diagnostic tool built INTO
+#   the ISO that automates checking, testing, and verification that (a) ISO OS +
+#   tools correctly match the current repository version, (b) all expected tools
+#   and dependencies are installed and work properly."
+#   Ten check categories (46 assertions) cover identity, version manifest, base
+#   packages, file presence, systemd units, python imports, nebula runtime,
+#   branding, freshen scripts, and optional installers. Single-authority source:
+#   /etc/orionx-version KEY=VALUE manifest (written by 0700 hook at build time).
+#   The tool MUST NOT sudo internally — invoke as: sudo orionx-diag.
+#   Exit 0 iff all checks PASS, exit 1 on any FAIL, exit 2 on argument error.
+#   References: W11-11, MASTER_PLAN.md §W11-11, DEC-PHASE11-015.
+
+set -uo pipefail
+
+# ---------------------------------------------------------------------------
+# Color / output constants (disabled when NO_COLOR=1 or stdout is not a TTY)
+# ---------------------------------------------------------------------------
+if [[ -t 1 && "${NO_COLOR:-}" != "1" ]]; then
+    GREEN='\033[0;32m'
+    RED='\033[0;31m'
+    YELLOW='\033[0;33m'
+    CYAN='\033[0;36m'
+    NC='\033[0m'
+else
+    GREEN=''
+    RED=''
+    YELLOW=''
+    CYAN=''
+    NC=''
+fi
+
+# ---------------------------------------------------------------------------
+# Global state
+# ---------------------------------------------------------------------------
+PASS_COUNT=0
+FAIL_COUNT=0
+SKIP_COUNT=0
+JSON_MODE=false
+CATEGORY_FILTER=""
+VERBOSE=false
+
+# JSON results buffer — built as newline-separated "cat:name:status:detail" lines
+RESULTS_BUFFER=""
+
+# Manifest fields (populated by load_manifest)
+MANIFEST_ISO_VERSION="unknown"
+MANIFEST_BUILD_TIMESTAMP="unknown"
+MANIFEST_GIT_HEAD_SHA="unknown"
+MANIFEST_GIT_HEAD_TITLE="unknown"
+MANIFEST_PHASE_11_SLICES="unknown"
+
+# ---------------------------------------------------------------------------
+# Usage / help
+# ---------------------------------------------------------------------------
+usage() {
+    cat <<'EOF'
+Usage: orionx-diag [OPTIONS]
+
+Runs a suite of self-checks verifying the Orion-X ISO OS and tools match the
+current build manifest and all dependencies are installed and functional.
+
+Operator invocation: sudo orionx-diag
+
+Options:
+  --json                 Machine-readable JSON output (one object on stdout)
+  --category <name>      Run only checks in one category
+  --version              Print the ISO version string from /etc/orionx-version and exit
+  -v, --verbose          Verbose output including SKIP reasons
+  -h, --help             Show this help and exit
+
+Categories:
+  identity          whoami, hostname, /proc/cmdline live-config tokens
+  version-manifest  /etc/orionx-version present + all KEY=VALUE fields parseable
+  packages          dpkg -l for expected Phase 11 packages; clamav ABSENT gate
+  files             Nebula model, comms, yara, suricata, optional, branding assets
+  systemd           nebula-integrity-check, nebula-runtime.service, suricata, NM, lightdm
+  python            control_center.app importable; yara Python binding loads
+  nebula            ollama binary + model SHA match + last-run status
+  branding          Plymouth theme + plymouthd.conf, GTK theme, MOTD wordmark
+  freshen           orionx-freshen-yara + orionx-freshen-suricata on PATH
+  optional          installer scripts source common lib; common lib defines all functions
+
+Exit codes:
+  0  All checks PASS (or SKIP)
+  1  One or more FAIL
+  2  Invalid arguments or unknown category
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Result recording helpers
+# ---------------------------------------------------------------------------
+
+# _record_result <category> <name> <status> <detail>
+_record_result() {
+    local cat="$1" name="$2" status="$3" detail="$4"
+    local encoded_name encoded_detail
+    # Encode pipes for the buffer — use unit separator (0x1F) as field sep
+    encoded_name="${name//|/PIPE}"
+    encoded_detail="${detail//|/PIPE}"
+    if [[ -n "$RESULTS_BUFFER" ]]; then
+        RESULTS_BUFFER="${RESULTS_BUFFER}
+${cat}|${encoded_name}|${status}|${encoded_detail}"
+    else
+        RESULTS_BUFFER="${cat}|${encoded_name}|${status}|${encoded_detail}"
+    fi
+}
+
+check_pass() {
+    local cat="$1" name="$2" detail="${3:-}"
+    ((PASS_COUNT+=1))
+    _record_result "$cat" "$name" "PASS" "$detail"
+    if ! "$JSON_MODE"; then
+        printf "  ${GREEN}PASS${NC}  [%s] %s\n" "$cat" "$name"
+    fi
+}
+
+check_fail() {
+    local cat="$1" name="$2" detail="${3:-}"
+    ((FAIL_COUNT+=1))
+    _record_result "$cat" "$name" "FAIL" "$detail"
+    if ! "$JSON_MODE"; then
+        printf "  ${RED}FAIL${NC}  [%s] %s\n" "$cat" "$name"
+        if [[ -n "$detail" ]]; then
+            printf "        detail: %s\n" "$detail"
+        fi
+    fi
+}
+
+check_skip() {
+    local cat="$1" name="$2" reason="${3:-}"
+    ((SKIP_COUNT+=1))
+    _record_result "$cat" "$name" "SKIP" "$reason"
+    if ! "$JSON_MODE" && "$VERBOSE"; then
+        printf "  ${YELLOW}SKIP${NC}  [%s] %s  (%s)\n" "$cat" "$name" "$reason"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Manifest loader — reads /etc/orionx-version KEY=VALUE
+# ---------------------------------------------------------------------------
+load_manifest() {
+    local manifest="/etc/orionx-version"
+    if [[ ! -f "$manifest" ]]; then
+        return 1
+    fi
+    local key value
+    while IFS='=' read -r key value; do
+        # Skip blank lines and comments
+        [[ -z "$key" || "$key" == \#* ]] && continue
+        case "$key" in
+            ISO_VERSION)       MANIFEST_ISO_VERSION="$value" ;;
+            BUILD_TIMESTAMP)   MANIFEST_BUILD_TIMESTAMP="$value" ;;
+            GIT_HEAD_SHA)      MANIFEST_GIT_HEAD_SHA="$value" ;;
+            GIT_HEAD_TITLE)    MANIFEST_GIT_HEAD_TITLE="$value" ;;
+            PHASE_11_SLICES)   MANIFEST_PHASE_11_SLICES="$value" ;;
+        esac
+    done < "$manifest"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# JSON output builder
+# ---------------------------------------------------------------------------
+_json_escape() {
+    local s="$1"
+    # Escape backslash first, then double-quote, then control chars
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    printf '%s' "$s"
+}
+
+emit_json() {
+    # Build the categories map from RESULTS_BUFFER.
+    # Format per line: cat|name|status|detail
+    # Uses only bash 3.2-compatible constructs (no local -A, no declare -A inside
+    # functions) so the script is testable on macOS where /bin/bash is 3.2.
+    # On the live Debian Bullseye ISO (bash 5.x) these constructs also work.
+
+    # All distinct categories in order of first occurrence
+    local all_cats=()
+    # Per-category state: encoded as indexed arrays with category-slug index
+    # We store per-category data in the caller scope via _json_state_<slug>_*
+    # variables.  Slugs use underscores; category names may contain hyphens which
+    # are not valid in variable names, so replace hyphens with underscores.
+
+    local line cat name status detail
+    while IFS='|' read -r cat name status detail; do
+        [[ -z "$cat" ]] && continue
+
+        # Track category order
+        local _found=false
+        local _c
+        for _c in "${all_cats[@]+"${all_cats[@]}"}"; do
+            [[ "$_c" == "$cat" ]] && _found=true && break
+        done
+        "$_found" || all_cats+=("$cat")
+
+        # Variable-name safe slug: replace hyphens with underscores
+        local slug="${cat//-/_}"
+
+        # Accumulate counters (global-scope variables so bash 3.2 can modify them)
+        case "$status" in
+            PASS)
+                eval "_json_pass_${slug}=\$(( \${_json_pass_${slug}:-0} + 1 ))"
+                ;;
+            FAIL)
+                eval "_json_fail_${slug}=\$(( \${_json_fail_${slug}:-0} + 1 ))"
+                ;;
+            SKIP)
+                eval "_json_skip_${slug}=\$(( \${_json_skip_${slug}:-0} + 1 ))"
+                ;;
+        esac
+
+        # Build assertion JSON object and append to per-category buffer
+        local esc_name esc_detail
+        esc_name="$(_json_escape "$name")"
+        esc_detail="$(_json_escape "$detail")"
+        local obj="{\"name\":\"${esc_name}\",\"status\":\"${status}\",\"detail\":\"${esc_detail}\"}"
+        local existing
+        eval "existing=\"\${_json_assertions_${slug}:-}\""
+        if [[ -n "$existing" ]]; then
+            eval "_json_assertions_${slug}=\"\${_json_assertions_${slug}},\${obj}\""
+        else
+            eval "_json_assertions_${slug}=\"\${obj}\""
+        fi
+    done <<< "$RESULTS_BUFFER"
+
+    # Determine overall
+    local overall="PASS"
+    [[ $FAIL_COUNT -gt 0 ]] && overall="FAIL"
+
+    # Emit JSON
+    printf '{'
+    printf '"iso_version":"%s",' "$(_json_escape "$MANIFEST_ISO_VERSION")"
+    printf '"build_timestamp":"%s",' "$(_json_escape "$MANIFEST_BUILD_TIMESTAMP")"
+    printf '"git_head_sha":"%s",' "$(_json_escape "$MANIFEST_GIT_HEAD_SHA")"
+    printf '"overall":"%s",' "$overall"
+    printf '"pass":%d,"fail":%d,"skip":%d,' "$PASS_COUNT" "$FAIL_COUNT" "$SKIP_COUNT"
+    printf '"categories":{'
+
+    local first_cat=true
+    local cat
+    for cat in "${all_cats[@]+"${all_cats[@]}"}"; do
+        "$first_cat" || printf ','
+        first_cat=false
+        local slug="${cat//-/_}"
+        local p f s a
+        eval "p=\${_json_pass_${slug}:-0}"
+        eval "f=\${_json_fail_${slug}:-0}"
+        eval "s=\${_json_skip_${slug}:-0}"
+        eval "a=\${_json_assertions_${slug}:-}"
+        printf '"%s":{"pass":%d,"fail":%d,"skip":%d,"assertions":[%s]}' \
+            "$(_json_escape "$cat")" "$p" "$f" "$s" "$a"
+    done
+
+    printf '}}'
+    printf '\n'
+}
+
+# ---------------------------------------------------------------------------
+# Category 1: Identity
+# ---------------------------------------------------------------------------
+run_identity_checks() {
+    local cat="identity"
+
+    # 1a: whoami == orionx-operator
+    # This tool documents "invoke as: sudo orionx-diag", under which whoami is
+    # root — so a bare whoami check could NEVER pass when used as documented.
+    # SUDO_USER carries the real invoker; fall back to whoami without sudo.
+    local actual_user
+    actual_user="${SUDO_USER:-$(whoami 2>/dev/null || echo unknown)}"
+    if [[ "$actual_user" == "orionx-operator" ]]; then
+        check_pass "$cat" "whoami == orionx-operator" "$actual_user"
+    else
+        check_fail "$cat" "whoami == orionx-operator" \
+            "expected=orionx-operator actual=$actual_user"
+    fi
+
+    # 1b: hostname is set and consistent. live-config boots as "orionx"; the
+    # first-boot wizard then sets whatever the operator chose (default
+    # "orionx-node"), so the value itself is not asserted — only that the kernel
+    # hostname matches /etc/hostname and is resolvable (DEC-PHASE12-021).
+    local actual_host etc_host
+    actual_host="$(hostname 2>/dev/null || echo "")"
+    etc_host="$({ cat /etc/hostname 2>/dev/null || true; } | tr -d '[:space:]')"
+    if [[ -n "$actual_host" && "$actual_host" != "localhost" && ( -z "$etc_host" || "$etc_host" == "$actual_host" ) ]]; then
+        check_pass "$cat" "hostname set and consistent with /etc/hostname" "$actual_host"
+    else
+        check_fail "$cat" "hostname set and consistent with /etc/hostname" \
+            "hostname=$actual_host /etc/hostname=$etc_host"
+    fi
+
+    # 1c: /proc/cmdline contains both identity tokens
+    local cmdline=""
+    cmdline="$(cat /proc/cmdline 2>/dev/null || echo "")"
+    if echo "$cmdline" | grep -q "live-config.username=orionx-operator"; then
+        check_pass "$cat" "cmdline live-config.username=orionx-operator present" ""
+    else
+        check_fail "$cat" "cmdline live-config.username=orionx-operator present" \
+            "missing from /proc/cmdline"
+    fi
+    if echo "$cmdline" | grep -q "live-config.hostname=orionx"; then
+        check_pass "$cat" "cmdline live-config.hostname=orionx present" ""
+    else
+        check_fail "$cat" "cmdline live-config.hostname=orionx present" \
+            "missing from /proc/cmdline"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Category 2: Version manifest
+# ---------------------------------------------------------------------------
+run_version_manifest_checks() {
+    local cat="version-manifest"
+    local manifest="/etc/orionx-version"
+
+    # 2a: /etc/orionx-version exists
+    if [[ -f "$manifest" ]]; then
+        check_pass "$cat" "/etc/orionx-version exists" ""
+    else
+        check_fail "$cat" "/etc/orionx-version exists" \
+            "file absent — was 0700 hook run at build time?"
+        # No further assertions possible
+        check_skip "$cat" "ISO_VERSION= line present" "/etc/orionx-version absent"
+        check_skip "$cat" "BUILD_TIMESTAMP= valid ISO-8601" "/etc/orionx-version absent"
+        check_skip "$cat" "GIT_HEAD_SHA= present" "/etc/orionx-version absent"
+        check_skip "$cat" "PHASE_11_SLICES= present + contains W11-1" "/etc/orionx-version absent"
+        return
+    fi
+
+    # 2b: ISO_VERSION= line present
+    if [[ "$MANIFEST_ISO_VERSION" != "unknown" && -n "$MANIFEST_ISO_VERSION" ]]; then
+        check_pass "$cat" "ISO_VERSION= line present" "$MANIFEST_ISO_VERSION"
+    else
+        check_fail "$cat" "ISO_VERSION= line present" \
+            "ISO_VERSION key absent or empty in /etc/orionx-version"
+    fi
+
+    # 2c: BUILD_TIMESTAMP= present + looks like ISO-8601 (YYYY-MM-DDTHH:MM:SS*)
+    if [[ "$MANIFEST_BUILD_TIMESTAMP" != "unknown" && -n "$MANIFEST_BUILD_TIMESTAMP" ]]; then
+        if [[ "$MANIFEST_BUILD_TIMESTAMP" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2} ]]; then
+            check_pass "$cat" "BUILD_TIMESTAMP= valid ISO-8601" "$MANIFEST_BUILD_TIMESTAMP"
+        else
+            check_fail "$cat" "BUILD_TIMESTAMP= valid ISO-8601" \
+                "value does not match ISO-8601 pattern: $MANIFEST_BUILD_TIMESTAMP"
+        fi
+    else
+        check_fail "$cat" "BUILD_TIMESTAMP= valid ISO-8601" \
+            "BUILD_TIMESTAMP key absent or empty in /etc/orionx-version"
+    fi
+
+    # 2d: GIT_HEAD_SHA= present (SKIP if 'unknown')
+    if [[ -z "$MANIFEST_GIT_HEAD_SHA" ]]; then
+        check_fail "$cat" "GIT_HEAD_SHA= present" \
+            "GIT_HEAD_SHA key absent in /etc/orionx-version"
+    elif [[ "$MANIFEST_GIT_HEAD_SHA" == "unknown" ]]; then
+        check_skip "$cat" "GIT_HEAD_SHA= present" \
+            "value is 'unknown' — likely built outside CI pipeline"
+    else
+        check_pass "$cat" "GIT_HEAD_SHA= present" "$MANIFEST_GIT_HEAD_SHA"
+    fi
+
+    # 2e: PHASE_11_SLICES= present + contains W11-1 (SKIP if 'unknown')
+    if [[ -z "$MANIFEST_PHASE_11_SLICES" ]]; then
+        check_fail "$cat" "PHASE_11_SLICES= present + contains W11-1" \
+            "PHASE_11_SLICES key absent in /etc/orionx-version"
+    elif [[ "$MANIFEST_PHASE_11_SLICES" == "unknown" ]]; then
+        check_skip "$cat" "PHASE_11_SLICES= present + contains W11-1" \
+            "value is 'unknown' — likely built outside CI pipeline"
+    elif echo "$MANIFEST_PHASE_11_SLICES" | grep -q "W11-1"; then
+        check_pass "$cat" "PHASE_11_SLICES= present + contains W11-1" \
+            "$MANIFEST_PHASE_11_SLICES"
+    else
+        check_fail "$cat" "PHASE_11_SLICES= present + contains W11-1" \
+            "W11-1 not found in PHASE_11_SLICES: $MANIFEST_PHASE_11_SLICES"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Category 3: Base packages
+# ---------------------------------------------------------------------------
+_check_pkg() {
+    local pkg="$1"
+    if dpkg -l "$pkg" 2>/dev/null | grep -q "^ii"; then
+        check_pass "packages" "dpkg $pkg installed" ""
+    else
+        check_fail "packages" "dpkg $pkg installed" \
+            "$pkg not found in dpkg — not installed"
+    fi
+}
+
+run_packages_checks() {
+    local cat="packages"
+
+    # 3a-3f: required packages (radare2 is not in trixie — dropped, #85;
+    # md5deep is provided by the hashdeep package)
+    _check_pkg "ssdeep"
+    _check_pkg "hashdeep"
+    _check_pkg "yara"
+    _check_pkg "python3-yara"
+    _check_pkg "suricata"
+
+    # 3g: python3-pefile OR pip-installed pefile
+    if dpkg -l python3-pefile 2>/dev/null | grep -q "^ii"; then
+        check_pass "$cat" "pefile available (dpkg python3-pefile)" ""
+    elif [[ -f "/opt/orionx/venv/re/bin/python3" ]] && \
+         /opt/orionx/venv/re/bin/python3 -c "import pefile" 2>/dev/null; then
+        check_pass "$cat" "pefile available (venv pip install)" ""
+    else
+        check_fail "$cat" "pefile available (dpkg python3-pefile or venv pip)" \
+            "python3-pefile not installed via dpkg and not importable from /opt/orionx/venv/re/"
+    fi
+
+    # 3h: clamav MUST be absent (W11-7 debloat gate)
+    if dpkg -l clamav 2>/dev/null | grep -q "^ii"; then
+        check_fail "$cat" "clamav ABSENT from base (W11-7 DEC-PHASE11-009)" \
+            "clamav is installed but must be optional-only; run install-clamav.sh to use it"
+    else
+        check_pass "$cat" "clamav ABSENT from base (W11-7 DEC-PHASE11-009)" ""
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Category 4: File presence
+# ---------------------------------------------------------------------------
+# The optional installers the image ships (single list for checks 4i and 10a;
+# shell P3-2: it named 6 of the 10). Keep in step with /opt/orionx/optional/.
+ORIONX_OPTIONAL_INSTALLERS=(clamav duckdb element floss geoip ghidra gomuks piper-voice trid zeek)
+
+run_files_checks() {
+    local cat="files"
+
+    # 4a: Nebula model file > 1.5 GB
+    # DEC-PHASE12-016 moved the weights into ollama's own store
+    # (models/blobs/sha256-*) and removed the bare
+    # models/Qwen2.5-3B-Instruct-Q4_K_M.gguf this used to stat, so the old path
+    # failed on every correct image while 4b (MANIFEST) and the nebula
+    # integrity check passed — a missing model cannot pass an integrity check.
+    local blobs_dir="/opt/orionx/nebula/models/blobs"
+    local model_size=0 model_blob="" b sz
+    if [[ -d "$blobs_dir" ]]; then
+        for b in "$blobs_dir"/sha256-*; do
+            [[ -f "$b" ]] || continue
+            sz="$(stat -c%s "$b" 2>/dev/null || stat -f%z "$b" 2>/dev/null || echo 0)"
+            if [[ "$sz" -gt "$model_size" ]]; then model_size="$sz"; model_blob="$b"; fi
+        done
+    fi
+    if [[ "$model_size" -gt 1610612736 ]]; then  # 1.5 GB in bytes
+        check_pass "$cat" "nebula model weights present (>1.5 GB)" \
+            "$(( model_size / 1048576 )) MB in $(basename "$model_blob")"
+    elif [[ -n "$model_blob" ]]; then
+        check_fail "$cat" "nebula model weights present (>1.5 GB)" \
+            "largest blob ${model_size} bytes < 1.5 GB floor"
+    else
+        check_fail "$cat" "nebula model weights present (>1.5 GB)" \
+            "no sha256-* blob under $blobs_dir"
+    fi
+
+    # 4b: MANIFEST.sha256
+    if [[ -f "/opt/orionx/nebula/models/MANIFEST.sha256" ]]; then
+        check_pass "$cat" "nebula MANIFEST.sha256 present" ""
+    else
+        check_fail "$cat" "nebula MANIFEST.sha256 present" \
+            "/opt/orionx/nebula/models/MANIFEST.sha256 absent"
+    fi
+
+    # 4c: capa venv binary
+    if [[ -f "/opt/orionx/venv/re/bin/capa" && -x "/opt/orionx/venv/re/bin/capa" ]]; then
+        check_pass "$cat" "capa binary present in RE venv" ""
+    else
+        check_fail "$cat" "capa binary present in RE venv" \
+            "/opt/orionx/venv/re/bin/capa absent or not executable"
+    fi
+
+    # 4d: comms README (W11-5 Layer A skeleton)
+    if [[ -f "/opt/orionx/comms/README.md" ]]; then
+        check_pass "$cat" "/opt/orionx/comms/README.md present" ""
+    else
+        check_fail "$cat" "/opt/orionx/comms/README.md present" \
+            "W11-5 comms skeleton absent"
+    fi
+
+    # 4e: yara README
+    if [[ -f "/opt/orionx/yara/README.md" ]]; then
+        check_pass "$cat" "/opt/orionx/yara/README.md present" ""
+    else
+        check_fail "$cat" "/opt/orionx/yara/README.md present" \
+            "W11-4 YARA skeleton absent"
+    fi
+
+    # 4f: yara LOCKFILE.json
+    if [[ -f "/opt/orionx/yara/LOCKFILE.json" ]]; then
+        check_pass "$cat" "/opt/orionx/yara/LOCKFILE.json present" ""
+    else
+        check_fail "$cat" "/opt/orionx/yara/LOCKFILE.json present" \
+            "W11-4 YARA LOCKFILE absent"
+    fi
+
+    # 4g: suricata skeleton README
+    if [[ -f "/var/lib/suricata/orionx-README.md" ]]; then
+        check_pass "$cat" "/var/lib/suricata/orionx-README.md present" ""
+    else
+        check_fail "$cat" "/var/lib/suricata/orionx-README.md present" \
+            "W11-6 Suricata skeleton absent"
+    fi
+
+    # 4h: optional shared lib
+    if [[ -f "/opt/orionx/optional/lib/orionx-installer-common.sh" ]]; then
+        check_pass "$cat" "optional shared lib orionx-installer-common.sh present" ""
+    else
+        check_fail "$cat" "optional shared lib orionx-installer-common.sh present" \
+            "/opt/orionx/optional/lib/orionx-installer-common.sh absent"
+    fi
+
+    # 4i: all ${#ORIONX_OPTIONAL_INSTALLERS[@]} optional installers present + executable
+    local installers=("${ORIONX_OPTIONAL_INSTALLERS[@]}")
+    local missing_installers=()
+    local inst
+    for inst in "${installers[@]}"; do
+        local path="/opt/orionx/optional/install-${inst}.sh"
+        if [[ ! -f "$path" || ! -x "$path" ]]; then
+            missing_installers+=("install-${inst}.sh")
+        fi
+    done
+    if [[ ${#missing_installers[@]} -eq 0 ]]; then
+        check_pass "$cat" "all ${#ORIONX_OPTIONAL_INSTALLERS[@]} optional installers present + executable" ""
+    else
+        check_fail "$cat" "all ${#ORIONX_OPTIONAL_INSTALLERS[@]} optional installers present + executable" \
+            "missing or non-executable: ${missing_installers[*]}"
+    fi
+
+    # 4j: Orion-X-Cyberdeck GTK theme directory
+    if [[ -d "/usr/share/themes/Orion-X-Cyberdeck" ]]; then
+        check_pass "$cat" "/usr/share/themes/Orion-X-Cyberdeck/ present" ""
+    else
+        check_fail "$cat" "/usr/share/themes/Orion-X-Cyberdeck/ present" \
+            "W11-9b desktop identity directory absent"
+    fi
+
+    # 4k: Plymouth orionx-phoenix theme directory
+    if [[ -d "/usr/share/plymouth/themes/orionx-phoenix" ]]; then
+        check_pass "$cat" "/usr/share/plymouth/themes/orionx-phoenix/ present" ""
+    else
+        check_fail "$cat" "/usr/share/plymouth/themes/orionx-phoenix/ present" \
+            "W11-9a boot chain Plymouth theme absent"
+    fi
+
+    # 4l: (GRUB graphical theme retired — DEC-PHASE11-044; the boot identity is
+    # the Plymouth splash checked in 4k. No GRUB theme assertion.)
+}
+
+# ---------------------------------------------------------------------------
+# Category 5: Systemd unit state
+# ---------------------------------------------------------------------------
+_systemctl_is_enabled() {
+    local unit="$1"
+    local state
+    state="$(systemctl is-enabled "$unit" 2>/dev/null || echo "unknown")"
+    printf '%s' "$state"
+}
+
+run_systemd_checks() {
+    local cat="systemd"
+
+    # 5a: nebula-integrity-check.service enabled
+    if [[ $EUID -ne 0 ]]; then
+        check_skip "$cat" "nebula-integrity-check.service enabled" \
+            "root required for systemctl is-enabled"
+    else
+        local state
+        state="$(_systemctl_is_enabled "nebula-integrity-check.service")"
+        if [[ "$state" == "enabled" || "$state" == "enabled-runtime" ]]; then
+            check_pass "$cat" "nebula-integrity-check.service enabled" "$state"
+        else
+            check_fail "$cat" "nebula-integrity-check.service enabled" \
+                "systemctl is-enabled returned: $state"
+        fi
+    fi
+
+    # 5b: nebula-runtime.service enabled (socket activation was removed —
+    # ollama binds :11434 itself; DEC-PHASE11-033)
+    if [[ $EUID -ne 0 ]]; then
+        check_skip "$cat" "nebula-runtime.service enabled" \
+            "root required for systemctl is-enabled"
+    else
+        local state
+        state="$(_systemctl_is_enabled "nebula-runtime.service")"
+        if [[ "$state" == "enabled" || "$state" == "enabled-runtime" ]]; then
+            check_pass "$cat" "nebula-runtime.service enabled" "$state"
+        else
+            check_fail "$cat" "nebula-runtime.service enabled" \
+                "systemctl is-enabled returned: $state"
+        fi
+    fi
+
+    # 5c: suricata.service masked OR has ConditionPathExists= (W11-6 lazy-start)
+    if [[ $EUID -ne 0 ]]; then
+        check_skip "$cat" "suricata.service masked or lazy-start gated" \
+            "root required for systemctl"
+    else
+        local masked_state
+        masked_state="$(_systemctl_is_enabled "suricata.service")"
+        if [[ "$masked_state" == "masked" ]]; then
+            check_pass "$cat" "suricata.service masked or lazy-start gated" "masked"
+        else
+            # Check for ConditionPathExists= directive
+            # `systemctl show --property=ConditionPathExists` returns EMPTY on
+            # current systemd (conditions are not a scalar show property), so
+            # the old form failed even though the W11-6 drop-in at
+            # /etc/systemd/system/suricata.service.d/orionx-lazy.conf does set
+            # ConditionPathExists=/var/lib/suricata/orionx-enabled. `systemctl
+            # cat` renders the unit with its drop-ins applied.
+            local condition
+            condition="$(systemctl cat suricata.service 2>/dev/null || echo "")"
+            if echo "$condition" | grep -q "ConditionPathExists="; then
+                check_pass "$cat" "suricata.service masked or lazy-start gated" \
+                    "ConditionPathExists override active"
+            else
+                check_fail "$cat" "suricata.service masked or lazy-start gated" \
+                    "suricata is neither masked nor has ConditionPathExists= (state: $masked_state)"
+            fi
+        fi
+    fi
+
+    # 5d: NetworkManager.service enabled
+    if [[ $EUID -ne 0 ]]; then
+        check_skip "$cat" "NetworkManager.service enabled" \
+            "root required for systemctl is-enabled"
+    else
+        local state
+        state="$(_systemctl_is_enabled "NetworkManager.service")"
+        if [[ "$state" == "enabled" || "$state" == "enabled-runtime" ]]; then
+            check_pass "$cat" "NetworkManager.service enabled" "$state"
+        else
+            check_fail "$cat" "NetworkManager.service enabled" \
+                "systemctl is-enabled returned: $state"
+        fi
+    fi
+
+    # 5e: lightdm.service active or enabled
+    if [[ $EUID -ne 0 ]]; then
+        check_skip "$cat" "lightdm.service active or enabled" \
+            "root required for systemctl"
+    else
+        local ldm_enabled ldm_active
+        ldm_enabled="$(_systemctl_is_enabled "lightdm.service")"
+        ldm_active="$(systemctl is-active "lightdm.service" 2>/dev/null || echo "unknown")"
+        if [[ "$ldm_active" == "active" || "$ldm_enabled" == "enabled" ]]; then
+            check_pass "$cat" "lightdm.service active or enabled" \
+                "active=$ldm_active enabled=$ldm_enabled"
+        else
+            check_fail "$cat" "lightdm.service active or enabled" \
+                "active=$ldm_active enabled=$ldm_enabled"
+        fi
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Category 6: Python imports
+# ---------------------------------------------------------------------------
+run_python_checks() {
+    local cat="python"
+
+    # 6a: control_center.app importable
+    local cc_out cc_exit=0
+    # control_center lives at /opt/orionx/scripts/control_center, which is not
+    # on the default sys.path — the orionx-control-center wrapper inserts its
+    # own directory before importing. A bare `python3 -c` does not, so this
+    # failed on a working install and was filed as issue #66 ("module missing
+    # from sys.path"). Mirror what the wrapper does.
+    cc_out="$(PYTHONPATH="/opt/orionx/scripts${PYTHONPATH:+:$PYTHONPATH}" \
+              python3 -c 'from control_center.app import run_app' 2>&1)" || cc_exit=$?
+    if [[ $cc_exit -eq 0 ]]; then
+        check_pass "$cat" "control_center.app importable" ""
+    else
+        check_fail "$cat" "control_center.app importable" \
+            "import failed (exit $cc_exit): $(echo "$cc_out" | head -3)"
+    fi
+
+    # 6b: python3 yara binding loads
+    local yara_exit=0
+    python3 -c 'import yara' 2>/dev/null || yara_exit=$?
+    if [[ $yara_exit -eq 0 ]]; then
+        check_pass "$cat" "python3 'import yara' loads" ""
+    else
+        check_fail "$cat" "python3 'import yara' loads" \
+            "import yara failed (exit $yara_exit) — python3-yara binding broken"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Category 7: Nebula runtime
+# ---------------------------------------------------------------------------
+run_nebula_checks() {
+    local cat="nebula"
+
+    # 7a: /usr/local/bin/ollama exists + executable
+    if [[ -f "/usr/local/bin/ollama" && -x "/usr/local/bin/ollama" ]]; then
+        check_pass "$cat" "/usr/local/bin/ollama present + executable" ""
+    else
+        check_fail "$cat" "/usr/local/bin/ollama present + executable" \
+            "/usr/local/bin/ollama absent or not executable"
+    fi
+
+    # 7b: ollama --version exits 0
+    if [[ -x "/usr/local/bin/ollama" ]]; then
+        local ollama_ver_exit=0
+        ollama --version >/dev/null 2>&1 || ollama_ver_exit=$?  # stdout would corrupt --json (shell P3-1)
+        if [[ $ollama_ver_exit -eq 0 ]]; then
+            check_pass "$cat" "ollama --version exits 0 (binary loadable)" ""
+        else
+            check_fail "$cat" "ollama --version exits 0 (binary loadable)" \
+                "ollama --version exited $ollama_ver_exit — binary may be corrupt or wrong arch"
+        fi
+    else
+        check_skip "$cat" "ollama --version exits 0 (binary loadable)" \
+            "ollama not present — skipping version check"
+    fi
+
+    # 7c: the model ollama actually loads matches MANIFEST.sha256
+    #
+    # @decision DEC-PHASE12-121
+    # @title 7c verifies the live blobs MANIFEST.sha256 names, like nebula-integrity-check
+    # @status accepted
+    # @rationale 7c hashed models/Qwen2.5-3B-Instruct-Q4_K_M.gguf, a file hook 0510
+    #   deletes by design (DEC-PHASE12-016: the weights live once, as ollama's
+    #   blobs/sha256-*), so 7c was a SKIP on every correct image and a corrupt
+    #   model was never caught here (shell P2-7). 0510 rewrites MANIFEST.sha256
+    #   to list the live blob(s) relative to the models dir; integrity.py
+    #   verifies exactly that list at boot. 7c now runs `sha256sum -c` over the
+    #   same manifest, from the same directory: PASS only when every listed file
+    #   exists and matches, FAIL naming each bad line otherwise. Reading the
+    #   0644 blobs needs no root; it takes tens of seconds on the deck.
+    local models_dir="${ORIONX_NEBULA_MODELS_DIR:-/opt/orionx/nebula/models}"
+    local manifest="$models_dir/MANIFEST.sha256"
+    local label="model blobs match MANIFEST.sha256 (what ollama loads)"
+    if [[ ! -f "$manifest" ]]; then
+        check_fail "$cat" "$label" "MANIFEST.sha256 absent at $manifest — the model cannot be verified"
+    elif grep -q "TBD-VERIFY" "$manifest"; then
+        check_fail "$cat" "$label" "manifest still has the TBD-VERIFY sentinel — no pinned hash to verify against"
+    elif [[ ! -s "$manifest" ]]; then
+        check_fail "$cat" "$label" "MANIFEST.sha256 is empty"
+    else
+        local verify_out verify_rc=0 bad nfiles
+        nfiles="$(grep -c . "$manifest")"
+        verify_out="$(cd "$models_dir" && sha256sum -c "$manifest" 2>&1)" || verify_rc=$?
+        if [[ $verify_rc -eq 0 ]]; then
+            check_pass "$cat" "$label" "$nfiles file(s) verified"
+        else
+            bad="$(printf '%s\n' "$verify_out" | grep -v ': OK$' | head -3 | tr '\n' ';')"
+            check_fail "$cat" "$label" "sha256sum -c failed: ${bad:-exit $verify_rc} — model corrupt or missing"
+        fi
+    fi
+
+    # 7d: nebula-integrity-check.service last run exit status
+    if [[ $EUID -ne 0 ]]; then
+        check_skip "$cat" "nebula-integrity-check last run successful" \
+            "root required for systemctl show ExecMainStatus"
+    else
+        local exec_status
+        exec_status="$(systemctl show nebula-integrity-check.service \
+            --property=ExecMainStatus 2>/dev/null | cut -d= -f2 || echo "")"
+        if [[ -z "$exec_status" || "$exec_status" == "" ]]; then
+            check_skip "$cat" "nebula-integrity-check last run successful" \
+                "not yet run this boot (ExecMainStatus empty)"
+        elif [[ "$exec_status" == "0" ]]; then
+            check_pass "$cat" "nebula-integrity-check last run successful" \
+                "ExecMainStatus=0"
+        else
+            check_fail "$cat" "nebula-integrity-check last run successful" \
+                "ExecMainStatus=$exec_status — integrity check failed"
+        fi
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Category 8: Branding
+# ---------------------------------------------------------------------------
+run_branding_checks() {
+    local cat="branding"
+
+    # 8a: Plymouth default theme == orionx-phoenix
+    if ! command -v plymouth-set-default-theme &>/dev/null; then
+        check_skip "$cat" "plymouth-set-default-theme reports orionx-phoenix" \
+            "plymouth-set-default-theme not on PATH (minimal Plymouth build?)"
+    else
+        local plymouth_theme
+        plymouth_theme="$(plymouth-set-default-theme 2>/dev/null || echo "")"
+        if [[ "$plymouth_theme" == "orionx-phoenix" ]]; then
+            check_pass "$cat" "plymouth-set-default-theme reports orionx-phoenix" \
+                "$plymouth_theme"
+        else
+            check_fail "$cat" "plymouth-set-default-theme reports orionx-phoenix" \
+                "active theme: ${plymouth_theme:-<empty>}"
+        fi
+    fi
+
+    # 8b: xsettings.xml contains Orion-X-Cyberdeck
+    local xsettings="/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"
+    if [[ ! -f "$xsettings" ]]; then
+        check_skip "$cat" "xsettings.xml contains Orion-X-Cyberdeck GTK theme" \
+            "xsettings.xml absent at $xsettings"
+    elif grep -q "Orion-X-Cyberdeck" "$xsettings" 2>/dev/null; then
+        check_pass "$cat" "xsettings.xml contains Orion-X-Cyberdeck GTK theme" ""
+    else
+        check_fail "$cat" "xsettings.xml contains Orion-X-Cyberdeck GTK theme" \
+            "Orion-X-Cyberdeck not found in $xsettings"
+    fi
+
+    # 8c: plymouthd.conf declares the Phoenix theme.
+    #
+    # This replaced a `set theme=` assertion on /boot/grub/grub.cfg: the
+    # graphical GRUB theme was retired after it failed on hardware
+    # (DEC-PHASE11-044), the generated grub.cfg no longer sets a theme, and
+    # /boot/grub/grub.cfg does not exist on a live boot anyway — so the old
+    # check SKIPped on the ISO and FAILed on an installed system. plymouthd.conf
+    # is the declarative authority for the boot identity that actually ships
+    # (DEC-PHASE11-010), and 8a checks what Plymouth resolves at runtime.
+    local plymouth_conf="/etc/plymouth/plymouthd.conf"
+    if [[ ! -f "$plymouth_conf" ]]; then
+        check_fail "$cat" "plymouthd.conf declares Theme=orionx-phoenix" \
+            "$plymouth_conf absent — boot splash configuration missing"
+    elif grep -qE '^[[:space:]]*Theme=orionx-phoenix[[:space:]]*$' "$plymouth_conf"; then
+        check_pass "$cat" "plymouthd.conf declares Theme=orionx-phoenix" ""
+    else
+        check_fail "$cat" "plymouthd.conf declares Theme=orionx-phoenix" \
+            "Theme=orionx-phoenix not found in $plymouth_conf"
+    fi
+
+    # 8d: MOTD contains Orion-X Phoenix Edition wordmark
+    local motd_ok=false
+    if grep -q "Orion-X Phoenix Edition" /etc/motd 2>/dev/null; then
+        motd_ok=true
+    fi
+    if ! $motd_ok && grep -q "Orion-X Phoenix Edition" /etc/update-motd.d/10-orionx-welcome 2>/dev/null; then
+        motd_ok=true
+    fi
+    if $motd_ok; then
+        check_pass "$cat" "MOTD contains 'Orion-X Phoenix Edition' wordmark" ""
+    else
+        check_fail "$cat" "MOTD contains 'Orion-X Phoenix Edition' wordmark" \
+            "wordmark not found in /etc/motd or /etc/update-motd.d/10-orionx-welcome"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Category 9: Freshen scripts
+# ---------------------------------------------------------------------------
+run_freshen_checks() {
+    local cat="freshen"
+
+    # 9a/9b: the freshen commands resolve on PATH.
+    #
+    # The 0700 hook installs these under /usr/bin (the same SCRIPT_MAP that
+    # places orionx-diag itself), not /usr/local/bin, which is where this used
+    # to look — so both assertions failed on every image while the commands
+    # worked fine. Resolve through PATH rather than hardcoding a directory.
+    local tool path target
+    for tool in orionx-freshen-yara orionx-freshen-suricata; do
+        path="$(command -v "$tool" 2>/dev/null || echo "")"
+        if [[ -z "$path" ]]; then
+            check_fail "$cat" "$tool on PATH + target executable" \
+                "$tool not found on PATH"
+            continue
+        fi
+        target="$(readlink -f "$path" 2>/dev/null || echo "$path")"
+        if [[ -x "$target" ]]; then
+            check_pass "$cat" "$tool on PATH + target executable" "$path -> $target"
+        else
+            check_fail "$cat" "$tool on PATH + target executable" \
+                "$path resolves to $target, which is not executable"
+        fi
+    done
+}
+
+# ---------------------------------------------------------------------------
+# Category 10: Optional installers self-check
+# ---------------------------------------------------------------------------
+run_optional_checks() {
+    local cat="optional"
+
+    local installers=("${ORIONX_OPTIONAL_INSTALLERS[@]}")
+    local common_lib="/opt/orionx/optional/lib/orionx-installer-common.sh"
+
+    # 10a: every installer sources orionx-installer-common.sh
+    local bad_installers=()
+    local inst
+    for inst in "${installers[@]}"; do
+        local path="/opt/orionx/optional/install-${inst}.sh"
+        if [[ -f "$path" ]]; then
+            if ! grep -qE '\. .*orionx-installer-common\.sh|source .*orionx-installer-common\.sh' \
+                    "$path" 2>/dev/null; then
+                bad_installers+=("install-${inst}.sh")
+            fi
+        else
+            bad_installers+=("install-${inst}.sh (absent)")
+        fi
+    done
+    if [[ ${#bad_installers[@]} -eq 0 ]]; then
+        check_pass "$cat" "all ${#ORIONX_OPTIONAL_INSTALLERS[@]} installers source orionx-installer-common.sh" ""
+    else
+        check_fail "$cat" "all ${#ORIONX_OPTIONAL_INSTALLERS[@]} installers source orionx-installer-common.sh" \
+            "missing source directive: ${bad_installers[*]}"
+    fi
+
+    # 10b: orionx-installer-common.sh defines all 7 expected functions
+    if [[ ! -f "$common_lib" ]]; then
+        check_fail "$cat" "orionx-installer-common.sh defines 7 required functions" \
+            "$common_lib absent"
+    else
+        local required_fns=(
+            orionx_log_info
+            orionx_log_error
+            orionx_require_root
+            orionx_require_network
+            orionx_wget_extract
+            orionx_apt_install
+            orionx_verify_sha256
+        )
+        local missing_fns=()
+        local fn
+        for fn in "${required_fns[@]}"; do
+            if ! grep -q "$fn" "$common_lib" 2>/dev/null; then
+                missing_fns+=("$fn")
+            fi
+        done
+        if [[ ${#missing_fns[@]} -eq 0 ]]; then
+            check_pass "$cat" "orionx-installer-common.sh defines 7 required functions" ""
+        else
+            check_fail "$cat" "orionx-installer-common.sh defines 7 required functions" \
+                "missing functions: ${missing_fns[*]}"
+        fi
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Category dispatch
+# ---------------------------------------------------------------------------
+_all_categories=(identity version-manifest packages files systemd python nebula branding freshen optional)
+
+run_category() {
+    local cat="$1"
+    case "$cat" in
+        identity)         run_identity_checks ;;
+        version-manifest) run_version_manifest_checks ;;
+        packages)         run_packages_checks ;;
+        files)            run_files_checks ;;
+        systemd)          run_systemd_checks ;;
+        python)           run_python_checks ;;
+        nebula)           run_nebula_checks ;;
+        branding)         run_branding_checks ;;
+        freshen)          run_freshen_checks ;;
+        optional)         run_optional_checks ;;
+        *)
+            printf 'ERROR: unknown category: %s\n' "$cat" >&2
+            printf 'Valid categories: %s\n' "${_all_categories[*]}" >&2
+            exit 2
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+main() {
+    # Argument parsing
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --json)
+                JSON_MODE=true
+                shift
+                ;;
+            --category)
+                if [[ -z "${2:-}" ]]; then
+                    printf 'ERROR: --category requires an argument\n' >&2
+                    usage >&2
+                    exit 2
+                fi
+                CATEGORY_FILTER="$2"
+                shift 2
+                ;;
+            --version)
+                load_manifest || true
+                printf '%s\n' "$MANIFEST_ISO_VERSION"
+                exit 0
+                ;;
+            -v|--verbose)
+                VERBOSE=true
+                shift
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                printf 'ERROR: unknown option: %s\n' "$1" >&2
+                usage >&2
+                exit 2
+                ;;
+        esac
+    done
+
+    # Validate category filter early
+    if [[ -n "$CATEGORY_FILTER" ]]; then
+        local valid=false
+        local c
+        for c in "${_all_categories[@]}"; do
+            [[ "$c" == "$CATEGORY_FILTER" ]] && valid=true && break
+        done
+        if ! $valid; then
+            printf 'ERROR: unknown category: %s\n' "$CATEGORY_FILTER" >&2
+            printf 'Valid categories: %s\n' "${_all_categories[*]}" >&2
+            exit 2
+        fi
+    fi
+
+    # Load manifest (best-effort; individual checks handle absence)
+    load_manifest || true
+
+    # Print header (human mode only)
+    if ! "$JSON_MODE"; then
+        printf '\n'
+        printf "${CYAN}Orion-X System Diagnostic${NC}\n"
+        printf '=========================\n'
+        if [[ -n "$CATEGORY_FILTER" ]]; then
+            printf "Category filter: %s\n" "$CATEGORY_FILTER"
+        fi
+        printf "ISO version: %s\n" "$MANIFEST_ISO_VERSION"
+        printf '\n'
+    fi
+
+    # Run checks
+    if [[ -n "$CATEGORY_FILTER" ]]; then
+        run_category "$CATEGORY_FILTER"
+    else
+        local cat
+        for cat in "${_all_categories[@]}"; do
+            if ! "$JSON_MODE"; then
+                printf "\n${CYAN}[%s]${NC}\n" "$cat"
+            fi
+            run_category "$cat"
+        done
+    fi
+
+    # Output results
+    if "$JSON_MODE"; then
+        emit_json
+    else
+        printf '\n'
+        printf 'Summary: '
+        printf "${GREEN}%d PASS${NC}  " "$PASS_COUNT"
+        printf "${RED}%d FAIL${NC}  " "$FAIL_COUNT"
+        printf "${YELLOW}%d SKIP${NC}\n" "$SKIP_COUNT"
+        if [[ $FAIL_COUNT -eq 0 ]]; then
+            printf "\nOverall: ${GREEN}PASS${NC}\n"
+        else
+            printf "\nOverall: ${RED}FAIL${NC}\n"
+        fi
+    fi
+
+    # Exit code: 0 iff no FAILs
+    [[ $FAIL_COUNT -eq 0 ]]
+}
+
+main "$@"

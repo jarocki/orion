@@ -96,6 +96,29 @@ declare -A SCRIPT_MAP=(
     # (root-only diagnostic command). Source at /opt/orionx/scripts/ — no .sh
     # suffix per the orionx-mesh precedent.
     ["orionx-diag"]="/opt/orionx/scripts/orionx-diag"
+    ["orionx-scanwatch"]="/opt/orionx/scripts/rain/orionx-scanwatch"
+    # W10-6 (DEC-PHASE12-023): orionx-heal is the operator control surface
+    # (status/confirm/undo/verify/log); orionx-heald is the daemon, symlinked
+    # so `orionx-heald --dry-run` is runnable by hand.
+    ["orionx-heal"]="/opt/orionx/scripts/healing/orionx-heal"
+    ["orionx-heald"]="/opt/orionx/scripts/healing/orionx-heald"
+    # W10-5 (DEC-PHASE12-024): posture enforcement daemon.
+    ["orionx-postured"]="/opt/orionx/scripts/awareness/orionx-postured"
+    # DEC-PHASE12-050: operator squelch/tune of IDS alerts (no root needed).
+    ["orionx-tune"]="/opt/orionx/scripts/awareness/orionx-tune"
+    # DEC-PHASE12-028: bounded on-demand PCAP capture control surface.
+    ["orionx-capture"]="/opt/orionx/scripts/awareness/orionx-capture"
+    # DEC-PHASE12-027: forensic log correlation + its intel refresh. The
+    # refresh is a script on PATH, not a timer, deliberately — when the deck
+    # reaches out to the network is a Shields Up decision that stays with the
+    # operator, same as orionx-freshen-yara/suricata.
+    ["orionx-logquery"]="/opt/orionx/scripts/logquery/orionx-logquery"
+    ["orionx-freshen-intel"]="/opt/orionx/scripts/logquery/orionx-freshen-intel"
+    # NOTE: the confined MCP server deliberately gets NO SCRIPT_MAP entry here.
+    # test_orionx_setup_hook_unit.sh asserts one is absent, and the entrypoint
+    # ships directly at /usr/bin/nebula-mcp via includes.chroot so its AppArmor
+    # attachment path is honest. (Spelling the map key literally in this
+    # comment would itself trip that grep-based assertion.)
     # First-boot wizard — was only reachable by full path (/opt/orionx/scripts/
     # security/first-boot-wizard.sh), painful on a console with no copy-paste
     # (operator report 2026-09-12). Give it a short PATH name so it is runnable
@@ -138,17 +161,24 @@ done
 #    --hold: keeps window open after the command exits.
 #    exec bash: provides a live shell on completion so the user can read output.
 #    No lxterminal — it is NOT installed in the Orion-X ISO.
+#    Categories=X-Orion; only, on purpose: orionx.menu merges every X-Orion
+#    entry into the Orion submenu. A registered main category (Utility;) would
+#    silence desktop-file-validate's hint but list each tool a second time
+#    under Accessories (QA round 1 docs F47: by design).
 # ---------------------------------------------------------------------------
 echo "[orionx-setup] Creating XDG desktop entries..."
 mkdir -p /usr/share/applications
 
+# Mesh status. orionx-mesh refuses to run without root, so the bare call this
+# entry used to make printed an error (QA UX-42); it now runs the read-only
+# status subcommand with sudo (the live account's sudo needs no password).
 cat > /usr/share/applications/orionx-mesh.desktop << 'DESKTOP_EOF'
 [Desktop Entry]
 Type=Application
-Name=Orion-X Mesh
-Comment=WireGuard P2P mesh management
-Exec=xfce4-terminal --hold -e "bash -c 'orionx-mesh; exec bash'"
-Icon=network-workgroup
+Name=Orion-X Mesh — Status
+Comment=Show this deck's WireGuard mesh: interface, peers, last handshakes
+Exec=xfce4-terminal --hold -e "bash -c 'sudo orionx-mesh status; exec bash'"
+Icon=orionx-mesh
 Categories=X-Orion;
 DESKTOP_EOF
 
@@ -183,7 +213,7 @@ Categories=X-Orion;
 DESKTOP_EOF
 
 # One-click mesh launcher — invokes the existing orionx-mesh entrypoint with sudo.
-# orionx user is in the sudo group (passwordless), so sudo works without a prompt.
+# live-config gives the live account NOPASSWD sudo, so there is no prompt.
 # The 'join' subcommand is the primary production use-case: bring up the mesh.
 cat > /usr/share/applications/orionx-start-mesh.desktop << 'DESKTOP_EOF'
 [Desktop Entry]
@@ -191,7 +221,7 @@ Type=Application
 Name=Orion-X — Start Mesh
 Comment=Start Orion-X WireGuard mesh (one-click)
 Exec=xfce4-terminal --hold -e "bash -c 'sudo orionx-mesh join; exec bash'"
-Icon=network-wireless
+Icon=orionx-mesh
 Categories=X-Orion;
 DESKTOP_EOF
 
@@ -199,13 +229,30 @@ DESKTOP_EOF
 # DEC-PHASE9-006: no lxterminal in any Exec line (lxterminal is NOT installed).
 # DEC-PHASE10-005: Control Center ships ahead of Phase 10 Nebula AI; Nebula
 # and Auto-Healing sections are placeholders that W10-1..W10-6 populate.
+# DEC-PHASE12-053: the tabs live in the Orion Cockpit; this entry opens it on a
+# tab. This hook is the ONLY writer of this file — rc7 shipped the old entry
+# because a static copy in includes.chroot was edited while this heredoc
+# silently overwrote it at build time (two authorities). The static copy is gone.
+#
+# @decision DEC-PHASE12-127
+# @title Menu entries are named for what they open and carry their own glyph
+# @status accepted
+# @rationale QA round 1 (UX-09/UX-44) found "Orion Cockpit" and "Orion Cockpit
+#   — Tabs" side by side with one icon, the latter listing six tabs while it
+#   opens Network. The file name stays (the content-presence and hooks-applied
+#   gates follow it, and old habits find it), but the entry now says what it
+#   opens. The Cockpit entries use orionx-cockpit and the mesh entries
+#   orionx-mesh from the Orion-X-Icons theme, so the primary surfaces are no
+#   longer six copies of the Phoenix PNG. tests/unit/test_operator_surfaces.sh
+#   parses every shipped entry: unique Name, no retired surface names, Exec
+#   resolves, --tab matches the Name, icon SVG parses.
 cat > /usr/share/applications/orionx-control-center.desktop << 'DESKTOP_EOF'
 [Desktop Entry]
 Type=Application
-Name=Orion-X Control Center
-Comment=Orion-X cyberdeck control surface (Network, Mesh, Comms, IR, Nebula AI)
-Exec=/usr/bin/orionx-control-center
-Icon=/usr/share/pixmaps/orionx.png
+Name=Orion Cockpit — Network tab
+Comment=Open the Orion Cockpit on its Network tab; Mesh, Comms, Awareness, Orion Tools, Nebula AI and Auto-Healing are in the strip on the left
+Exec=/usr/bin/orionx-cockpit --tab network
+Icon=orionx-cockpit
 Categories=X-Orion;
 DESKTOP_EOF
 
@@ -216,11 +263,32 @@ cat > /usr/share/applications/orionx-cockpit.desktop << 'DESKTOP_EOF'
 [Desktop Entry]
 Type=Application
 Name=Orion Cockpit
-Comment=Live cockpit — see and hear the cyber activity around you
+Comment=See and hear the cyber activity around you — live dashboard plus the Network, Mesh, Comms, Awareness, Orion Tools, Nebula AI and Auto-Healing tabs
 Exec=/usr/bin/orionx-cockpit
-Icon=/usr/share/pixmaps/orionx.png
+Icon=orionx-cockpit
 Categories=X-Orion;
 DESKTOP_EOF
+
+# @decision DEC-PHASE12-128
+# @title The Cockpit gets a desktop icon and a panel launcher, derived from its menu entry
+# @status accepted
+# @rationale QA round 1 (UX-08): the Cockpit was the only primary surface with
+#   no desktop icon and no panel launcher — two menu levels deep, while GODSEYE
+#   (which refuses to open offline) had an icon. Both copies are DERIVED from
+#   the menu entry above (one source, generated surfaces — RESILIENCE rule 7),
+#   the same pattern 0710 uses for the Workbench icon. The panel's launcher
+#   plugin (id 11, seeded by hooks/normal/0100-create-user) reads its item
+#   from ~/.config/xfce4/panel/launcher-11/. The prefix variable exists only so
+#   tests/unit/test_operator_surfaces.sh can run this exact block against a
+#   scratch root; in the chroot it is empty. Rendering on the deck is unverified
+#   until the next hardware boot.
+# BEGIN derive-cockpit-surfaces
+_root="${ORIONX_CHROOT_PREFIX:-}"
+for _dst in "$_root/etc/skel/Desktop" "$_root/etc/skel/.config/xfce4/panel/launcher-11"; do
+    mkdir -p "$_dst"
+    install -m 0755 "$_root/usr/share/applications/orionx-cockpit.desktop" "$_dst/orionx-cockpit.desktop"
+done
+# END derive-cockpit-surfaces
 
 # Pivotglass — adversary-infrastructure hunting; `ap web` serves its local
 # browser cockpit on 127.0.0.1:8765 and opens it (DEC-PHASE12-013). Grouped
@@ -266,7 +334,7 @@ else
     echo "[0700] WARNING: /etc/orionx-build-env absent — /etc/orionx-version will report defaults" >&2
 fi
 cat > /etc/orionx-version << VERSION_EOF
-ISO_VERSION=${ORIONX_VERSION:-v2.0.0-rc8}
+ISO_VERSION=${ORIONX_VERSION:-unknown-build}
 BUILD_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 GIT_HEAD_SHA=${ORIONX_GIT_SHA:-unknown}
 GIT_HEAD_TITLE=${ORIONX_GIT_TITLE:-unknown}
@@ -277,53 +345,64 @@ chmod 644 /etc/orionx-version
 # carries exactly one metadata surface (DEC-PHASE11-015 single-authority).
 rm -f /etc/orionx-build-env
 
+# @decision DEC-PHASE12-129
+# @title MOTD and orionx-help are rendered from one command list
+# @status accepted
+# @rationale QA round 1 (UX-32, docs F37) found both describing the 2.0-era
+#   toolkit: no Cockpit, Workbench, Nebula, diag, tune or wizard, and both
+#   pointing at the raw User_Guide.md. They were two hand-kept copies that had
+#   drifted from what ships. Both now read /usr/share/orionx/orionx-commands.txt
+#   (includes.chroot) at run time: "quick" lines feed the MOTD, all lines feed
+#   orionx-help. tests/unit/test_operator_surfaces.sh runs both renderers and
+#   checks every listed command is installed by the image. The ORIONX_*_FILE
+#   variables exist for that test; on the deck they are unset.
+#   The version fallback is "unknown-build" (docs F38): the old literals
+#   (v2.0.0 / v2.0.0-rc8) read like real releases when the build env was lost.
 cat > /etc/update-motd.d/10-orionx-welcome << 'MOTD_EOF'
 #!/bin/bash
-# W11-11 T2c: grep-reads the ISO_VERSION key from the KEY=VALUE manifest written
-# by the 0700 hook. Backward-compat: if /etc/orionx-version is the legacy
-# single-line format (pre-W11-11), grep returns nothing and fallback 'v2.0.0'
-# is used — MOTD continues to render (acceptable degrade on legacy image).
-ORIONX_VER="$(grep '^ISO_VERSION=' /etc/orionx-version 2>/dev/null | cut -d= -f2 || echo v2.0.0)"
-cat << EOF
+# Orion-X login banner. Release from /etc/orionx-version (written by the 0700
+# hook); commands from /usr/share/orionx/orionx-commands.txt (DEC-PHASE12-129).
+VERSION_FILE="${ORIONX_VERSION_FILE:-/etc/orionx-version}"
+COMMANDS_FILE="${ORIONX_COMMANDS_FILE:-/usr/share/orionx/orionx-commands.txt}"
+ORIONX_VER="$(grep -m1 '^ISO_VERSION=' "$VERSION_FILE" 2>/dev/null | cut -d= -f2)"
+ORIONX_VER="${ORIONX_VER:-unknown-build}"
+# Quoted heredoc: in an unquoted one the wordmark's trailing backslash joins
+# the next line, which glued the release string onto the art.
+cat << 'EOF'
   ___      _               __  __
  / _ \ _ _(_)___ _ _      \ \/ /
 | (_) | '_| / _ \ ' \      >  <
  \___/|_| |_\___/_||_|    /_/\_\
-Orion-X Phoenix Edition ${ORIONX_VER}
+EOF
+printf 'Orion-X Phoenix Edition %s\n\nQuick start:\n' "$ORIONX_VER"
+awk -F' :: ' '$1 == "quick" { printf "  %-20s %s\n", $2, $3 }' "$COMMANDS_FILE" 2>/dev/null \
+    || echo "  (command list missing: $COMMANDS_FILE)"
+cat << 'EOF'
 
-Quick start:
-  orionx-mesh       — WireGuard P2P mesh management
-  setup-matrix.sh   — Matrix/Synapse setup
-  artifact-analyzer.py — Forensic artifact analysis
-  pcap-analyzer.py  — Structured PCAP traffic analysis (STA)
-  storyboard-gen.py — Generate storyboards
-
-Type 'orionx-help' for the full command reference.
-Docs: /usr/share/doc/orionx/User_Guide.md
+Guide: /usr/share/doc/orionx/User_Guide.html (desktop: "Orion-X User Guide")
 EOF
 MOTD_EOF
 chmod 755 /etc/update-motd.d/10-orionx-welcome
 
-# Provide the orionx-help bashrc function (matches Dockerfile pattern)
+# orionx-help: every command in the shared list (DEC-PHASE12-129).
 cat > /etc/profile.d/orionx-help.sh << 'HELP_EOF'
-# Orion-X help function — available in all interactive shells
+# Orion-X help function — available in all interactive bash shells.
+# Rendered from /usr/share/orionx/orionx-commands.txt (DEC-PHASE12-129).
 orionx-help() {
+    local f="${ORIONX_COMMANDS_FILE:-/usr/share/orionx/orionx-commands.txt}"
     echo ""
-    echo "Orion-X Phoenix Edition — Command Reference"
+    echo "Orion-X Phoenix Edition — command reference"
     echo "==========================================="
-    echo "  orionx-mesh          WireGuard P2P mesh (join/leave/status/discover)"
-    echo "  setup-wireguard.sh   WireGuard interface setup"
-    echo "  setup-matrix.sh      Matrix/Synapse server setup"
-    echo "  artifact-analyzer.py Forensic artifact analysis"
-    echo "  pcap-analyzer.py     Structured PCAP traffic analysis (STA, Bejtlich method)"
-    echo "  storyboard-gen.py    Intelligence storyboard generation"
-    echo "  toggle-theme.sh      Toggle light/dark desktop theme"
-    echo "  run-lynis.sh         Run Lynis security audit"
-    echo "  download-samples.sh  Download forensic sample datasets"
+    if [ -r "$f" ]; then
+        awk -F' :: ' '/^(quick|help) :: / {
+            if (length($2) <= 26) printf "  %-26s %s\n", $2, $3
+            else printf "  %s\n  %-26s %s\n", $2, "", $3 }' "$f"
+    else
+        echo "  (command list missing: $f — see the User Guide, section 17)"
+    fi
     echo ""
-    echo "Docs:   /usr/share/doc/orionx/User_Guide.md"
-    echo "Data:   /opt/orionx/data/samples/"
-    echo "Theme:  /opt/orionx/theme/"
+    echo "Guide:  /usr/share/doc/orionx/User_Guide.html  (section 17: Command Reference)"
+    echo "Data:   ~/Analysis/ (your working copy), /opt/orionx/data/samples/ (originals)"
     echo ""
 }
 export -f orionx-help 2>/dev/null || true
@@ -353,11 +432,11 @@ if [[ -d /opt/orionx/theme ]]; then
     find /opt/orionx/theme -type f -exec chmod 644 {} \;
 fi
 
-# Set orionx user ownership when the user exists
-if id orionx &>/dev/null; then
-    chown -R orionx:orionx /opt/orionx
-    echo "  [orionx-setup] /opt/orionx ownership set to orionx:orionx"
-fi
+# DEC-PHASE12-108 (security F20): a latent `chown -R orionx:orionx /opt/orionx`
+# (guarded on a user named "orionx", which does not exist) stood here. Had
+# anyone "fixed" the name, every script root units execute (postured, heald,
+# the wizard) would have become operator-writable: a local privilege
+# escalation. /opt/orionx stays root-owned. Removed, not disabled.
 
 # ---------------------------------------------------------------------------
 # Completion marker (greppable from CI log)

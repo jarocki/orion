@@ -76,12 +76,21 @@ echo ""
 # ===========================================================================
 # T3: Profile name matches /usr/bin/ollama
 # ===========================================================================
-echo "[T3] Profile name matches /usr/bin/ollama"
-if grep -qE "^profile ollama /usr/bin/ollama" "$PROFILE"; then
-    pass "profile block names /usr/bin/ollama"
+# The ollama binary is installed by 0500 to /usr/local/bin/ollama and
+# nebula-runtime.service ExecStart uses that path; the profile MUST attach to
+# the same path or the confinement silently never applies.
+echo "[T3] Profile attaches to the installed binary path (/usr/local/bin/ollama)"
+if grep -qE "^profile ollama /usr/local/bin/ollama" "$PROFILE"; then
+    pass "profile block names /usr/local/bin/ollama"
 else
-    fail "profile block names /usr/bin/ollama" \
-         "Expected 'profile ollama /usr/bin/ollama {' in $PROFILE"
+    fail "profile block names /usr/local/bin/ollama" \
+         "Expected 'profile ollama /usr/local/bin/ollama {' in $PROFILE"
+fi
+UNIT_EXEC="$(grep -E '^ExecStart=' "$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/nebula-runtime.service" | head -1 | sed 's/^ExecStart=//; s/ .*//')"
+if [[ "$UNIT_EXEC" == "/usr/local/bin/ollama" ]]; then
+    pass "nebula-runtime.service ExecStart uses the same path ($UNIT_EXEC)"
+else
+    fail "unit/profile path agreement" "ExecStart=$UNIT_EXEC but profile attaches to /usr/local/bin/ollama"
 fi
 echo ""
 

@@ -1,0 +1,72 @@
+#!/bin/bash
+# shellcheck shell=bash
+#
+# orionx-apparmor-load — load /etc/apparmor.d on a live boot and REPORT the
+# result by profile name. Run by orionx-apparmor-load.service.
+#
+# @decision DEC-PHASE12-103
+# @title AppArmor load reports partial confinement by name and fails only
+#   when an Orion-X confinement claim is false
+# @status accepted
+# @rationale The old inline ExecStart set rc=1 if ANY of ~131 profiles
+#   failed to parse (124 of them third-party), so one bad package profile
+#   turned the unit "failed" while everything else loaded — and nothing
+#   said whether ollama, nebula-mcp, wg or tshark were actually confined
+#   (system P2-7). Now:
+#     - every profile is still loaded; failures are listed by file;
+#     - the REQUIRED Orion-X profiles are checked in the kernel's own list
+#       (/sys/kernel/security/apparmor/profiles) for "(enforce)";
+#     - the outcome is published to the R.A.I.N. bus (source apparmor,
+#       category health = self-status, never threat pressure);
+#     - exit 1 only when a required profile is not enforced. nebula-runtime
+#       Requires= this unit, so ollama does not start unconfined while the
+#       docs say it is confined (fail closed, like nebula-mcp's
+#       AppArmorProfile=).
+#   Overridable paths exist for tests only.
+set -u
+
+PROFILE_DIR="${ORIONX_AA_PROFILE_DIR:-/etc/apparmor.d}"
+PARSER="${ORIONX_AA_PARSER:-/sbin/apparmor_parser}"
+KERNEL_LIST="${ORIONX_AA_KERNEL_PROFILES:-/sys/kernel/security/apparmor/profiles}"
+EVENT_CLI="${ORIONX_EVENT_CLI:-orionx-event}"
+REQUIRED="${ORIONX_AA_REQUIRED:-ollama nebula-mcp wireguard tshark}"
+
+failed=()
+loaded=0
+for p in "$PROFILE_DIR"/*; do
+    [[ -f "$p" ]] || continue
+    if "$PARSER" -r "$p" 2>/dev/null; then
+        loaded=$((loaded + 1))
+    else
+        failed+=("$(basename "$p")")
+        echo "orionx-apparmor-load: FAILED to load $p" >&2
+    fi
+done
+
+missing=()
+for name in $REQUIRED; do
+    if ! grep -qxF "$name (enforce)" "$KERNEL_LIST" 2>/dev/null; then
+        missing+=("$name")
+    fi
+done
+
+emit() {  # severity message
+    command -v "$EVENT_CLI" >/dev/null 2>&1 || { echo "orionx-apparmor-load: orionx-event not found — NOT published: $2" >&2; return 0; }
+    "$EVENT_CLI" --severity "$1" --source apparmor --category health "$2" >/dev/null 2>&1 \
+        || echo "orionx-apparmor-load: orionx-event failed — NOT published: $2" >&2
+}
+
+if (( ${#missing[@]} > 0 )); then
+    msg="AppArmor: required Orion-X profiles NOT enforced: ${missing[*]}. Confinement the docs claim is not in effect; Nebula's runtime will not start. Loaded $loaded profile(s); failed to load: ${failed[*]:-none}. Check: sudo aa-status; journalctl -u orionx-apparmor-load"
+    echo "orionx-apparmor-load: $msg" >&2
+    emit critical "$msg"
+    exit 1
+fi
+if (( ${#failed[@]} > 0 )); then
+    msg="AppArmor: partial load — ${#failed[@]} profile(s) failed: ${failed[*]}. Required Orion-X profiles ($REQUIRED) are enforced. Check: journalctl -u orionx-apparmor-load"
+    echo "orionx-apparmor-load: $msg" >&2
+    emit warning "$msg"
+    exit 0
+fi
+echo "orionx-apparmor-load: loaded $loaded profile(s); required profiles enforced: $REQUIRED"
+exit 0

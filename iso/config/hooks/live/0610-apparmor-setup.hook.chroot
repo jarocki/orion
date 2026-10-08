@@ -4,19 +4,20 @@ set -euo pipefail
 #
 # @decision DEC-SEC-002
 # @title Enable AppArmor at boot with Orion-X profiles
-echo "[*] Enabling AppArmor..."
-
-# Enable AppArmor service
-if command -v systemctl &>/dev/null; then
-    systemctl enable apparmor
-fi
-
-# Add AppArmor boot parameter if not present
-GRUB_FILE="/etc/default/grub"
-if [ -f "$GRUB_FILE" ]; then
-    if ! grep -q "apparmor=1" "$GRUB_FILE"; then
-        sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="apparmor=1 security=apparmor /' "$GRUB_FILE"
-    fi
-fi
-
-echo "[*] AppArmor setup complete"
+#
+# @decision DEC-PHASE12-103
+# @title This hook no longer does anything; it records where AppArmor
+#   actually comes from on a live boot
+# @status accepted
+# @rationale Both of its actions were dead (system P3-7):
+#   - it edited /etc/default/grub, which does not exist in the image and is
+#     never read by a live boot (DEC-PHASE12-031: the live cmdline comes from
+#     iso/auto/config --bootappend-live, which carries
+#     `apparmor=1 security=apparmor`, verified in the rc9 grub.cfg);
+#   - it ran `systemctl enable apparmor`, whose unit skips itself on every
+#     live boot (ConditionPathExists=!/run/live/overlay/work).
+#   The live authority for loading profiles is orionx-apparmor-load.service
+#   (installed and enabled by 0615) running /usr/lib/orionx/orionx-apparmor-load.
+#   Keeping two dead mechanisms beside it only invited the next reader to
+#   "fix" the wrong one.
+echo "[*] AppArmor: profiles are loaded at boot by orionx-apparmor-load.service (DEC-PHASE12-103); nothing to do here"

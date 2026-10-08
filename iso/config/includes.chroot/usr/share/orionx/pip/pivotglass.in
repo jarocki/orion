@@ -1,0 +1,8 @@
+# Pivotglass (ap) deps pip provides into SYSTEM Python (DEC-PHASE12-013: ap runs
+# `python3 -m pivotglass` against apt-provided deps; a venv would need a launcher
+# change). Exactly the rc9 set (log line 7843). Installed --no-deps: the other
+# transitive deps (requests, pytz, simplejson) come from apt.
+antlr4-python3-runtime==4.13.2
+pyfiglet==1.0.4
+stix2==3.0.2
+stix2-patterns==2.1.2

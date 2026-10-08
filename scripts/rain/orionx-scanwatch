@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+"""orionx-scanwatch — turn firewall drops into R.A.I.N. scan events.
+
+@decision DEC-PHASE12-022
+@title Port-scan detection sourced from nftables drop logs, not an IDS
+@status accepted
+@rationale The Cockpit's network panel reads byte counters from /proc/net/dev.
+  That shows a scan as a throughput bump and nothing more — a rate cannot
+  express "one host touched 900 ports", so an operator watching the deck being
+  scanned saw only a spike with no explanation.
+
+  The signal already existed. /etc/nftables.conf ends its input chain with
+  `log prefix "[ORIONX-DROP] " drop` (DEC-SEC-001), so every packet to a
+  non-permitted port is already recorded by the kernel with SRC, DPT and PROTO.
+  Nothing consumed it. This daemon does.
+
+  Suricata is the conventional answer and is the wrong one here: it is
+  deliberately lazy-start (DEC-PHASE11-008) and its rules arrive only via
+  `orionx-freshen-suricata`, which needs a network. A deck that boots
+  air-gapped — the documented primary use — would detect nothing. This reads a
+  log the kernel is already writing, needs no packages, no rules and no
+  network, and works on a stock boot.
+
+  Detection is a producer, not a Cockpit feature: it emits onto the existing
+  bus, so the event stream, the threat-pressure gauge and the audible R.A.I.N.
+  cue all respond without a second detection path in the UI.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+import time
+from collections import OrderedDict
+
+# nftables log lines look like:
+#   [ORIONX-DROP] IN=eth0 OUT= MAC=... SRC=10.0.0.99 DST=10.0.0.1 LEN=44 ...
+#   PROTO=TCP SPT=54321 DPT=4444 WINDOW=1024 ...
+DROP_PREFIX = "[ORIONX-DROP]"
+_SRC_RE = re.compile(r"\bSRC=(\S+)")
+_DPT_RE = re.compile(r"\bDPT=(\d+)")
+_PROTO_RE = re.compile(r"\bPROTO=(\S+)")
+
+# A scan is many distinct destination ports from one source in a short window.
+#
+# The window is 15s, not 10s, because of a measured rate. Against a DROP policy
+# every probe waits out a timeout, so `nmap -Pn -A` on the reference deck swept
+# 1000 ports at ~4.3 ports/sec. A 10s window therefore never holds more than
+# ~43 distinct ports, and PORTS_CRITICAL=50 was unreachable for the exact scan
+# this was built to catch: it would have warned and then never escalated. At
+# 15s the same scan reaches warning in ~3.5s and critical in ~12s, while a fast
+# scanner against responsive ports still trips both almost immediately.
+WINDOW_SECONDS = 15.0
+PORTS_WARNING = 15
+PORTS_CRITICAL = 50
+
+# Re-announce an ongoing scan at most this often, per source.
+REANNOUNCE_SECONDS = 60.0
+
+# A second, wider window catches timing-evasive scans. `nmap -T2` spaces probes
+# far enough apart to leave the 10-second window empty, so a fast window alone
+# detects only noisy scanners and stays silent for the patient ones — the worse
+# adversary. The wider window trades immediacy for that coverage: more ports
+# required, lower severity, announced at most once per period.
+SLOW_WINDOW_SECONDS = 900.0
+SLOW_PORTS_WARNING = 30
+SLOW_PORTS_CRITICAL = 120
+SLOW_REANNOUNCE_SECONDS = 900.0
+
+# Bound memory. A scan with spoofed/random sources must not grow this without
+# limit — that would turn a detector into a denial-of-service against the deck
+# it protects. Oldest source is evicted once the cap is reached.
+MAX_SOURCES = 4096
+
+
+def parse_drop_line(line: str) -> dict | None:
+    """Extract (src, dport, proto) from one nftables drop log line.
+
+    Returns None for any line that is not an Orion-X drop record or that lacks
+    the fields needed to reason about a scan (e.g. ICMP, which has no DPT).
+    """
+    if DROP_PREFIX not in line:
+        return None
+    m_src = _SRC_RE.search(line)
+    m_dpt = _DPT_RE.search(line)
+    if not m_src or not m_dpt:
+        return None
+    try:
+        port = int(m_dpt.group(1))
+    except ValueError:
+        return None
+    if not 0 <= port <= 65535:
+        return None
+    m_proto = _PROTO_RE.search(line)
+    return {
+        "src": m_src.group(1),
+        "port": port,
+        "proto": (m_proto.group(1).lower() if m_proto else "unknown"),
+    }
+
+
+class ScanTracker:
+    """Sliding-window port-scan detector, keyed by source address."""
+
+    def __init__(self, window=WINDOW_SECONDS, warn=PORTS_WARNING,
+                 crit=PORTS_CRITICAL, reannounce=REANNOUNCE_SECONDS,
+                 max_sources=MAX_SOURCES, label=""):
+        self.label = label
+        self.window = window
+        self.warn = warn
+        self.crit = crit
+        self.reannounce = reannounce
+        self.max_sources = max_sources
+        # src -> {"hits": OrderedDict(port -> last_ts), "last_alert": ts,
+        #         "last_severity": str, "protos": set}
+        self._sources: OrderedDict[str, dict] = OrderedDict()
+
+    def observe(self, ts: float, src: str, port: int, proto: str) -> dict | None:
+        """Record one dropped packet. Returns an alert dict, or None."""
+        st = self._sources.get(src)
+        if st is None:
+            if len(self._sources) >= self.max_sources:
+                self._sources.popitem(last=False)
+            st = {"hits": OrderedDict(), "last_alert": 0.0,
+                  "last_severity": "", "protos": set()}
+            self._sources[src] = st
+        self._sources.move_to_end(src)
+
+        st["hits"][port] = ts
+        st["hits"].move_to_end(port)
+        st["protos"].add(proto)
+
+        cutoff = ts - self.window
+        for p, seen in list(st["hits"].items()):
+            if seen < cutoff:
+                del st["hits"][p]
+            else:
+                break  # OrderedDict is in insertion order == time order
+
+        distinct = len(st["hits"])
+        if distinct < self.warn:
+            return None
+
+        severity = "critical" if distinct >= self.crit else "warning"
+
+        # Throttle, but always let an escalation through: a scan that widens
+        # from warning to critical is new information, not a repeat.
+        escalated = severity == "critical" and st["last_severity"] != "critical"
+        if not escalated and (ts - st["last_alert"]) < self.reannounce:
+            return None
+
+        st["last_alert"] = ts
+        st["last_severity"] = severity
+        span = max(ts - min(st["hits"].values()), 0.001)
+        return {
+            "severity": severity,
+            "src": src,
+            "ports": distinct,
+            "span": span,
+            "proto": "/".join(sorted(st["protos"])),
+            "latest_port": port,
+            "label": self.label,
+            # Evidence for the Cockpit drill-down (DEC-PHASE12-029): which
+            # ports, so the operator can see a sweep vs a targeted probe.
+            "ports_seen": sorted(st["hits"])[:64],
+        }
+
+    def tracked_sources(self) -> int:
+        return len(self._sources)
+
+
+def format_message(alert: dict) -> str:
+    kind = alert.get("label") or "port scan"
+    return (
+        f"{kind} from {alert['src']} — {alert['ports']} ports in "
+        f"{alert['span']:.0f}s ({alert['proto']}), most recent dport "
+        f"{alert['latest_port']}"
+    )
+
+
+def build_detail(alert: dict) -> dict:
+    """Evidence the Cockpit drill-down shows for a scan.
+
+    A message string can say "port scan from X"; it cannot answer the next
+    three questions an operator asks — which ports, how fast, and what
+    actually observed it. This is that answer, and it names the nftables rule
+    that produced the evidence so the finding can be traced to its source.
+    """
+    return {
+        "src_ip": alert["src"],
+        "distinct_ports": alert["ports"],
+        "window_seconds": round(alert["span"], 1),
+        "protocols": alert["proto"],
+        "latest_dport": alert["latest_port"],
+        "ports_seen": alert.get("ports_seen", []),
+        "detector": "orionx-scanwatch",
+        "evidence": "nftables drop log",
+        "triggering_rule": 'log prefix "[ORIONX-DROP] " drop  (inet orionx_firewall/input)',
+        "scan_kind": alert.get("label") or "port scan",
+    }
+
+
+def publish(alert: dict, dry_run: bool = False) -> None:
+    msg = format_message(alert)
+    if dry_run:
+        print(f"[{alert['severity']}] {msg}", flush=True)
+        return
+    try:
+        subprocess.Popen(
+            ["orionx-event", "--severity", alert["severity"],
+             "--source", "firewall", "--category", "scan",
+             "--detail", json.dumps(build_detail(alert)), msg],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        pass
+
+
+def follow_kernel_log():
+    """Yield kernel log lines as they arrive."""
+    proc = subprocess.Popen(
+        ["journalctl", "--dmesg", "--follow", "--lines", "0", "--output", "cat"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    )
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        yield line
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="orionx-scanwatch",
+        description="Emit R.A.I.N. events when the firewall logs a port scan.",
+    )
+    ap.add_argument("--window", type=float, default=WINDOW_SECONDS,
+                    help="sliding window in seconds (default: %(default)s)")
+    ap.add_argument("--warning-ports", type=int, default=PORTS_WARNING,
+                    help="distinct ports in window to raise warning (default: %(default)s)")
+    ap.add_argument("--critical-ports", type=int, default=PORTS_CRITICAL,
+                    help="distinct ports in window to raise critical (default: %(default)s)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="print alerts instead of emitting bus events")
+    ap.add_argument("--stdin", action="store_true",
+                    help="read log lines from stdin instead of the kernel log")
+    args = ap.parse_args(argv)
+
+    # Two windows: the fast one reports an aggressive sweep within seconds, the
+    # wide one still catches a scanner patient enough to stay under it.
+    fast = ScanTracker(window=args.window, warn=args.warning_ports,
+                       crit=args.critical_ports, label="port scan")
+    slow = ScanTracker(window=SLOW_WINDOW_SECONDS, warn=SLOW_PORTS_WARNING,
+                       crit=SLOW_PORTS_CRITICAL,
+                       reannounce=SLOW_REANNOUNCE_SECONDS,
+                       label="slow port scan")
+    source = sys.stdin if args.stdin else follow_kernel_log()
+    try:
+        for line in source:
+            rec = parse_drop_line(line)
+            if rec is None:
+                continue
+            now = time.time()
+            # Report the fast window if it fires; only fall through to the wide
+            # one when it does not, so a noisy scan is announced once, not twice.
+            alert = fast.observe(now, rec["src"], rec["port"], rec["proto"])
+            slow_alert = slow.observe(now, rec["src"], rec["port"], rec["proto"])
+            if alert is None:
+                alert = slow_alert
+            if alert is not None:
+                publish(alert, dry_run=args.dry_run)
+    except KeyboardInterrupt:
+        return 0
+    except BrokenPipeError:
+        return 0
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

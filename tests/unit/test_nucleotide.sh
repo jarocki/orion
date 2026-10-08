@@ -30,7 +30,7 @@ if find "$N/nucleotide" -name "__pycache__" | grep -q .; then fail "no __pycache
 grep -q 'exec python3 -m nucleotide' "$N/nucleotide-cli" && pass "launcher runs python3 -m nucleotide (no pip/venv)" || fail "launcher form" "expected python3 -m nucleotide"
 grep -q 'while \[ -h "\$_SOURCE" \]' "$N/nucleotide-cli" && pass "launcher resolves its /usr/bin symlink" || fail "launcher symlink resolution" "missing readlink loop"
 [[ -f "$N/PROVENANCE.txt" && -f "$N/LICENSE.nucleotide" ]] && pass "provenance + upstream licence shipped" || fail "provenance/licence" "missing"
-if PYTHONPYCACHEPREFIX="$(mktemp -d)" python3 -m py_compile "$N/orionx-nucleotide-watch" 2>/dev/null; then pass "orionx-nucleotide-watch compiles"; else fail "watch compiles" "py_compile error"; fi
+if PYTHONPYCACHEPREFIX="$(mktemp -d)" PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/orionx-pycache" python3 -m py_compile "$N/orionx-nucleotide-watch" 2>/dev/null; then pass "orionx-nucleotide-watch compiles"; else fail "watch compiles" "py_compile error"; fi
 # Third-party surface must stay exactly {yaml}: anything else would need packaging work.
 extra=$(grep -rhoE "^(import|from) [a-zA-Z_]+" "$N/nucleotide" | awk '{print $2}' | sort -u \
         | grep -vxE "os|sys|re|json|pathlib|typing|dataclasses|collections|argparse|hashlib|datetime|itertools|functools|enum|logging|time|math|io|subprocess|shutil|textwrap|string|abc|copy|glob|fnmatch|urllib|statistics|__future__|nucleotide|importlib|csv|random|tempfile|contextlib|operator|heapq|bisect|difflib|unicodedata|base64|struct|socket|ipaddress|warnings|tarfile|yaml" || true)

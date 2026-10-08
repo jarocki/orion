@@ -99,13 +99,16 @@ orionx_apt_install() {
 # Args:
 #   $1  URL to download (wget -q)
 #   $2  destination directory (created if absent)
+#   $3  expected SHA-256 (64 hex) — REQUIRED; the archive is verified before
+#       anything is extracted (DEC-PHASE12-122)
 orionx_wget_extract() {
     local url="${1:?url required}"
     local dest="${2:?dest_dir required}"
+    local sha="${3:-}"
     local tmp
     tmp="$(mktemp)"
     orionx_log_info "Downloading $(basename "$url") → $dest"
-    wget -q -O "$tmp" "$url"
+    orionx_download_verified "$url" "$tmp" "$sha"
     mkdir -p "$dest"
     case "$url" in
         *.tar.gz|*.tgz)
@@ -144,6 +147,42 @@ orionx_wget_extract() {
 # ---------------------------------------------------------------------------
 # Integrity verification helper
 # ---------------------------------------------------------------------------
+
+# @decision DEC-PHASE12-122
+# @title Every optional-installer download is SHA-256 pinned and refused on mismatch
+# @status accepted
+# @rationale gomuks, FLOSS, TrID and Ghidra were downloaded and run as root with
+#   no integrity check; orionx_verify_sha256 existed and only the piper
+#   installer used it (security F12). orionx_download_verified is now the one
+#   download path for fetched executables/archives: it refuses an empty or
+#   malformed pin (no trust-on-first-use), downloads to the caller's temp path,
+#   verifies, and on mismatch deletes the file and exits 1 before anything is
+#   extracted, chmod'ed or linked. Pins live next to each URL in its installer.
+#
+# orionx_download_verified <url> <dest_file> <expected_hex>
+orionx_download_verified() {
+    local url="${1:?url required}" dest="${2:?dest required}" expected="${3:-}"
+    if [[ ! "$expected" =~ ^[0-9a-f]{64}$ ]]; then
+        orionx_log_error "No valid SHA-256 pin for $url — refusing to download and run it (DEC-PHASE12-122)."
+        exit 1
+    fi
+    if ! wget -q -O "$dest" "$url"; then
+        rm -f "$dest"
+        orionx_log_error "Download failed: $url"
+        exit 1
+    fi
+    local actual
+    actual="$(sha256sum "$dest" | awk '{print $1}')"
+    if [[ "$actual" != "$expected" ]]; then
+        rm -f "$dest"
+        orionx_log_error "SHA-256 MISMATCH for $url — refusing to install."
+        orionx_log_error "  expected: $expected"
+        orionx_log_error "  actual:   $actual"
+        orionx_log_error "Upstream changed the file or the download was tampered with."
+        exit 1
+    fi
+    orionx_log_info "SHA-256 verified: $(basename "$url") ($actual)"
+}
 
 # orionx_verify_sha256 <file> <expected_hex> — compare the SHA-256 digest of
 # <file> against <expected_hex> and exit 1 on mismatch (LOUD-fail).

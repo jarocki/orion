@@ -288,18 +288,49 @@ assert_file_contains "Makefile" "## .*mesh" \
 # Test Group 6: No modification of existing mesh scripts
 # ============================================================
 echo ""
-echo "=== Test Group 6: Existing Scripts Untouched ==="
+echo "=== Test Group 6: the harness uses the REPO's mesh scripts ==="
 
-# Verify mesh scripts were not modified (check git status)
-if command -v git >/dev/null 2>&1; then
-    local_changes="$(git -C "$PROJECT_ROOT" diff --name-only -- scripts/mesh/ 2>/dev/null || echo "")"
-    if [[ -z "$local_changes" ]]; then
-        pass "No modifications to scripts/mesh/"
-    else
-        fail "No modifications to scripts/mesh/" \
-            "Modified files: $local_changes"
-    fi
+# @decision DEC-PHASE12-041
+# This group used to assert `git diff --name-only -- scripts/mesh/` was empty,
+# i.e. "nobody has edited the mesh scripts in this working tree". That is not
+# a property of the product. It passed on a pristine checkout no matter how
+# broken the mesh was, and it went red for anyone who legitimately touched
+# scripts/mesh/ — which is exactly what happened when DEC-PHASE12-041 fixed
+# the unbounded heal loop. RESILIENCE rule 1: assert effects, not a working
+# tree's cleanliness.
+#
+# What the group was reaching for is real, so it is asserted properly here:
+# the Docker harness must exercise the SAME mesh scripts the ISO ships, not a
+# forked copy that can drift.
+
+if grep -qE '^COPY +scripts/mesh/ ' "$PROJECT_ROOT/docker/Dockerfile.mesh-node"; then
+    pass "harness copies the repo's scripts/mesh/ (one authority, no fork)"
+else
+    fail "harness copies the repo's scripts/mesh/" \
+        "Dockerfile.mesh-node must COPY scripts/mesh/, or the container tests a different mesh"
 fi
+
+forked=""
+for f in mesh-lib.sh mesh-health.sh mesh-discover.sh mesh-join.sh mesh-leave.sh orionx-mesh; do
+    [[ -e "$PROJECT_ROOT/docker/$f" ]] && forked="$forked docker/$f"
+done
+if [[ -z "$forked" ]]; then
+    pass "no forked copy of a mesh script under docker/"
+else
+    fail "no forked copy of a mesh script under docker/" \
+        "these would silently diverge from scripts/mesh/:$forked"
+fi
+
+# The container must be able to run what the ISO runs. mesh-health.sh calls
+# `ip`, `wg` and `ping`; the dead wg-quick dependency is gone (DEC-PHASE12-041)
+# but the image still needs the first three.
+for _tool in iproute2 wireguard-tools iputils-ping; do
+    if grep -q "$_tool" "$PROJECT_ROOT/docker/Dockerfile.mesh-node"; then
+        pass "image installs $_tool (mesh-health.sh needs it)"
+    else
+        fail "image installs $_tool" "mesh-health.sh execs it on every run"
+    fi
+done
 
 # ============================================================
 # Summary

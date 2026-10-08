@@ -1,0 +1,6 @@
+# volatility3 venv /opt/orionx/venv/forensics (vol, volshell on PATH via
+# /usr/local/bin symlinks). rc9 installed volatility3 2.28.2 into system Python
+# (log line 7819) with pefile from apt; the venv needs pefile from PyPI and pins
+# the same pefile release capa uses (rc9 log line 8123).
+volatility3==2.28.2
+pefile==2024.8.26

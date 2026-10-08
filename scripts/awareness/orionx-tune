@@ -1,0 +1,182 @@
+#!/usr/bin/env python3
+"""orionx-tune — squelch an IDS alert for a while, or tune it off for good.
+
+    orionx-tune squelch --sid 2210000 [--src 192.168.4.57] [--ttl 3600] [--signature "..."] [--reason "..."]
+    orionx-tune tune    --sid 2210000 [--src ...] [--signature "..."] [--reason "..."]
+    orionx-tune squelch --note Scan::Port_Scan [--src ...]        # Zeek notices
+    orionx-tune list | remove <id> | status
+
+Writes ~/.config/orionx/tuning.json as the operator (no root). orionx-postured
+picks it up within a reassert cycle, stops publishing matching alerts to the
+bus, derives Suricata's threshold file from it and reloads the ruleset.
+Every write states whether the rule survives a reboot (DEC-PHASE12-050).
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import tuning_lib as T  # noqa: E402
+
+
+def _announce(severity: str, message: str, detail: dict) -> None:
+    """Record the tuning on the bus, fire-and-forget. A silenced alert must leave a trace."""
+    if not shutil.which("orionx-event"):
+        return
+    try:
+        subprocess.Popen(["orionx-event", "--severity", severity, "--source", "tuning",
+                          "--category", "tuning", "--detail", json.dumps(detail, default=str),
+                          message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+def _describe(rule: dict) -> str:
+    what = f"sid {rule['sid']}" if rule.get("sid") is not None else f"Zeek note {rule.get('note')}"
+    if rule.get("signature"):
+        what += f" ({rule['signature']})"
+    if rule.get("src_ip"):
+        what += f" from {rule['src_ip']}"
+    if rule.get("mode") == "squelch" and rule.get("expires"):
+        mins = max(0, int((float(rule["expires"]) - time.time()) / 60))
+        what += f" for {mins} min"
+    return what
+
+
+def _warn_rejected(path, errors: list[str]) -> None:
+    """A rule the daemon will ignore is said out loud (DEC-PHASE12-080)."""
+    for e in errors:
+        print(f"orionx-tune: IGNORED in {path}: {e}", file=sys.stderr)
+
+
+def cmd_add(args: argparse.Namespace, mode: str) -> int:
+    path = T.default_path()
+    engine = args.engine or ("zeek" if args.note else "suricata")
+    try:
+        rule = T.make_rule(engine, mode, sid=args.sid, note=args.note, src_ip=args.src,
+                           signature=args.signature or "", reason=args.reason or "",
+                           ttl=args.ttl)
+    except ValueError as exc:
+        print(f"orionx-tune: {exc}", file=sys.stderr)
+        return 2
+    try:
+        # Read-modify-write under one lock: two concurrent runs must not lose a rule.
+        with T.locked(path):
+            rules, errors = T.load_rules_report(T.read_text(path))
+            _warn_rejected(path, errors)
+            rules = T.prune(rules, time.time())
+            rules.append(rule)
+            T.write_rules(path, rules)
+    except OSError as exc:
+        print(f"orionx-tune: cannot write {path}: {exc}", file=sys.stderr)
+        return 1
+    present, where = T.persistence_present()
+    verb = "squelched" if mode == "squelch" else "tuned off (kept)"
+    line1 = f"{verb}: {_describe(rule)}   [{rule['id']}]"
+    line2 = T.survives_reboot_line(present, where)
+    print(line1)
+    print(line2)
+    print(f"file: {path}  — orionx-postured applies it within one reassert cycle (≤30 s)")
+    _announce("info", f"operator {verb} {_describe(rule)} — {line2.split(' — ')[0]}",
+              {"rule": rule, "persistent": present, "file": str(path)})
+    return 0
+
+
+def cmd_list(_args: argparse.Namespace) -> int:
+    path = T.default_path()
+    now = time.time()
+    rules, errors = T.load_rules_report(T.read_text(path))
+    _warn_rejected(path, errors)
+    if not rules:
+        print(f"no tuning rules ({path})")
+        return 1 if errors else 0
+    for r in rules:
+        state = "active" if T.is_active(r, now) else "expired"
+        print(f"{r['id']}  {r['engine']:<8} {r['mode']:<7} {state:<7} {_describe(r)}"
+              + (f"  — {r['reason']}" if r.get("reason") else ""))
+    return 0
+
+
+def cmd_remove(args: argparse.Namespace) -> int:
+    path = T.default_path()
+    try:
+        with T.locked(path):
+            rules = T.load_rules(T.read_text(path))
+            keep = [r for r in rules if r.get("id") != args.id]
+            if len(keep) == len(rules):
+                print(f"orionx-tune: no rule {args.id}", file=sys.stderr)
+                return 1
+            T.write_rules(path, keep)
+    except OSError as exc:
+        print(f"orionx-tune: cannot write {path}: {exc}", file=sys.stderr)
+        return 1
+    print(f"removed {args.id}; the alert will be published again")
+    _announce("info", f"operator removed tuning rule {args.id}", {"id": args.id})
+    return 0
+
+
+def cmd_status(_args: argparse.Namespace) -> int:
+    path = T.default_path()
+    now = time.time()
+    rules, errors = T.load_rules_report(T.read_text(path))
+    present, where = T.persistence_present()
+    print("Orion-X alert tuning (DEC-PHASE12-050)")
+    print(f"  file          : {path} ({'present' if path.exists() else 'absent'})")
+    print(f"  rules         : {len(rules)} ({len(T.active_rules(rules, now))} active)")
+    for e in errors:
+        print(f"  IGNORED       : {e}")
+    print(f"  {T.survives_reboot_line(present, where)}")
+    print(f"  derived       : {T.THRESHOLD_FILE} (written by orionx-postured as root; /var/lib is writable under its hardening)")
+    print("  verify        : grep -c tuned_suppressed /run/orionx/posture-status.json")
+    return 0
+
+
+def ttl_seconds(text: str) -> float:
+    """'1800', '30m', '2h', '1d' -> seconds. argparse type; a bad value says what is accepted."""
+    import argparse
+    s = str(text).strip().lower()
+    mult = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    unit = s[-1] if s and s[-1] in mult else ""
+    num = s[:-1] if unit else s
+    try:
+        v = float(num) * mult.get(unit, 1)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r}: give seconds, or a number with m, h or d (e.g. 30m)") from None
+    if v <= 0:
+        raise argparse.ArgumentTypeError("ttl must be positive")
+    return v
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="orionx-tune", description=__doc__.split("\n\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    for name in ("squelch", "tune"):
+        p = sub.add_parser(name)
+        p.add_argument("--sid", type=int, help="Suricata signature id")
+        p.add_argument("--note", help="Zeek notice type, e.g. Scan::Port_Scan")
+        p.add_argument("--src", help="only when the source address is this")
+        p.add_argument("--engine", choices=T.ENGINES, help="default: suricata for --sid, zeek for --note")
+        p.add_argument("--signature", help="human name, recorded with the rule")
+        p.add_argument("--reason", help="why (recorded with the rule)")
+        if name == "squelch":
+            p.add_argument("--ttl", type=ttl_seconds, metavar="SECONDS|30m|2h|1d",
+                           help=f"how long (seconds, or a number with m/h/d; default {int(T.DEFAULT_SQUELCH_SECONDS)} s)")
+        else:
+            p.set_defaults(ttl=None)
+    sub.add_parser("list")
+    pr = sub.add_parser("remove"); pr.add_argument("id")
+    sub.add_parser("status")
+    args = ap.parse_args(argv)
+    if args.cmd in ("squelch", "tune"):
+        return cmd_add(args, args.cmd)
+    return {"list": cmd_list, "remove": cmd_remove, "status": cmd_status}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

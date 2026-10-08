@@ -1,0 +1,15 @@
+[Desktop Entry]
+# Orion-X GODSEYE globe (DEC-PHASE12-045). Opens the PREFLIGHT, never the
+# globe: every GODSEYE layer is a live third-party API, and on a deck with no
+# route the globe renders a featureless sphere that reads as "nothing is
+# happening". orionx-osint refuses to serve the bundle at all at a raised
+# posture or with no default route.
+Type=Application
+Name=GODSEYE (globe)
+GenericName=Live situational globe — network required
+Comment=3-D globe of live public feeds; refuses to open at a raised posture or with no route, and lists every host it would contact
+Exec=/usr/bin/orionx-osint --page godseye
+Icon=/usr/share/pixmaps/orionx.png
+Terminal=true
+Categories=X-Orion;
+Keywords=godseye;globe;cesium;ADS-B;satellites;situational awareness;OSINT;

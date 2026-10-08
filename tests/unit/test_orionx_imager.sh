@@ -133,5 +133,16 @@ else
 fi
 
 echo ""
+# --- Downloader behaviour: split-release reassembly + pre-release selection
+#     (DEC-PHASE12-019) — real files/hashes, no network -------------------------
+if PYTHONDONTWRITEBYTECODE=1 python3 "$REPO_ROOT/tests/unit/test_orionx_imager_downloader.py" >/tmp/orionx-imager-dl.$$ 2>&1; then
+    pass "downloader: split .iso.part-* releases reassemble + verify; --allow-prerelease resolves betas ($(grep -c -E '^test_' /tmp/orionx-imager-dl.$$ 2>/dev/null || echo ok) cases)"
+else
+    fail "downloader unit tests failed: $(tail -3 /tmp/orionx-imager-dl.$$ | tr '\n' ' ')"
+fi
+rm -f /tmp/orionx-imager-dl.$$
+grep -q -- '--allow-prerelease' "$IMAGER" && pass "CLI exposes --allow-prerelease" || fail "CLI lacks --allow-prerelease"
+grep -q 'allow_prerelease=args.allow_prerelease' "$IMAGER" && pass "CLI passes --allow-prerelease to get_release" || fail "flag not wired to get_release"
+
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [[ $FAIL -eq 0 ]]

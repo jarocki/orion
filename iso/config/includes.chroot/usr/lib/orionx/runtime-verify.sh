@@ -119,32 +119,39 @@ assert_mesh_discover_enabled() {
 # ---------------------------------------------------------------------------
 # Assertion: matrix_synapse_state
 #
-# Checks that matrix-synapse-orionx.service is present and not absent from
-# systemd's unit database. Accepts: active, activating, or any loaded state
-# (including failed, since Synapse startup is slow and may fail transiently
-# on first boot before configuration is complete). Rejects only: not-found.
+# Checks that matrix-synapse.service is not in a broken state.
+# DEC-PHASE12-102: the package unit is the ONE Synapse unit (the Cockpit and
+# setup-matrix.sh name the same one); matrix-synapse-orionx.service is gone.
+# Accepts: not-found, inactive, active, activating — every state except one.
+# Rejects only: failed.
 #
-# Rationale: the assertion's purpose is to verify the unit is INSTALLED and
-# managed by systemd, not that it successfully completed startup. A not-found
-# result means the 0615 hook failed to install the unit into the squashfs.
+# Rationale: Matrix is OPT-IN. W11-14f (offline boot) removed the unit from the
+# set the 0615 hook installs; an operator adds it with
+# `setup-matrix.sh --mode server`, which pulls Synapse over the network. On a
+# stock image the unit is therefore "not-found" BY DESIGN, and that is a PASS.
+# The only thing worth failing on is a unit that was installed and then failed
+# to start. (Beta audit A.6: the previous not-found=FAIL rule made W7-4-B red
+# on every correctly-built image.)
 # ---------------------------------------------------------------------------
 assert_matrix_synapse_state() {
-    local verdict="FAIL"
+    # "failed" is the only rejected state — see the block comment above.
+    local verdict="PASS"
     local svc_state
-    svc_state="$(systemctl is-active matrix-synapse-orionx.service 2>/dev/null || true)"
-    if [[ "${svc_state}" != "not-found" ]]; then
-        verdict="PASS"
+    svc_state="$(systemctl is-active matrix-synapse.service 2>/dev/null || true)"
+    if [[ "${svc_state}" == "failed" ]]; then
+        verdict="FAIL"
     fi
-    emit "ORIONX_VERIFY: matrix_synapse_state=${verdict}"
+    emit "ORIONX_VERIFY: matrix_synapse_state=${verdict} (${svc_state:-unknown})"
     [[ "${verdict}" == "PASS" ]] || mark_fail
 }
 
 # ---------------------------------------------------------------------------
 # Assertion: apparmor_enforcing
 #
-# Checks that AppArmor is loaded and at least 5 profiles are in enforce mode.
-# The 5 documented profiles are: Synapse, WireGuard (wg), Volatility3,
-# bulk_extractor, and tshark — installed by 0610-apparmor-setup.hook.chroot.
+# DEC-PHASE12-103: checks BY NAME that the profiles Orion-X advertises are in
+# enforce mode (ollama, nebula-mcp, wireguard, tshark), in the kernel's own
+# list. A count of ">= 5 enforced" passed with any five stock profiles while
+# ollama ran unconfined (system P2-7). Synapse has no profile (DEC-PHASE12-102).
 #
 # Implementation: parse `aa-status` output for the enforced-profile count.
 # `aa-status --enforced` prints a count and exits 0 when >=1 profile enforced,
@@ -153,15 +160,13 @@ assert_matrix_synapse_state() {
 # "AppArmor not loaded".
 # ---------------------------------------------------------------------------
 assert_apparmor_enforcing() {
-    local verdict="FAIL"
-    if command -v aa-status >/dev/null 2>&1; then
-        local enforced_count
-        enforced_count="$(aa-status 2>/dev/null | grep -oE '^[0-9]+ profiles are in enforce mode' | grep -oE '^[0-9]+' || echo "0")"
-        if [[ "${enforced_count}" -ge 5 ]] 2>/dev/null; then
-            verdict="PASS"
-        fi
-    fi
-    emit "ORIONX_VERIFY: apparmor_enforcing=${verdict}"
+    local verdict="PASS" name missing=""
+    local list="${ORIONX_AA_KERNEL_PROFILES:-/sys/kernel/security/apparmor/profiles}"
+    for name in ollama nebula-mcp wireguard tshark; do
+        grep -qxF "${name} (enforce)" "$list" 2>/dev/null || missing+=" ${name}"
+    done
+    [[ -z "$missing" ]] || verdict="FAIL"
+    emit "ORIONX_VERIFY: apparmor_enforcing=${verdict}${missing:+ (not enforced:${missing})}"
     [[ "${verdict}" == "PASS" ]] || mark_fail
 }
 

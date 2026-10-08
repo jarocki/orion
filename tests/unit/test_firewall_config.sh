@@ -70,8 +70,9 @@ assert_file_exists "$NFTABLES_CONF" "nftables.conf exists"
 echo ""
 echo "=== Test Group 2: nftables.conf Ruleset Structure ==="
 
-assert_file_contains "$NFTABLES_CONF" "flush ruleset" \
-    "nftables.conf contains flush ruleset"
+assert_file_contains "$NFTABLES_CONF" "^delete table inet orionx_firewall" \
+    "nftables.conf replaces only its own table (DEC-PHASE12-104)"
+if grep -vE "^[[:space:]]*#" "$PROJECT_ROOT/$NFTABLES_CONF" | grep -q "flush ruleset"; then fail "nftables.conf never flushes the whole ruleset" "found flush ruleset"; else pass "nftables.conf never flushes the whole ruleset"; fi
 
 assert_file_contains "$NFTABLES_CONF" "table inet orionx_firewall" \
     "nftables.conf defines inet orionx_firewall table"
@@ -100,17 +101,17 @@ assert_file_contains "$NFTABLES_CONF" "ct state established,related accept" \
 assert_file_contains "$NFTABLES_CONF" 'iif "lo" accept' \
     "nftables.conf allows loopback"
 
-assert_file_contains "$NFTABLES_CONF" "ip protocol icmp accept" \
-    "nftables.conf allows ICMP"
+assert_file_contains "$NFTABLES_CONF" "icmp type \{ destination-unreachable" \
+    "nftables.conf allows ICMP errors"
 
-assert_file_contains "$NFTABLES_CONF" "ip6 nexthdr icmpv6 accept" \
-    "nftables.conf allows ICMPv6"
+assert_file_contains "$NFTABLES_CONF" "nd-neighbor-solicit" \
+    "nftables.conf allows ICMPv6 neighbour discovery"
 
 assert_file_contains "$NFTABLES_CONF" "udp dport 51820 accept" \
     "nftables.conf allows WireGuard port 51820"
 
-assert_file_contains "$NFTABLES_CONF" "udp dport 55555 accept" \
-    "nftables.conf allows mesh discovery port 55555"
+assert_file_contains "$NFTABLES_CONF" "udp dport 55555 limit rate" \
+    "nftables.conf allows mesh discovery port 55555, rate-limited"
 
 assert_file_contains "$NFTABLES_CONF" "tcp dport.*8008.*8448" \
     "nftables.conf allows Matrix ports 8008 and 8448"
@@ -151,7 +152,7 @@ fi
 echo ""
 echo "=== Test Group 5: systemd Unit File ==="
 
-SYSTEMD_UNIT="systemd/orionx-firewall.service"
+SYSTEMD_UNIT="iso/config/includes.chroot/usr/share/orionx/systemd/orionx-firewall.service"   # the shipped tree; the repo-root systemd/ copy was a stale duplicate (removed 2026-10-07)
 
 assert_file_exists "$SYSTEMD_UNIT" "orionx-firewall.service exists"
 
@@ -161,8 +162,8 @@ assert_file_contains "$SYSTEMD_UNIT" "ExecStart=/usr/sbin/nft -f /etc/nftables.c
 assert_file_contains "$SYSTEMD_UNIT" "ExecReload=/usr/sbin/nft -f /etc/nftables.conf" \
     "systemd unit has ExecReload"
 
-assert_file_contains "$SYSTEMD_UNIT" "ExecStop=/usr/sbin/nft flush ruleset" \
-    "systemd unit has ExecStop to flush ruleset"
+assert_file_contains "$SYSTEMD_UNIT" "ExecStop=/usr/sbin/nft delete table inet orionx_firewall" \
+    "systemd unit ExecStop removes only its own table (F15)"
 
 assert_file_contains "$SYSTEMD_UNIT" "Type=oneshot" \
     "systemd unit is Type=oneshot"

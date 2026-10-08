@@ -1,0 +1,37 @@
+# Orion-X command list — the ONE source for the login MOTD "Quick start" and
+# the `orionx-help` reference (DEC-PHASE12-129). Both read this file at run
+# time; neither carries its own copy.
+#
+# Format: <where> :: <usage as typed> :: <what it does>
+#   quick → shown in the MOTD Quick start AND in orionx-help
+#   help  → shown in orionx-help only
+# The first word of <usage> (after an optional "sudo") must be a command the
+# image installs; tests/unit/test_operator_surfaces.sh checks every line.
+quick :: orionx-cockpit :: Live dashboard plus the Mesh, Comms and other tabs
+quick :: orionx-osint :: Orion Workbench: local tools in the browser
+quick :: nebula chat :: Ask the on-device AI assistant (127.0.0.1 only)
+quick :: sudo orionx-diag :: Self-check of this image (--json for a report)
+quick :: orionx-help :: Every Orion-X command, one line each
+help :: sudo orionx-mesh join|status|peers|leave :: WireGuard peer-to-peer mesh between decks
+help :: sudo setup-wireguard.sh :: WireGuard VPN to a central server
+help :: sudo setup-matrix.sh --mode client|server :: Matrix team chat (installs over the network)
+help :: orionx-event -s SEV -c CAT "msg" :: Publish an event to R.A.I.N. and the Cockpit
+help :: orionx-rain --test warning :: Play an alert cue (--speech on|off: narration)
+help :: orionx-tune list|squelch|tune|remove|status :: Silence or keep off a noisy IDS signature
+help :: orionx-capture status|plan|start|stop IFACE :: Bounded, on-demand packet capture
+help :: orionx-logquery :: Query logs, correlate with local threat intel
+help :: sudo orionx-freshen-intel :: Refresh the local threat-intel lists (network)
+help :: orionx-heal status|list|verify :: Auto-healing approvals, actions, audit chain
+help :: artifact-analyzer.py FILE :: Automated artifact triage
+help :: pcap-analyzer.py FILE :: Structured PCAP traffic analysis
+help :: storyboard-gen.py :: Build an event timeline from logs
+help :: download-samples.sh --samples-dir DIR :: Public samples (network; --offline: synthetic)
+help :: sudo orionx-freshen-yara :: Fetch YARA rulesets (network)
+help :: sudo orionx-freshen-suricata :: Fetch Suricata ET-Open rules (network)
+help :: nucleotide lookup TABLE URL :: Map a URL to the nuclei template that probes it
+help :: ap web :: Pivotglass: hunt adversary infrastructure
+help :: roast extract -f FILE :: go-roast: find out-of-band (OAST) domains in a log
+help :: toggle-theme.sh :: Switch the terminal colour scheme
+help :: run-lynis.sh :: Lynis host security audit
+help :: orionx-music status|play :: Optional music bed (off by default)
+help :: sudo orionx-wizard :: Re-run the first-boot wizard

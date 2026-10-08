@@ -20,7 +20,7 @@
 #   crash or malformed output. References: MASTER_PLAN.md §W11-11 T6, W11-11.
 #
 # Production sequence:
-#   1. orionx-diag is staged into includes.chroot/opt/orionx/scripts/orionx-diag
+#   1. orionx-diag lives in scripts/ (staged to /opt/orionx/scripts/ by build-iso.sh; DEC-PHASE12-021)
 #   2. 0700 hook symlinks it to /usr/bin/orionx-diag at build time
 #   3. Operator runs: sudo orionx-diag (or sudo orionx-diag --json --category X)
 #   4. orionx-diag reads /etc/orionx-version, runs 10 check categories, exits 0/1
@@ -33,7 +33,7 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-DIAG_SCRIPT="$REPO_ROOT/iso/config/includes.chroot/opt/orionx/scripts/orionx-diag"
+DIAG_SCRIPT="$REPO_ROOT/scripts/orionx-diag"
 
 # ---------------------------------------------------------------------------
 # Test counters — use ((VAR+=1)) style to avoid set -e firing on zero-result

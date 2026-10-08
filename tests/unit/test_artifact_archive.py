@@ -11,11 +11,11 @@ Unit tests for artifact archive integration.
   state, not mocks.
 
 Tests verify:
-- Archive directory structure exists with version subdirectories
-- INVENTORY.md exists in archive/ and is the only tracked file there
+- archive/ tracks exactly INVENTORY.md and README.md
+- INVENTORY.md documents the (local, untracked) archive layout
 - .gitignore properly excludes archive/ contents but tracks INVENTORY.md
-- No .DS_Store files in archive directories
-- docs/images/ contains architecture images from v1.4
+- No .DS_Store file is tracked anywhere
+- docs/images/ exists
 - data/samples/pcaps/ contains sample PCAP data
 - Legacy artifacts are organized by version
 """
@@ -35,58 +35,33 @@ PCAP_DIR = os.path.join(WORKTREE, "data", "samples", "pcaps")
 
 # ---------------------------------------------------------------------------
 # Archive directory structure
+#
+# @decision DEC-PHASE12-110
+# @title Archive tests assert TRACKED state, never one developer's local files
+# @status accepted
+# @rationale archive/* is gitignored: versions/ and artifacts/ exist only on the
+#   machine that made them, so the old existence tests failed on every clean
+#   clone and CI runner (8 of the 12 failures make test-unit hid, P1-2/F-01).
+#   What the repo can promise is what it tracks: archive/ carries exactly
+#   INVENTORY.md and README.md, and nothing tracked is a .DS_Store.
+#   docs/images/architecture_diagram.png was deleted on purpose in 18a0d06
+#   (byte-sized placeholder replaced by real screenshots), so its test is gone.
 # ---------------------------------------------------------------------------
 
-VERSION_DIRS = ["v1.2", "v1.3", "v1.4"]
 
-
-@pytest.mark.parametrize("version", VERSION_DIRS)
-def test_archive_version_directory_exists(version):
-    """Each legacy version must have its own subdirectory in archive/versions/."""
-    version_path = os.path.join(ARCHIVE_DIR, "versions", version)
-    assert os.path.isdir(version_path), (
-        f"Archive version directory missing: {version_path}"
+def _git_ls_files(*paths):
+    result = subprocess.run(
+        ["git", "-C", WORKTREE, "ls-files", "--", *paths],
+        capture_output=True, text=True, check=True,
     )
+    return [line for line in result.stdout.splitlines() if line]
 
 
-@pytest.mark.parametrize("version", VERSION_DIRS)
-def test_archive_version_has_content(version):
-    """Each version directory must contain at least one file."""
-    version_path = os.path.join(ARCHIVE_DIR, "versions", version)
-    if not os.path.isdir(version_path):
-        pytest.skip(f"Version directory {version} does not exist yet")
-    entries = os.listdir(version_path)
-    # Filter out .DS_Store
-    entries = [e for e in entries if e != ".DS_Store"]
-    assert len(entries) > 0, (
-        f"Archive version directory is empty: {version_path}"
-    )
-
-
-def test_archive_artifacts_directory_exists():
-    """archive/artifacts/ directory must exist."""
-    artifacts_path = os.path.join(ARCHIVE_DIR, "artifacts")
-    assert os.path.isdir(artifacts_path), (
-        f"Archive artifacts directory missing: {artifacts_path}"
-    )
-
-
-def test_archive_artifacts_has_structure_txt():
-    """orionx-phoenix-structure.txt must be present in archive/artifacts/."""
-    structure_path = os.path.join(
-        ARCHIVE_DIR, "artifacts", "orionx-phoenix-structure.txt"
-    )
-    assert os.path.isfile(structure_path), (
-        f"Structure file missing: {structure_path}"
-    )
-
-
-def test_archive_artifacts_has_orion_artifacts():
-    """orion_artifacts subdirectory must exist in archive/artifacts/."""
-    oa_path = os.path.join(ARCHIVE_DIR, "artifacts", "orion_artifacts")
-    assert os.path.isdir(oa_path), (
-        f"orion_artifacts directory missing: {oa_path}"
-    )
+def test_archive_tracks_only_inventory_and_readme():
+    """archive/ must track exactly INVENTORY.md and README.md (the rest is local)."""
+    assert sorted(_git_ls_files("archive")) == [
+        "archive/INVENTORY.md", "archive/README.md",
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -200,18 +175,10 @@ def test_archive_contents_are_gitignored():
 # No .DS_Store files
 # ---------------------------------------------------------------------------
 
-def test_no_ds_store_in_archive():
-    """No .DS_Store files should exist anywhere in the archive directory."""
-    if not os.path.isdir(ARCHIVE_DIR):
-        pytest.skip("Archive directory does not exist yet")
-    ds_store_files = []
-    for root, dirs, files in os.walk(ARCHIVE_DIR):
-        for f in files:
-            if f == ".DS_Store":
-                ds_store_files.append(os.path.join(root, f))
-    assert len(ds_store_files) == 0, (
-        f".DS_Store files found in archive: {ds_store_files}"
-    )
+def test_no_ds_store_tracked():
+    """No .DS_Store may be tracked anywhere (local ones are gitignored and harmless)."""
+    tracked = [p for p in _git_ls_files() if os.path.basename(p) == ".DS_Store"]
+    assert tracked == [], f".DS_Store files tracked in git: {tracked}"
 
 
 # ---------------------------------------------------------------------------
@@ -222,14 +189,6 @@ def test_docs_images_directory_exists():
     """docs/images/ directory must exist for architecture images."""
     assert os.path.isdir(DOCS_IMAGES_DIR), (
         f"docs/images/ directory missing: {DOCS_IMAGES_DIR}"
-    )
-
-
-def test_docs_images_has_architecture_diagram():
-    """docs/images/ must contain architecture_diagram.png from v1.4."""
-    arch_path = os.path.join(DOCS_IMAGES_DIR, "architecture_diagram.png")
-    assert os.path.isfile(arch_path), (
-        f"Architecture diagram missing: {arch_path}"
     )
 
 
