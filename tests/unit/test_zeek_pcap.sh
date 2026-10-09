@@ -668,7 +668,7 @@ else
 fi
 
 if command -v ruff >/dev/null 2>&1; then
-  if ruff check "$PD" "$CAP" >/dev/null 2>&1; then pass "ruff check clean"; else fail "ruff check clean" "$(ruff check "$PD" "$CAP" 2>&1 | tail -3)"; fi
+  if ruff check --select E4,E7,E9,F "$PD" "$CAP" >/dev/null 2>&1; then pass "ruff check --select E4,E7,E9,F clean"; else fail "ruff check --select E4,E7,E9,F clean" "$(ruff check --select E4,E7,E9,F "$PD" "$CAP" 2>&1 | tail -3)"; fi
 fi
 if command -v shellcheck >/dev/null 2>&1; then
   if shellcheck -S warning "$INSTALLER" >/dev/null 2>&1; then pass "installer shellcheck clean"; else fail "installer shellcheck" "$(shellcheck -S warning "$INSTALLER" 2>&1 | tail -5)"; fi

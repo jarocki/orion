@@ -67,10 +67,10 @@ fi
 
 section "Lint"
 if command -v ruff >/dev/null 2>&1; then
-    if RUFF_OUT="$(cd "$REPO_ROOT" && ruff check scripts/healing/ 2>&1)"; then
-        pass "ruff check scripts/healing/ clean"
+    if RUFF_OUT="$(cd "$REPO_ROOT" && ruff check --select E4,E7,E9,F scripts/healing/ 2>&1)"; then
+        pass "ruff check --select E4,E7,E9,F scripts/healing/ clean"
     else
-        fail "ruff check scripts/healing/ clean" "$RUFF_OUT"
+        fail "ruff check --select E4,E7,E9,F scripts/healing/ clean" "$RUFF_OUT"
     fi
 else
     pass "ruff not installed — skipped (not a failure on this host)"

@@ -10,7 +10,7 @@
 #   (a) nebula dispatcher exists, executable, valid Python;
 #   (b) every .py under scripts/nebula/ begins with `from __future__ import annotations`
 #       (DEC-PHASE9-019 hard invariant carried into Phase 10);
-#   (c) ruff check exits 0 on scripts/nebula/ (DEC-PHASE9-020 hard invariant);
+#   (c) ruff check --select E4,E7,E9,F exits 0 on scripts/nebula/ (DEC-PHASE9-020 hard invariant);
 #   (d) `nebula --version` runs without importing ollama;
 #   (e) `nebula --help` lists at least version/status/warmup subcommands;
 #   (f) integrity.py exposes verify_manifest() with correct signature;
@@ -137,22 +137,22 @@ fi
 echo ""
 
 # ===========================================================================
-# T5: ruff check (DEC-PHASE9-020) — skip cleanly if ruff not installed
+# T5: ruff check --select E4,E7,E9,F (DEC-PHASE9-020) — skip cleanly if ruff not installed
 # ===========================================================================
-echo "[T5] ruff check scripts/nebula/ (DEC-PHASE9-020)"
+echo "[T5] ruff check --select E4,E7,E9,F scripts/nebula/ (DEC-PHASE9-020)"
 if command -v ruff >/dev/null 2>&1; then
-    RUFF_OUT="$(ruff check "$NEBULA_DIR" 2>&1 || true)"
+    RUFF_OUT="$(ruff check --select E4,E7,E9,F "$NEBULA_DIR" 2>&1 || true)"
     if echo "$RUFF_OUT" | grep -qE '^Found [0-9]+ error'; then
-        fail "ruff check scripts/nebula/ exits 0" "$RUFF_OUT"
+        fail "ruff check --select E4,E7,E9,F scripts/nebula/ exits 0" "$RUFF_OUT"
     elif echo "$RUFF_OUT" | grep -qE 'error|Error' && ! echo "$RUFF_OUT" | grep -qE 'All checks passed|no errors'; then
         # ruff may print "Found 0 errors" on clean; or print nothing on clean
-        if ruff check "$NEBULA_DIR" >/dev/null 2>&1; then
-            pass "ruff check scripts/nebula/ exits 0"
+        if ruff check --select E4,E7,E9,F "$NEBULA_DIR" >/dev/null 2>&1; then
+            pass "ruff check --select E4,E7,E9,F scripts/nebula/ exits 0"
         else
-            fail "ruff check scripts/nebula/ exits 0" "$RUFF_OUT"
+            fail "ruff check --select E4,E7,E9,F scripts/nebula/ exits 0" "$RUFF_OUT"
         fi
     else
-        pass "ruff check scripts/nebula/ exits 0"
+        pass "ruff check --select E4,E7,E9,F scripts/nebula/ exits 0"
     fi
 else
     echo "  SKIP: ruff not installed (DEC-PHASE9-020 local contract; skip in CI without ruff)"

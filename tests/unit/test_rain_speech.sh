@@ -589,7 +589,7 @@ then pass "drift invariants"; else fail "drift invariants" "see output above"; f
 section "Installer hygiene"
 if shellcheck -S warning "$INSTALLER" >/dev/null 2>&1; then pass "installer shellcheck clean"; else fail "installer shellcheck" "$(shellcheck -S warning "$INSTALLER" 2>&1 | tail -5)"; fi
 if bash -n "$INSTALLER"; then pass "installer parses (bash -n)"; else fail "installer bash -n"; fi
-if ruff check "$RS" >/dev/null 2>&1; then pass "rain_speech ruff clean"; else fail "rain_speech ruff" "$(ruff check "$RS" 2>&1 | tail -5)"; fi
+if ruff check --select E4,E7,E9,F "$RS" >/dev/null 2>&1; then pass "rain_speech ruff clean"; else fail "rain_speech ruff" "$(ruff check --select E4,E7,E9,F "$RS" 2>&1 | tail -5)"; fi
 
 section "The installer's CHECK actually rejects a broken install"
 # Not a grep for the word RIFF: the real verification path is RUN, against a

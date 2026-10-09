@@ -613,8 +613,8 @@ want "CLI can serve on the socket"          'serve_unix' "$CLI"
 want "CLI --allow-active is operator-only"  'allow-active' "$CLI"
 want "status.py supports --offline"         '\-\-offline' "$REPO_ROOT/scripts/nebula/status.py"
 if command -v ruff >/dev/null 2>&1; then
-    if ruff check "$REPO_ROOT/scripts/nebula/" >/dev/null 2>&1; then pass "ruff check scripts/nebula/ clean"
-    else fail "ruff check scripts/nebula/ clean" "$(ruff check "$REPO_ROOT/scripts/nebula/" 2>&1 | tail -3)"; fi
+    if ruff check --select E4,E7,E9,F "$REPO_ROOT/scripts/nebula/" >/dev/null 2>&1; then pass "ruff check --select E4,E7,E9,F scripts/nebula/ clean"
+    else fail "ruff check --select E4,E7,E9,F scripts/nebula/ clean" "$(ruff check --select E4,E7,E9,F "$REPO_ROOT/scripts/nebula/" 2>&1 | tail -3)"; fi
 else
     printf "  SKIP: ruff not installed\n"
 fi

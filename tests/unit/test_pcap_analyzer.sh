@@ -409,11 +409,11 @@ section "ruff lint check (F541/E741 regression guard)"
 if command -v ruff >/dev/null 2>&1; then
     RUFF_OUTPUT=""
     RUFF_EXIT=0
-    RUFF_OUTPUT="$( ruff check "$TOOL" 2>&1 )" || RUFF_EXIT=$?
+    RUFF_OUTPUT="$( ruff check --select E4,E7,E9,F "$TOOL" 2>&1 )" || RUFF_EXIT=$?
     if [[ "$RUFF_EXIT" -eq 0 ]]; then
-        pass "T11: ruff check exits 0 (no F541/E741 or other ruff errors)"
+        pass "T11: ruff check --select E4,E7,E9,F exits 0 (no F541/E741 or other ruff errors)"
     else
-        fail "T11: ruff check exits 0" \
+        fail "T11: ruff check --select E4,E7,E9,F exits 0" \
              "ruff found errors: $RUFF_OUTPUT"
     fi
 else
