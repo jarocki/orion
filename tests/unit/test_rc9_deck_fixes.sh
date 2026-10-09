@@ -34,7 +34,7 @@ s = M.load_snapshot(sys.argv[1]); assert s and s["peers"][0]["handshake_age"] is
 assert s["peers"][1]["handshake_age"] is None and M.peer_state(None) == "never" and M.peer_state(s["peers"][0]["handshake_age"]) == "live"
 assert M.load_snapshot(sys.argv[1] + ".nope") is None and M.snapshot_age(s, time.time()) is not None
 PY
-[[ "$(stat -f %Lp "$TMP/run/mesh-status.json" 2>/dev/null || stat -c %a "$TMP/run/mesh-status.json")" == "644" ]] && pass "snapshot is world-readable (0644) — the Cockpit runs as the operator" || fail "snapshot mode" "$(stat -f %Lp "$TMP/run/mesh-status.json" 2>/dev/null)"
+[[ "$(stat -c %a "$TMP/run/mesh-status.json" 2>/dev/null || stat -f %Lp "$TMP/run/mesh-status.json")" == "644" ]] && pass "snapshot is world-readable (0644) — the Cockpit runs as the operator" || fail "snapshot mode" "$(stat -f %Lp "$TMP/run/mesh-status.json" 2>/dev/null)"
 OUT2="$(cd "$ROOT" && PATH="$TMP/bin:$PATH" MESH_STATE_FILE="$TMP/absent.json" MESH_SNAPSHOT_FILE="$TMP/run/mesh-status.json" bash -c 'source scripts/mesh/mesh-lib.sh; mesh_snapshot_write' 2>&1)"
 python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['active'] is False and d['vpn_ip']=='' , d" "$TMP/run/mesh-status.json" && pass "no state file -> snapshot says inactive (what leave writes)" || fail "inactive snapshot" "$OUT2"
 # sysfs reader against a fixture
