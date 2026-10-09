@@ -29,7 +29,10 @@ jobs:
     # Bumped from 30 → 60 minutes: TCG-mode boot under --timeout 900
     # for both BIOS and UEFI may consume up to ~30 min total in worst case
     # (no KVM on standard ubuntu-latest), plus ~10-15 min ISO build.
-    timeout-minutes: 60
+    # 90: the v3.0.0 runs showed TCG on shared runners needing >900 s for one
+    # mode on a bad day (BIOS and UEFI each timed out once, then passed on
+    # rerun); 1200 s per mode + the ~25 min build fits in 90.
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
@@ -174,7 +177,7 @@ jobs:
           fi
           bash scripts/qemu-boot-test.sh \
             --mode both \
-            --timeout 900 \
+            --timeout 1200 \
             ${OVMF_FLAG}
 
       # W7-4-B: Run in-guest runtime verification (mesh + Matrix + AppArmor).

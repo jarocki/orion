@@ -84,8 +84,13 @@ else
 fi
 
 if command -v systemd-analyze >/dev/null 2>&1; then
-    out="$(systemd-analyze verify "$DROPIN" 2>&1 || true)"
-    if grep -qi 'unknown key\|invalid' <<< "$out"; then fail "systemd-analyze: drop-in keys valid" "$out"; else pass "systemd-analyze: drop-in keys valid"; fi
+    # verify a UNIT with the drop-in beside it: systemd-analyze refuses a bare
+    # .d/*.conf path ("Failed to prepare filename: Invalid argument" on the CI runner).
+    _vd="$(mktemp -d)"; mkdir -p "$_vd/matrix-synapse.service.d"
+    printf '[Unit]\nDescription=verify host\n[Service]\nExecStart=/bin/true\n' > "$_vd/matrix-synapse.service"
+    cp "$DROPIN" "$_vd/matrix-synapse.service.d/orionx.conf"
+    out="$(systemd-analyze verify "$_vd/matrix-synapse.service" 2>&1 || true)"; rm -rf "$_vd"
+    if grep -qiE 'unknown (key|lvalue)|assignment outside of section|failed to parse' <<< "$out"; then fail "systemd-analyze: drop-in keys valid" "$out"; else pass "systemd-analyze: drop-in keys valid"; fi
 fi
 
 echo ""
