@@ -328,7 +328,7 @@ fi
 section "ruff check (DEC-PHASE9-020)"
 
 if command -v ruff >/dev/null 2>&1; then
-    if ruff check "$CC_DIR/" 2>&1; then
+    if ruff check --select E4,E7,E9,F "$CC_DIR/" 2>&1; then   # pinned rule set: CI installs the latest ruff
         pass "ruff check scripts/control_center/ passes clean"
     else
         fail "ruff check scripts/control_center/ passes clean" \

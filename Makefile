@@ -25,7 +25,7 @@ lint-shell: ## Lint shell scripts with ShellCheck
 lint-python: ## Lint Python scripts with ruff (or flake8 fallback)
 	@echo "=== Python lint ==="
 	@if command -v ruff >/dev/null 2>&1; then \
-		ruff check $(PYTHON_SCRIPTS); \
+		ruff check --select E4,E7,E9,F,I001,DTZ,BLE001,PLW1510,SIM115,UP022,PERF102,EXE001 $(PYTHON_SCRIPTS); \
 	elif command -v flake8 >/dev/null 2>&1; then \
 		flake8 $(PYTHON_SCRIPTS); \
 	else \
