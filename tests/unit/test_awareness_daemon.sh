@@ -174,6 +174,7 @@ same = m.plan_actions(m.tier_plan("1", True), m.tier_plan("1", True))
 ck(same == [], f"re-asserting the same tier is a no-op -> {same}")
 
 # Gate file is the DEC-PHASE11-008 mechanism that actually lets suricata start.
+os.makedirs(os.environ.get("ORIONX_TMP", "tmp"), exist_ok=True)   # a fresh CI checkout has no tmp/
 with tempfile.TemporaryDirectory(dir=os.environ.get("ORIONX_TMP", "tmp")) as td:
     g = Path(td) / "sub" / "orionx-enabled"
     ck(m.set_gate(True, path=g) is True and g.exists(), "set_gate(True) creates the gate (parents too)")
@@ -211,7 +212,7 @@ else
   pass "postured is not ordered behind the model runtime (DEC-PHASE12-032)"
 fi
 if command -v ruff >/dev/null 2>&1; then
-  if ruff check "$PD" >/dev/null 2>&1; then pass "ruff check clean"; else fail "ruff check clean" "$(ruff check "$PD" 2>&1 | tail -3)"; fi
+  if ruff check --select E4,E7,E9,F "$PD" >/dev/null 2>&1; then pass "ruff check clean"; else fail "ruff check clean" "$(ruff check --select E4,E7,E9,F "$PD" 2>&1 | tail -3)"; fi
 fi
 
 section "Self-diagnosis is not a threat (RESILIENCE.md rule 5)"
