@@ -212,7 +212,7 @@ else
   pass "postured is not ordered behind the model runtime (DEC-PHASE12-032)"
 fi
 if command -v ruff >/dev/null 2>&1; then
-  if ruff check --select E4,E7,E9,F "$PD" >/dev/null 2>&1; then pass "ruff check clean"; else fail "ruff check clean" "$(ruff check --select E4,E7,E9,F "$PD" 2>&1 | tail -3)"; fi
+  if ruff check --select E4,E7,E9,F "$PD" >/dev/null 2>&1; then pass "ruff check --select E4,E7,E9,F clean"; else fail "ruff check --select E4,E7,E9,F clean" "$(ruff check --select E4,E7,E9,F "$PD" 2>&1 | tail -3)"; fi
 fi
 
 section "Self-diagnosis is not a threat (RESILIENCE.md rule 5)"

@@ -744,8 +744,8 @@ else fail "0615 has a logquery entry" "this slice deliberately ships no unit"; f
 section "Lint"
 if command -v ruff >/dev/null 2>&1; then
     cp "$LQ" "$WORK/_cli_lint.py"
-    if ruff check "$WORK/_cli_lint.py" "$LQ_DIR"/*.py >/dev/null 2>&1; then pass "ruff clean"
-    else fail "ruff clean" "$(ruff check "$WORK/_cli_lint.py" "$LQ_DIR"/*.py 2>&1 | tail -5)"; fi
+    if ruff check --select E4,E7,E9,F "$WORK/_cli_lint.py" "$LQ_DIR"/*.py >/dev/null 2>&1; then pass "ruff clean"
+    else fail "ruff clean" "$(ruff check --select E4,E7,E9,F "$WORK/_cli_lint.py" "$LQ_DIR"/*.py 2>&1 | tail -5)"; fi
 else
     pass "ruff not installed — skipped"
 fi

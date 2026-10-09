@@ -14,7 +14,7 @@
 #   mechanically so regressions are caught before CI.
 #
 # @decision DEC-PHASE9-020
-# @title ruff check enforced on all new Python in Phase 9+
+# @title ruff check --select E4,E7,E9,F enforced on all new Python in Phase 9+
 # @status accepted
 # @rationale ruff is invoked here when available; the test skips gracefully
 #   when ruff is absent so macOS dev machines without ruff stay unblocked,
@@ -323,15 +323,15 @@ else
 fi
 
 # ===========================================================================
-# 10. ruff check (DEC-PHASE9-020) — skip gracefully when ruff not installed
+# 10. ruff check --select E4,E7,E9,F (DEC-PHASE9-020) — skip gracefully when ruff not installed
 # ===========================================================================
-section "ruff check (DEC-PHASE9-020)"
+section "ruff check --select E4,E7,E9,F (DEC-PHASE9-020)"
 
 if command -v ruff >/dev/null 2>&1; then
     if ruff check --select E4,E7,E9,F "$CC_DIR/" 2>&1; then   # pinned rule set: CI installs the latest ruff
-        pass "ruff check scripts/control_center/ passes clean"
+        pass "ruff check --select E4,E7,E9,F scripts/control_center/ passes clean"
     else
-        fail "ruff check scripts/control_center/ passes clean" \
+        fail "ruff check --select E4,E7,E9,F scripts/control_center/ passes clean" \
              "Fix all ruff errors before committing (DEC-PHASE9-020)"
     fi
 else

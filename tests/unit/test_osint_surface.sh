@@ -1006,8 +1006,8 @@ else fail "drift between authorities" "see output above"; fi
 
 section "Lint"
 if command -v ruff >/dev/null 2>&1; then
-    if ruff check --no-cache "$SRC" "$CH/usr/bin/orionx-osint" >"$TMP/ruff.log" 2>&1; then
-        pass "ruff check clean"
+    if ruff check --select E4,E7,E9,F --no-cache "$SRC" "$CH/usr/bin/orionx-osint" >"$TMP/ruff.log" 2>&1; then
+        pass "ruff check --select E4,E7,E9,F clean"
     else fail "ruff check" "$(head -5 "$TMP/ruff.log")"; fi
 else
     pass "ruff not installed on this host (skipped)"
