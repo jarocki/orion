@@ -206,26 +206,44 @@ as every release's must.
 
 ### Known issues and decisions deferred to the owner
 
+Each item below now has an owner decision, recorded 2026-10-18 in
+`MASTER_PLAN.md` § Decision Log as DEC-PHASE13-001 … 012 (taken through the
+`/decide` configurator on this list; nothing here changes the v3.0.0 image).
+
 - Boot-tested in QEMU (BIOS + UEFI); the v3.0.0 image has **not yet booted on the
   reference laptop** — the Mesh tab, "Set up as server", Element's keyring prompt,
   AppArmor enforcement of ollama and the Synapse drop-in sandbox need that boot.
-- `radare2` and `fonts-iosevka` are not shipped (#85); Zeek has no managed capture
-  unit (ingest only); the gomuks installer refuses until a replacement download is
-  chosen (upstream's asset 404s); TrID pins fail closed when the vendor updates.
-- NetworkManager MAC randomisation was not applied (captive portals and DHCP
-  reservations); exim4 is masked rather than purged; firmware scope for the
-  supported decks is undecided.
-- LAN mesh discovery is unauthenticated beyond beacon validation: a LAN host with a
-  well-formed beacon becomes a peer unless the team PSK is installed first.
-- `orionx-scanwatch` and the posture/healing daemons still run as uid 0 (with empty
-  capability sets and kernel hardening); moving them to a dedicated user needs a
-  deck boot to verify journal and nftables access.
-- The optional `install-duckdb.sh` installs an unpinned `duckdb` into system
-  Python and `install-geoip.sh` fetches the monthly database without a checksum
-  (the vendor publishes none); the other installers are SHA-256 pinned.
+  **DEC-PHASE13-001:** boot the deck before any 3.0.1 work.
+- `radare2` and `fonts-iosevka` are not shipped (#85) — **DEC-PHASE13-002:** close
+  #85 as won't-ship (Ghidra via `install-ghidra.sh`; Hack + DejaVu Sans Mono).
+  Zeek has no managed capture unit (ingest only) — **DEC-PHASE13-004:** ship
+  `orionx-zeek@.service` in 3.0.1, templated on the interface like
+  `orionx-capture@`, started by the Tier-1 plan beside Suricata. The gomuks
+  installer refuses (upstream's asset 404s) — **DEC-PHASE13-003:** remove
+  `install-gomuks.sh`; Element is the Matrix client path. TrID pins fail closed
+  when the vendor updates — **DEC-PHASE13-005:** keep fail-closed; add a
+  `--print-pin` operator path.
+- NetworkManager MAC randomisation was not applied — **DEC-PHASE13-006:**
+  `cloned-mac-address=stable` for Wi-Fi and Ethernet (hardware MAC never leaves
+  the deck; per-network address is stable so portals and DHCP survive). exim4 is
+  masked rather than purged — **DEC-PHASE13-007:** purge in the 0900 trim hook
+  (drop the 0620 mask; handle rkhunter's default-mta Recommends). Firmware scope —
+  **DEC-PHASE13-008:** the current Wi-Fi set plus `intel-microcode` and
+  `amd64-microcode`.
+- LAN mesh discovery is unauthenticated beyond beacon validation — **DEC-PHASE13-009:**
+  auto-peer only when a team PSK is installed; otherwise hold beacons as candidates
+  the Mesh tab lists. (Gated on 001.)
+- `orionx-scanwatch` and the posture/healing daemons still run as uid 0 —
+  **DEC-PHASE13-010:** a dedicated `orionx` system user with ambient capabilities;
+  journal and nftables access verified on the deck first. (Gated on 001.)
+- `install-duckdb.sh` installs an unpinned `duckdb` into system Python and
+  `install-geoip.sh` fetches without a checksum — **DEC-PHASE13-011:** pin duckdb
+  (version + hash) in a venv under `/opt/orionx/venvs`; GeoIP records the SHA-256 of
+  each monthly file and refuses a changed re-download.
 - The old guided-demo recorder (`tools/guided-demo/build_demo.py`, #99) still
-  drives the retired Control Center window; the v3.0.0 release video comes from
-  `tools/guided-demo/cinematic/` instead.
+  drives the retired Control Center window — **DEC-PHASE13-012:** port it to the
+  Cockpit and keep both recorders (the short walkthrough and the trailer serve
+  different readers; `scenes.yaml` stays its single source).
 
 ---
 

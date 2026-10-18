@@ -384,8 +384,11 @@ Open in v3.0.0 (each links to its tracking issue):
 - **The operator account is root without a prompt** (by design; see the User
   Guide, §3 *The Live Account and Administrator Rights*).
 - **Hardware coverage:** boot-tested on one reference laptop and in QEMU only.
-- TODO(release lead): add the items other QA groups marked needs-hardware or
-  deferred in round 1, with issue numbers.
+- **Deferred items and their decisions** (Zeek capture unit, gomuks removal, TrID
+  pins, MAC randomisation, exim4, firmware, mesh auto-peering, daemon user,
+  duckdb/GeoIP pinning, the old demo recorder) are listed in the CHANGELOG under
+  v3.0.0 "Known issues", each with its owner decision DEC-PHASE13-001 … 012 for
+  the 3.0.1 line.
 
 ---
 
