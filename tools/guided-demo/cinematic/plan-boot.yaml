@@ -25,5 +25,5 @@
 - {sleep: 8}
 - {send: "export DISPLAY=:0; until xwininfo -root -tree 2>/dev/null | grep -q '\"xfdesktop\"'; do sleep 3; done; echo X-DESKTOP-UP\n"}
 - {wait: '(?m)^X-DESKTOP-UP', timeout: 1200, required: true}
-- {label: desktop,     mark: desktop, fps: 2, sleep: 45}
+- {label: desktop,     mark: desktop, fps: 2, sleep: 100}
 - {label: end,         mark: x-end, sleep: 2}

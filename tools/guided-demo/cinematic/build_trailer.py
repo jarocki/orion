@@ -110,18 +110,32 @@ def synth_narration(shots: list[dict], cfg: dict, models: Path, cache: Path) -> 
     cache.mkdir(parents=True, exist_ok=True)
     k = None
     voice, speed = cfg.get("voice", "af_heart"), float(cfg.get("voice_speed", 0.95))
+    # `voice` is a Kokoro voice name, or a blend: {"blend": [["bf_emma", 0.7], ["af_heart", 0.3]]}.
+    # `lang` picks the phonemiser independently of the voice's timbre: "en-us"
+    # with a British voice gives a British accent with American pronunciations
+    # (the owner's brief for the v3.0.0 narrator).
+    lang = cfg.get("lang") or ("en-gb" if str(voice).startswith("b") else "en-us")
+    if isinstance(voice, dict):
+        vkey = "blend-" + "-".join(f"{n}{w}" for n, w in voice["blend"])
+    else:
+        vkey = str(voice)
     out = {}
+    style = None
     for s in shots:
         text = s.get("narration")
         if not text:
             continue
-        key = f"{voice}-{speed}-" + hashlib.sha256(text.encode()).hexdigest()[:12]
+        key = f"{vkey}-{lang}-{speed}-" + hashlib.sha256(text.encode()).hexdigest()[:12]
         wav = cache / f"{s['id']}-{key}.wav"
         if not wav.exists():
             if k is None:
                 k = Kokoro(str(models / "kokoro-v1.0.onnx"), str(models / "voices-v1.0.bin"))
-            lang = "en-gb" if voice.startswith("b") else "en-us"
-            samples, sr = k.create(text, voice=voice, speed=speed, lang=lang)
+            if style is None:
+                if isinstance(voice, dict):
+                    style = sum(k.get_voice_style(n) * float(w) for n, w in voice["blend"])
+                else:
+                    style = voice
+            samples, sr = k.create(text, voice=style, speed=speed, lang=lang)
             sf.write(wav, samples, sr)
         a, sr = sf.read(wav, dtype="float32")
         if a.ndim > 1:
@@ -245,7 +259,7 @@ class Renderer:
         r = np.sqrt(((xx - W / 2) / (W / 2)) ** 2 + ((yy - H / 2) / (H / 2)) ** 2)
         self.vignette = np.clip(1.08 - 0.42 * r ** 2.2, 0.45, 1.0).astype(np.float32)[..., None]
         rng = np.random.default_rng(3)
-        self.grain = [rng.normal(0, 5.5, (H // 2, W // 2)).astype(np.float32) for _ in range(6)]
+        self.grain = [rng.normal(0, 2.2, (H // 2, W // 2)).astype(np.float32) for _ in range(6)]
         self.static: dict = {}
         self.wall = Image.open(WALLPAPER).convert("RGB") if WALLPAPER.exists() else None
 
@@ -895,13 +909,20 @@ def write_vtt(captions, path: Path):
     path.write_text("\n".join(lines))
 
 
+def _voice_desc(cfg: dict) -> str:
+    v = cfg.get("voice", "af_heart")
+    if isinstance(v, dict):
+        v = " + ".join(f"{n} {int(float(w) * 100)}%" for n, w in v["blend"])
+    return f"`{v}`, phonemes `{cfg.get('lang', 'auto')}`"
+
+
 def write_transcript(cfg, shots, captions, total, path: Path):
-    out = [f"# {cfg['title']} {cfg['version']} — release trailer — transcript", "",
+    out = [f"# {cfg['title']} {cfg['version']} — {cfg.get('kind', 'release trailer')} — transcript", "",
            f"**Runtime:** {int(total // 60)} min {int(total % 60)} s<br>",
            "**Picture:** boot, first-boot wizard and desktop are the release ISO booting in QEMU (UEFI, 1920x1080); "
            "every application scene is the ISO's own userspace running in a container (`record_scenes.py`); "
            "title cards and architecture diagrams are drawn by `tools/guided-demo/cinematic/build_trailer.py`.<br>",
-           "**Sound:** narration synthesised offline (Kokoro v1.0, voice `" + cfg.get("voice", "") + "`); "
+           "**Sound:** narration synthesised offline (Kokoro v1.0, voice " + _voice_desc(cfg) + "); "
            "procedural score (`render_music.py`); deck samples are the image's own R.A.I.N. cues and voice.<br>",
            "**Cockpit LIVE tab:** built-in demo feed plus real events published with `orionx-event` during the capture.", ""]
     for s in shots:
@@ -951,7 +972,7 @@ def main() -> int:
         elif s["kind"] == "montage":
             fr = []
             for sc in s["scenes"]:
-                fr += cap.frames(sc) if cap else []
+                fr += cap.frames(sc, tuple(s.get("window", (0, 1)))) if cap else []
             s["_frames"] = fr
         if s["kind"] in ("capture", "montage") and not s.get("_frames"):
             print(f"[cap] WARNING: no footage for shot {s['id']} (scene {s.get('scene') or s.get('scenes')})", flush=True)
@@ -964,11 +985,11 @@ def main() -> int:
     if args.stills:
         for s in shots:
             im = R.shot_frame(s, s["_dur"] * 0.7, s["_dur"])
-            Image.fromarray(R.finish(im, 0, grade=s["kind"] in ("capture", "montage"))).save(out / f"still-{s['id']}.png")
+            Image.fromarray(R.finish(im, 0, grade=s["kind"] in ("capture", "montage"))).save(out / f"still-{s['id']}.png")  # noqa: E501
         print(f"[stills] wrote {len(shots)} stills to {out}")
         return 0
 
-    base = f"orionx-trailer-{cfg['version']}" + ("-preview" if args.preview else "")
+    base = f"{cfg.get('basename', 'orionx-trailer')}-{cfg['version']}" + ("-preview" if args.preview else "")
     wav = out / f"{base}.mix.wav"
     captions = mix_audio(shots, narr, cap, total, wav)
 
@@ -991,7 +1012,7 @@ def main() -> int:
             im = Image.blend(pim, im, ease(alpha))
         grade = cur["kind"] in ("capture", "montage")
         frame = R.finish(im, fno, grade=grade)
-        if cur["id"] == "finale" and poster is None and t - cur["_start"] > 3.2:
+        if poster is None and cur["kind"] == "title" and cur["text"]["style"] == "finale" and t - cur["_start"] > 3.2:
             poster = frame
         p.stdin.write(frame.tobytes())
         if fno % (fps * 5) == 0:

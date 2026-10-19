@@ -111,7 +111,7 @@ Orion-X Phoenix Edition is a complete Linux system on a USB stick for incident r
 
 The "Phoenix" name symbolizes the toolkit's ability to help organizations rise from the ashes of security incidents through effective investigation and response. This release is built on Debian 13 "trixie" with Python 3.13 and Linux 6.12. It brings an on-device AI assistant (Nebula), audible intrusion alerts (R.A.I.N.), the Orion Cockpit — a live dashboard whose tabs also hold the network, mesh, comms, awareness, tool, AI and auto-healing controls — and a peer-to-peer WireGuard mesh.
 
-**Known limits of this release.** Orion-X has been boot-tested on one reference laptop (Lenovo, Intel Bay Trail, UEFI) and in QEMU; other hardware is untested. Please report anything confusing or broken (see [Support](SUPPORT.md)).
+**Known limits of this release.** Orion-X v3.0.0 has been boot-tested on one reference laptop (Lenovo, Intel Bay Trail, UEFI — live boot verified 2026-10-18) and in QEMU; other hardware is untested. Please report anything confusing or broken (see [Support](SUPPORT.md)).
 
 - x86-64 PCs only (it does not boot Apple-silicon Macs); Secure Boot must be off.
 - Nothing you change survives a reboot unless you set up [persistence](#persistence-options).

@@ -21,8 +21,9 @@ that raise active defenses as the situation demands.
 
 Mission verbs: **monitor** / **detect** / **defend** / **triage** / **timeline**.
 
-> **Tested hardware.** Orion-X has been boot-tested on one reference laptop
-> (Lenovo, Intel Bay Trail, UEFI) and in QEMU; other machines are untested, so
+> **Tested hardware.** Orion-X v3.0.0 has been boot-tested on one reference laptop
+> (Lenovo, Intel Bay Trail, UEFI; live boot verified 2026-10-18) and in QEMU
+> (BIOS + UEFI); other machines are untested, so
 > please report anything confusing or broken via the
 > [issue tracker](https://github.com/jarocki/orion/issues/new/choose). What it
 > does **not** do: boot Apple-silicon Macs (x86-64 only), keep your changes
@@ -40,18 +41,18 @@ DEC-PHASE12-062…064, -140). The Cockpit's LIVE tab runs its built-in demo feed
 published during the capture; the alert you hear spoken is the deck's own voice. Narration is
 synthesised offline; the score is procedural.
 
-[![Watch the Orion-X guided walkthrough](docs/media/orionx-guided-demo-v2.2.0-beta-poster.png)](docs/media/orionx-guided-demo-v2.2.0-beta.mp4)
+[![Watch the Orion-X guided walkthrough](docs/media/orionx-guided-demo-v3.0.0-poster.png)](docs/media/orionx-guided-demo-v3.0.0.mp4)
 
-**[Watch or download the guided walkthrough (2½ min)](docs/media/orionx-guided-demo-v2.2.0-beta.mp4)** ·
-**[Captions](docs/media/orionx-guided-demo-v2.2.0-beta.vtt)** ·
-**[Read the transcript](docs/media/orionx-guided-demo-v2.2.0-beta-transcript.md)**
+**[Watch or download the guided walkthrough (about 3 min, 720p)](docs/media/orionx-guided-demo-v3.0.0.mp4)** ·
+**[Captions](docs/media/orionx-guided-demo-v3.0.0.vtt)** ·
+**[Read the transcript](docs/media/orionx-guided-demo-v3.0.0-transcript.md)**
 
-The walkthrough was **recorded on v2.2.0-beta** from that image's own desktop and
-applications (`tools/guided-demo/`); the Cockpit shows its built-in synthetic
-demo feed and the narration is synthesised offline. Two things in it have
-changed since: the separate "Control Center" window it shows is now the
-Cockpit's tabs, and its "works fully air-gapped" overstates the case — Orion-X
-makes no outbound connection on its own, but nothing blocks one you start.
+Both videos are cut from the same footage of the v3.0.0 ISO by one pipeline
+(`tools/guided-demo/cinematic/`): the boot, first-boot wizard and desktop are the ISO
+booting in QEMU; every application frame is the ISO's own userspace running. The
+Cockpit's LIVE tab shows its built-in demo feed plus real events published during the
+capture, and the narration is synthesised offline. The earlier beta walkthrough
+(`docs/media/orionx-guided-demo-v2.2.0-beta.*`) is kept as history.
 
 ---
 
@@ -383,7 +384,7 @@ Open in v3.0.0 (each links to its tracking issue):
   `/opt/orionx/optional/install-ghidra.sh`; Hack is the monospace font.
 - **The operator account is root without a prompt** (by design; see the User
   Guide, §3 *The Live Account and Administrator Rights*).
-- **Hardware coverage:** boot-tested on one reference laptop and in QEMU only.
+- **Hardware coverage:** boot-tested on one reference laptop (Lenovo; v3.0.0 live boot verified 2026-10-18) and in QEMU (BIOS + UEFI). Other hardware is untested — reports welcome.
 - **Deferred items and their decisions** (Zeek capture unit, gomuks removal, TrID
   pins, MAC randomisation, exim4, firmware, mesh auto-peering, daemon user,
   duckdb/GeoIP pinning, the old demo recorder) are listed in the CHANGELOG under

@@ -256,10 +256,14 @@ Both must pass. A mismatch means rebuilding from the tagged commit (or with
 - Asset list contains exactly: every `.iso.part-*` named in `SHA256SUMS`,
   `SHA256SUMS`, `SHA256SUMS.asc`, `SHA512SUMS`, `SHA512SUMS.asc`,
   `REASSEMBLE.txt`. Byte sizes match (`gh release view <tag> --json assets`).
-- The guided-demo assets referenced from the release notes
+- The two videos referenced from the release notes — the guided walkthrough
   (`docs/media/orionx-guided-demo-<tag>.{mp4,vtt,-poster.png,-transcript.md}`)
-  are either attached to the release or linked to their `docs/media/` paths
-  at the tag.
+  and the trailer (`docs/media/orionx-trailer-<tag>.{…}`) — are rebuilt for the
+  tag by `tools/guided-demo/cinematic/` (DEC-PHASE13-012): 720p copies under
+  60 MB live in `docs/media/`; the 1080p masters are attached to the release.
+  Re-cut per release: `import-rootfs.sh` → `record_scenes.py` →
+  `qemu_capture.py --plan plan-boot.yaml` → `build_trailer.py --script
+  {walkthrough,trailer}.yaml`.
 
 ### 4.5. Flip DRAFT → Published
 

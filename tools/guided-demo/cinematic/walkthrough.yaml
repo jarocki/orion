@@ -1,0 +1,160 @@
+# Orion-X Phoenix Edition — guided walkthrough (the short, plain-spoken tour).
+#
+# Rendered by build_trailer.py from the same recorded footage as the trailer
+# (record_scenes.py from the ISO's own userspace; qemu_capture.py for the boot).
+# Narration rule, as before: say only what the image does; no invented numbers.
+# Spoken names are spelled the way they are pronounced: "Orion X", "Rain",
+# "God's Eye", "pea-cap" is avoided in favour of "packet capture".
+
+title: "Orion-X Phoenix Edition"
+version: "v3.0.0"
+release_url: "https://github.com/jarocki/orion/releases/tag/v3.0.0"
+basename: orionx-guided-demo
+kind: guided walkthrough
+voice: {blend: [[bf_emma, 0.7], [af_heart, 0.3]]}
+lang: en-us
+voice_speed: 0.95
+resolution: [1920, 1080]
+fps: 30
+
+shots:
+  - id: boot
+    kind: montage
+    scenes: [boot]
+    window: [0.04, 1.0]   # skip QEMU's blank 'display output is not active' frames
+    pick: spread
+    cuts: 5
+    dur: 14.0
+    chapter: "BOOT FROM A STICK"
+    music: {intensity: 0.18}
+    narration: "This is Orion X, Phoenix Edition, version three point zero: a live USB cyberdeck for incident responders working in networks they cannot trust. It boots from a USB stick on Debian 13 and runs with every change held in memory. It needs no network, makes no connection on its own, and installs nothing on the machine you are standing at."
+
+  - id: config
+    kind: capture
+    scene: config
+    window: [0.02, 0.62]
+    dur: 9.0
+    zoom: {from: [0.0, 0.25, 0.75, 0.75], to: [0.0, 0.3, 0.65, 0.65]}
+    chapter: "FIRST BOOT"
+    music: {intensity: 0.2}
+    narration: "The first boot asks for a name for the deck and an account, with thirty-second defaults. Pick the no-questions entry in the boot menu and it asks nothing at all."
+
+  - id: desktop
+    kind: capture
+    scene: desktop
+    window: [0.5, 1.0]
+    dur: 9.0
+    zoom: {from: [0, 0, 1, 1], to: [0.03, 0.03, 0.94, 0.94]}
+    chapter: "THE DESKTOP"
+    music: {intensity: 0.22}
+    narration: "The desktop is XFCE, themed as a cyberdeck. The panel shows the mesh you are joined to, the events seen on the bus, and the hosts on the local network. The Cockpit is one click away, and every Orion tool lives under one Orion menu."
+
+  - id: cockpit
+    kind: capture
+    scene: cockpit-live
+    window: [0.1, 1.0]
+    dur: 16.0
+    zoom: {from: [0, 0, 1, 1], to: [0.05, 0.04, 0.9, 0.9]}
+    chapter: "THE COCKPIT"
+    tag: "LIVE tab · built-in demo feed + live events"
+    music: {intensity: 0.3}
+    narration: "The Cockpit's live tab is where you see and hear the activity around you: a scrolling event stream, a threat-pressure gauge that decays over time, a network sparkline, subsystem lights, the deck's own vitals, and the current posture. This feed is the built-in demo traffic; on a real deck it is the live event bus."
+
+  - id: eventbus
+    kind: diagram
+    diagram: eventbus
+    dur: 9.0
+    music: {intensity: 0.3}
+    narration: "Everything that detects something publishes once, to one event bus. Rain, the audible notifier, turns severity into sound and speech. The Cockpit shows the same line. What you hear and what you see always agree."
+
+  - id: awareness
+    kind: capture
+    scene: tab-awareness
+    window: [0.3, 1.0]
+    dur: 13.0
+    zoom: {from: [0, 0, 1, 1], to: [0.08, 0.08, 0.8, 0.8]}
+    chapter: "AWARENESS"
+    music: {intensity: 0.32}
+    narration: "The Awareness tab puts live health, the firewall, the next hop and DNS on one page, with sparklines for packets, processor, memory and disk. Threat posture has three tiers, from passive watching to decoys and canaries, and the deck tells you whether a tier is actually enforced before it claims it is."
+
+  - id: tuning
+    kind: capture
+    scene: defense
+    window: [0.0, 0.5]
+    dur: 10.0
+    zoom: {from: [0, 0, 0.8, 0.8], to: [0, 0, 0.62, 0.62]}
+    chapter: "TUNING"
+    music: {intensity: 0.32}
+    narration: "When an alert is your own scanner, squelch it for a while or tune it out for good. Every answer states whether the change survives a reboot; on a stick without persistence it does not, and the deck says so."
+
+  - id: mesh
+    kind: capture
+    scene: tab-mesh
+    window: [0.3, 1.0]
+    dur: 10.0
+    zoom: {from: [0, 0, 1, 1], to: [0.08, 0.06, 0.84, 0.84]}
+    chapter: "MESH AND COMMS"
+    music: {intensity: 0.34}
+    narration: "Decks find each other on the local network and form a WireGuard mesh with no hub. Keys are made on the deck when you join, and a team pre-shared key is one command away. Team chat runs over that mesh on your own Matrix server."
+
+  - id: nebula
+    kind: capture
+    scene: tab-nebula
+    window: [0.3, 1.0]
+    dur: 11.0
+    # the tab's chat pane is empty in the recording (the model runtime is down
+    # inside the capture container); settle on the sidebar, prompt and tool list
+    zoom: {from: [0, 0, 1, 1], to: [0.0, 0.38, 0.62, 0.62]}
+    chapter: "NEBULA"
+    music: {intensity: 0.34}
+    narration: "Nebula is the on-device assistant: a local language model, verified against its hash at every boot, listening on the deck only. Its tools can look at packet captures and artifacts, but they cannot improvise commands, and nothing leaves the deck."
+
+  - id: pcap
+    kind: capture
+    scene: forensics-pcap
+    window: [0.0, 1.0]
+    dur: 12.0
+    zoom: {from: [0, 0, 0.8, 0.8], to: [0, 0, 0.62, 0.62]}
+    chapter: "THE TOOLKIT"
+    music: {intensity: 0.36}
+    narration: "Underneath is a curated forensics toolkit: Wireshark and Zeek for the wire, Volatility for memory, capa and YARA for binaries, and a synthetic training capture to practise on, with no real malware in it."
+
+  - id: memory
+    kind: capture
+    scene: forensics-memory
+    window: [0.3, 1.0]
+    dur: 6.0
+    zoom: {from: [0, 0, 0.8, 0.8], to: [0, 0, 0.62, 0.62]}
+    music: {intensity: 0.36}
+
+  - id: workbench
+    kind: capture
+    scene: workbench
+    window: [0.2, 1.0]
+    dur: 10.0
+    zoom: {from: [0, 0, 1, 1], to: [0.05, 0.05, 0.85, 0.85]}
+    chapter: "THE WORKBENCH"
+    music: {intensity: 0.38}
+    narration: "The Orion Workbench is the analyst's toolbox in a browser: what is on the deck, what you can add, and the open-source intelligence tools, with God's Eye and Pivotglass beside CyberChef."
+
+  - id: pivotglass
+    kind: capture
+    scene: pivotglass
+    window: [0.3, 1.0]
+    dur: 10.0
+    zoom: {from: [0, 0, 1, 1], to: [0.08, 0.08, 0.8, 0.8]}
+    music: {intensity: 0.38}
+    narration: "Pivotglass is the adversary-infrastructure hunting deck. It runs locally, keeps hypotheses, evidence and contradictions as separate records, and ships with an offline learning case."
+
+  - id: release
+    kind: title
+    dur: 12.0
+    text: {lines: ["ORION-X", "PHOENIX EDITION", "v3.0.0"], style: finale}
+    music: {intensity: 0.3, hit: true}
+    narration: "The full User Guide is on the image and on GitHub. The ISO is larger than GitHub's file limit, so it ships in signed parts: download them, join them, verify the hash, and write the image to a USB stick. It is tested on one reference laptop and in QEMU, so your bug reports are welcome. That is Orion X."
+
+  - id: end-card
+    kind: title
+    dur: 5.0
+    text: {lines: ["github.com/jarocki/orion", "Debian 13 · x86-64 · runs from USB · works without a network"], style: endcard}
+    music: {intensity: 0.1}

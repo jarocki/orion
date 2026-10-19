@@ -2,7 +2,7 @@
 
 **Runtime:** 3 min 12 s<br>
 **Picture:** boot, first-boot wizard and desktop are the release ISO booting in QEMU (UEFI, 1920x1080); every application scene is the ISO's own userspace running in a container (`record_scenes.py`); title cards and architecture diagrams are drawn by `tools/guided-demo/cinematic/build_trailer.py`.<br>
-**Sound:** narration synthesised offline (Kokoro v1.0, voice `af_heart`); procedural score (`render_music.py`); deck samples are the image's own R.A.I.N. cues and voice.<br>
+**Sound:** narration synthesised offline (Kokoro v1.0, voice `bf_emma 70% + af_heart 30%`, phonemes `en-us`); procedural score (`render_music.py`); deck samples are the image's own R.A.I.N. cues and voice.<br>
 **Cockpit LIVE tab:** built-in demo feed plus real events published with `orionx-event` during the capture.
 
 ## 00:00 — cold-open
@@ -35,7 +35,7 @@ The Orion Cockpit lets you see, and hear, the network around you. Every detectio
 
 ## 00:55 — eventbus
 
-Producers publish once. R.A.I.N. sounds it. The Cockpit shows it. What you hear and what you see always agree.
+Producers publish once. Rain sounds it. The Cockpit shows it. What you hear and what you see always agree.
 
 ## 01:10 — mesh
 
@@ -45,7 +45,7 @@ Decks find each other and form an encrypted WireGuard mesh.
 
 Every deck peers with every other. No hub. No cloud.
 
-## 01:23 — comms
+## 01:22 — comms
 
 Team chat runs over that mesh, on your own Matrix server.
 
@@ -57,19 +57,19 @@ Threat posture comes in three tiers, from quiet watching to decoys and canaries.
 
 When an alert is your own scanner, squelch it for thirty minutes or tune it for good, and the deck tells you whether that survives a reboot.
 
-## 01:52 — pcap
+## 01:51 — pcap
 
 Packet captures, memory images, suspicious binaries.
 
-## 01:59 — wireshark
+## 01:58 — wireshark
 
 Wireshark. Volatility. YARA. capa.
 
-## 02:04 — memory
+## 02:03 — memory
 
 Offline. On the stick.
 
-## 02:14 — nebula
+## 02:13 — nebula
 
 Nebula is a local AI copilot. Its model is hash-checked at every boot.
 
@@ -77,19 +77,19 @@ Nebula is a local AI copilot. Its model is hash-checked at every boot.
 
 Its tools can look, but they cannot improvise commands. Nothing leaves the deck.
 
-## 02:29 — workbench
+## 02:28 — workbench
 
 The Orion Workbench is the analyst's toolbox.
 
 ## 02:34 — godseye
 
-GODSEYE will not reach out until the deck says it can.
+God's Eye will not reach out until the deck says it can.
 
 ## 02:39 — cyberchef
 
 CyberChef decodes.
 
-## 02:43 — pivotglass
+## 02:42 — pivotglass
 
 And Pivotglass keeps hypotheses, evidence and contradictions apart.
 
@@ -99,4 +99,4 @@ Monitor. Detect. Defend. Triage. Timeline. One stick.
 
 ## 02:58 — finale
 
-Orion-X Phoenix Edition. A cyberdeck for the good guys.
+Orion X, Phoenix Edition. A cyberdeck for the good guys. All of them.

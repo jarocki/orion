@@ -22,7 +22,8 @@ below was accepted without a test that failed before the fix and passes after it
 clean chroot (only the bootstrap stage reused). Baked `ISO_VERSION=v3.0.0`, baked README ==
 repo. Gates on this image: hooks-applied 19/0; content-presence in release mode
 (`ORIONX_RELEASE_GATE=1 ORIONX_EXPECT_VERSION=v3.0.0`, shellcheck and lsinitramfs present)
-391/0/0; QEMU BIOS 104 s / UEFI 112 s. Not yet booted on the reference laptop. The
+391/0/0; QEMU BIOS 104 s / UEFI 112 s. Booted on the reference laptop (Lenovo) by the
+owner on 2026-10-18: works as advertised (DEC-PHASE13-001 satisfied). The
 CHANGELOG, README and User Guide copies baked into the image predate this identity line,
 as every release's must.
 
@@ -43,8 +44,10 @@ as every release's must.
   ISO as signed 190 MiB parts with SHA256SUMS/SHA512SUMS and reassembly
   instructions; `scripts/release/ci-local.sh` runs the CI gates locally; lint, e2e
   and QEMU workflows run on `release/**` branches (DEC-PHASE12-115, -123).
-- **The release trailer** (`docs/media/orionx-trailer-v3.0.0.{mp4,vtt,-transcript.md,-poster.png}`,
-  720p in the repo, 1080p master on the release) and its pipeline (`tools/guided-demo/cinematic/`): boot footage
+- **Two release videos** — the guided walkthrough (`docs/media/orionx-guided-demo-v3.0.0.*`)
+  and the trailer (`docs/media/orionx-trailer-v3.0.0.*`), each as mp4 + vtt + transcript +
+  poster, 720p in the repo, 1080p masters on the release — and their one pipeline
+  (`tools/guided-demo/cinematic/`): boot footage
   captured from the real ISO in QEMU, UI scenes recorded from the ISO's own root
   filesystem, the deck's own R.A.I.N. cues and voice, a synthesised score and an
   offline neural narrator; captions and transcript derive from one script
@@ -210,10 +213,11 @@ Each item below now has an owner decision, recorded 2026-10-18 in
 `MASTER_PLAN.md` § Decision Log as DEC-PHASE13-001 … 012 (taken through the
 `/decide` configurator on this list; nothing here changes the v3.0.0 image).
 
-- Boot-tested in QEMU (BIOS + UEFI); the v3.0.0 image has **not yet booted on the
-  reference laptop** — the Mesh tab, "Set up as server", Element's keyring prompt,
-  AppArmor enforcement of ollama and the Synapse drop-in sandbox need that boot.
-  **DEC-PHASE13-001:** boot the deck before any 3.0.1 work.
+- Boot-tested in QEMU (BIOS + UEFI) and, on 2026-10-18, on the reference laptop
+  (Lenovo) by the owner: boots and works as advertised. **DEC-PHASE13-001 is
+  satisfied**; the deck-only checks (Mesh tab, "Set up as server", Element's keyring
+  prompt, AppArmor enforcement of ollama, the Synapse drop-in sandbox) remain to be
+  exercised one by one on that hardware as 3.0.1 work begins.
 - `radare2` and `fonts-iosevka` are not shipped (#85) — **DEC-PHASE13-002:** close
   #85 as won't-ship (Ghidra via `install-ghidra.sh`; Hack + DejaVu Sans Mono).
   Zeek has no managed capture unit (ingest only) — **DEC-PHASE13-004:** ship
@@ -240,10 +244,11 @@ Each item below now has an owner decision, recorded 2026-10-18 in
   `install-geoip.sh` fetches without a checksum — **DEC-PHASE13-011:** pin duckdb
   (version + hash) in a venv under `/opt/orionx/venvs`; GeoIP records the SHA-256 of
   each monthly file and refuses a changed re-download.
-- The old guided-demo recorder (`tools/guided-demo/build_demo.py`, #99) still
-  drives the retired Control Center window — **DEC-PHASE13-012:** port it to the
-  Cockpit and keep both recorders (the short walkthrough and the trailer serve
-  different readers; `scenes.yaml` stays its single source).
+- The old guided-demo recorder (`tools/guided-demo/build_demo.py`, #99) drove the
+  retired Control Center window — **DEC-PHASE13-012 (amended):** keep both videos,
+  one pipeline. The guided walkthrough is now `tools/guided-demo/cinematic/
+  walkthrough.yaml`, rendered by the trailer's builder from footage of the shipped
+  ISO; `build_demo.py` and its container mirror are removed.
 
 ---
 

@@ -14,8 +14,13 @@
 title: "Orion-X Phoenix Edition"
 version: "v3.0.0"
 release_url: "https://github.com/jarocki/orion/releases"
-voice: af_heart           # Kokoro v1.0 (Apache-2.0), rendered offline
-voice_speed: 0.94
+# Narrator (owner's brief, 2026-10-18): a woman's voice, British timbre with American
+# pronunciations — Kokoro bf_emma blended with af_heart, phonemised as en-us.
+voice: {blend: [[bf_emma, 0.7], [af_heart, 0.3]]}
+lang: en-us
+voice_speed: 0.93
+basename: orionx-trailer
+kind: release trailer
 resolution: [1920, 1080]
 fps: 30
 
@@ -37,6 +42,7 @@ shots:
   - id: boot
     kind: montage
     scenes: [boot]
+    window: [0.04, 1.0]   # skip QEMU's blank 'display output is not active' frames
     pick: spread          # evenly spaced frames through the whole boot
     cuts: 7
     dur: 8.5
@@ -96,7 +102,7 @@ shots:
     diagram: eventbus
     dur: 8.0
     music: {intensity: 0.55}
-    narration: "Producers publish once. R.A.I.N. sounds it. The Cockpit shows it. What you hear and what you see always agree."
+    narration: "Producers publish once. Rain sounds it. The Cockpit shows it. What you hear and what you see always agree."
 
   - id: rain
     kind: capture
@@ -248,7 +254,7 @@ shots:
     dur: 5.0
     zoom: {from: [0, 0, 1, 1], to: [0.15, 0.12, 0.7, 0.7]}
     music: {intensity: 0.92}
-    narration: "GODSEYE will not reach out until the deck says it can."
+    narration: "God's Eye will not reach out until the deck says it can."
 
   - id: cyberchef
     kind: capture
@@ -280,7 +286,9 @@ shots:
     dur: 9.0
     text: {lines: ["ORION-X", "PHOENIX EDITION", "v3.0.0"], style: finale}
     music: {intensity: 0.35, hit: true}
-    narration: "Orion-X Phoenix Edition. A cyberdeck for the good guys."
+    # The tagline is the project's. Spoken as a plain statement, stress on "good",
+    # and completed so nobody hears "guys" as a who: it is a which side.
+    narration: "Orion X, Phoenix Edition. A cyberdeck for the good guys. All of them."
 
   - id: end-card
     kind: title
