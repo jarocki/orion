@@ -72,10 +72,8 @@ for f in sorted(os.listdir(apps)):
         if not os.path.exists(os.path.join(inc, icon.lstrip("/"))):
             out.append(f"FAIL {f}: Icon file {icon} is not shipped")
     elif icon.startswith("orionx-"):
-        try:
-            ET.parse(os.path.join(icons, icon + ".svg"))
-        except Exception as ex:  # noqa: BLE001 — report any parse/missing error
-            out.append(f"FAIL {f}: Icon {icon} has no valid SVG in Orion-X-Icons ({ex})")
+        if not os.path.isfile(os.path.join(icons, icon + ".svg")):
+            out.append(f"FAIL {f}: Icon {icon} has no SVG in Orion-X-Icons")
     if f in PRIMARY and not icon.startswith("orionx-"):
         out.append(f"FAIL {f}: primary surface uses a shared generic icon ({icon}); give it its own Orion-X-Icons glyph")
     argv = shlex.split(exe)
@@ -105,6 +103,37 @@ for f in sorted(os.listdir(apps)):
             others = [lbl for k, lbl in tabs.items() if k != tab]
             if any(lbl in comment for lbl in others) and tabs[tab] not in comment:
                 out.append(f"FAIL {f}: Comment lists other tabs but not the one it opens: {comment!r}")
+
+# Every theme icon, referenced or not, must be one gdk-pixbuf will load.
+# v3.0.0 shipped orionx-cockpit, -workbench and -phoenix with header comments
+# ahead of <svg>; the loader only recognises an SVG whose "<svg" is in the
+# first 256 bytes (loaders.cache: " <svg" "*    " 100), so the menu, desktop
+# and panel showed no icon. Reproduced in the v3.0.0 squashfs (#103,
+# DEC-PHASE13-017). Parsing as XML alone passed all three.
+SNIFF_BYTES = 256
+try:
+    import gi
+    gi.require_version("GdkPixbuf", "2.0")
+    from gi.repository import GdkPixbuf
+except (ImportError, ValueError):
+    GdkPixbuf = None
+for svg in sorted(os.listdir(icons)):
+    path = os.path.join(icons, svg)
+    data = open(path, "rb").read()
+    try:
+        ET.fromstring(data)
+    except ET.ParseError as ex:
+        out.append(f"FAIL {svg}: not valid XML ({ex})")
+        continue
+    where = data.find(b"<svg")
+    if not 0 <= where < SNIFF_BYTES:
+        out.append(f"FAIL {svg}: '<svg' starts at byte {where}; gdk-pixbuf only "
+                   f"recognises it in the first {SNIFF_BYTES} — move header comments inside <svg>")
+    if GdkPixbuf is not None:
+        try:
+            GdkPixbuf.Pixbuf.new_from_file_at_size(path, 48, 48)
+        except Exception as ex:  # noqa: BLE001 — any loader error is the finding
+            out.append(f"FAIL {svg}: gdk-pixbuf cannot load it ({ex})")
 
 for n, fs in names.items():
     if len(fs) > 1:

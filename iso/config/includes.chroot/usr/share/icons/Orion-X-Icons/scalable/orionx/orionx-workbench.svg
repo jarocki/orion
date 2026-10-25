@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Orion-X Phoenix Edition — Orion Workbench icon (toolbox of local tools) -->
-<!-- @decision DEC-PHASE12-127 — distinct glyph for the Workbench (QA UX-44) -->
-<!-- License: GPL-3.0+ (Orion-X project, original work) -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- Orion-X Phoenix Edition — Orion Workbench icon (toolbox of local tools) -->
+  <!-- @decision DEC-PHASE12-127 — distinct glyph for the Workbench (QA UX-44) -->
+  <!-- License: GPL-3.0+ (Orion-X project, original work) -->
+  <!-- Header kept inside <svg>: gdk-pixbuf only recognizes an SVG whose "<svg" falls in the first 256 bytes (DEC-PHASE13-017). -->
   <circle cx="24" cy="24" r="23" fill="#1a1a1a" stroke="#FF5722" stroke-width="1"/>
   <!-- toolbox handle -->
   <path d="M19 17 V14 a2 2 0 0 1 2 -2 h6 a2 2 0 0 1 2 2 V17" fill="none" stroke="#e6e6e6" stroke-width="2"/>

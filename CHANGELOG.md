@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Orion Workbench, Orion Cockpit and Phoenix icons now render in the menu,
+  on the desktop and in the panel. In v3.0.0, gdk-pixbuf rejected their SVGs
+  because header comments pushed `<svg` past the first 256 bytes, which is as
+  far as its SVG loader looks. This was reproduced in the v3.0.0 image. Header
+  comments now sit inside `<svg>`, and the desktop-entry test rejects any theme
+  icon that breaks the rule (#103). The Cockpit window now uses the gauge
+  icon instead of the Phoenix.
 - `orionx-logquery` no longer appears to hang when run without `--path`.
   `--path` defaulted to stdin, so the command that the Workbench card, the
   Attack Map and `orionx-help` all advertise (`orionx-logquery --report
@@ -21,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Orion-themed icons for Artifact Analyzer, DJ Deck, Matrix Comms, Matrix
+  Setup and Storyboard Generator, which previously used generic theme icons
+  (#104).
 - `orionx-logquery -v/--verbose` narrates each step on stderr, stamped with
   elapsed seconds: the files to be read and their total size, each file as it
   starts and finishes, a heartbeat every 100,000 lines, object-store listing

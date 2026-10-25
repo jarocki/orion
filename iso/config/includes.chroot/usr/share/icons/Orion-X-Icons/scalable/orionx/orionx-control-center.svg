@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Orion-X Phoenix Edition — Control Center icon -->
-<!-- @decision DEC-PHASE11-010 — Orion-X-Icons orionx-control-center symbol -->
-<!-- License: GPL-3.0+ (Orion-X project, original work) -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- Orion-X Phoenix Edition — Control Center icon -->
+  <!-- @decision DEC-PHASE11-010 — Orion-X-Icons orionx-control-center symbol -->
+  <!-- License: GPL-3.0+ (Orion-X project, original work) -->
+  <!-- Header kept inside <svg>: gdk-pixbuf only recognizes an SVG whose "<svg" falls in the first 256 bytes (DEC-PHASE13-017). -->
   <circle cx="24" cy="24" r="23" fill="#1a1a1a" stroke="#FF5722" stroke-width="1"/>
   <!-- Grid of control sliders — cyberdeck control panel -->
   <rect x="10" y="12" width="28" height="3" rx="1.5" fill="#3a3a3a"/>

@@ -63,6 +63,8 @@ class DJDeck(Gtk.Window):
     def __init__(self) -> None:
         super().__init__(title="Orion-X DJ Deck")
         self.set_name("deck")
+        # Same glyph as the menu entry (#104); a missing theme icon is harmless.
+        self.set_icon_name("orionx-dj")
         self.set_default_size(420, 560)
         self.set_resizable(False)
 

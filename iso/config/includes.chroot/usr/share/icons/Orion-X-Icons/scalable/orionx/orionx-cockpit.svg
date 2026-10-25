@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Orion-X Phoenix Edition — Orion Cockpit icon (threat-pressure gauge) -->
-<!-- @decision DEC-PHASE12-127 — distinct glyph for the primary surface (QA UX-44) -->
-<!-- License: GPL-3.0+ (Orion-X project, original work) -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- Orion-X Phoenix Edition — Orion Cockpit icon (threat-pressure gauge) -->
+  <!-- @decision DEC-PHASE12-127 — distinct glyph for the primary surface (QA UX-44) -->
+  <!-- License: GPL-3.0+ (Orion-X project, original work) -->
+  <!-- Header kept inside <svg>: gdk-pixbuf only recognizes an SVG whose "<svg" falls in the first 256 bytes (DEC-PHASE13-017). -->
   <circle cx="24" cy="24" r="23" fill="#1a1a1a" stroke="#FF5722" stroke-width="1"/>
   <!-- gauge arc: calm (green), elevated (amber), hostile (red) -->
   <path d="M10 30 A14 14 0 0 1 15.3 14.9" fill="none" stroke="#34ff9e" stroke-width="3.5" stroke-linecap="round"/>

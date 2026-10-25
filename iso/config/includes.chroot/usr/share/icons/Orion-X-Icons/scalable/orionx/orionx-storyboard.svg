@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
+  <!-- Orion-X Phoenix Edition — Storyboard Generator icon (three frames and a pen) -->
+  <!-- @decision DEC-PHASE13-018 — Orion-themed glyph replacing a generic theme icon (#104) -->
+  <!-- License: GPL-3.0+ (Orion-X project, original work) -->
+  <circle cx="24" cy="24" r="23" fill="#1a1a1a" stroke="#FF5722" stroke-width="1"/>
+  <!-- three storyboard frames -->
+  <rect x="9" y="12" width="13" height="10" rx="1.5" fill="#2a2a2a" stroke="#e6e6e6" stroke-width="1.5"/>
+  <rect x="26" y="12" width="13" height="10" rx="1.5" fill="#2a2a2a" stroke="#e6e6e6" stroke-width="1.5"/>
+  <rect x="9" y="26" width="13" height="10" rx="1.5" fill="#2a2a2a" stroke="#e6e6e6" stroke-width="1.5"/>
+  <path d="M11.5 20 L15 16 L17.5 18.5 L19.5 16.5" fill="none" stroke="#33d9ff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="32.5" cy="17" r="2.2" fill="#ffb15c"/>
+  <rect x="11.5" y="30" width="8" height="2" rx="1" fill="#555555"/>
+  <!-- pen drawing the fourth frame -->
+  <path d="M27 38 L28 34 L37 25 L40 28 L31 37 Z" fill="#FF5722" stroke="#1a1a1a" stroke-width="0.8" stroke-linejoin="round"/>
+  <path d="M27 38 L28 34 L31 37 Z" fill="#e6e6e6"/>
+</svg>

@@ -65,6 +65,10 @@ POLL_EVENTS_MS = 500
 POLL_NET_MS = 1000
 POLL_SYS_MS = 5000
 POLL_VITALS_MS = 2000      # deck vitals (DEC-PHASE12-049): two /proc/stat samples apart
+# The window wears the same gauge as its launcher (#103), so the tasklist and
+# Alt-Tab match the menu. The Phoenix PNG is the fallback for a session whose
+# icon theme cannot supply the gauge.
+ICON_NAME = "orionx-cockpit"
 ICON = "/usr/share/pixmaps/orionx.png"
 FONT = "Hack"         # fonts-hack-otf is in the image; cairo falls back if absent
 
@@ -89,10 +93,13 @@ class Cockpit(Gtk.Window):
         self.set_default_size(1280, 680)
         if not fullscreen:
             self.maximize()
-        try:
-            self.set_icon_from_file(ICON)
-        except Exception:
-            pass
+        if Gtk.IconTheme.get_default().has_icon(ICON_NAME):
+            self.set_icon_name(ICON_NAME)
+        else:
+            try:
+                self.set_icon_from_file(ICON)
+            except Exception:
+                pass
         self._fs = False
         self.demo = demo
 
