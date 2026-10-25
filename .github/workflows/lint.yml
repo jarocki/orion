@@ -21,7 +21,9 @@ jobs:
           python-version: '3.13'
 
       - name: Install Python tools
-        run: pip install ruff pytest pyyaml
+        # Match the validated local linter until existing scripts are migrated
+        # to newer Ruff rules; an unpinned upgrade broke unrelated v3.0.0 code.
+        run: pip install ruff==0.15.12 pytest pyyaml
 
       - name: Lint
         run: make lint
