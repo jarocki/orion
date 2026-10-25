@@ -444,6 +444,7 @@ def make_unsealer(key_path: Path):
 def resolve_local_path(path: str | None, stdin_is_tty: bool) -> str:
     """Decide what a local run reads, before anything blocks on it.
 
+    @decision DEC-PHASE13-016
     The old default was stdin unconditionally, so the advertised bare command
     sat on an interactive terminal waiting for input that was never coming,
     with no output at all — the reported "hang". Now: piped input is still
