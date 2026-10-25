@@ -38,7 +38,7 @@ mk_image() {  # complete synthetic image at $1
     x /opt/orionx/venv/comms/bin/matrix-commander; l /usr/local/bin/matrix-commander /opt/orionx/venv/comms/bin/matrix-commander
     x /opt/orionx/venv/forensics/bin/vol; l /usr/local/bin/vol /opt/orionx/venv/forensics/bin/vol
     f /opt/orionx/venv/forensics/pyvenv.cfg 'home = /usr/bin'
-    f /opt/orionx/venv/forensics/lib/python3.13/site-packages/volatility3/__init__.py
+    f /opt/orionx/venv/forensics/lib/python3.13/site-packages/volatility3/framework/__init__.py
     x /usr/bin/tcpdump; x /usr/bin/binwalk; x /usr/bin/x86_64-linux-gnu-strings; l /usr/bin/strings x86_64-linux-gnu-strings
     x /usr/bin/espeak-ng; x /usr/bin/pacat; l /usr/bin/paplay pacat
     x /opt/zeek/bin/zeek; l /usr/bin/zeek /opt/zeek/bin/zeek
@@ -108,7 +108,7 @@ grep -nE 'pass "[^"]*(skipped|informational only)' "$GATE" >/dev/null && tfail "
 # that calls its helpers (v3.0.0 gate: sourced at section 37, used at 32).
 _cp="$REPO_ROOT/tests/integration/test-iso-content-presence.sh"
 _src_ln="$(grep -nE '^\. "\$SCRIPT_DIR/lib/release-promises.sh"' "$_cp" | head -1 | cut -d: -f1)"
-_use_ln="$(grep -nE 'sqf_resolve|dpkg_state|assert_release_promises' "$_cp" | grep -vE '^[0-9]+:\s*#' | grep -v 'release-promises.sh' | head -1 | cut -d: -f1)"
-if [[ -n "$_src_ln" && -n "$_use_ln" && "$_src_ln" -lt "$_use_ln" ]]; then pass "content-presence sources the helper library (line $_src_ln) before its first use (line $_use_ln)"; else fail "helper library sourced before use" "source=$_src_ln first use=$_use_ln"; fi
+_use_ln="$(grep -nE 'sqf_resolve|dpkg_state|assert_release_promises' "$_cp" | grep -vE '^[0-9]+:[[:space:]]*(#|/)' | grep -v 'release-promises.sh' | head -1 | cut -d: -f1)"
+if [[ -n "$_src_ln" && -n "$_use_ln" && "$_src_ln" -lt "$_use_ln" ]]; then tpass "content-presence sources the helper library (line $_src_ln) before its first use (line $_use_ln)"; else tfail "helper library sourced before use" "source=$_src_ln first use=$_use_ln"; fi
 echo; echo "Results: $T_PASS passed, $T_FAIL failed"
 [[ $T_FAIL -eq 0 ]]

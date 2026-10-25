@@ -122,10 +122,20 @@ assert_release_promises() {
     if [[ "$vt" == /opt/orionx/venv/forensics/* && -x "$SQF$vt" ]]; then
         pass "37m: /usr/local/bin/vol resolves into the forensics venv ($vt)"
     else fail "37m: /usr/local/bin/vol resolves into /opt/orionx/venv/forensics" "resolves to '${vt:-<nothing>}' (DEC-PHASE12-116)"; fi
-    local volpkg
-    volpkg="$(find "$SQF/opt/orionx/venv/forensics/lib" -maxdepth 4 -path '*/site-packages/volatility3/__init__.py' 2>/dev/null | head -1)"
-    if [[ $EUID -eq 0 ]] && command -v chroot >/dev/null 2>&1 && [[ -x "$SQF/opt/orionx/venv/forensics/bin/python" ]]; then
-        if chroot "$SQF" /opt/orionx/venv/forensics/bin/python -c 'import volatility3' >/dev/null 2>&1; then
+    local volpkg="" pkgdir
+    for pkgdir in "$SQF"/opt/orionx/venv/forensics/lib/python*/site-packages/volatility3; do
+        if [[ -f "$pkgdir/framework/__init__.py" ]]; then volpkg="$pkgdir"; break; fi
+    done
+    local -a chroot_cmd=()
+    if command -v chroot >/dev/null 2>&1; then
+        if [[ $EUID -eq 0 ]]; then
+            chroot_cmd=(chroot)
+        elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+            chroot_cmd=(sudo -n chroot)
+        fi
+    fi
+    if [[ ${#chroot_cmd[@]} -gt 0 && -x "$SQF/opt/orionx/venv/forensics/bin/python" ]]; then
+        if "${chroot_cmd[@]}" "$SQF" /opt/orionx/venv/forensics/bin/python -c 'import volatility3.framework' >/dev/null 2>&1; then
             pass "37m: forensics venv python imports volatility3 (run in the image via chroot)"
         else fail "37m: forensics venv python imports volatility3" "chroot import failed"; fi
     elif [[ -n "$volpkg" ]] && grep -q '^home = /usr/bin' "$SQF/opt/orionx/venv/forensics/pyvenv.cfg" 2>/dev/null; then
