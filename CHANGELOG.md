@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased] — v3.1.0
+## [v3.1.0] — 2026-10-25 (feature release; ISO verification pending)
+
+Five operator-requested changes, tracked under the
+[v3.1.0 milestone](https://github.com/jarocki/orion/milestone/1) (#103–#111)
+and defined in MASTER_PLAN.md (DEC-PHASE13-013…022). The release includes the
+v3.0.1 and v3.0.2 security patches. Unit, lint and headless GTK tests cover
+the source changes. The icon fix was reproduced and verified against the
+v3.0.0 squashfs's own GTK. A v3.1.0 ISO has not yet been built, booted, or
+verified on the reference hardware.
 
 ### Fixed
 
@@ -56,6 +64,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   starts and finishes, a heartbeat every 100,000 lines, object-store listing
   and fetch counts, and how long intel loading, enrichment, correlation, the
   SQL engine load and the query took. Report output on stdout is unchanged.
+
+### Known issues and release status
+
+- Not verified on the reference deck, which was offline. The Network tab's
+  VPN connect/import and capture start/stop/export were tested against
+  fixtures and a headless GTK session, not against a live NetworkManager or a
+  real capture.
+- The Workbench still launches as a terminal plus Firefox, so its running
+  windows show those programs' icons. The menu, desktop and panel icon are
+  fixed.
+- Per-interface protocol counts need capture or Zeek data. The Network tab
+  shows protocol traffic for the whole deck and says so (#93).
+- Signing secrets are not provisioned in CI. The v3.0.2 release run stopped
+  at *Import GPG signing key*, and a v3.1.0 tag run will stop at the same
+  step. Stage and sign through the manual path (release-process §10), or
+  provision the secrets.
+- The v3.0.0 known issues listed below remain open unless separately closed.
 
 ## [v3.0.2] — 2026-10-24 (application security patch; ISO verification pending)
 
