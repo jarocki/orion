@@ -55,6 +55,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -65,6 +66,11 @@ import logquery_intel as intel_mod  # noqa: E402
 import logquery_sources as sources  # noqa: E402
 
 PROG = "orionx-logquery"
+
+# What a bare run reads when nobody piped anything in. Every surface that
+# advertises the command without --path (Workbench card, Attack Map banners,
+# orionx-help) is pointing the operator at this deck's own event stream.
+DECK_EVIDENCE = Path("/run/orionx/events.jsonl")
 
 _COLOR = {"dim": "\033[2m", "red": "\033[31m", "grn": "\033[32m",
           "yel": "\033[33m", "cyn": "\033[36m", "rst": "\033[0m"}
@@ -78,6 +84,35 @@ def info(message: str) -> None:
 
 def warn(message: str) -> None:
     print(f"{_COLOR['yel']}!{_COLOR['rst']} {message}", file=sys.stderr)
+
+
+# -v narration. Off by default so the normal output stays a report, not a log.
+_VERBOSE = False
+_STARTED = time.monotonic()
+
+
+def trace(message: str) -> None:
+    """One line of -v narration on stderr, stamped with seconds since start."""
+    if _VERBOSE:
+        elapsed = time.monotonic() - _STARTED
+        print(f"{_COLOR['dim']}[{elapsed:6.1f}s]{_COLOR['rst']} {message}",
+              file=sys.stderr, flush=True)
+
+
+class _Stage:
+    """Trace a named step's start and its duration under -v."""
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def __enter__(self):
+        self.started = time.monotonic()
+        trace(f"{self.name} ...")
+        return self
+
+    def __exit__(self, *exc):
+        trace(f"{self.name}: {time.monotonic() - self.started:.1f}s")
+        return False
 
 
 def fail(message: str, hint: str = "") -> int:
@@ -98,6 +133,7 @@ WHAT IT IS
   its reasons every time, so you can disagree with it.
 
 START HERE (no credentials, no network, no setup)
+  orionx-logquery --report summary        (this deck's own event stream)
   orionx-logquery --path /var/log/nginx/access.log
   orionx-logquery --path /var/log --report targeted
   orionx-logquery --path /run/orionx/events.jsonl --report summary
@@ -105,6 +141,8 @@ START HERE (no credentials, no network, no setup)
 
 WHERE EVIDENCE COMES FROM  (--source)
   local  (default)  a file, a directory, or - for stdin. Needs nothing.
+                    With no --path and nothing piped in, it reads this
+                    deck's event stream, /run/orionx/events.jsonl.
   r2                Cloudflare R2 sealed archive   (needs python3-boto3 + key)
   s3                any S3-compatible endpoint     (needs python3-boto3)
   api               an HTTP endpoint serving NDJSON or JSON  (stdlib only)
@@ -136,6 +174,11 @@ FOCUS ON ONE THING  (--focus, works on every report)
 INTEL
   sudo orionx-freshen-intel      fetch the CISA KEV catalog (needs network)
   orionx-logquery --intel-status  show what is cached and how old it is
+
+SEEMS STUCK?
+  Add -v. It narrates every step on stderr — each file as it is read, a
+  heartbeat on long files, and how long enrichment, the engine and the query
+  took — so slow is never mistaken for hung.
 
 Full report list:  orionx-logquery --list-reports
 """
@@ -398,10 +441,36 @@ def make_unsealer(key_path: Path):
     return unseal
 
 
+def resolve_local_path(path: str | None, stdin_is_tty: bool) -> str:
+    """Decide what a local run reads, before anything blocks on it.
+
+    The old default was stdin unconditionally, so the advertised bare command
+    sat on an interactive terminal waiting for input that was never coming,
+    with no output at all — the reported "hang". Now: piped input is still
+    read as before; an interactive bare run reads the deck's event stream and
+    says so; and if that is not here, it fails at once with examples instead
+    of waiting.
+    """
+    if path is not None:
+        if path == "-" and stdin_is_tty:
+            info("reading evidence typed or pasted here — end it with Ctrl-D")
+        return path
+    if not stdin_is_tty:
+        return "-"
+    if DECK_EVIDENCE.exists():
+        info(f"no --path given: reading this deck's event stream, {DECK_EVIDENCE}")
+        return str(DECK_EVIDENCE)
+    raise sources.SourceError(
+        f"no evidence to read: --path was not given, nothing was piped in, "
+        f"and {DECK_EVIDENCE} is not here",
+        f"point it at evidence:  {PROG} --path /var/log --report targeted\n"
+        f"or pipe it in:         journalctl -k | {PROG} --path - --report ports")
+
+
 def acquire(args, window) -> tuple[list[dict], list[str]]:
     """Fetch records from the selected source. Returns (records, notes)."""
     if args.source == "local":
-        return sources.read_local(args.path)
+        return sources.read_local(args.path, progress=trace if _VERBOSE else None)
 
     if args.source == "api":
         token = None
@@ -417,7 +486,8 @@ def acquire(args, window) -> tuple[list[dict], list[str]]:
         if not args.api_url:
             raise sources.SourceError("--source api needs --api-url",
                                       "e.g. --api-url https://host/logs.ndjson")
-        return sources.read_api(args.api_url, token, timeout=args.timeout)
+        return sources.read_api(args.api_url, token, timeout=args.timeout,
+                                progress=trace if _VERBOSE else None)
 
     env_file = Path(args.env or sources.DEFAULT_ENV_FILE).expanduser()
     if env_file and env_file.exists():
@@ -434,7 +504,7 @@ def acquire(args, window) -> tuple[list[dict], list[str]]:
     prefixes = sources.day_prefixes(window, args.prefix or "raw")
     return sources.read_object_store(
         args.source, creds, prefixes, unseal=unseal, limit=args.limit,
-        endpoint=args.endpoint_url)
+        endpoint=args.endpoint_url, progress=trace if _VERBOSE else None)
 
 
 # ---------------------------------------------------------------------------
@@ -450,8 +520,10 @@ def build_parser() -> argparse.ArgumentParser:
     src = parser.add_argument_group("source")
     src.add_argument("--source", choices=sources.SOURCES, default="local",
                      help="where the evidence comes from (default: local)")
-    src.add_argument("--path", default="-",
-                     help="local file, directory, or - for stdin (default: -)")
+    src.add_argument("--path",
+                     help="local file, directory, or - for stdin (default: "
+                          "stdin when piped, else this deck's event stream "
+                          f"{DECK_EVIDENCE})")
     src.add_argument("--api-url", help="HTTP(S) endpoint serving NDJSON or JSON")
     src.add_argument("--api-token-file",
                      help="file holding a bearer token (mode-checked, never logged)")
@@ -496,6 +568,9 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument("--dry-run", action="store_true",
                      help="print would-be bus events instead of publishing")
     out.add_argument("--keep", help="write the normalized corpus to this file (0600)")
+    out.add_argument("-v", "--verbose", action="store_true",
+                     help="narrate each step on stderr: files read, progress "
+                          "on long reads, and how long each stage took")
 
     doc = parser.add_argument_group("help")
     doc.add_argument("--guide", action="store_true",
@@ -535,8 +610,10 @@ def cmd_intel_status(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    global _VERBOSE
     parser = build_parser()
     args = parser.parse_args(argv)
+    _VERBOSE = args.verbose
 
     if args.guide:
         print(GUIDE)
@@ -561,9 +638,15 @@ def main(argv: list[str] | None = None) -> int:
     except sources.SourceError as exc:
         return fail(str(exc), exc.hint)
 
+    trace(f"window: {'from ' + window.isoformat() if window else 'all time'}")
+
     # --- acquire ----------------------------------------------------------
     try:
-        records, notes = acquire(args, window)
+        if args.source == "local":
+            args.path = resolve_local_path(args.path, sys.stdin.isatty())
+        with _Stage(f"acquire from {args.source}"
+                    + (f" ({args.path})" if args.source == "local" else "")):
+            records, notes = acquire(args, window)
     except sources.SourceError as exc:
         return fail(str(exc), exc.hint)
     except KeyboardInterrupt:
@@ -600,13 +683,18 @@ def main(argv: list[str] | None = None) -> int:
     freshness = {"state": intel_mod.STATE_MISSING, "age_days": None,
                  "warn": False, "label": "enrichment disabled (--no-enrich)"}
     if not args.no_enrich:
-        intel = intel_mod.load_intel(args.intel_dir)
+        with _Stage("load intel"):
+            intel = intel_mod.load_intel(args.intel_dir)
+        trace(f"intel cache {intel['cache_dir']}: "
+              f"{len(intel['signatures'])} signature(s), "
+              f"{intel['catalog_count']} KEV entr(ies)")
         freshness = intel["freshness"]
         banner = intel_mod.freshness_banner(freshness, intel["catalog_count"])
         # Always stated, on every run, whatever the state. This is the whole
         # point: stale intel is never presented as current.
         (warn if freshness["warn"] else info)(banner)
-        intel_mod.enrich_all(records, intel)
+        with _Stage(f"enrich {len(records):,} record(s)"):
+            intel_mod.enrich_all(records, intel)
     else:
         intel_mod.enrich_all(records, None)
         warn("enrichment disabled — tool/CVE/KEV columns will be empty")
@@ -626,10 +714,12 @@ def main(argv: list[str] | None = None) -> int:
              "delete it when the case closes")
 
     report = args.report or ("summary" if not args.sql else None)
+    trace(f"report: {report or 'custom --sql'}, format {args.format}")
 
     # --- python-side correlation reports ---------------------------------
     if report == "targeted":
-        result = correlate.correlate(records)
+        with _Stage(f"correlate {len(records):,} record(s)"):
+            result = correlate.correlate(records)
         render_targeted(result, freshness, args.format)
         if args.publish or args.dry_run:
             count = publish_findings(result, freshness, dry_run=args.dry_run)
@@ -641,12 +731,16 @@ def main(argv: list[str] | None = None) -> int:
             return fail("the 'similarity' report needs a seed address",
                         "add: --focus <IP>")
         seed = args.focus.split(",")[0].strip()
-        intel_mod.enrich_all(unfocused, intel if not args.no_enrich else None)
-        render_similarity(correlate.similarity(unfocused, seed), args.format)
+        with _Stage(f"enrich the unfocused {len(unfocused):,} record(s)"):
+            intel_mod.enrich_all(unfocused, intel if not args.no_enrich else None)
+        with _Stage(f"compare {seed} against every other source"):
+            result = correlate.similarity(unfocused, seed)
+        render_similarity(result, args.format)
         return 0
 
     if report == "cadence":
-        rows = correlate.cadence(records)
+        with _Stage(f"cadence over {len(records):,} record(s)"):
+            rows = correlate.cadence(records)
         columns = ["ip", "requests", "mean_gap_s", "cv", "machine_regular", "org"]
         render_rows(columns, [[r[c] for c in columns] for r in rows],
                     args.format)
@@ -663,7 +757,8 @@ def main(argv: list[str] | None = None) -> int:
              f"{freshness['label']}. Read its CVE/KEV columns accordingly.")
 
     try:
-        connection = engine.make_engine(args.engine, records)
+        with _Stage(f"load {len(records):,} record(s) into {args.engine}"):
+            connection = engine.make_engine(args.engine, records)
     except engine.EngineUnavailable as exc:
         return fail(str(exc), exc.hint)
 
@@ -675,7 +770,9 @@ def main(argv: list[str] | None = None) -> int:
     sql = args.sql or engine.SQL_REPORTS[report]
     info(f"engine: {connection.name}, {len(records)} record(s)")
     try:
-        columns, rows = connection.query(sql)
+        with _Stage("run query"):
+            columns, rows = connection.query(sql)
+        trace(f"query returned {len(rows):,} row(s)")
     except Exception as exc:
         connection.close()
         return fail(f"query failed: {exc}",
@@ -684,7 +781,8 @@ def main(argv: list[str] | None = None) -> int:
     connection.close()
 
     if args.publish or args.dry_run:
-        result = correlate.correlate(records)
+        with _Stage(f"correlate {len(records):,} record(s) for the bus"):
+            result = correlate.correlate(records)
         count = publish_findings(result, freshness, dry_run=args.dry_run)
         info(f"{count} event(s) {'would be ' if args.dry_run else ''}published")
     return 0

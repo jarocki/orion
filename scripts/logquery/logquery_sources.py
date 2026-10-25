@@ -42,6 +42,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -330,43 +331,80 @@ def iter_local_paths(target: Path) -> list[Path]:
                       "directory, or - for stdin")
 
 
-def read_local(target, stdin=None) -> tuple[list[dict], list[str]]:
+def _human_size(size: int) -> str:
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if size < 1024 or unit == "GiB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GiB"
+
+
+# How often a long read reports that it is still alive. Every line costs one
+# modulo; a 100k-line beat is about once a second on the reference deck.
+PROGRESS_EVERY_LINES = 100_000
+
+
+def _read_stream(stream, origin: str, records: list[dict], progress=None):
+    """Parse one text stream into records. Returns (parsed, skipped)."""
+    parsed = skipped = 0
+    for lineno, line in enumerate(stream, 1):
+        rec = parse_line(line)
+        if rec is None:
+            skipped += 1
+        else:
+            rec["origin"] = origin
+            records.append(rec)
+            parsed += 1
+        if progress and lineno % PROGRESS_EVERY_LINES == 0:
+            progress(f"{origin}: {lineno:,} line(s) read, "
+                     f"{parsed:,} record(s) so far")
+    return parsed, skipped
+
+
+def read_local(target, stdin=None, progress=None) -> tuple[list[dict], list[str]]:
     """Read local evidence. Needs no credentials, no network, no key.
 
     Returns (records, notes). Notes are operator-facing observations, not
     errors: files that yielded nothing are named rather than silently skipped.
+    progress, when given, is called with a line of narration as each file
+    starts, every PROGRESS_EVERY_LINES lines, and as each file finishes — the
+    -v trace, so a long read is never indistinguishable from a hang.
     """
     notes: list[str] = []
     records: list[dict] = []
     if str(target) == "-":
         stream = stdin if stdin is not None else sys.stdin
-        parsed = skipped = 0
-        for line in stream:
-            rec = parse_line(line)
-            if rec is None:
-                skipped += 1
-                continue
-            rec["origin"] = "-"
-            records.append(rec)
-            parsed += 1
+        if progress:
+            progress("reading stdin until end of input")
+        started = time.monotonic()
+        parsed, skipped = _read_stream(stream, "-", records, progress)
+        if progress:
+            progress(f"stdin: done in {time.monotonic() - started:.1f}s")
         notes.append(f"stdin: {parsed} record(s), {skipped} unparsed line(s)")
         return records, notes
 
-    for path in iter_local_paths(Path(target)):
-        parsed = skipped = 0
+    paths = iter_local_paths(Path(target))
+    if progress:
+        total = sum(p.stat().st_size for p in paths if p.exists())
+        progress(f"{target}: {len(paths)} file(s) to read, {_human_size(total)}")
+    for index, path in enumerate(paths, 1):
+        if progress:
+            try:
+                size = _human_size(path.stat().st_size)
+            except OSError:
+                size = "size unknown"
+            progress(f"[{index}/{len(paths)}] {path} ({size})")
+        started = time.monotonic()
         try:
             with open(path, "r", errors="replace") as handle:
-                for line in handle:
-                    rec = parse_line(line)
-                    if rec is None:
-                        skipped += 1
-                        continue
-                    rec["origin"] = str(path)
-                    records.append(rec)
-                    parsed += 1
+                parsed, skipped = _read_stream(handle, str(path), records, progress)
         except OSError as exc:
             notes.append(f"{path}: unreadable ({exc.strerror})")
             continue
+        if progress:
+            progress(f"[{index}/{len(paths)}] {parsed:,} record(s), "
+                     f"{skipped:,} unparsed line(s) in "
+                     f"{time.monotonic() - started:.1f}s")
         if parsed == 0:
             notes.append(f"{path}: no recognizable records ({skipped} line(s))")
         else:
@@ -479,8 +517,13 @@ def _require_boto3():
 
 def read_object_store(source: str, creds: dict, prefixes: list[str],
                       unseal=None, limit: int | None = None,
-                      endpoint: str | None = None) -> tuple[list[dict], list[str]]:
-    """List and read sealed/plain objects from R2 or a generic S3 endpoint."""
+                      endpoint: str | None = None,
+                      progress=None) -> tuple[list[dict], list[str]]:
+    """List and read sealed/plain objects from R2 or a generic S3 endpoint.
+
+    progress narrates the listing and every 25th fetch for -v. It is given
+    bucket, prefix and counts only — never a key's contents or an error body.
+    """
     boto3, Config = _require_boto3()
     if source == "r2":
         url = f"https://{creds['account_id']}.r2.cloudflarestorage.com"
@@ -498,6 +541,8 @@ def read_object_store(source: str, creds: dict, prefixes: list[str],
     keys: list[str] = []
     paginator = client.get_paginator("list_objects_v2")
     for prefix in prefixes:
+        if progress:
+            progress(f"{source}: listing {bucket}/{prefix}")
         try:
             for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
                 for obj in page.get("Contents", []):
@@ -512,9 +557,14 @@ def read_object_store(source: str, creds: dict, prefixes: list[str],
         if limit and len(keys) >= limit:
             break
 
+    if progress:
+        progress(f"{source}: {len(keys)} object(s) to fetch")
     records, notes = [], []
     bad = 0
-    for key in keys:
+    for index, key in enumerate(keys, 1):
+        if progress and (index % 25 == 0 or index == len(keys)):
+            progress(f"{source}: fetched {index}/{len(keys)} object(s), "
+                     f"{len(records)} record(s) so far")
         try:
             body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
             payload = json.loads(body)
@@ -535,7 +585,7 @@ def read_object_store(source: str, creds: dict, prefixes: list[str],
 # remote API source — stdlib urllib, no third-party dependency
 # ---------------------------------------------------------------------------
 def read_api(url: str, token: str | None = None, timeout: int = 30,
-             opener=None) -> tuple[list[dict], list[str]]:
+             opener=None, progress=None) -> tuple[list[dict], list[str]]:
     """Pull records from a remote HTTP endpoint returning NDJSON or JSON.
 
     Deliberately stdlib-only: an IR tool that cannot reach its own evidence
@@ -550,6 +600,10 @@ def read_api(url: str, token: str | None = None, timeout: int = 30,
     request = urllib.request.Request(url, headers={"Accept": "application/x-ndjson, application/json"})
     if token:
         request.add_header("Authorization", f"Bearer {token}")
+    if progress:
+        # The URL is operator-supplied and already on their command line; the
+        # token is never part of it.
+        progress(f"api: GET {url} (timeout {timeout}s)")
     try:
         opener = opener or urllib.request.urlopen
         with opener(request, timeout=timeout) as response:
@@ -562,6 +616,8 @@ def read_api(url: str, token: str | None = None, timeout: int = 30,
         raise SourceError(f"api: could not reach {url}",
                           f"{type(exc).__name__} — check connectivity and "
                           "the Shields Up posture") from exc
+    if progress:
+        progress(f"api: received {_human_size(len(body))}")
     return _records_from_text(body, origin=f"api:{url}")
 
 
