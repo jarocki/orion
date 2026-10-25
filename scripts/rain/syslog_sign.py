@@ -81,6 +81,17 @@ def _write_new(path: Path, data: bytes, mode: int) -> None:
         os.close(fd)
 
 
+def _certificate_common_name(hostname: str) -> str:
+    """Keep the certificate CN within X.509's 64-byte limit without aliasing hosts."""
+    raw = hostname.encode("utf-8")
+    if not raw:
+        return "orionx.local"
+    if len(raw) <= 64:
+        return hostname
+    prefix = raw[:47].decode("utf-8", "ignore")
+    return f"{prefix}-{hashlib.sha256(raw).hexdigest()[:16]}"
+
+
 def _load_or_create_identity(key_path: Path, cert_path: Path, hostname: str):
     try:
         fd = _secure_regular(key_path, 0o600)
@@ -106,7 +117,8 @@ def _load_or_create_identity(key_path: Path, cert_path: Path, hostname: str):
         fd = _secure_regular(cert_path, 0o644)
     except FileNotFoundError:
         now = dt.datetime.now(dt.timezone.utc)
-        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)])
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,
+                                            _certificate_common_name(hostname))])
         cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
                 .public_key(key.public_key()).serial_number(x509.random_serial_number())
                 .not_valid_before(now - dt.timedelta(minutes=5))

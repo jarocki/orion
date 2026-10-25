@@ -1,6 +1,7 @@
 """Live Unix-socket and RFC 5848 regression tests for the event boundary."""
 
 import json
+import hashlib
 import multiprocessing
 import os
 import socket
@@ -11,12 +12,16 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from cryptography.x509.oid import NameOID
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts/rain"))
 import rain_lib  # noqa: E402
 import rain_broker  # noqa: E402
 from rain_broker import EventBroker  # noqa: E402
+from syslog_sign import SignedSyslog  # noqa: E402
 from verify_syslog_sign import verify_log  # noqa: E402
 
 
@@ -71,6 +76,19 @@ class BrokerTests(unittest.TestCase):
             sock.connect(str(self.socket))
             sock.sendall(payload)
             return sock.recv(16)
+
+    def test_long_hostname_has_valid_distinct_certificate_name(self):
+        hostname = "runner-" + "x" * 80
+        with patch("syslog_sign.socket.getfqdn", return_value=hostname):
+            signer = SignedSyslog(self.signed, self.base / "sign.key",
+                                 self.base / "sign.crt", self.base / "sign.state")
+        try:
+            common_name = signer.cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)[0].value
+            self.assertEqual(signer.hostname, hostname)
+            self.assertLessEqual(len(common_name.encode("utf-8")), 64)
+            self.assertTrue(common_name.endswith(hashlib.sha256(hostname.encode()).hexdigest()[:16]))
+        finally:
+            signer.close()
 
     def test_migration_replaces_open_world_writable_inode(self):
         self.spool.write_text("old untrusted row\n")

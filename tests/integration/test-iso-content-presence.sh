@@ -3063,7 +3063,9 @@ _initrd="$(find "$SQF/boot" -maxdepth 1 -name 'initrd.img-*' 2>/dev/null | head 
 if [[ -z "$_initrd" ]]; then
     fail "29b: initrd present in the image" "no /boot/initrd.img-* in the squashfs"
 elif command -v lsinitramfs >/dev/null 2>&1; then
-    if lsinitramfs "$_initrd" 2>/dev/null | grep -q 'plymouth/themes/orionx-phoenix'; then
+    if ! _initrd_listing="$(lsinitramfs "$_initrd" 2>&1)"; then
+        fail "29b: initrd can be inspected" "lsinitramfs failed: ${_initrd_listing:0:300}"
+    elif grep -q 'plymouth/themes/orionx-phoenix' <<< "$_initrd_listing"; then
         pass "29b: Plymouth orionx-phoenix theme is inside the shipped initrd"
     else
         fail "29b: Plymouth theme inside the initrd" "lsinitramfs $(basename "$_initrd") has no plymouth/themes/orionx-phoenix"
