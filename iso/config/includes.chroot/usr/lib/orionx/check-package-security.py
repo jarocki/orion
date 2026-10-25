@@ -47,6 +47,8 @@ def installed_packages(path: Path, fmt: str) -> dict[str, str]:
             if name in packages and packages[name] != version:
                 raise ValueError(f"conflicting versions of {name}")
             packages[name] = version
+        if not packages:
+            raise ValueError("dpkg status has no installed packages")
     return packages
 
 

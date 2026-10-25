@@ -73,3 +73,13 @@ def test_dpkg_status_parses_only_installed(tmp_path):
 def test_missing_inventory_fails_closed(tmp_path):
     with pytest.raises(OSError):
         MODULE.installed_packages(tmp_path / "missing", "packages")
+
+
+def test_status_with_no_installed_packages_fails_closed(tmp_path):
+    status = tmp_path / "status"
+    status.write_text(
+        "Package: php8.4-cli\nStatus: deinstall ok config-files\n"
+        "Version: 8.4.26-1~deb13u1\n"
+    )
+    with pytest.raises(ValueError, match="no installed packages"):
+        MODULE.installed_packages(status, "status")
