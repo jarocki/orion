@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition User Guide
 
-Release: **<!--orionx:release-->v3.0.0<!--/orionx:release-->** — Debian 13 "trixie", Python 3.13, Linux 6.12. On the deck, the rendered guide shows the exact build from `/etc/orionx-version`.
+Release: **<!--orionx:release-->v3.0.1<!--/orionx:release-->** — Debian 13 "trixie", Python 3.13, Linux 6.12. On the deck, the rendered guide shows the exact build from `/etc/orionx-version`. The v3.0.1 signed ISO is pending; v3.0.0 remains the latest published build.
 
 ## Table of Contents
 
@@ -282,7 +282,7 @@ Nothing is installed on the computer — this checks the file you downloaded and
    ```bash
    grep ISO_VERSION= /etc/orionx-version
    ```
-   This release prints `ISO_VERSION=v3.0.0`. (The earlier v2.2.0-beta printed `ISO_VERSION=v2.2.0-trixie-dev9`.)
+   The v3.0.1 image prints `ISO_VERSION=v3.0.1`; the published v3.0.0 image prints `ISO_VERSION=v3.0.0`.
 
 4. Run the built-in self-check: `sudo orionx-diag` (without `sudo` the systemd and AppArmor checks are skipped). See [orionx-diag.md](orionx-diag.md).
 
@@ -2104,4 +2104,4 @@ Ctrl+E                         # Export packet dissections
 
 ---
 
-This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.0.0<!--/orionx:release--> (Debian 13 "trixie"). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.
+This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.0.1<!--/orionx:release--> (Debian 13 "trixie"). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.

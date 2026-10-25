@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v3.0.1] — 2026-10-24 (PHP/Trixie security maintenance)
+
+- Refresh the Debian 13 (Trixie) package indices and apply available security
+  upgrades immediately before sealing the live image. An index or upgrade
+  failure now stops the build.
+- Refuse to publish an ISO containing a PHP 8.4 binary package older than
+  Debian's `8.4.27-1~deb13u1` fix for CVE-2026-109618 and CVE-2026-109619.
+  The check reads both the chroot package database and the built ISO inventory;
+  an absent or malformed inventory fails closed.
+- The published v3.0.0 ISO inventory did not list PHP, so this is a release
+  guard against stale or future PHP-bearing images, not evidence that v3.0.0
+  exposed a PHP service.
+
 ## [v3.0.0] — 2026-10-07 (release; built from the v2.2.0-rc9 line)
 
 **What this release is.** The v2.2.0 release-candidate line (rc5–rc9, below), taken

@@ -12,8 +12,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install ShellCheck
-        run: sudo apt-get install -y shellcheck
+      - name: Install shell and ISO test tools
+        run: sudo apt-get install -y shellcheck xorriso squashfs-tools
 
       - name: Set up Python
         uses: actions/setup-python@v5

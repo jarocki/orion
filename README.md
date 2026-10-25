@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition — Cyberdeck for the Good Guys
 
-**Version:** v3.0.0 — [release page](https://github.com/jarocki/orion/releases/tag/v3.0.0). Previous published build: [v2.2.0-beta](https://github.com/jarocki/orion/releases/tag/v2.2.0-beta) (pre-release)
+**Source version:** v3.0.1 (PHP/Trixie security maintenance; signed ISO pending). Latest published build: [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0).
 **Base:** Debian 13 "trixie" live (kernel 6.12, Python 3.13, XFCE 4.20) | **Runtime:** Qwen2.5-3B-Instruct (Apache-2.0)
 **Previous line:** v2.1.0-bullseye-rain (final Debian 11 build, kept as a known-good fallback)
 

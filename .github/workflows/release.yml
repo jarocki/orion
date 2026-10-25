@@ -100,6 +100,21 @@ jobs:
           (cd output && sha256sum -c "$(basename "${ISO}").sha256")
           echo "ISO=${ISO}" >> "${GITHUB_ENV}"
 
+      - name: Verify shipped filesystem and PHP security floor
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace:ro" -w /workspace \
+            -e "ORIONX_RELEASE_GATE=1" \
+            -e "ORIONX_EXPECT_VERSION=${ORIONX_VERSION}" \
+            -e "ISO=${ISO}" \
+            debian:trixie-slim bash -c '
+              set -e
+              apt-get update -q
+              apt-get install -y -q --no-install-recommends \
+                python3 xorriso squashfs-tools shellcheck initramfs-tools-core util-linux
+              bash tests/integration/test-iso-content-presence.sh "$ISO"
+            '
+
       # These steps deliberately DO NOT set continue-on-error (DEC-PHASE12-026).
       # An unsigned public release cannot be produced by accident. If import
       # fails, provision GPG_PRIVATE_KEY and GPG_PASSPHRASE in repository

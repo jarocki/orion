@@ -41,6 +41,13 @@ In both cases a human publishes. The `DRAFT` boundary is non-negotiable.
 
 Before tagging:
 
+- **PHP/Trixie security floor:** the image build refreshes Debian package
+  indices and upgrades before sealing. The build checks the actual ISO package
+  inventory, and the release content gate checks the shipped dpkg database.
+  If PHP 8.4 is present, every versioned PHP binary package must be at least
+  `8.4.27-1~deb13u1` (DSA-6574-1); a missing inventory or failed update
+  blocks release. An image with no PHP package does not expose these PHP CVEs.
+
 - **The branch is at the head you intend to release** — `release/2.2.0` for
   the v2.2.0 line (merged back to `develop` after the tag). The image is built
   from the tagged commit, or with `ORIONX_VERSION=<tag>` exported, so that the
@@ -407,8 +414,10 @@ ORIONX_VERSION=<tag> bash scripts/build-iso.sh
 
 # 1. Stage, split (190 MiB parts, see §10.1), checksum, sign with the release
 #    key from your local keyring, render REASSEMBLE.txt + RELEASE-NOTES.md,
-#    and self-verify. Refuses a tag with no CHANGELOG section, an ISO that
-#    fails its .sha256, or a signing failure.
+#    and self-verify. Signed staging also checks the ISO inventory and shipped
+#    dpkg status against the PHP security floor; run this on a Debian host or
+#    in a Debian container with xorriso, unsquashfs, Python and dpkg installed.
+#    Refuses a missing CHANGELOG section, bad ISO, or signing failure.
 bash scripts/release/stage-split-release.sh output/orionx-phoenix-edition-<tag>.iso <tag> \
     --out tmp/release-<tag>
 R=tmp/release-<tag>

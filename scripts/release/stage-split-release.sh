@@ -73,6 +73,30 @@ fi
 notes="$(CHANGELOG_PATH="$REPO_ROOT/CHANGELOG.md" bash "$HERE/extract-release-notes.sh" "$TAG")" \
     || die "no CHANGELOG.md section for $TAG; write it before staging the release"
 
+# Signed staging is the manual-release boundary. Verify the exact ISO's
+# inventory AND its shipped dpkg database; a valid hash alone proves neither.
+# --unsigned remains a rehearsal mode and must never be published.
+if [[ $SIGN -eq 1 ]]; then
+    for tool in xorriso unsquashfs python3; do
+        command -v "$tool" >/dev/null 2>&1 || die "$tool is required to verify a signed ISO"
+    done
+    gate_dir="$(mktemp -d)"
+    trap 'rm -rf -- "$gate_dir"' EXIT
+    xorriso -osirrox on -indev "$ISO" \
+        -extract /live/filesystem.packages "$gate_dir/filesystem.packages" \
+        -extract /live/filesystem.squashfs "$gate_dir/filesystem.squashfs" \
+        >/dev/null 2>&1 || die "ISO package inventory or root filesystem is unreadable"
+    unsquashfs -cat "$gate_dir/filesystem.squashfs" var/lib/dpkg/status \
+        > "$gate_dir/status" 2>/dev/null || die "ISO dpkg status is unreadable"
+    checker="$REPO_ROOT/iso/config/includes.chroot/usr/lib/orionx/check-package-security.py"
+    python3 "$checker" --packages "$gate_dir/filesystem.packages" \
+        || die "ISO package inventory fails PHP security floor"
+    python3 "$checker" --dpkg-status "$gate_dir/status" \
+        || die "shipped root filesystem fails PHP security floor"
+    rm -rf -- "$gate_dir"
+    trap - EXIT
+fi
+
 [[ ! -e "$OUT" ]] || [[ -z "$(ls -A "$OUT")" ]] || die "$OUT exists and is not empty; refusing to mix asset sets"
 mkdir -p "$OUT"
 
