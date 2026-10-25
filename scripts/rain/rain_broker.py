@@ -152,7 +152,8 @@ class EventBroker:
         self.bus_key, why = rain_lib.ensure_bus_key(self.bus_key_path)
         if self.bus_key is None:
             raise RuntimeError(why or "bus key unavailable")
-        self.signer = SignedSyslog(self.signed_log, self.sign_key, self.sign_cert)
+        self.signer = SignedSyslog(self.signed_log, self.sign_key, self.sign_cert,
+                                  self.socket_path.parent / ".syslog-sign-state")
         if self.socket_path.parent.resolve() != self.event_log.parent.resolve():
             raise ValueError("event socket and spool must share a protected directory")
         try:

@@ -153,6 +153,9 @@ class BrokerTests(unittest.TestCase):
             started = time.monotonic()
             self.assertTrue(rain_lib.emit_event("critical", "firewall", "scan", "while clients idle"))
             self.assertLess(time.monotonic() - started, 1.5)
+            for conn in idle:
+                conn.close()
+            time.sleep(0.2)  # let the selector release the two untrusted slots
             self.role[0] = 1000
             prefix = b'{"severity":"notice","source":"cli","category":"general","message":"deep","detail":{"x":'
             payload = prefix + b"[" * 30000 + b"0" + b"]" * 30000 + b"}}\n"
@@ -184,6 +187,7 @@ class BrokerTests(unittest.TestCase):
         self.assertTrue(rain_lib.emit_event("notice", "cli", "general", "before restart"))
         used = self.broker.untrusted_bytes
         pin = self.broker.signer.fingerprint
+        self.assertEqual(stat.S_IMODE((self.base / ".syslog-sign-state").stat().st_mode), 0o600)
         self.stop.set()
         self.thread.join(timeout=2)
         self.broker.close()
@@ -197,6 +201,7 @@ class BrokerTests(unittest.TestCase):
         self.assertEqual(self.broker.untrusted_bytes, used)
         self.assertTrue(rain_lib.emit_event("notice", "cli", "general", "after restart"))
         self.assertGreater(self.broker.untrusted_bytes, used)
+        self.assertIn(b'GBC="1" FMN="2"', self.signed.read_bytes())
         self.assertEqual(verify_log(self.signed, pin), 2)
 
     def test_boot_wiring_and_protected_modes(self):

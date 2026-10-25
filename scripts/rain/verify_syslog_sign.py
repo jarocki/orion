@@ -138,6 +138,7 @@ def verify_log(path: Path, fingerprint: str) -> int:
 
     pending = None
     count = 0
+    last_gbc, last_fmn = -1, 0
     for kind, procid, message, fields in parsed:
         if procid not in sessions:
             raise ValueError("event or signature lacks certificate")
@@ -153,14 +154,22 @@ def verify_log(path: Path, fingerprint: str) -> int:
             continue
         if pending is None or pending[0] != procid or fields is None:
             raise ValueError("orphaned or reordered signature block")
-        if fields[b"CNT"] != b"1" or int(fields[b"GBC"]) != session["gbc"] + 1 or int(fields[b"FMN"]) != session["fmn"] + 1:
+        gbc, fmn = int(fields[b"GBC"]), int(fields[b"FMN"])
+        continued = ((last_gbc + 1) % 10_000_000_000,
+                     last_fmn % 9_999_999_999 + 1)
+        # A new PROCID may mean a daemon restart (continue the counters) or
+        # a reboot (RSID=0, counters reset). With non-persistent RSID these
+        # cases cannot be distinguished from the log alone.
+        expected = (continued if session["gbc"] >= 0 else None)
+        allowed = {continued} if expected is not None else {continued, (0, 1)}
+        if fields[b"CNT"] != b"1" or (gbc, fmn) not in allowed:
             raise ValueError("missing or reordered signed message")
         digest = base64.b64decode(fields[b"HB"], validate=True)
         if digest != hashlib.sha256(pending[1]).digest():
             raise ValueError("event hash mismatch")
         _verify_control(message, fields, session["cert"])
-        session["gbc"] += 1
-        session["fmn"] += 1
+        session["gbc"], session["fmn"] = gbc, fmn
+        last_gbc, last_fmn = gbc, fmn
         count += 1
         pending = None
     if pending is not None:

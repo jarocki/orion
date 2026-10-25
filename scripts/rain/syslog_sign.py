@@ -129,7 +129,8 @@ def _load_or_create_identity(key_path: Path, cert_path: Path, hostname: str):
 class SignedSyslog:
     """One RFC 5848 signer session; one signature group, one event per block."""
 
-    def __init__(self, log_path: Path, key_path: Path, cert_path: Path) -> None:
+    def __init__(self, log_path: Path, key_path: Path, cert_path: Path,
+                 state_path: Path) -> None:
         self.hostname = socket.getfqdn().encode("ascii", "ignore").decode("ascii")
         if not self.hostname or any(c.isspace() for c in self.hostname):
             self.hostname = "orionx.local"
@@ -139,8 +140,13 @@ class SignedSyslog:
         # The live overlay cannot guarantee a monotonic counter across reboots.
         # RFC 5848 section 4.2.2 therefore requires RSID=0.
         self.rsid = 0
-        self.gbc = 0
-        self.fmn = 0
+        self.state_path = Path(state_path)
+        parent = self.state_path.parent.stat()
+        if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid() or parent.st_mode & 0o022:
+            raise PermissionError("unsafe syslog-sign counter directory")
+        # /run survives service restarts but resets on reboot.  RFC 5848 GBC
+        # and FMN are reboot-session counters, not daemon-process counters.
+        self.gbc, self.fmn = self._read_counters()
         self.fd = _secure_regular(log_path, 0o644, create=True)
         try:
             self._certificate_blocks()
@@ -150,6 +156,35 @@ class SignedSyslog:
 
     def close(self) -> None:
         os.close(self.fd)
+
+    def _read_counters(self) -> tuple[int, int]:
+        try:
+            fd = _secure_regular(self.state_path, 0o600)
+        except FileNotFoundError:
+            return 0, 0
+        try:
+            st = os.fstat(fd)
+            if st.st_nlink != 1:
+                raise PermissionError("linked syslog-sign counter file")
+            parts = os.read(fd, 64).decode("ascii").strip().split(" ")
+            if len(parts) != 2 or any(not part.isdigit() for part in parts):
+                raise ValueError("invalid syslog-sign counter state")
+            gbc, fmn = (int(part) for part in parts)
+            if gbc > 9_999_999_999 or fmn > 9_999_999_999:
+                raise ValueError("syslog-sign counter out of range")
+            return gbc, fmn
+        finally:
+            os.close(fd)
+
+    def _save_counters(self, gbc: int, fmn: int) -> None:
+        temp = self.state_path.with_name(f".syslog-state-{os.getpid()}-{secrets.token_hex(4)}")
+        _write_new(temp, f"{gbc} {fmn}\n".encode("ascii"), 0o600)
+        os.replace(temp, self.state_path)
+        directory = os.open(self.state_path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
     def _header(self, app: str, msgid: str) -> str:
         return f"<{PRI}>1 {_timestamp()} {self.hostname} {app} {self.procid} {msgid} "
@@ -186,13 +221,18 @@ class SignedSyslog:
         message = (self._header("orionx-event", "EVENT") + "- " + body).encode("ascii")
         if len(message) > MAX_SYSLOG_MESSAGE:
             raise ValueError("syslog event exceeds bounded message length")
-        self.fmn += 1
+        current_fmn = self.fmn % 9_999_999_999 + 1
+        current_gbc = self.gbc
         # GBC counts preceding Signature Blocks; the first block is 0.
         fields = [("VER", VERSION), ("RSID", str(self.rsid)), ("SG", "0"),
-                  ("SPRI", str(PRI)), ("GBC", str(self.gbc)),
-                  ("FMN", str(self.fmn)), ("CNT", "1"),
+                  ("SPRI", str(PRI)), ("GBC", str(current_gbc)),
+                  ("FMN", str(current_fmn)), ("CNT", "1"),
                   ("HB", _b64(hashlib.sha256(message).digest()))]
         block = self._block("ssign", fields, "SIGN")
+        # Reserve before writing: after a crash, a gap is visible rather than
+        # silently reusing a block/message number for different evidence.
+        next_gbc = (current_gbc + 1) % 10_000_000_000
+        self._save_counters(next_gbc, current_fmn)
+        self.gbc, self.fmn = next_gbc, current_fmn
         _write_all(self.fd, message + b"\n" + block)
         os.fsync(self.fd)
-        self.gbc += 1
