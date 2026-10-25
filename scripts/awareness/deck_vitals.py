@@ -162,26 +162,83 @@ def primary_ipv4(ifaces: list[dict[str, Any]], route: dict[str, Any]) -> tuple[s
     return None, None
 
 
-def parse_net_dev(text: str) -> dict[str, int]:
-    """/proc/net/dev totals over non-loopback interfaces: rx/tx bytes and packets."""
-    out = {"rx_bytes": 0, "tx_bytes": 0, "rx_packets": 0, "tx_packets": 0}
+def parse_net_dev_by_iface(text: str) -> dict[str, dict[str, int]]:
+    """/proc/net/dev per non-loopback interface: rx/tx bytes and packets."""
+    out: dict[str, dict[str, int]] = {}
     for line in (text or "").splitlines():
         if ":" not in line:
             continue
         name, rest = line.split(":", 1)
-        if name.strip() in SKIP_IFACES:
+        name = name.strip()
+        if name in SKIP_IFACES:
             continue
         f = rest.split()
         if len(f) < 10:
             continue
         try:
-            out["rx_bytes"] += int(f[0])
-            out["rx_packets"] += int(f[1])
-            out["tx_bytes"] += int(f[8])
-            out["tx_packets"] += int(f[9])
+            out[name] = {"rx_bytes": int(f[0]), "rx_packets": int(f[1]),
+                         "tx_bytes": int(f[8]), "tx_packets": int(f[9])}
         except ValueError:
             continue
     return out
+
+
+def parse_net_dev(text: str) -> dict[str, int]:
+    """/proc/net/dev totals over non-loopback interfaces: rx/tx bytes and packets."""
+    out = {"rx_bytes": 0, "tx_bytes": 0, "rx_packets": 0, "tx_packets": 0}
+    for counters in parse_net_dev_by_iface(text).values():
+        for key in out:
+            out[key] += counters[key]
+    return out
+
+
+# /proc/net/snmp{,6} counters behind the Network tab's protocol breakdown
+# (#107). Tcp's segment counters already cover IPv4 and IPv6 (the kernel keeps
+# one TCP MIB); UDP and ICMP have separate v6 counters, which are added in.
+_SNMP_FIELDS = {
+    ("Tcp", "InSegs"): "tcp_in", ("Tcp", "OutSegs"): "tcp_out",
+    ("Tcp", "CurrEstab"): "tcp_established",
+    ("Udp", "InDatagrams"): "udp_in", ("Udp", "OutDatagrams"): "udp_out",
+    ("Icmp", "InMsgs"): "icmp_in", ("Icmp", "OutMsgs"): "icmp_out",
+}
+_SNMP6_FIELDS = {
+    "Udp6InDatagrams": "udp_in", "Udp6OutDatagrams": "udp_out",
+    "Icmp6InMsgs": "icmp_in", "Icmp6OutMsgs": "icmp_out",
+}
+
+
+def parse_snmp(text: str, text6: str = "") -> dict[str, int]:
+    """Protocol counters from /proc/net/snmp (+ /proc/net/snmp6). Missing = absent."""
+    out: dict[str, int] = {}
+    lines = (text or "").splitlines()
+    for names, values in zip(lines[::2], lines[1::2]):
+        n_proto, _, n_rest = names.partition(":")
+        v_proto, _, v_rest = values.partition(":")
+        if n_proto != v_proto:
+            continue
+        for field, value in zip(n_rest.split(), v_rest.split()):
+            key = _SNMP_FIELDS.get((n_proto, field))
+            if key:
+                try:
+                    out[key] = int(value)
+                except ValueError:
+                    pass
+    for line in (text6 or "").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] in _SNMP6_FIELDS:
+            try:
+                key = _SNMP6_FIELDS[parts[0]]
+                out[key] = out.get(key, 0) + int(parts[1])
+            except ValueError:
+                pass
+    return out
+
+
+def per_second(prev: dict[str, int] | None, cur: dict[str, int], dt: float) -> dict[str, float]:
+    """Counter deltas over dt seconds; a counter that went backwards (reset) is 0."""
+    if not prev or dt <= 0:
+        return {}
+    return {k: max(0, v - prev[k]) / dt for k, v in cur.items() if k in prev}
 
 
 def parse_resolv_conf(text: str) -> list[str]:

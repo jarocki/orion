@@ -419,7 +419,7 @@ Left of the window list sit the **Orion-X** applications menu and the Orion Cock
 
 ### Cockpit tabs (formerly the Control Center)
 
-What used to be the separate Control Center window now lives inside the Orion Cockpit as tabs (press the tab strip on the left; `orionx-cockpit --tab mesh` opens one directly). **LIVE** is the dashboard. **Mesh** shows the WireGuard identity, every connected node with its endpoint, last handshake and traffic, rx/tx sparklines, and the mesh's own history from the event bus, with Start/Stop/Peers. It reads a snapshot that the mesh itself publishes as root every 10 s (`/run/orionx/mesh-status.json`) plus the kernel's own counters, so it needs no privilege and cannot disagree with `sudo orionx-mesh status`. **Comms** says where the Matrix homeserver is (this deck or a remote), its service state, which rooms and members this deck's login can see, which clients are installed (Matrix CLI, Element, gomuks) with an Open button each — and an Install button for the ones that are not. Element may ask about a keyring on first start: the live session autologs in with no password to unlock one, so either set a keyring password when prompted or choose "Use no encryption" — on a RAM-only live deck both are reasonable. **Awareness** adds the firewall's addresses, the next hop, the DNS servers and four trend sparklines (packets/s, CPU, memory, disk) to the live health rows, posture tiers and R.A.I.N. controls. **Orion Tools** (called IR Tools before) lists the guided actions plus every tool actually on this deck and every optional one, read from the Workbench catalogue at runtime — Run for what is here, Install for what is not. **Nebula AI** and **Auto-Healing** are unchanged.
+What used to be the separate Control Center window now lives inside the Orion Cockpit as tabs (press the tab strip on the left; `orionx-cockpit --tab mesh` opens one directly). Every tab uses the LIVE look (dark grid, ember-framed panel, Hack type), and the status strip across the top, with hostname, address, threat posture and clock, stays in place whichever tab is open. **LIVE** is the dashboard. **Network** lists every interface with its state, addresses, live down/up rate, share of traffic and totals since boot, plus the default route and DNS servers. It shows TCP, UDP and ICMP packets per second for the whole deck; a protocol breakdown *per interface* needs a capture. It lists your NetworkManager VPN and WireGuard connections with Connect/Disconnect, and **Import WireGuard .conf…** adds a provider's config (Mullvad, Proton, IVPN and others offer one). The file name becomes the interface name, so it must be at most 15 characters; the tab suggests a rename when it is not. **Packet capture** starts, stops and copies bounded captures (see [Network Traffic Capture](#network-traffic-capture)). **Mesh** shows the WireGuard identity, every connected node with its endpoint, last handshake and traffic, rx/tx sparklines, and the mesh's own history from the event bus, with Start/Stop/Peers. It reads a snapshot that the mesh itself publishes as root every 10 s (`/run/orionx/mesh-status.json`) plus the kernel's own counters, so it needs no privilege and cannot disagree with `sudo orionx-mesh status`. **Comms** says where the Matrix homeserver is (this deck or a remote), its service state, which rooms and members this deck's login can see, which clients are installed (Matrix CLI, Element, gomuks) with an Open button each — and an Install button for the ones that are not. Element may ask about a keyring on first start: the live session autologs in with no password to unlock one, so either set a keyring password when prompted or choose "Use no encryption" — on a RAM-only live deck both are reasonable. **Awareness** adds the firewall's addresses, the next hop, the DNS servers and four trend sparklines (packets/s, CPU, memory, disk) to the live health rows, posture tiers and R.A.I.N. controls. **Orion Tools** (called IR Tools before) lists the guided actions plus every tool actually on this deck and every optional one, read from the Workbench catalogue at runtime — Run for what is here, Install for what is not. **Nebula AI** and **Auto-Healing** are unchanged.
 
 ## 5. Networking
 
@@ -693,8 +693,8 @@ The Orion Cockpit (`orionx-cockpit`; also the desktop icon, the panel's gauge ic
 - **THREAT PRESSURE** gauge — severity-weighted with a 60 s half-life: **CALM** below 25, **ELEVATED** below 60, **HOSTILE** at 60 and above.
 - **NETWORK** — rx/tx sparkline.
 - **SYSTEMS** LEDs — Nebula, Firewall, Mesh, R.A.I.N.
-- **DECK** band (under the stream) — this machine: hostname, every interface's address, the default gateway, uptime, and CPU / memory / disk bars with the numbers written on them. The header repeats hostname and primary address so they are visible at a glance.
-- Posture badge (current threat-posture tier) and clock.
+- **DECK** band (under the stream) — this machine: hostname, every interface's address, the default gateway, uptime, and CPU / memory / disk bars with the numbers written on them.
+- The status strip above the tabs (on every tab, not just LIVE) shows hostname and primary address, the posture badge (current threat-posture tier) and the clock.
 
 Keys: **F11** toggles fullscreen on any tab. The other keys act on the **LIVE** tab only (on the other tabs they go to the controls, so typing in a text field is safe): **Esc** closes an open drill-down, and quits when none is open; **q** quits; **s** and **t** squelch or tune the event in an open drill-down (below); **Page Up** scrolls the stream back. Flags: `--fullscreen` starts fullscreen; `--demo` feeds synthetic events for a demonstration; `--tab NAME` opens on a tab (`live`, `network`, `mesh`, `comms`, `awareness`, `tools`, `nebula`, `healing`).
 
@@ -860,6 +860,18 @@ To create forensic images of storage devices:
 ### Network Traffic Capture
 
 Network traffic capture can reveal communication patterns, malware command and control, and data exfiltration. Replace `IFACE` with your interface (e.g. `enp2s0` / `wlp3s0` — check `ip link`).
+
+**The bounded way (recommended).** On the Cockpit's **Network** tab, **Start** next to an interface runs `sudo orionx-capture start IFACE` in a terminal. That starts a ring of capture files with a size cap *and* a time limit, announced on the event bus, so a capture can never fill the deck's memory. **Stop** ends it early. The capture files belong to root (`/var/lib/orionx/capture/IFACE/`): they are the deck's evidence. **Copy to ~/Captures** runs `sudo orionx-capture export IFACE`, which copies the newest file into your own `~/Captures` (mode 0600). It refuses, with the numbers, if your home directory cannot hold the copy; on a live USB your home directory is in RAM. **Open in Wireshark** then opens that copy as you, with no root. The same steps from a terminal:
+
+```bash
+sudo orionx-capture start IFACE          # bounded: --duration, --files, --max-file-mb
+orionx-capture status                     # what is running and its limits
+sudo orionx-capture stop IFACE
+sudo orionx-capture export IFACE          # newest ring file -> ~/Captures/
+wireshark -r ~/Captures/IFACE_*.pcapng
+```
+
+**By hand**, when you need tcpdump's filters directly:
 
 1. List available network interfaces:
    ```bash
