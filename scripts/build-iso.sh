@@ -177,6 +177,7 @@ require_release_changelog() {  # <version> <repo_root>
 #   patches are verified after sed; a live-build whose text no longer matches
 #   fails the build instead of silently building unpatched.
 # ---------------------------------------------------------------------------
+# shellcheck disable=SC2120  # Optional test-only functions_dir; production uses default.
 patch_live_build() {  # [functions_dir]
     local fdir="${1:-/usr/share/live/build/functions}"
     # -i.orig + rm: the one in-place form GNU and BSD sed both accept (tests run on macOS).
