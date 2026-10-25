@@ -84,12 +84,13 @@ else
 fi
 
 if command -v systemd-analyze >/dev/null 2>&1; then
-    # verify a UNIT with the drop-in beside it: systemd-analyze refuses a bare
-    # .d/*.conf path ("Failed to prepare filename: Invalid argument" on the CI runner).
-    _vd="$(mktemp -d)"; mkdir -p "$_vd/matrix-synapse.service.d"
-    printf '[Unit]\nDescription=verify host\n[Service]\nExecStart=/bin/true\n' > "$_vd/matrix-synapse.service"
-    cp "$DROPIN" "$_vd/matrix-synapse.service.d/orionx.conf"
-    out="$(systemd-analyze verify "$_vd/matrix-synapse.service" 2>&1 || true)"; rm -rf "$_vd"
+    # systemd-analyze verifies a unit, not a bare .d/*.conf drop-in.
+    verify_dir="$(mktemp -d)"
+    mkdir -p "$verify_dir/matrix-synapse.service.d"
+    printf '[Unit]\nDescription=verify host\n[Service]\nExecStart=/bin/true\n' > "$verify_dir/matrix-synapse.service"
+    cp "$DROPIN" "$verify_dir/matrix-synapse.service.d/orionx.conf"
+    out="$(systemd-analyze verify "$verify_dir/matrix-synapse.service" 2>&1 || true)"
+    rm -rf -- "$verify_dir"
     if grep -qiE 'unknown (key|lvalue)|assignment outside of section|failed to parse' <<< "$out"; then fail "systemd-analyze: drop-in keys valid" "$out"; else pass "systemd-analyze: drop-in keys valid"; fi
 fi
 

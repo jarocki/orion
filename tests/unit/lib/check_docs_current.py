@@ -51,8 +51,8 @@ for rel in FILES:
             if rx.search(line):
                 out.append(f"FAIL {rel}:{n}: {why}: {line.strip()[:110]}")
 readme = open(os.path.join(root, "README.md"), encoding="utf-8").read()
-if f"**Version:** {release}" not in readme:
-    out.append(f"FAIL README.md: the Version line does not name {release}")
+if not any(f"**{label}:** {release}" in readme for label in ("Version", "Source version")):
+    out.append(f"FAIL README.md: the version line does not name {release}")
 if "## Known issues" not in readme:
     out.append("FAIL README.md: no '## Known issues' section")
 else:
