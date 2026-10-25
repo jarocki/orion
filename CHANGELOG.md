@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [v3.0.1] — 2026-10-24 (security patch; ISO verification pending)
+## [v3.0.2] — 2026-10-24 (application security patch; ISO verification pending)
 
 This patch release incorporates the 2026-10-24 [Security Review](docs/SECURITY_REVIEW_2026-10-24.md)
 and the fixes merged in [#100](https://github.com/jarocki/orion/pull/100) and
 [#101](https://github.com/jarocki/orion/pull/101). The findings describe the
 pre-fix revision; they are not a claim that every issue in that snapshot remains
-open. The source changes have focused regression tests, but a v3.0.1 ISO has
+open. The source changes have focused regression tests, but a v3.0.2 ISO has
 not yet been built, booted, or verified on the reference hardware. The previous
 verified image remains v3.0.0 until the draft release passes the [release
 process](docs/release-process.md) and is published by the operator.
@@ -36,7 +36,7 @@ process](docs/release-process.md) and is published by the operator.
 
 ### Known issues and release status
 
-- This source tag does not by itself establish a releasable ISO. The v3.0.1
+- This source tag does not by itself establish a releasable ISO. The v3.0.2
   image still requires build, content-presence checks, BIOS/UEFI boot tests,
   signature and checksum verification, and an explicit operator publish step.
 - A live, non-persistent session loses its local signed log on reboot. Store
@@ -46,8 +46,22 @@ process](docs/release-process.md) and is published by the operator.
   running as that operator can become root; broker peer checks are not a
   sandbox for already-compromised operator code.
 - Hardware and other deferred v3.0.0 issues below remain open unless separately
-  verified and closed; no v3.0.1 hardware-boot claim is made here. Planned
+  verified and closed; no v3.0.2 hardware-boot claim is made here. Planned
   Phase 13 work is not implied to have shipped in this security patch.
+
+## [v3.0.1] — 2026-10-24 (PHP/Trixie security maintenance)
+
+- Refresh the Debian 13 (Trixie) package indices and apply available security
+  upgrades immediately before sealing the live image. An index or upgrade
+  failure now stops the build.
+- Refuse to publish an ISO containing a PHP 8.4 binary package older than
+  Debian's `8.4.27-1~deb13u1` fix for CVE-2026-109618 and CVE-2026-109619.
+  The check reads both the chroot package database and the built ISO inventory;
+  an absent or malformed inventory fails closed.
+- The published v3.0.0 ISO inventory did not list PHP, so this is a release
+  guard against stale or future PHP-bearing images, not evidence that v3.0.0
+  exposed a PHP service.
+
 
 ## [v3.0.0] — 2026-10-07 (release; built from the v2.2.0-rc9 line)
 
@@ -259,11 +273,11 @@ Each item below now has an owner decision, recorded 2026-10-18 in
   (Lenovo) by the owner: boots and works as advertised. **DEC-PHASE13-001 is
   satisfied**; the deck-only checks (Mesh tab, "Set up as server", Element's keyring
   prompt, AppArmor enforcement of ollama, the Synapse drop-in sandbox) remain to be
-  exercised one by one on that hardware as 3.0.1 work begins.
+  exercised one by one on that hardware during later patch work.
 - `radare2` and `fonts-iosevka` are not shipped (#85) — **DEC-PHASE13-002:** close
   #85 as won't-ship (Ghidra via `install-ghidra.sh`; Hack + DejaVu Sans Mono).
   Zeek has no managed capture unit (ingest only) — **DEC-PHASE13-004:** ship
-  `orionx-zeek@.service` in 3.0.1, templated on the interface like
+  `orionx-zeek@.service` in a later patch, templated on the interface like
   `orionx-capture@`, started by the Tier-1 plan beside Suricata. The gomuks
   installer refuses (upstream's asset 404s) — **DEC-PHASE13-003:** remove
   `install-gomuks.sh`; Element is the Matrix client path. TrID pins fail closed

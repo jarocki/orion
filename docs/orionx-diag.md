@@ -1,6 +1,6 @@
 # orionx-diag — Diagnostic Tool Reference
 
-**Shipped in:** v3.0.0 and the v2.2.0 release candidates from rc5 (first added in the v2.1.0 Bullseye line, W11-11). The v3.0.1 source patch retains it; a v3.0.1 ISO has not yet been verified.
+**Shipped in:** the verified v3.0.0 ISO and the v2.2.0 release candidates from rc5 (first added in the v2.1.0 Bullseye line, W11-11). The v3.0.2 source retains it; a v3.0.2 ISO has not yet been verified.
 **Source of truth:** `scripts/orionx-diag`
 **Location on ISO:** `/usr/bin/orionx-diag` (symlink to `/opt/orionx/scripts/orionx-diag`)
 **Decision:** DEC-PHASE11-015
@@ -235,7 +235,7 @@ assertions (the version and timestamp below are an example from an older build):
 
 ```json
 {
-  "iso_version": "v3.0.0",
+  "iso_version": "v3.0.2",
   "build_timestamp": "2026-09-20T14:32:00Z",
   "git_head_sha": "0ab8fa1",
   "overall": "PASS",
@@ -301,7 +301,7 @@ written at build time by the `0700-orionx-setup.hook.chroot` hook from the
 
 | Key | Example value | Description |
 |---|---|---|
-| `ISO_VERSION` | `v3.0.0` | Release identity — `ORIONX_VERSION` at build time, else `git describe` |
+| `ISO_VERSION` | `v3.0.2` | Release identity — `ORIONX_VERSION` at build time, else `git describe` |
 | `BUILD_TIMESTAMP` | `2026-09-16T04:23:56Z` | ISO 8601 UTC build time |
 | `GIT_HEAD_SHA` | `32247dd2734f` | Short SHA of the commit built |
 | `GIT_HEAD_TITLE` | `fix(trim): …` | First line of that commit's message |

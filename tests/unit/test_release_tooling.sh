@@ -52,7 +52,14 @@ section "stage-split-release.sh: parts, sums, signature, instructions (P1-1, F-1
 # A tag that has a CHANGELOG section in this repository.
 TAG="v2.2.0-rc9"
 NAME="orionx-phoenix-edition-$TAG.iso"
-head -c 2621440 /dev/urandom > "$S/build.iso"   # 2.5 MiB
+# A small but real ISO: signed staging now checks its shipped inventory and
+# squashfs package database, not just an adjacent checksum file.
+mkdir -p "$S/root/var/lib/dpkg" "$S/iso/live"
+printf 'Package: bash\nStatus: install ok installed\nVersion: 5.2.15-2\n' > "$S/root/var/lib/dpkg/status"
+printf 'bash 5.2.15-2\n' > "$S/iso/live/filesystem.packages"
+mksquashfs "$S/root" "$S/iso/live/filesystem.squashfs" -noappend -quiet >/dev/null
+head -c 2621440 /dev/urandom > "$S/iso/filler"   # 2.5 MiB
+xorriso -as mkisofs -quiet -o "$S/build.iso" "$S/iso" >/dev/null 2>&1
 (cd "$S" && sha256 build.iso > build.iso.sha256)
 export GNUPGHOME="$S/g"; mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
 if gpg --batch --passphrase '' --quick-gen-key "Release Test <release-test@example.invalid>" ed25519 sign never >/dev/null 2>&1; then
@@ -82,6 +89,18 @@ if gpg --batch --passphrase '' --quick-gen-key "Release Test <release-test@examp
     grep -q "Not yet booted on the deck\|release candidate" "$S/rel/RELEASE-NOTES.md" && pass "release notes body comes from the CHANGELOG section" || fail "notes body" "CHANGELOG text absent"
     OUT="$(bash "$STAGE" "$S/build.iso" "$TAG" --out "$S/rel" --part-size 1m --key "$FPR" 2>&1)" \
         && fail "non-empty --out" "accepted" || pass "refuses to mix with an existing asset set"
+    if command -v dpkg >/dev/null 2>&1; then
+        # The manifest stays safe while the shipped dpkg database is stale.
+        # Signed staging must inspect both, not trust only filesystem.packages.
+        printf 'Package: php8.4-cli\nStatus: install ok installed\nVersion: 8.4.26-1~deb13u1\n' > "$S/root/var/lib/dpkg/status"
+        rm -f "$S/iso/live/filesystem.squashfs"
+        mksquashfs "$S/root" "$S/iso/live/filesystem.squashfs" -noappend -quiet >/dev/null
+        xorriso -as mkisofs -quiet -o "$S/stale.iso" "$S/iso" >/dev/null 2>&1
+        OUT="$(bash "$STAGE" "$S/stale.iso" "$TAG" --out "$S/stale-release" --part-size 1m --key "$FPR" 2>&1)"; RC=$?
+        [[ $RC -ne 0 && "$OUT" == *"shipped root filesystem fails PHP security floor"* ]] \
+            && pass "signed staging rejects old PHP hidden from the ISO package inventory" \
+            || fail "stale shipped PHP" "rc=$RC $OUT"
+    fi
 else
     fail "gpg throwaway key" "could not generate a test key (gpg missing?)"
 fi

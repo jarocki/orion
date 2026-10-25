@@ -1,6 +1,6 @@
 {
   "name": "Orion-X Phoenix Edition",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "release_date": null,
   "contents": [
     { "path": "scripts/install.sh", "description": "Installation script", "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
@@ -24,6 +24,7 @@
     { "version": "1.5.0", "codename": "Phoenix Edition", "date": "2025-03-01", "summary": "Major update with UI redesign, full disk encryption, expanded data samples." },
     { "version": "1.5.5", "date": "2025-05-03", "summary": "Security audit fixes and additional content." },
     { "version": "3.0.0", "date": "2026-10-07", "summary": "First stable Debian 13 Phoenix Edition release." },
-    { "version": "3.0.1", "date": "2026-10-24", "status": "source-patch; ISO verification pending", "summary": "Security review remediations and root-owned signed event broker." }
+    { "version": "3.0.1", "date": "2026-10-24", "status": "source-patch; ISO verification pending", "summary": "PHP/Trixie security maintenance and fail-closed package floor." },
+    { "version": "3.0.2", "date": "2026-10-24", "status": "source-patch; ISO verification pending", "summary": "Security review remediations and root-owned signed event broker." }
   ]
 }

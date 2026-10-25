@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition — Cyberdeck for the Good Guys
 
-**Source version:** v3.0.1 security patch. **Latest verified published ISO:** [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0). The v3.0.1 ISO is not a published download until its draft passes the [release process](docs/release-process.md).
+**Source version:** v3.0.2 application security patch (includes the v3.0.1 PHP/Trixie fix). **Latest verified published ISO:** [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0). New ISO artifacts remain pending the [release process](docs/release-process.md).
 **Base:** Debian 13 "trixie" live (kernel 6.12, Python 3.13, XFCE 4.20) | **Runtime:** Qwen2.5-3B-Instruct (Apache-2.0)
 **Previous line:** v2.1.0-bullseye-rain (final Debian 11 build, kept as a known-good fallback)
 
@@ -30,12 +30,12 @@ Mission verbs: **monitor** / **detect** / **defend** / **triage** / **timeline**
 > between reboots unless you set up persistence, or update itself. See
 > [Known issues](#known-issues).
 
-The v3.0.1 source patch includes the security-review fixes in [PR #100](https://github.com/jarocki/orion/pull/100)
+The v3.0.2 source patch includes the security-review fixes in [PR #100](https://github.com/jarocki/orion/pull/100)
 and [PR #101](https://github.com/jarocki/orion/pull/101). It moves event
 publication behind a root-owned local socket broker and adds RFC 5848 signed
 logging. See the [review](docs/SECURITY_REVIEW_2026-10-24.md) and
 [changelog](CHANGELOG.md) for scope, trust limits, and verification status.
-The videos below show the v3.0.0 image, not the v3.0.1 patch.
+The videos below show the v3.0.0 image, not the patch releases.
 
 [![Watch the Orion-X 3.0 release trailer](docs/media/orionx-trailer-v3.0.0-poster.png)](docs/media/orionx-trailer-v3.0.0.mp4)
 
@@ -289,7 +289,7 @@ sudo orionx-diag --category nebula
 
 Expected: all identity, manifest, packages, files, and systemd categories PASS.
 For the v3.0.0 ISO below, `grep ISO_VERSION= /etc/orionx-version` prints
-`ISO_VERSION=v3.0.0`; a verified v3.0.1 image must print `ISO_VERSION=v3.0.1`.
+`ISO_VERSION=v3.0.0`; a verified v3.0.2 image must print `ISO_VERSION=v3.0.2`.
 See `docs/orionx-diag.md` for interpreting results.
 
 ---
@@ -375,7 +375,7 @@ without the bundled model.
 
 ## Known issues
 
-Open in the v3.0.0 published ISO and not claimed resolved by the v3.0.1 source patch (each links to its tracking issue):
+Open in the v3.0.0 published ISO and not claimed resolved by the v3.0.2 source patch (each links to its tracking issue):
 
 - **SSH is installed but not started at boot** (fixes
   [#98](https://github.com/jarocki/orion/issues/98), still open until the owner closes it). The old "SSH admin
@@ -397,7 +397,7 @@ Open in the v3.0.0 published ISO and not claimed resolved by the v3.0.1 source p
   pins, MAC randomisation, exim4, firmware, mesh auto-peering, daemon user,
   duckdb/GeoIP pinning, the old demo recorder) are listed in the CHANGELOG under
   v3.0.0 "Known issues", each with its owner decision DEC-PHASE13-001 … 012 for
-  the 3.0.1 line.
+  a later patch line.
 
 ---
 

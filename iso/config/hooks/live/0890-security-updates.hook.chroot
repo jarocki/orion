@@ -1,0 +1,9 @@
+#!/bin/sh
+# Refresh Trixie security metadata and upgrade before the image is sealed.
+# Failure is fatal: an offline/stale mirror must not silently publish an ISO.
+set -eu
+
+export DEBIAN_FRONTEND=noninteractive
+apt-get -o APT::Update::Error-Mode=any update
+apt-get -y -o Dpkg::Options::=--force-confold upgrade --with-new-pkgs
+python3 /usr/lib/orionx/check-package-security.py --dpkg-status /var/lib/dpkg/status
