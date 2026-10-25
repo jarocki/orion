@@ -4817,7 +4817,23 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 - **AI audit trail** — Every inference, prompt, tool output, and conclusion recorded on-chain
 - **Court export** — Human-readable reports + cryptographic proofs + verifiable AI reasoning chains
 
-### v3.1.0 — Immutable Platform Migration
+### v3.1.0 — Cockpit, icons and logquery (operative definition, 2026-10-25)
+
+The owner set this scope on 2026-10-25 (DEC-PHASE13-013). The March 2026
+"Immutable Platform Migration" sketch that used to carry this number is
+preserved below, unscheduled. Work happens on `feature/v3.1.0` from
+`develop` while 3.0.1 and 3.0.2 land on `main`. The branch is rebased onto
+them before merge.
+
+| # | Item | Where | Notes |
+|---|------|-------|-------|
+| 1 | Fix the Workbench and Cockpit app icons | `usr/share/icons/Orion-X-Icons`, hooks 0700/0710, `orionx-cockpit:68,93` | Most likely cause: b98d93d (DEC-PHASE12-127) moved both from the absolute `orionx.png` to icon names that exist only in Orion-X-Icons. No hicolor fallback and no icon cache. The Cockpit window still sets the Phoenix PNG, and the Workbench runs as terminal + Firefox, so the panel never shows the launcher icon. Confirm on the deck before and after. |
+| 2 | Orion-themed icons for Artifact Analyzer, DJ Deck, Matrix Comms, Matrix Setup, Storyboard Generator | new `orionx-*` SVGs in Orion-X-Icons; entries in 0700 (writer) and the two static files | Follow the existing 48×48 style: `#1a1a1a` disc, `#FF5722` ring, glyph palette amber/green/cyan. 0700 is the only writer of its entries. |
+| 3 | LIVE-tab styling on every Cockpit tab; the status line (host, IP, posture, clock) on every tab | `scripts/cockpit/orionx-cockpit`, `scripts/control_center/app.py` CSS | Move `_header()` out of the LIVE canvas into a header widget above the notebook. The pollers that feed it are re-owned so they keep running. Shared Cairo background plus `.orionx-panel` CSS. Remove the dead headerbar CSS. |
+| 4 | Fuller Network tab | `scripts/control_center/sections/network.py` | Per-interface addresses and rates. Traffic by protocol and by interface. VPN status, plus import of a provider's WireGuard `.conf` through NetworkManager (DEC-PHASE13-014). Capture start/stop and "Open in Wireshark" (DEC-PHASE13-015). |
+| 5 | `orionx-logquery` silent "hang" and `-v` | `scripts/logquery/` | Done in d6ef0bb (DEC-PHASE13-016). |
+
+### Unscheduled — Immutable Platform Migration (the March 2026 v3.1.0 sketch)
 
 - **NixOS migration** — Declarative, reproducible builds replacing Debian live-build
 - **TPM 2.0 measured boot** — Cryptographic platform attestation
@@ -4869,6 +4885,10 @@ This initiative transforms Orion X from a toolkit into an autonomous forensic in
 | DEC-PHASE13-010 | 2026-10-18 | [SECURITY] Dedicated `orionx` system user with ambient capabilities | uid 0 with an empty bounding set is still uid 0 for DAC; a system user with AmbientCapabilities=CAP_NET_ADMIN (postured) and systemd-journal group membership is the standard shape. Gated on DEC-PHASE13-001: journal and nftables access for the new user must be verified on the deck. |
 | DEC-PHASE13-011 | 2026-10-18 | [INSTALLERS] Pin duckdb (version + hash) in a venv; record-and-verify for GeoIP | pip --require-hashes with a pinned duckdb into /opt/orionx/venvs keeps system Python clean; GeoIP records the SHA-256 of each monthly file on first fetch and refuses a changed re-download of the same month. |
 | DEC-PHASE13-012 | 2026-10-18 | [DOCS] Keep both videos — the short guided walkthrough and the cinematic trailer — for v3.0.0 and every release after | Preserves the short-form walkthrough alongside the cinematic trailer. **Amended 2026-10-18 (HOW, code wins):** both are rendered by ONE pipeline, `tools/guided-demo/cinematic/` (`walkthrough.yaml` + `trailer.yaml` → `build_trailer.py`, footage from `record_scenes.py`/`qemu_capture.py` on the shipped ISO). `build_demo.py` and its container mirror (`build.sh`, `container-setup.sh`, `session-start.sh`, `fake-ollama.py`, `scenes.yaml`) are removed: they recorded a re-created session, not the image, and drove the retired Control Center window (#99). Two recorders would be two authorities for the same footage. Owner's call against the reviewers' 'delete': the 2½-minute walkthrough and the trailer serve different readers; the recorder must drive the Cockpit, and scenes.yaml stays its single source. |
+| DEC-PHASE13-013 | 2026-10-25 | [RELEASE] v3.1.0 = the owner's five items (Workbench/Cockpit icons, five re-themed icons, LIVE styling and the status line on every Cockpit tab, a fuller Network tab, the logquery hang and -v) | Set by the owner. The March "Immutable Platform Migration" sketch keeps its content but no longer holds a version number; it was never planned in detail and is far larger than a minor release. |
+| DEC-PHASE13-014 | 2026-10-25 | [NETWORK] Third-party VPNs come in only as NetworkManager WireGuard connections (status for every NM vpn/wireguard connection, import of a provider's .conf). No OpenVPN. | Owner's call. This narrows DEC-PHASE11-003 rather than reversing it: one VPN protocol stays on the base, and NM already ships WireGuard support, so no package is added. A provider that offers only OpenVPN is out of scope. |
+| DEC-PHASE13-015 | 2026-10-25 | [CAPTURE] Network-tab capture controls drive the bounded orionx-capture@ unit through `sudo` in a visible terminal. Status comes from posture-status.json. "Open in Wireshark" opens the latest ring file read-only. The operator is not added to the wireshark group. | Owner's call. It reuses the one capture path that already has ring, duration and free-space limits. It keeps the never-silent-sudo convention (mesh.py:5-8) and gives the desktop session no new raw-capture privilege. |
+| DEC-PHASE13-016 | 2026-10-25 | [LOGQUERY] With no --path: piped stdin is read; on an interactive terminal it reads /run/orionx/events.jsonl and says so; with neither, it refuses at once. -v narrates each stage on stderr. | Root cause of the reported hang: --path defaulted to stdin, so the bare command advertised by the Workbench card, the Attack Map and orionx-help blocked on the tty with no output. Those surfaces point the operator at the event stream, so that is the interactive default. Annotated at resolve_local_path(). |
 | DEC-001 | 2026-03-08 | [FOUNDATION] Start from v1.5.5 as foundation | Most mature version, has all scripts and ISO config |
 | DEC-002 | 2026-03-08 | [INFRA] Debian Bullseye retained for v2.0 | Stable, known working; NixOS migration deferred to v3.1 |
 | DEC-003 | 2026-03-08 | [MESH] LAN-only mesh for MVP | NAT traversal adds complexity; defer to v2.1. Code: `scripts/artifact-analyzer.py` |
