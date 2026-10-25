@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comments now sit inside `<svg>`, and the desktop-entry test rejects any theme
   icon that breaks the rule (#103). The Cockpit window now uses the gauge
   icon instead of the Phoenix.
+- The Workbench's `orionx-logquery` card no longer claims journald, Suricata
+  and Zeek sources the tool cannot parse. It now names what it reads: NDJSON
+  (including the deck's event stream), web access logs and the nftables drop
+  log (#111).
 - `orionx-logquery` no longer appears to hang when run without `--path`.
   `--path` defaulted to stdin, so the command that the Workbench card, the
   Attack Map and `orionx-help` all advertise (`orionx-logquery --report

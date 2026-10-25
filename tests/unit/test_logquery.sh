@@ -803,6 +803,18 @@ else
 fi
 rm -rf "$_LT"
 
+section "The Workbench card claims only what the parsers read (#111)"
+# links.json used to promise journald, Suricata and Zeek; parse_line() reads
+# NDJSON/JSON (the bus included), CLF access logs and [ORIONX-DROP] lines.
+BLURB="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(next(t['blurb'] for k in ('local','installable','online') for t in d.get(k, []) if t.get('id')=='logquery'))" "$CHROOT/opt/orionx/osint/links.json" 2>&1)"
+if grep -qiE 'journald|suricata|zeek' <<<"$BLURB"; then
+    fail "logquery card names only formats it parses" "$BLURB"
+elif grep -qi 'ndjson' <<<"$BLURB" && grep -qi 'access log' <<<"$BLURB" && grep -qi 'drop log' <<<"$BLURB"; then
+    pass "logquery card names only formats it parses"
+else
+    fail "logquery card names only formats it parses" "$BLURB"
+fi
+
 section "Never silent — a bare run cannot hang, and -v narrates the work"
 # The reported "hang": --path defaulted to stdin, so the advertised bare
 # command (Workbench card, Attack Map, orionx-help) sat on an interactive

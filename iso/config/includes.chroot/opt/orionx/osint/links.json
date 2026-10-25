@@ -37,7 +37,7 @@
       "id": "logquery",
       "name": "orionx-logquery",
       "category": "correlate",
-      "blurb": "Forensic log correlation across journald, Suricata, Zeek and the nftables drop log, with preset IR reports.",
+      "blurb": "Forensic log correlation over NDJSON (including this deck's event stream), web access logs and the nftables drop log: targeted vs widespread, with preset IR reports.",
       "kind": "command",
       "command": "orionx-logquery --report summary",
       "runtime_path": "/opt/orionx/scripts/logquery/orionx-logquery"
