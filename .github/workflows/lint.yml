@@ -23,7 +23,7 @@ jobs:
       - name: Install Python tools
         # Match the validated local linter until existing scripts are migrated
         # to newer Ruff rules; an unpinned upgrade broke unrelated v3.0.0 code.
-        run: pip install ruff==0.15.12 pytest pyyaml
+        run: pip install ruff==0.15.12 pytest pyyaml cryptography
 
       - name: Lint
         run: make lint

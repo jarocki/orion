@@ -6,7 +6,7 @@
 # Validates the hook file structurally — no chroot or root access needed.
 # Asserts: file existence, permissions, shebang, strict mode, single
 # autostart-array authority, correct install target, correct source path,
-# all 12 unit file references present, and that the hook does NOT write
+# all expected unit file references present, and that the hook does NOT write
 # directly to /etc/systemd/system/ (systemctl enable owns symlinks).
 #
 # @decision DEC-PHASE7-SYSTEMD-INSTALL-TEST-001
@@ -160,9 +160,7 @@ else
 fi
 
 # ===========================================================================
-# 5. Autostart array contains exactly the documented 8 members
-#    W10-1 added 2 to AUTOSTART_UNITS (only the integrity check + socket;
-#    runtime + warmup are lazy/opt-in)
+# 5. Autostart array contains exactly the documented members.
 # ===========================================================================
 section "Autostart array members"
 
@@ -175,9 +173,18 @@ EXPECTED_AUTOSTART=(
     "orionx-mesh-status.timer"
     "orionx-firewall.service"
     "orionx-first-boot.service"
+    "orionx-scanwatch.service"
+    "orionx-event-broker.service"
     # W10-1 added 2 Nebula units (DEC-PHASE10-009 integrity + DEC-PHASE11-033 runtime auto-start)
     "nebula-integrity-check.service"
     "nebula-runtime.service"
+    "orionx-heald.service"
+    "orionx-postured.service"
+    "nebula-mcp.service"
+    "orionx-apparmor-load.service"
+    "orionx-mesh-discover.service"
+    "orionx-perf-measure.service"
+    "orionx-runtime-verify.service"
 )
 
 for unit in "${EXPECTED_AUTOSTART[@]}"; do
@@ -188,16 +195,14 @@ for unit in "${EXPECTED_AUTOSTART[@]}"; do
     fi
 done
 
-# Count quoted unit entries inside the AUTOSTART_UNITS block to verify exactly
-# 6 members: 4 mesh/firewall/first-boot + 2 Nebula (integrity + runtime).
-# matrix + mesh-beacon removed (W11-14f offline boot); socket removed (DEC-PHASE11-033).
+# Check the exact autostart cardinality as well as each named member above.
 AUTOSTART_BLOCK="$(awk '/^AUTOSTART_UNITS=\(/{p=1} p{print} /^\)/{if(p) p=0}' "$HOOK_FILE")"
 AUTOSTART_MEMBER_COUNT="$(grep -c '".*\.service"\|".*\.timer"\|".*\.socket"' <(echo "$AUTOSTART_BLOCK") || true)"
-if [[ "$AUTOSTART_MEMBER_COUNT" -eq 15 ]]; then
-    pass "AUTOSTART_UNITS array has exactly 15 members (DEC-PHASE12-109 added the two VM-only probes)"
+if [[ "$AUTOSTART_MEMBER_COUNT" -eq "${#EXPECTED_AUTOSTART[@]}" ]]; then
+    pass "AUTOSTART_UNITS array has exactly ${#EXPECTED_AUTOSTART[@]} named members"
 else
-    fail "AUTOSTART_UNITS array has exactly 15 members (DEC-PHASE12-109 added the two VM-only probes)" \
-         "Found $AUTOSTART_MEMBER_COUNT; expected 6"
+    fail "AUTOSTART_UNITS array has exactly ${#EXPECTED_AUTOSTART[@]} named members" \
+         "Found $AUTOSTART_MEMBER_COUNT; expected ${#EXPECTED_AUTOSTART[@]}"
 fi
 
 # ===========================================================================
@@ -225,11 +230,9 @@ else
 fi
 
 # ===========================================================================
-# 8. All 12 expected unit file names referenced for copy
-#    W10-1 added 4 Nebula units (DEC-PHASE10-009 integrity + DEC-PHASE10-010
-#    socket activation)
+# 8. All expected unit file names referenced for copy.
 # ===========================================================================
-section "All 9 unit files referenced"
+section "All expected unit files referenced"
 
 EXPECTED_UNITS=(
     "orionx-mesh-health.service"
@@ -240,10 +243,20 @@ EXPECTED_UNITS=(
     "orionx-mesh-discover.timer"
     "orionx-firewall.service"
     "orionx-first-boot.service"
+    "orionx-scanwatch.service"
+    "orionx-event-broker.service"
     # W10-1 added 3 Nebula units (DEC-PHASE10-009 integrity + DEC-PHASE11-033 runtime; socket removed)
     "nebula-integrity-check.service"
     "nebula-runtime.service"
     "nebula-warmup.service"
+    "orionx-heald.service"
+    "orionx-postured.service"
+    "nebula-mcp.service"
+    "orionx-capture@.service"
+    "orionx-apparmor-load.service"
+    "orionx-mesh-beacon.service"
+    "orionx-perf-measure.service"
+    "orionx-runtime-verify.service"
 )
 
 for unit in "${EXPECTED_UNITS[@]}"; do
@@ -254,16 +267,14 @@ for unit in "${EXPECTED_UNITS[@]}"; do
     fi
 done
 
-# Count members in the UNIT_FILES array (must be exactly 9): 6 mesh/firewall/
-# first-boot + 3 Nebula (integrity + runtime + warmup). matrix + mesh-beacon
-# removed (W11-14f offline boot); nebula-runtime.socket removed (DEC-PHASE11-033).
+# Check the exact install cardinality as well as each named member above.
 UNIT_FILES_BLOCK="$(awk '/^UNIT_FILES=\(/{p=1} p{print} /^\)/{if(p) p=0}' "$HOOK_FILE")"
 UNIT_FILES_COUNT="$(grep -c '".*\.service"\|".*\.timer"\|".*\.socket"' <(echo "$UNIT_FILES_BLOCK") || true)"
-if [[ "$UNIT_FILES_COUNT" -eq 20 ]]; then
-    pass "UNIT_FILES array has exactly 20 members (DEC-PHASE12-109 added the two VM-only probes)"
+if [[ "$UNIT_FILES_COUNT" -eq "${#EXPECTED_UNITS[@]}" ]]; then
+    pass "UNIT_FILES array has exactly ${#EXPECTED_UNITS[@]} named members"
 else
-    fail "UNIT_FILES array has exactly 20 members (DEC-PHASE12-109 added the two VM-only probes)" \
-         "Found $UNIT_FILES_COUNT; expected 9"
+    fail "UNIT_FILES array has exactly ${#EXPECTED_UNITS[@]} named members" \
+         "Found $UNIT_FILES_COUNT; expected ${#EXPECTED_UNITS[@]}"
 fi
 
 # ===========================================================================
