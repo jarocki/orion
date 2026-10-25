@@ -112,9 +112,25 @@ class Cockpit(Gtk.Window):
         self.nb.append_page(self.da, CC.tab_label("LIVE", "utilities-system-monitor-symbolic"))
         self._pages = {"live": 0}
         self._pages.update(CC.append_sections(self.nb))
+        for key, index in self._pages.items():
+            if key != "live":
+                self._skin_page(self.nb.get_nth_page(index))
         self.toast_bar = CC.ToastBar()
         CCUX.set_notifier(self.toast_bar.notify)
+        # @decision DEC-PHASE13-020
+        # @title The status line is a strip above the tabs, fed on every tab
+        # @status accepted
+        # @rationale #105: host, address, posture and clock were painted in
+        #   the top of the LIVE canvas and fed by pollers owned by it, so every
+        #   other tab had no status line and the data froze while it was
+        #   hidden. The strip is its own widget above the notebook, drawn with
+        #   LIVE's primitives, and owns those two pollers; it is mapped on
+        #   every tab, so they keep running.
+        self.header = Gtk.DrawingArea()
+        self.header.set_size_request(-1, L.HEADER_H)
+        self.header.connect("draw", self._draw_header)
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        root.pack_start(self.header, False, False, 0)
         root.pack_start(self.nb, True, True, 0)
         root.pack_start(self.toast_bar, False, False, 0)
         self.add(root)
@@ -151,8 +167,9 @@ class Cockpit(Gtk.Window):
         GLib.timeout_add(FPS_MS, self._tick)
         GLib.timeout_add(POLL_EVENTS_MS, self._poll_events)
         GLib.timeout_add(POLL_NET_MS, self._poll_net)
-        self._sys_poller = Poller(self.da, POLL_SYS_MS, self._collect_sys, self._apply_sys)
-        self._vitals_poller = Poller(self.da, POLL_VITALS_MS, self._collect_vitals, self._apply_vitals)
+        self._sys_poller = Poller(self.header, POLL_SYS_MS, self._collect_sys, self._apply_sys)
+        self._vitals_poller = Poller(self.header, POLL_VITALS_MS, self._collect_vitals, self._apply_vitals)
+        GLib.timeout_add(1000, self._tick_header)       # the clock
         if demo:
             GLib.timeout_add(1400, self._demo_event)
         self._poll_events()
@@ -223,6 +240,7 @@ class Cockpit(Gtk.Window):
             return
         self.systems.update(d["systems"])
         self.posture, self.posture_status, self.heal = d["posture"], d["posture_status"], d["heal"]
+        self.header.queue_draw()
 
     def _collect_vitals(self, _visible: bool) -> dict:
         return V.collect(self._cpu_prev)
@@ -231,6 +249,12 @@ class Cockpit(Gtk.Window):
         if err is None and v:
             self._cpu_prev = v.get("cpu_sample")
             self.vitals = v
+            self.header.queue_draw()
+
+    def _tick_header(self) -> bool:
+        if self.header.get_mapped():
+            self.header.queue_draw()
+        return True
 
     def _tick(self) -> bool:
         self.pressure_shown = L.lerp(self.pressure_shown, self.pressure_target, 0.15)
@@ -385,9 +409,8 @@ class Cockpit(Gtk.Window):
     def _draw(self, da, cr) -> bool:
         W = da.get_allocated_width()
         H = da.get_allocated_height()
-        self._background(cr, W, H)
+        self._background(cr, W, H, self._origin(da), sweep=True)
         lay = L.live_layout(W, H)
-        self._header(cr, W, lay["header"][3])
         # Every panel is clipped to its own rectangle (UX-17): nothing a panel
         # draws can land on its neighbour or below the window.
         for name, fn in (("events", self._events_panel), ("deck", self._deck_panel),
@@ -461,7 +484,7 @@ class Cockpit(Gtk.Window):
         cr.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
         cr.close_path()
 
-    def _panel(self, cr, x, y, w, h, title):
+    def _panel(self, cr, x, y, w, h, title=None):
         self._rrect(cr, x, y, w, h)
         cr.set_source_rgba(0.04, 0.05, 0.07, 0.82)
         cr.fill_preserve()
@@ -476,11 +499,52 @@ class Cockpit(Gtk.Window):
             cr.line_to(cx, cy)
             cr.line_to(cx, cy + dy * 14)
             cr.stroke()
-        self._text(cr, x + 14, y + 20, title, 11, L.EMBER, bold=True, glow=0.6)
+        if title:
+            self._text(cr, x + 14, y + 20, title, 11, L.EMBER, bold=True, glow=0.6)
         return (x + 14, y + 34, w - 28, h - 46)   # content box
 
+    # --- tab pages (#106, DEC-PHASE13-019) ---
+    PAGE_INSET = 8            # frame inset from the page edge
+    PAGE_PAD = 22             # content inset: frame + the 14 px _panel uses
+
+    def _skin_page(self, scrolled) -> None:
+        """Give a GTK tab LIVE's backdrop: gradient, grid and ember frame.
+
+        Painted on the page box's own "draw" (it runs before the box draws
+        its children), with the same primitives LIVE uses, so the two cannot
+        drift. The tab-name label becomes the panel's title (CSS
+        .orionx-panel-title) and the content is inset to sit inside the frame.
+        """
+        viewport = scrolled.get_child()
+        page = viewport.get_child() if viewport is not None else None
+        if page is None:
+            return
+        page.connect("draw", self._page_backdrop)
+        children = page.get_children()
+        for i, child in enumerate(children):
+            child.set_margin_start(max(child.get_margin_start(), self.PAGE_PAD))
+            child.set_margin_end(max(child.get_margin_end(), self.PAGE_PAD))
+            if i == 0:
+                child.set_margin_top(self.PAGE_INSET + 10)
+            if i == len(children) - 1:
+                child.set_margin_bottom(max(child.get_margin_bottom(), self.PAGE_PAD))
+
+    def _page_backdrop(self, page, cr) -> bool:
+        W = page.get_allocated_width()
+        H = page.get_allocated_height()
+        self._background(cr, W, H, self._origin(page))
+        i = self.PAGE_INSET
+        self._panel(cr, i, i, W - 2 * i, H - 2 * i)
+        return False           # let the box draw its children on top
+
+    def _origin(self, widget) -> tuple[int, int]:
+        """`widget`'s top-left in window coordinates, so every surface's grid
+        lines up with its neighbours' (header, LIVE, and the tab pages)."""
+        xy = widget.translate_coordinates(self, 0, 0)
+        return (xy[0], xy[1]) if xy else (0, 0)
+
     # --- background: gradient + grid + scanline sweep ---
-    def _background(self, cr, W, H):
+    def _background(self, cr, W, H, origin=(0, 0), sweep=False):
         g = cairo.LinearGradient(0, 0, 0, H)
         g.add_color_stop_rgb(0, *L.BG_TOP)
         g.add_color_stop_rgb(1, *L.BG_BOTTOM)
@@ -489,14 +553,18 @@ class Cockpit(Gtk.Window):
         cr.fill()
         cr.set_source_rgba(*L.GRID, 0.22)
         cr.set_line_width(1.0)
-        for gx in range(0, W, 40):
+        ox, oy = origin
+        for gx in range(-(ox % 40), W, 40):
             cr.move_to(gx + 0.5, 0)
             cr.line_to(gx + 0.5, H)
-        for gy in range(0, H, 40):
+        for gy in range(-(oy % 40), H, 40):
             cr.move_to(0, gy + 0.5)
             cr.line_to(W, gy + 0.5)
         cr.stroke()
-        # scanline sweep
+        if not sweep:
+            return
+        # scanline sweep — LIVE only: it needs a 6 fps redraw, which the GTK
+        # tabs are not worth on the reference deck's CPU
         t = time.time() - self.t0
         sy = (t * 60.0) % (H + 80) - 40
         band = cairo.LinearGradient(0, sy - 40, 0, sy + 40)
@@ -507,7 +575,14 @@ class Cockpit(Gtk.Window):
         cr.rectangle(0, sy - 40, W, 80)
         cr.fill()
 
-    # --- header ---
+    # --- header (the status strip above the tabs, DEC-PHASE13-020) ---
+    def _draw_header(self, da, cr) -> bool:
+        W = da.get_allocated_width()
+        H = da.get_allocated_height()
+        self._background(cr, W, H, self._origin(da))
+        self._header(cr, W, H - 1)
+        return False
+
     def _header(self, cr, W, h):
         cr.set_source_rgba(*L.EMBER, 0.5)
         cr.set_line_width(1.0)

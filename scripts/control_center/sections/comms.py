@@ -24,7 +24,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # type: ignore[import]  # noqa: E402
 
 from ..helpers import comms_data as C  # noqa: E402
-from ..helpers import ux  # noqa: E402
+from ..helpers import style, ux  # noqa: E402
 from ..helpers.background import Poller, run_async  # noqa: E402
 from ..helpers.subprocess_runner import run_stdout  # noqa: E402
 
@@ -126,9 +126,7 @@ def build_section() -> Gtk.Widget:
     detail.set_selectable(True)
     box.pack_start(detail, False, False, 0)
 
-    who_hdr = Gtk.Label()
-    who_hdr.set_markup("<b>Who is connected</b>")
-    who_hdr.set_halign(Gtk.Align.START)
+    who_hdr = style.heading("<b>Who is connected</b>")
     box.pack_start(who_hdr, False, False, 2)
     who = Gtk.Label(label="Press Refresh to list rooms and members.")
     who.set_halign(Gtk.Align.START)
@@ -140,9 +138,7 @@ def build_section() -> Gtk.Widget:
     refresh_btn.get_style_context().add_class("orionx-tool")
     box.pack_start(refresh_btn, False, False, 2)
 
-    clients_hdr = Gtk.Label()
-    clients_hdr.set_markup("<b>Clients</b>")
-    clients_hdr.set_halign(Gtk.Align.START)
+    clients_hdr = style.heading("<b>Clients</b>")
     box.pack_start(clients_hdr, False, False, 2)
     clients_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
     box.pack_start(clients_box, False, False, 0)

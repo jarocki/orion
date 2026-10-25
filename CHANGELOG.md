@@ -28,6 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The Cockpit's status line (hostname, address, threat posture, clock) is now
+  a strip above the tabs and shows on every tab. Its probes keep running when
+  LIVE is not the visible tab (#105).
+- Every Cockpit tab now uses LIVE's look: the dark gradient and grid, an
+  ember-framed panel titled with the tab's name, Hack type, and ember headings
+  and dividers (#106).
 - Orion-themed icons for Artifact Analyzer, DJ Deck, Matrix Comms, Matrix
   Setup and Storyboard Generator, which previously used generic theme icons
   (#104).
