@@ -257,6 +257,7 @@ ncdu
 neovim
 net-tools
 openssl
+python3-cryptography
 p7zip-full
 parallel
 pciutils

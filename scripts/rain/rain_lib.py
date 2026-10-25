@@ -7,7 +7,7 @@ intrusion is heard without watching the screen (issue #88).
 
 This module is the single authority for three things every R.A.I.N. piece shares:
 
-  1. THE EVENT BUS — an append-only JSONL spool at /run/orionx/events.jsonl.
+  1. THE EVENT BUS — a broker-owned JSONL spool at /run/orionx/events.jsonl.
      It is the integration point the whole detection stack plugs into: the
      Control Center health monitor + threat-posture changes emit here now; the
      W10-5 Suricata detection daemon, auto-healing engine (W10-6), and the
@@ -28,7 +28,8 @@ This module is the single authority for three things every R.A.I.N. piece shares
   Rather than couple RAIN to any one detector, define /run/orionx/events.jsonl as
   the single event authority (JSONL on tmpfs — ephemeral by design on a live
   forensic appliance) and make RAIN its first consumer. Emitters call the
-  `orionx-event` CLI (or emit_event() in-process); the daemon tails the spool and
+  `orionx-event` CLI (or emit_event() in-process); the broker appends to the spool
+  and the daemon tails it and
   maps severity -> a bundled WAV cue, throttled so an event storm cannot become
   an audio storm. Audio degrades gracefully (paplay -> aplay -> silent) so a box
   with no sound device never errors.
@@ -41,6 +42,7 @@ import hmac
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import time
@@ -50,11 +52,11 @@ from pathlib import Path
 from typing import Any
 
 # --- Event bus (single authority) -------------------------------------------
-# tmpfs path created 0755 by tmpfiles.d (DEC-PHASE11-022); the spool file itself
-# is created world-writable (0666) so both root detectors and the desktop user
-# can append on this single-operator appliance. Ephemeral across reboots — RAIN
-# is a live-alert channel, not a forensic log (those go to /var/log/orionx).
+# The root-owned broker is the only writer. Readers retain this JSONL path.
+# The socket is writable by local publishers, but does not grant spool access.
 EVENT_LOG = Path("/run/orionx/events.jsonl")
+EVENT_SOCKET = Path("/run/orionx/events.sock")
+MAX_REQUEST_BYTES = 128 * 1024
 
 # --- Severity model ---------------------------------------------------------
 SEVERITIES = ("info", "notice", "warning", "critical")
@@ -209,19 +211,17 @@ def save_config(cfg: dict[str, Any]) -> bool:
 # signature that fired, the rule that triggered, or the matching content. Any
 # drill-down needs that detail to exist on the bus in the first place.
 #
-# It must not arrive at the cost of the bus's integrity. Single-line appends to
-# an O_APPEND fd are atomic only below PIPE_BUF (4096 on Linux), and there are
-# now many concurrent emitters (scanwatch, postured, healing, nucleotide, the
-# Control Center...). A fat detail payload would push a line over that limit
-# and let two emitters interleave, corrupting the record precisely when it
-# matters most. So detail is budgeted, and anything that does not fit spills to
-# a sidecar file the event points at rather than being silently dropped.
+# It must not arrive at the cost of the bus's integrity. The broker serializes
+# appends from concurrent emitters (scanwatch, postured, healing, nucleotide,
+# the Control Center...), while a small bounded line keeps readers and the
+# signed syslog stream predictable. Overflow spills to a broker-owned sidecar
+# file the event points at rather than being silently dropped.
 # ---------------------------------------------------------------------------
 
 DETAIL_DIR = Path("/run/orionx/details")
 
-# Total serialized line budget. PIPE_BUF is 4096; leave generous headroom for
-# the envelope and for multi-byte UTF-8 expanding past len() in characters.
+# Total serialized line budget; leave headroom for the envelope and multi-byte
+# UTF-8 expanding past len() in characters.
 LINE_BUDGET = 3072
 _DETAIL_VALUE_MAX = 512
 
@@ -249,11 +249,15 @@ def _shrink_detail(detail: dict[str, Any], envelope_len: int) -> tuple[dict[str,
     return inline, overflow
 
 
-def _write_sidecar(event_id: str, payload: dict[str, Any]) -> str | None:
+def _write_sidecar(event_id: str, payload: dict[str, Any],
+                   directory: Path | None = None) -> str | None:
     """Persist the full detail next to the bus. Returns a path, or None."""
     try:
-        DETAIL_DIR.mkdir(parents=True, exist_ok=True)
-        path = DETAIL_DIR / f"{event_id}.json"
+        if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > MAX_REQUEST_BYTES:
+            return None
+        directory = DETAIL_DIR if directory is None else directory
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{event_id}.json"
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
         os.replace(tmp, path)          # atomic; a reader never sees a partial file
@@ -265,20 +269,19 @@ def _write_sidecar(event_id: str, payload: dict[str, Any]) -> str | None:
 # --- Attestation: which bus lines a ROOT producer wrote --------------------
 #
 # @decision DEC-PHASE12-084
-# @title Root producers sign their bus events; the healing daemon acts only on signed ones
+# @title The broker signs root-origin bus events; healing acts only on signed ones
 # @status accepted
-# @rationale QA round 1 (security F7). /run/orionx/events.jsonl is 0666 by
-#   design: the Cockpit, the operator's `orionx-event` and every sensor write
-#   it, and R.A.I.N. must hear all of them. But the `source` field is
+# @rationale QA round 1 (security F7). The former 0666 bus allowed the Cockpit,
+#   the operator's `orionx-event` and sensors to append directly. A root-owned
+#   socket broker now owns the 0644 spool. The `source` field remains
 #   self-asserted, and orionx-heald (root, CAP_NET_ADMIN/CAP_KILL) maps
 #   source/category to block_ip, kill_process, isolate_node... Any local uid
 #   could append {"source":"health","category":"compromise"} and, with
 #   autonomy raised, isolate the deck.
 #   Trust model, kept to one bus: a 32-byte key lives in a root-only file
-#   (BUS_KEY, 0600 root, created by orionx-heald or any root emitter, never
-#   by anyone else: a file not owned by root or with group/other bits is
-#   REFUSED). emit_event() adds "auth" = HMAC-SHA256(key, canonical event)
-#   when, and only when, it can read that key - i.e. when the writer is root
+#   (BUS_KEY, 0600 root, created by the broker; a file not owned by root or
+#   with group/other bits is REFUSED). The broker verifies peer credentials
+#   and adds "auth" = HMAC-SHA256(key, canonical event) only for root submissions
 #   (postured, scanwatch, heald, `sudo orionx-event`). The engine verifies the
 #   HMAC, a freshness window and a replay set before it will park or execute
 #   anything; an unsigned, forged, stale or replayed event can at most become
@@ -292,7 +295,6 @@ def _write_sidecar(event_id: str, payload: dict[str, Any]) -> str | None:
 BUS_KEY = Path(os.environ.get("ORIONX_BUS_KEY", "/var/lib/orionx/bus.key"))
 AUTH_FIELD = "auth"
 _KEY_BYTES = 32
-_key_cache: dict[str, bytes] = {}
 
 
 def _canonical_event(event: dict[str, Any]) -> bytes:
@@ -346,21 +348,6 @@ def ensure_bus_key(path: Path | str | None = None) -> tuple[bytes | None, str | 
     return read_bus_key(p)
 
 
-def _signing_key() -> bytes | None:
-    """The key, if this process may sign. Cached once found; retried until then."""
-    k = str(BUS_KEY)
-    if k in _key_cache:
-        return _key_cache[k]
-    key = None
-    if os.geteuid() == 0:
-        key, _why = ensure_bus_key(BUS_KEY)
-    if key is None:
-        key, _why = read_bus_key(BUS_KEY)
-    if key is not None:
-        _key_cache[k] = key
-    return key
-
-
 def sign_event(event: dict[str, Any], key: bytes) -> str:
     return hmac.new(key, _canonical_event(event), hashlib.sha256).hexdigest()
 
@@ -371,14 +358,12 @@ def verify_event(event: dict[str, Any], key: bytes | None) -> bool:
         return False
     return hmac.compare_digest(tag, sign_event(event, key))
 
-def emit_event(severity: str, source: str, category: str, message: str,
-               detail: dict[str, Any] | None = None) -> bool:
-    """Append one event to the bus. Safe to call from anywhere; never raises.
-
-    Emitters that cannot import this module (e.g. the Control Center, which is
-    held to a strict import allowlist) shell out to the `orionx-event` CLI, which
-    is a thin wrapper over this function.
-    """
+def build_event(severity: str, source: str, category: str, message: str,
+                detail: dict[str, Any] | None = None,
+                *, trusted: bool = False,
+                detail_dir: Path | None = None,
+                attestation_key: bytes | None = None) -> dict[str, Any]:
+    """Construct an event inside the broker, after peer credentials are checked."""
     event = {
         "ts": time.time(),
         "iso": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime()),
@@ -394,7 +379,7 @@ def emit_event(severity: str, source: str, category: str, message: str,
         envelope = len(json.dumps(event, ensure_ascii=False)) + len('"detail":,') + 2
         inline, overflow = _shrink_detail(detail, envelope)
         if overflow:
-            ref = _write_sidecar(event["id"], detail)
+            ref = _write_sidecar(event["id"], detail, detail_dir)
             if ref:
                 inline["_full"] = ref
             else:
@@ -404,7 +389,9 @@ def emit_event(severity: str, source: str, category: str, message: str,
         if inline:
             event["detail"] = inline
 
-    key = _signing_key()               # DEC-PHASE12-084: root producers attest
+    key = attestation_key if trusted else None
+    if trusted and key is None:
+        raise RuntimeError("root event attestation key unavailable")
     if key is not None:
         event[AUTH_FIELD] = sign_event(event, key)
     line = json.dumps(event, ensure_ascii=False) + "\n"
@@ -414,17 +401,25 @@ def emit_event(severity: str, source: str, category: str, message: str,
         event.pop("detail", None)
         if key is not None:
             event[AUTH_FIELD] = sign_event(event, key)
-        line = json.dumps(event, ensure_ascii=False) + "\n"
+    return event
+
+
+def emit_event(severity: str, source: str, category: str, message: str,
+               detail: dict[str, Any] | None = None) -> bool:
+    """Publish through the local broker. No client opens the protected spool."""
+    request = {"severity": severity, "source": source,
+               "category": category, "message": message,
+               "detail": detail if isinstance(detail, dict) else None}
     try:
-        # O_APPEND makes concurrent single-line appends atomic (< PIPE_BUF),
-        # so multiple emitters never interleave a line.
-        fd = os.open(str(EVENT_LOG), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o666)
-        try:
-            os.write(fd, line.encode("utf-8"))
-        finally:
-            os.close(fd)
-        return True
-    except OSError:
+        data = json.dumps(request, ensure_ascii=False, default=str).encode("utf-8") + b"\n"
+        if len(data) > MAX_REQUEST_BYTES:
+            return False
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+            conn.settimeout(2.0)
+            conn.connect(str(EVENT_SOCKET))
+            conn.sendall(data)
+            return conn.recv(16) == b"OK\n"
+    except (OSError, ValueError, TypeError):
         return False
 
 
