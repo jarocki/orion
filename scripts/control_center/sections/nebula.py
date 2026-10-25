@@ -37,7 +37,7 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk  # type: ignore[import]  # noqa: E402
 
-from ..helpers import ux  # noqa: E402
+from ..helpers import style, ux  # noqa: E402
 from ..helpers.background import Poller, run_async  # noqa: E402
 
 logger = logging.getLogger("control_center.nebula")
@@ -146,9 +146,7 @@ class _NebulaSectionWidget:
         self.box.pack_start(self._integrity_label, False, False, 0)
 
         # --- Ask Nebula (chat) — W10-2 ---
-        chat_hdr = Gtk.Label()
-        chat_hdr.set_markup("<b>Ask Nebula</b>  <small>— local &amp; private</small>")
-        chat_hdr.set_halign(Gtk.Align.START)
+        chat_hdr = style.heading("<b>Ask Nebula</b>  <small>— local &amp; private</small>")
         self.box.pack_start(chat_hdr, False, False, 2)
 
         chat_scroll = Gtk.ScrolledWindow()

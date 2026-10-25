@@ -24,7 +24,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # type: ignore[import]  # noqa: E402
 
 from ..helpers import tools_data as T  # noqa: E402
-from ..helpers import ux  # noqa: E402
+from ..helpers import style, ux  # noqa: E402
 from ..helpers.background import Poller  # noqa: E402
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -144,9 +144,7 @@ _IR_TOOLS = [
 
 
 def _hdr(box: Gtk.Box, text: str) -> Gtk.Label:
-    h = Gtk.Label()
-    h.set_markup(f"<b>{text}</b>")
-    h.set_halign(Gtk.Align.START)
+    h = style.heading(f"<b>{text}</b>")
     box.pack_start(h, False, False, 4)
     return h
 

@@ -47,7 +47,7 @@ from gi.repository import GLib, Gtk  # type: ignore[import]  # noqa: E402
 from ..helpers import mesh_data as M  # noqa: E402
 from ..helpers import posture_data as P  # noqa: E402
 from ..helpers import settings_io as S  # noqa: E402
-from ..helpers import ux  # noqa: E402
+from ..helpers import style, ux  # noqa: E402
 from ..helpers.background import Poller, run_async  # noqa: E402
 
 # python.md P2-3: import once. Inserting into sys.path on every probe grew it
@@ -264,9 +264,7 @@ class _AwarenessWidget:
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         self.box.set_border_width(12)
 
-        hdr = Gtk.Label()
-        hdr.set_markup("<b>Live health</b>")
-        hdr.set_halign(Gtk.Align.START)
+        hdr = style.heading("<b>Live health</b>")
         self.box.pack_start(hdr, False, False, 2)
 
         grid = Gtk.Grid()
@@ -303,9 +301,7 @@ class _AwarenessWidget:
         self.box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 6)
 
         # --- Threat posture ---
-        phdr = Gtk.Label()
-        phdr.set_markup("<b>Threat posture</b>")
-        phdr.set_halign(Gtk.Align.START)
+        phdr = style.heading("<b>Threat posture</b>")
         self.box.pack_start(phdr, False, False, 2)
 
         current = self._load_posture()
@@ -429,9 +425,7 @@ class _AwarenessWidget:
         """Audible-alert controls; rain_lib owns rain.json's schema and its atomic save."""
         cfg = rain_lib.load_config()
 
-        rhdr = Gtk.Label()
-        rhdr.set_markup("<b>Audible alerts · R.A.I.N.</b>")
-        rhdr.set_halign(Gtk.Align.START)
+        rhdr = style.heading("<b>Audible alerts · R.A.I.N.</b>")
         self.box.pack_start(rhdr, False, False, 2)
 
         sub = Gtk.Label()

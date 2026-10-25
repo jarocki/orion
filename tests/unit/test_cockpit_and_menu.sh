@@ -117,8 +117,19 @@ then pass "cockpit_lib logic (pressure decay/clamp/bands, parse, sparkline, rate
 
 section "Deck theming (DEC-PHASE12-008)"
 grep -q "DEC-PHASE12-008" "$APP" && pass "DEC-PHASE12-008 annotation in app.py" || fail "DEC-PHASE12-008 annotation" "missing"
-grep -q "@keyframes orionx-pulse" "$APP" && pass "CC CSS has the pulsing ember tagline animation" || fail "CSS keyframes" "missing"
-grep -q "button.orionx-cockpit" "$APP" && pass "CC CSS styles the Cockpit launcher button" || fail "CSS cockpit button" "missing"
+# DEC-PHASE13-019: the headerbar/tagline/launcher rules styled a window that
+# no longer exists; the page rules carry LIVE's look onto every tab.
+CSS_BLOCK="$(awk '/^_CSS = b"""/{f=1;next} f&&/^"""/{exit} f' "$APP")"
+if [[ -z "$CSS_BLOCK" ]]; then
+    fail "dead Control Center window CSS removed" "could not find the _CSS block in app.py"
+elif grep -qE "headerbar|orionx-subtitle|orionx-pulse|button\.orionx-cockpit" <<<"$CSS_BLOCK"; then
+    fail "dead Control Center window CSS removed" "headerbar/tagline/launcher rules are back"
+else
+    pass "dead Control Center window CSS removed"
+fi
+for cls in orionx-page orionx-panel-title orionx-heading; do
+    grep -q "\.$cls" "$APP" && pass "CSS themes .$cls (LIVE look on every tab)" || fail "CSS .$cls" "missing"
+done
 grep -q '"orionx-cockpit"' "$APP" && pass "CC header launches orionx-cockpit" || fail "CC cockpit launcher" "app.py does not launch orionx-cockpit"
 
 printf "\n===========================================\n"

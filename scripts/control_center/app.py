@@ -73,6 +73,7 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk  # type: ignore[import]  # noqa: E402
 
+from .helpers import style  # noqa: E402
 from .sections import auto_healing, awareness, comms, ir, mesh, nebula, network  # noqa: E402
 
 # Dark-cyberdeck accent — layered OVER the system theme, not a full replacement.
@@ -87,31 +88,27 @@ from .sections import auto_healing, awareness, comms, ir, mesh, nebula, network 
 #   buttons that light on hover, and an accent-lit active tab. Every property
 #   used is GTK 3.22+; anything a theme lacks is ignored with a warning, never a
 #   crash. Kept as an overlay so the system theme still supplies base widgets.
+#
+# DEC-PHASE13-019: the headerbar, pulsing-tagline and Cockpit-launcher rules
+# went with the Control Center window they styled (DEC-PHASE12-053 left them
+# selecting nothing). The page rules below finish what LIVE starts: the
+# Cockpit paints each page's gradient, grid and ember frame in Cairo, and these
+# give the widgets on it LIVE's font, title glow and dividers.
 _CSS = b"""
-/* --- header: ember glow, wordmark tracking, pulsing tagline --- */
-headerbar {
-    background: linear-gradient(to bottom, #171a21, #0d0f13);
-    border-bottom: 1px solid rgba(255,106,19,0.55);
-    box-shadow: 0 2px 12px rgba(255,106,19,0.28);
+/* --- tab pages: LIVE's type and accents on the painted page --- */
+.orionx-page, .orionx-page label, .orionx-page button, .orionx-page entry,
+.orionx-page treeview, .orionx-page textview { font-family: Hack, monospace; }
+.orionx-page label { color: #c6ccd4; }
+.orionx-page scrolledwindow, .orionx-page viewport { background: transparent; }
+.orionx-page label.orionx-panel-title {
+    color: #ff6a13; font-weight: bold; letter-spacing: 1px;
+    text-shadow: 0 0 6px rgba(255,106,19,0.75);
 }
-headerbar .title { color: #f2f2f2; letter-spacing: 1px; font-weight: bold; }
-.orionx-subtitle {
-    color: #ff8a2a; font-size: 90%; letter-spacing: 1px;
-    animation: orionx-pulse 2.6s ease-in-out infinite alternate;
+.orionx-page label.orionx-heading {
+    color: #ff6a13; font-weight: bold; letter-spacing: 1px;
+    text-shadow: 0 0 5px rgba(255,106,19,0.55);
 }
-@keyframes orionx-pulse {
-    from { text-shadow: 0 0 3px rgba(255,120,30,0.25); color: #e07a24; }
-    to   { text-shadow: 0 0 12px rgba(255,140,40,0.95); color: #ffa24a; }
-}
-/* --- Cockpit launcher: the one loud button on the header --- */
-button.orionx-cockpit {
-    background: linear-gradient(to right, #ff6a13, #d43f1c);
-    color: #0b0b0e; font-weight: bold; letter-spacing: 1px;
-    border: none; border-radius: 4px; padding: 4px 14px;
-    box-shadow: 0 0 10px rgba(255,106,19,0.55);
-    transition: all 160ms ease;
-}
-button.orionx-cockpit:hover { box-shadow: 0 0 18px rgba(255,120,40,1.0); color: #000; }
+.orionx-page separator { background: rgba(255,106,19,0.35); min-height: 1px; min-width: 1px; }
 /* --- vertical tabs: accent-lit active tab --- */
 notebook > header { background: #0f1116; }
 notebook > header tab { padding: 8px 10px; color: #9aa0a6; border-left: 3px solid transparent; }
@@ -180,8 +177,9 @@ def append_sections(notebook: Gtk.Notebook) -> dict[str, int]:
         # Sections no longer title themselves ("Situational Awareness" under
         # an "Awareness" tab, "Comms (Matrix)" under "Comms").
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        title = Gtk.Label()
-        title.set_markup(f"<b>{GLib.markup_escape_text(label)}</b>")
+        page.get_style_context().add_class(style.PAGE)
+        title = Gtk.Label(label=label)
+        title.get_style_context().add_class(style.PANEL_TITLE)
         title.set_halign(Gtk.Align.START)
         title.set_margin_start(12)
         title.set_margin_top(10)

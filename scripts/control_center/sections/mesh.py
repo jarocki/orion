@@ -23,7 +23,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk  # type: ignore[import]  # noqa: E402
 
 from ..helpers import mesh_data as M  # noqa: E402
-from ..helpers import ux  # noqa: E402
+from ..helpers import style, ux  # noqa: E402
 from ..helpers.spark import Spark  # noqa: E402
 from ..helpers import settings_io as S  # noqa: E402
 from ..helpers.background import Poller  # noqa: E402
@@ -66,9 +66,7 @@ def build_section() -> Gtk.Widget:
         sparks.pack_start(s, True, True, 0)
     box.pack_start(sparks, False, False, 4)
 
-    peers_hdr = Gtk.Label()
-    peers_hdr.set_markup("<b>Connected nodes</b>")
-    peers_hdr.set_halign(Gtk.Align.START)
+    peers_hdr = style.heading("<b>Connected nodes</b>")
     box.pack_start(peers_hdr, False, False, 2)
     store = Gtk.ListStore(str, str, str, str, str, str)  # node, state, endpoint, handshake, rx, tx
     tree = Gtk.TreeView(model=store)
@@ -77,9 +75,7 @@ def build_section() -> Gtk.Widget:
     tree.set_size_request(-1, 120)
     box.pack_start(tree, False, False, 0)
 
-    hist_hdr = Gtk.Label()
-    hist_hdr.set_markup("<b>History</b> <span foreground=\"#9aa0a6\">(mesh events on the bus, newest first)</span>")
-    hist_hdr.set_halign(Gtk.Align.START)
+    hist_hdr = style.heading("<b>History</b> <span foreground=\"#9aa0a6\">(mesh events on the bus, newest first)</span>")
     box.pack_start(hist_hdr, False, False, 2)
     hist = Gtk.Label(label="…")
     hist.set_halign(Gtk.Align.START)

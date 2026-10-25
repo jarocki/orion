@@ -195,22 +195,58 @@ pump(4.0)
 ck(ticks["n"] >= 50, f"main loop kept ticking while probes ran ({ticks['n']} x 50 ms beats in 4 s)")
 hidden = [p for p in Poller.instances if not p.visible() and not p.run_hidden]
 ck(hidden and all(p.runs == 0 for p in hidden), f"{len(hidden)} hidden-tab pollers ran {sum(p.runs for p in hidden)} times")
-live = [p for p in Poller.instances if p.owner is cw.da]
-ck(live and all(p.runs >= 1 for p in live), "LIVE probes ran while LIVE is visible")
+# #105: the status strip's probes (vitals, systems/posture) belong to the
+# strip above the tabs, not to the LIVE canvas, so they run on every tab.
+status = [p for p in Poller.instances if p.owner is cw.header]
+ck(len(status) == 2 and all(p.runs >= 1 for p in status), f"status-line probes ran ({len(status)} owned by the strip)")
+ck(not [p for p in Poller.instances if p.owner is cw.da], "no poller is tied to the LIVE canvas any more")
 mesh_page = cw._pages["mesh"]
 cw.nb.set_current_page(mesh_page)
-wait_for(lambda: all(p.runs >= 1 for p in Poller.instances if p.visible() and p.owner is not cw.da), 5.0)
-mesh_pollers = [p for p in Poller.instances if p.visible() and p.owner is not cw.da]
+wait_for(lambda: all(p.runs >= 1 for p in Poller.instances if p.visible() and p.owner is not cw.header), 5.0)
+mesh_pollers = [p for p in Poller.instances if p.visible() and p.owner is not cw.header]
 ck(mesh_pollers and all(p.runs >= 1 for p in mesh_pollers), "switching to Mesh collects immediately")
-runs_live = sum(p.runs for p in live)
+runs_status = sum(p.runs for p in status)
 pump(5.5)
-ck(sum(p.runs for p in live) == runs_live, "LIVE probes stop while another tab is visible")
+ck(sum(p.runs for p in status) > runs_status, "status-line probes keep running while another tab is visible")
+seen_header = []
+for key in cw._pages:
+    cw.select_tab(key)
+    pump(0.2)
+    seen_header.append(cw.header.get_mapped() and cw.header.get_allocated_height() >= CK.L.HEADER_H)
+ck(all(seen_header), f"the status strip is on screen on every tab ({sum(seen_header)}/{len(seen_header)})")
+cw.select_tab("mesh")
 
 print("[cockpit: one name per tab; no retired surface names on screen (UX-45)]")
 for key, label, _icon, _b in CCAPP.SECTIONS:
     page = cw.nb.get_nth_page(cw._pages[key])
     texts = [w.get_text() for w in walk(page) if isinstance(w, Gtk.Label)]
     ck(texts and texts[0] == label, f"tab '{label}' content opens with its own name ({texts[:1]})")
+
+print("[cockpit: every tab wears the LIVE look (#106)]")
+import cairo  # noqa: E402
+for key, label, _icon, _b in CCAPP.SECTIONS:
+    box = cw.nb.get_nth_page(cw._pages[key]).get_child().get_child()
+    first = next(w for w in walk(box) if isinstance(w, Gtk.Label))
+    ck(box.get_style_context().has_class("orionx-page")
+       and first.get_style_context().has_class("orionx-panel-title"),
+       f"tab '{label}' is an orionx-page titled by an orionx-panel-title")
+heads = [w for w in walk(cw.nb) if isinstance(w, Gtk.Label) and w.get_style_context().has_class("orionx-heading")]
+ck(len(heads) >= 9, f"group headings come from style.heading() ({len(heads)} found)")
+page_surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 400, 300)
+err = None
+try:
+    awareness_box = cw.nb.get_nth_page(cw._pages["awareness"]).get_child().get_child()
+    cw._page_backdrop(awareness_box, cairo.Context(page_surf))
+    page_surf.flush()
+    px = bytes(page_surf.get_data())
+    # BGRA: the frame's ember corner (x=8..22, y=8) must be drawn, the inside dark
+    corner = px[(8 * 400 + 12) * 4: (8 * 400 + 12) * 4 + 4]
+    inside = px[(150 * 400 + 200) * 4: (150 * 400 + 200) * 4 + 4]
+    ck(corner[2] > 150 and corner[2] > corner[0] + 60, f"page backdrop draws the ember frame (corner BGRA {tuple(corner)})")
+    ck(max(inside[:3]) < 40, f"page backdrop is LIVE's dark gradient (inside BGRA {tuple(inside)})")
+except Exception as exc:  # noqa: BLE001
+    err = exc
+ck(err is None, f"page backdrop paints without error ({err})")
 retired = ("Control Center", "IR Tools", "Investigation Surface", "Situational Awareness")
 seen = []
 for w in walk(cw):
@@ -266,6 +302,7 @@ err = None
 try:
     cw._draw(cw.da, cairo.Context(surf))
     n_first = len(drawn)
+    cw._header(cairo.Context(surf), W, CK.L.HEADER_H - 1)   # the strip, at window width
     surf.write_to_png(os.environ.get("ORIONX_GTK_PNG", str(WORK / "live.png")).replace(".png", "-stream.png"))
     cw.drill = True
     cw._draw(cw.da, cairo.Context(surf))

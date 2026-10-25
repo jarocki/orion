@@ -617,14 +617,18 @@ SEVERITY_TAG = {"info": "INFO", "notice": "NOTE", "warning": "WARN", "critical":
 SYSTEMS_MIN_H = 90
 
 
-def live_layout(W: float, H: float, pad: int = 16, header_h: int = 58,
+# The status strip above the tabs (#105, DEC-PHASE13-020). It used to be the
+# top 58 px of the LIVE canvas, which is why no other tab had it.
+HEADER_H = 58
+
+
+def live_layout(W: float, H: float, pad: int = 16,
                 deck_h: int = 118) -> dict[str, tuple[float, float, float, float]]:
-    """Panel rectangles (x, y, w, h) for a W x H drawing area."""
-    body_y = header_h + pad
-    body_h = max(0, H - header_h - pad * 2)
+    """Panel rectangles (x, y, w, h) for a W x H LIVE drawing area."""
+    body_y = pad
+    body_h = max(0, H - pad * 2)
     left_w = int(W * 0.58) - pad
     out = {
-        "header": (0, 0, W, header_h),
         "events": (pad, body_y, left_w, max(0, body_h - deck_h - pad)),
         "deck": (pad, body_y + body_h - deck_h, left_w, deck_h),
     }
