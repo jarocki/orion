@@ -56,12 +56,15 @@ Usage:
     orionx-capture status                      # what is running, and its bounds
     sudo orionx-capture stop eth0
     orionx-capture plan eth0                   # print the plan, change nothing
+    sudo orionx-capture export eth0            # newest ring file -> ~/Captures
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import pwd
+import re
 import shutil
 import subprocess
 import sys
@@ -667,6 +670,101 @@ def cmd_stop(args) -> int:
     return 0 if ok else 1
 
 
+# @decision DEC-PHASE13-021
+# @title `export` hands the operator a copy of a capture; the ring stays root's
+# @status accepted
+# @rationale #109 wants "Open in Wireshark" on the Cockpit's Network tab, and
+#   DEC-PHASE13-015 rules out giving the desktop session raw-capture or
+#   capture-read privilege. The unit writes ring files root:root 0640 under
+#   UMask=0027, so the operator cannot open them, and that is right: they are
+#   the deck's evidence. `sudo orionx-capture export <iface>` copies the newest
+#   ring file into the invoking operator's ~/Captures (0700 dir, 0600 file,
+#   owned by them), in a terminal they can see. Wireshark then opens the copy
+#   with no privilege at all. The copy is refused if the destination cannot
+#   hold it, with the numbers, because on the live image ~ is RAM.
+IFACE_NAME = re.compile(r"^(?!\.{1,2}$)[A-Za-z0-9_.:@-]{1,15}$")
+
+
+def ring_files(iface: str, capture_root: Path = CAPTURE_ROOT) -> list[Path]:
+    """This interface's ring files, newest first."""
+    try:
+        found = [p for p in (Path(capture_root) / iface).glob(f"{iface}*.pcapng")
+                 if p.is_file()]
+    except OSError:
+        return []
+    return sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def export_destination(to: str | None, environ=os.environ,
+                       lookup=pwd.getpwnam) -> tuple[Path, int | None, int | None]:
+    """Where an export lands, and who should own it.
+
+    --to wins. Otherwise ~/Captures of the operator who ran sudo; a bare root
+    login has no operator to hand the copy to, so it must say where.
+    """
+    if to:
+        return Path(to).expanduser(), None, None
+    user = environ.get("SUDO_USER")
+    if not user or user == "root":
+        raise ValueError("no operator to hand the copy to: run it with sudo from "
+                         "your own session, or pass --to DIR")
+    entry = lookup(user)
+    return Path(entry.pw_dir) / "Captures", entry.pw_uid, entry.pw_gid
+
+
+def cmd_export(args) -> int:
+    if not IFACE_NAME.match(args.iface):
+        print(f"REFUSED: {args.iface!r} is not an interface name", file=sys.stderr)
+        return 2
+    files = ring_files(args.iface, Path(args.dir))
+    if not files:
+        print(f"No capture files for {args.iface} under {Path(args.dir) / args.iface}. "
+              f"Start one first: sudo orionx-capture start {args.iface}", file=sys.stderr)
+        return 1
+    src = files[0]
+    try:
+        dest_dir, uid, gid = export_destination(args.to)
+    except (ValueError, KeyError) as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return 2
+    size_mb = src.stat().st_size / (1024.0 * 1024.0)
+    free = free_mb_for(dest_dir)
+    if free is not None and size_mb * FREE_SPACE_FACTOR > free:
+        print(f"REFUSED: {src.name} is {size_mb:.1f} MB and {dest_dir} has "
+              f"{free:.1f} MB free (need {FREE_SPACE_FACTOR:g}x headroom). "
+              f"Pass --to a larger disk.", file=sys.stderr)
+        return 1
+    dest = dest_dir / src.name
+    if args.dry_run:
+        print(f"[dry-run] copy {src} -> {dest} (0600)")
+        return 0
+    try:
+        dest_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if uid is not None:
+            os.chown(dest_dir, uid, gid)
+        tmp = dest.with_name(f".{dest.name}.part")
+        shutil.copyfile(src, tmp)
+        os.chmod(tmp, 0o600)
+        if uid is not None:
+            os.chown(tmp, uid, gid)
+        os.replace(tmp, dest)
+    except OSError as exc:
+        print(f"export failed: {exc}", file=sys.stderr)
+        return 1
+    live = state_path(args.iface, Path(args.state_dir)).exists()
+    note = (" It is the file the running capture is still writing, so the last "
+            "packet may be cut short." if live else "")
+    publish("notice", f"PCAP {src.name} ({size_mb:.1f} MB) exported to {dest} "
+            f"for analysis.{note}", dry_run=args.dry_run)
+    if args.json:
+        print(json.dumps({"source": str(src), "path": str(dest),
+                          "size_mb": round(size_mb, 1), "live": live}))
+    else:
+        print(f"exported {src} -> {dest} ({size_mb:.1f} MB, mode 0600){note}")
+        print(f"open it with: wireshark -r {dest}")
+    return 0
+
+
 def cmd_status(args) -> int:
     captures = active_captures(Path(args.state_dir))
     if args.json:
@@ -818,9 +916,13 @@ def main(argv: list[str] | None = None) -> int:
     for verb, helptext in (("plan", "print the plan without starting anything"),
                            ("start", "start a bounded capture"),
                            ("stop", "stop the capture on an interface"),
+                           ("export", "copy the newest ring file to ~/Captures"),
                            ("run", "in-unit entry point (execs dumpcap)")):
         p = sub.add_parser(verb, parents=[common], help=helptext)
         p.add_argument("iface", help="interface name, e.g. eth0")
+        if verb == "export":
+            p.add_argument("--to", help="destination directory "
+                                        "(default: ~/Captures of the sudo user)")
         if verb == "start":
             p.add_argument("--restart", action="store_true",
                            help="replace a capture already running")
@@ -837,6 +939,7 @@ def main(argv: list[str] | None = None) -> int:
     return {
         "list": cmd_list, "status": cmd_status, "plan": cmd_plan,
         "start": cmd_start, "stop": cmd_stop, "run": cmd_run,
+        "export": cmd_export,
     }[args.verb](args)
 
 

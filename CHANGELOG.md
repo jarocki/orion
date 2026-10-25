@@ -34,6 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every Cockpit tab now uses LIVE's look: the dark gradient and grid, an
   ember-framed panel titled with the tab's name, Hack type, and ember headings
   and dividers (#106).
+- The Cockpit's Network tab now shows every interface (state, addresses,
+  live down/up rates, share of traffic, totals), the default route and DNS,
+  and TCP/UDP/ICMP packets per second (#107). It lists NetworkManager VPN and
+  WireGuard connections with Connect/Disconnect, and can import a provider's
+  WireGuard `.conf`, with no OpenVPN stack added (#108). It has per-interface
+  Start/Stop for the bounded capture, Copy to ~/Captures, and Open in
+  Wireshark (#109).
+- `orionx-capture export <iface>` copies the newest ring file into the
+  operator's `~/Captures` (mode 0600). It refuses if the destination cannot
+  hold the copy.
 - Orion-themed icons for Artifact Analyzer, DJ Deck, Matrix Comms, Matrix
   Setup and Storyboard Generator, which previously used generic theme icons
   (#104).

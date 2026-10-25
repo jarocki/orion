@@ -687,6 +687,43 @@ if command -v shellcheck >/dev/null 2>&1; then
 fi
 if bash -n "$INSTALLER"; then pass "installer parses (bash -n)"; else fail "installer bash -n"; fi
 
+section "export: the operator gets a 0600 copy; the ring stays root's (#109, DEC-PHASE13-021)"
+EXR="$WORK/export"; mkdir -p "$EXR/cap/eth0" "$EXR/state" "$EXR/out"
+printf 'old' > "$EXR/cap/eth0/eth0_00001_20261025100000.pcapng"
+printf 'newest' > "$EXR/cap/eth0/eth0_00002_20261025100500.pcapng"
+touch -t 202610251000 "$EXR/cap/eth0/eth0_00001_20261025100000.pcapng"
+touch -t 202610251005 "$EXR/cap/eth0/eth0_00002_20261025100500.pcapng"
+OUT="$(python3 "$CAP" export eth0 --dir "$EXR/cap" --state-dir "$EXR/state" --to "$EXR/out" 2>&1)"; rc=$?
+COPY="$EXR/out/eth0_00002_20261025100500.pcapng"
+if [[ $rc -eq 0 && -f "$COPY" && "$(cat "$COPY")" == "newest" ]]; then
+  pass "export copies the NEWEST ring file"
+else
+  fail "export copies the NEWEST ring file" "rc=$rc $OUT"
+fi
+MODE="$(stat -c '%a' "$COPY" 2>/dev/null || stat -f '%Lp' "$COPY")"
+[[ "$MODE" == "600" ]] && pass "the copy is mode 0600" || fail "the copy is mode 0600" "mode $MODE"
+echo "$OUT" | grep -q "wireshark -r $COPY" && pass "export says how to open the copy" || fail "export says how to open the copy" "$OUT"
+ls "$EXR/out" | grep -q '\.part$' && fail "no partial file left behind" "$(ls -a "$EXR/out")" || pass "no partial file left behind"
+python3 "$CAP" export eth1 --dir "$EXR/cap" --state-dir "$EXR/state" --to "$EXR/out" >/dev/null 2>&1
+[[ $? -eq 1 ]] && pass "an interface with no capture is refused (exit 1)" || fail "no-capture export" "did not exit 1"
+python3 "$CAP" export ../etc --dir "$EXR/cap" --state-dir "$EXR/state" --to "$EXR/out" >/dev/null 2>&1
+[[ $? -eq 2 ]] && pass "a path-like interface name is refused (exit 2)" || fail "path-like iface" "did not exit 2"
+ERR="$(env -u SUDO_USER python3 "$CAP" export eth0 --dir "$EXR/cap" --state-dir "$EXR/state" 2>&1)"; rc=$?
+[[ $rc -eq 2 ]] && echo "$ERR" | grep -q -- "--to" && pass "without sudo or --to it refuses and says why" || fail "no destination" "rc=$rc $ERR"
+if python3 - "$CAP" "$EXR" <<'PY'
+import sys, types
+from importlib.machinery import SourceFileLoader
+cap = SourceFileLoader("cap", sys.argv[1]).load_module()
+root = sys.argv[2]
+cap.free_mb_for = lambda _p: 0.000001
+args = types.SimpleNamespace(iface="eth0", dir=root + "/cap", state_dir=root + "/state",
+                             to=root + "/full", dry_run=False, json=False)
+sys.exit(0 if cap.cmd_export(args) == 1 else 1)
+PY
+then pass "export refuses when the destination cannot hold the copy"
+else fail "export refuses when the destination cannot hold the copy"
+fi
+
 printf "\n===========================================\n"
 if [[ ${PENDING:-0} -gt 0 ]]; then
   printf "  ${RED}%s central wiring entr(y/ies) PENDING${NC} — see WIRING above\n" "$PENDING"

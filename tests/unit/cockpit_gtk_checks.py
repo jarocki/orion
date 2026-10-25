@@ -230,6 +230,13 @@ for key, label, _icon, _b in CCAPP.SECTIONS:
     ck(box.get_style_context().has_class("orionx-page")
        and first.get_style_context().has_class("orionx-panel-title"),
        f"tab '{label}' is an orionx-page titled by an orionx-panel-title")
+net_box = cw.nb.get_nth_page(cw._pages["network"]).get_child().get_child()
+net_heads = [w.get_text() for w in walk(net_box) if isinstance(w, Gtk.Label) and w.get_style_context().has_class("orionx-heading")]
+ck(net_heads == ["Interfaces", "Traffic by protocol", "VPN", "Packet capture"],
+   f"Network tab has interfaces, protocol traffic, VPN and capture (#107-#109): {net_heads}")
+net_buttons = [w.get_label() for w in walk(net_box) if isinstance(w, Gtk.Button)]
+ck("Import WireGuard .conf…" in net_buttons and "Open Network Manager" in net_buttons,
+   f"Network tab offers WireGuard import and the NM editor ({net_buttons})")
 heads = [w for w in walk(cw.nb) if isinstance(w, Gtk.Label) and w.get_style_context().has_class("orionx-heading")]
 ck(len(heads) >= 9, f"group headings come from style.heading() ({len(heads)} found)")
 page_surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, 400, 300)
