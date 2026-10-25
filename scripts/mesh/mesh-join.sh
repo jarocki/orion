@@ -69,6 +69,10 @@ mesh_join() {
 
     # --- 3. Report the team PSK posture (never invented here: DEC-PHASE12-098) ---
     mesh_psk_status
+    if [[ -z "$config_file" && ! -f "$MESH_PSK_FILE" ]]; then
+        echo "  Discovery safety: LAN beacons will be held as candidates, not auto-added."
+        echo "  Review with: sudo orionx-mesh candidates list"
+    fi
 
     # --- 4. Allocate VPN IP ---
     local vpn_ip

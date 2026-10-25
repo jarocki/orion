@@ -204,7 +204,7 @@ else
     fail "Help banner version" "$(echo "$output" | head -1)"
 fi
 
-for cmd in join status peers leave help; do
+for cmd in join status peers candidates leave help; do
     if echo "$output" | grep -q "$cmd"; then
         pass "Help lists '$cmd' command"
     else
@@ -244,6 +244,22 @@ if echo "$output" | grep -qi 'inactive'; then
 else
     fail "'status' shows inactive" "Output: $output"
 fi
+
+# A no-PSK candidate queue is operator-visible through the real CLI.  The
+# target image has util-linux flock; provide its minimal success behaviour on
+# development hosts such as macOS so this remains an offline unit test.
+candidate_tmp="$(mktemp -d)"
+mkdir -p "$candidate_tmp/bin" "$candidate_tmp/run"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$candidate_tmp/bin/flock"
+chmod +x "$candidate_tmp/bin/flock"
+output="$(PATH="$candidate_tmp/bin:$PATH" MESH_RUNTIME_DIR="$candidate_tmp/run" \
+    MESH_CANDIDATE_FILE="$candidate_tmp/run/candidates.tsv" run_cli candidates list)"
+if echo "$output" | grep -q 'No pending mesh candidates'; then
+    pass "'candidates list' routes to the bounded approval queue"
+else
+    fail "'candidates list' routes to the bounded approval queue" "Output: $output"
+fi
+rm -rf "$candidate_tmp"
 
 # join now attempts real WireGuard setup; without WG it fails gracefully
 set +e

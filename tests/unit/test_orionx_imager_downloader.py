@@ -172,6 +172,30 @@ class DownloaderTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "SHA256 mismatch for orionx-"):
             downloader.download_and_verify(rel.dict())
 
+    def test_missing_manifest_refuses_before_iso_download(self):
+        rel = FakeRelease("v-no-manifest")
+        rel.add("orionx-v-no-manifest.iso", b"unverified")
+        # A detached signature is not a checksum manifest and must not satisfy
+        # the mandatory-verification gate by name alone.
+        rel.add("SHA256SUMS.asc", b"detached-signature")
+        self.served.update(rel.blobs)
+
+        with self.assertRaisesRegex(RuntimeError, "has no SHA256SUMS asset"):
+            downloader.download_and_verify(rel.dict())
+
+        self.assertEqual(self.downloads, [], "fail before downloading unverified bytes")
+        self.assertFalse((self.cache / "orionx-v-no-manifest.iso").exists())
+
+    def test_explicit_skip_verify_allows_missing_manifest(self):
+        rel = FakeRelease("v-explicit-skip")
+        rel.add("orionx-v-explicit-skip.iso", b"explicitly-unverified")
+        self.served.update(rel.blobs)
+
+        out = downloader.download_and_verify(rel.dict(), skip_verify=True)
+
+        self.assertEqual(out.read_bytes(), b"explicitly-unverified")
+        self.assertEqual(len(self.downloads), 1)
+
     # --- release selection ----------------------------------------------
     def test_latest_uses_github_latest_endpoint_by_default(self):
         with mock.patch.object(downloader, "_api_get", return_value={"tag_name": "v1"}) as api:

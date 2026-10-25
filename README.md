@@ -374,11 +374,11 @@ Open in v3.0.0 (each links to its tracking issue):
   one-shot" credential was removed: it targeted an account SSH refuses. Start
   sshd deliberately with `sudo systemctl start ssh`; the firewall accepts port
   22 only over the mesh (`wg0`), key login only, for `orionx-operator`.
-- **LAN mesh discovery trusts any well-formed beacon.** A host on the same LAN
-  that sends a valid beacon with a free mesh address and its own public key is
-  added as a peer (it cannot steal or rewrite another peer's address). On a
-  hostile LAN install the optional team PSK before joining
-  (`sudo orionx-mesh psk install …`, User Guide §5) or join from a peer list.
+- **LAN mesh discovery is candidate-only without a team PSK.** A well-formed
+  beacon is validated and held for five minutes, but is not added as a peer
+  until the operator runs `sudo orionx-mesh candidates approve <VPN_IP>`.
+  Installing the optional team PSK before joining permits automatic discovery;
+  a pre-planned peer list remains the deterministic option (User Guide §5).
 - **`radare2` and `fonts-iosevka` are not shipped** ([#85](https://github.com/jarocki/orion/issues/85)):
   Debian 13 has no candidate package for either. Ghidra installs post-boot via
   `/opt/orionx/optional/install-ghidra.sh`; Hack is the monospace font.

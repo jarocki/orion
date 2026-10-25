@@ -498,9 +498,9 @@ Add `--verbose` to any subcommand for detailed output. The ◆ widget in the top
 
 **Keys.** `join` creates this deck's WireGuard keypair on first use (under `/etc/wireguard/`, mode 0600) — nothing is pre-generated on the image, so no two decks share a key. Join and leave print whether the result survives a reboot; on a stick without persistence it does not, and the deck says so.
 
-**Beacons.** Decks find each other with a UDP beacon on port 55555. A beacon can only add a peer as a single host address inside the mesh subnet and never changes an existing peer's addresses; malformed or out-of-range beacons are logged and dropped.
+**Beacons.** Decks find each other with a UDP beacon on port 55555. A beacon can only propose a peer as a single host address inside the mesh subnet and never changes an existing peer's addresses; malformed or out-of-range beacons are logged and dropped.
 
-**Limits of LAN discovery.** A beacon cannot steal or rewrite an existing peer's address, but discovery is otherwise unauthenticated: any host on the LAN that sends a well-formed beacon with a free address and its own public key becomes a peer. On a hostile LAN, install the team PSK below *before* joining, or join from a peer list (`--config peers.conf`).
+**LAN discovery authority.** Without a team PSK, discovery is unauthenticated, so a well-formed beacon is held only as a bounded, five-minute candidate. Review it with `sudo orionx-mesh candidates list` and approve a specific address with `sudo orionx-mesh candidates approve <VPN_IP>`. The approval is the authority that adds that key and endpoint. With the same team PSK installed on every deck *before* joining, valid beacons may be added automatically. On a hostile LAN, prefer the PSK or a peer list (`--config peers.conf`) rather than approving an identity you have not verified out of band.
 
 **Optional team pre-shared key.** Public-key peering is the default and needs no setup. For a second layer, make one PSK on one deck, carry it to the others out of band (a USB stick), and install it on every deck **before** they join:
 

@@ -149,6 +149,7 @@ from typing import Any
 from rich.console import Console  # DEC-ERROR-ROUTING-004: ToolContext.console injection
 
 from pivotglass.core.config import ConfigManager
+from pivotglass.core.csv_safety import spreadsheet_safe_cell
 from pivotglass.core.dossier_pivot import make_dossier_pivot_ranker  # M-6 DEC-M6-PIVOT-001
 from pivotglass.core.error_interpreter import (  # DEC-ERROR-ROUTING-001..007
     interpret,
@@ -2576,7 +2577,10 @@ def _execute_export_workspace(ctx: ToolContext, fmt: str) -> str:
         stream = _io.StringIO()
         writer = _csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(raw_objects)
+        writer.writerows(
+            {key: spreadsheet_safe_cell(value) for key, value in item.items()}
+            for item in raw_objects
+        )
         return stream.getvalue()
 
     g = RelationshipGraph()

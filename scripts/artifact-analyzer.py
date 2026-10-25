@@ -89,9 +89,14 @@ ARTIFACT_TYPES = {
             "tshark": {
                 "cmd": "tshark",
                 "filters": [
-                    "-Y \"http\"",
-                    "-Y \"dns\"",
-                    "-Y \"ip.addr==10.0.0.0/8 || ip.addr==172.16.0.0/12 || ip.addr==192.168.0.0/16\""
+                    ("http", "http"),
+                    ("dns", "dns"),
+                    (
+                        "private_ips",
+                        "ip.addr==10.0.0.0/8 || "
+                        "ip.addr==172.16.0.0/12 || "
+                        "ip.addr==192.168.0.0/16",
+                    ),
                 ]
             },
             "zeek": {
@@ -247,13 +252,20 @@ def analyze_network_capture(filename, output_dir):
         tshark_output_dir = os.path.join(net_output_dir, "tshark")
         os.makedirs(tshark_output_dir, exist_ok=True)
         
-        for filter_expr in tools["tshark"]["filters"]:
-            filter_name = filter_expr.replace("-Y ", "").replace("\"", "").replace(" ", "_")
+        for filter_name, filter_expr in tools["tshark"]["filters"]:
             output_file = os.path.join(tshark_output_dir, f"{filter_name}.txt")
             
             try:
-                command = f"tshark -r {filename} {filter_expr} > {output_file}"
-                subprocess.run(command, shell=True, check=True)
+                # Evidence filenames and analyst-selected output paths are
+                # untrusted data.  Keep both out of a command shell: a pcap
+                # named ``capture; command; #.pcap`` must remain a filename,
+                # never become executable syntax.
+                with open(output_file, "w") as outfile:
+                    subprocess.run(
+                        ["tshark", "-r", os.path.abspath(filename), "-Y", filter_expr],
+                        stdout=outfile,
+                        check=True,
+                    )
                 logger.info(f"Saved tshark filter {filter_name} results to {output_file}")
             except subprocess.CalledProcessError as e:
                 logger.error(f"Error running tshark with filter {filter_expr}: {e}")

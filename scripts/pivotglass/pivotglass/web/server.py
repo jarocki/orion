@@ -48,6 +48,7 @@ from pivotglass.core.analytic_commands import execute_analysis_command
 from pivotglass.core.analytic_ledger import AnalyticLedger
 from pivotglass.core.analytic_rigor import build_analytic_rigor
 from pivotglass.core.command_completion import command_completions
+from pivotglass.core.csv_safety import spreadsheet_safe_cell
 from pivotglass.core.document_entity_extraction import (
     EntityExtractionLimits,
     defang_indicator_value,
@@ -84,6 +85,7 @@ from pivotglass.core.investigation import (
 from pivotglass.core.investigation_graph import build_investigation_graph
 from pivotglass.core.ioc_types import detect_ioc_type
 from pivotglass.core.learning_workspace import create_learning_workspace
+from pivotglass.core.network_safety import require_loopback_host
 from pivotglass.core.operational_status import build_authority_registry
 from pivotglass.core.pursuit_brief import build_pursuit_brief
 from pivotglass.core.visualization import build_visualization_intents
@@ -1421,7 +1423,11 @@ class WebCockpitService:
             stream = io.StringIO()
             writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
             writer.writeheader()
-            writer.writerows(_defang_export_tree(objects) if defang else objects)
+            rows = _defang_export_tree(objects) if defang else objects
+            writer.writerows(
+                {key: spreadsheet_safe_cell(value) for key, value in item.items()}
+                for item in rows
+            )
             content, mime, suffix = stream.getvalue(), "text/csv", "csv"
         elif fmt in {"stix", "gexf"}:
             summary, *_ = execute_tool(self.ctx, "export_workspace", {"format": fmt})
@@ -2258,12 +2264,7 @@ def _handler(
 
 def run_web(*, host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> None:
     """Serve the built cockpit locally and optionally open the default browser."""
-    normalized_host = host.strip().lower()
-    if normalized_host in {"", "0.0.0.0", "::"}:
-        raise ValueError(
-            "Pivotglass requires an explicit loopback or LAN address; "
-            "wildcard interface binding is not allowed."
-        )
+    normalized_host = require_loopback_host(host)
     web_root = _web_root()
     if not web_root.joinpath("index.html").exists():
         raise RuntimeError("Web cockpit is not built. Run `npm ci && npm run build` in web/.")
@@ -2275,10 +2276,10 @@ def run_web(*, host: str = "127.0.0.1", port: int = 8765, open_browser: bool = T
     service = WebCockpitService()
     allowed_hosts = frozenset({"127.0.0.1", "localhost", "[::1]", normalized_host})
     server = ThreadingHTTPServer(
-        (host, port),
+        (normalized_host, port),
         _handler(service, web_root, allowed_hosts=allowed_hosts),
     )
-    url = f"http://{host}:{server.server_port}"
+    url = f"http://{normalized_host}:{server.server_port}"
     print(f"Pivotglass cockpit: {url}")
     if open_browser:
         threading.Timer(0.35, lambda: webbrowser.open(url)).start()

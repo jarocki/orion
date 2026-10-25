@@ -288,12 +288,24 @@ ck(m.upstream_scan_reporters("nucleotide") == (),
    "an unknown reporter defers to nobody (fails OPEN: a missed detection is worse than a duplicate)")
 
 now = 5000.0
+key = b"scan-dedup-test-key-32-bytes-long!"
+m.rain_lib.read_bus_key = lambda: (key, None)
+def signed_event(event):
+    event["auth"] = m.rain_lib.sign_event(event, key)
+    return json.dumps(event)
 # 1. scanwatch reports a sweep from 10.0.0.9 on the bus.
-bus = [json.dumps({"ts": now - 5, "severity": "critical", "source": "firewall",
-                   "category": "scan",
-                   "message": "port scan from 10.0.0.9 — 60 ports in 14s (tcp), most recent dport 445"})]
+scan = {"ts": now - 5, "severity": "critical", "source": "firewall",
+        "category": "scan",
+        "message": "port scan from 10.0.0.9 — 60 ports in 14s (tcp), most recent dport 445"}
+bus = [signed_event(scan.copy())]
 srcs = m.scan_sources_from_bus(bus, now, sources=("firewall",))
 ck(srcs == {"10.0.0.9"}, f"scanwatch's report is read off the bus -> {srcs}")
+ck(m.scan_sources_from_bus([json.dumps(scan)], now, sources=("firewall",)) == set(),
+   "forged unsigned scanwatch report cannot suppress an IDS alert")
+tampered = json.loads(bus[0])
+tampered["message"] = "port scan from 10.0.0.10"
+ck(m.scan_sources_from_bus([json.dumps(tampered)], now, sources=("firewall",)) == set(),
+   "a changed source in a signed line cannot suppress an IDS alert")
 
 # 2. Suricata sees the same sweep. It must NOT re-report it.
 sur = {"classtype": "attempted-recon", "signature": "ET SCAN Nmap", "src_ip": "10.0.0.9"}
@@ -344,8 +356,8 @@ noise = [json.dumps({"ts": now, "source": "health", "category": "service", "mess
          "not json at all", "", "{}"]
 ck(m.scan_sources_from_bus(noise, now, sources=("firewall",)) == set(),
    "non-scan bus traffic never suppresses a detection")
-stale = [json.dumps({"ts": now - 10000, "source": "firewall", "category": "scan",
-                     "message": "port scan from 10.0.0.9"})]
+stale = [signed_event({"ts": now - 10000, "source": "firewall", "category": "scan",
+                       "message": "port scan from 10.0.0.9"})]
 ck(m.scan_sources_from_bus(stale, now, sources=("firewall",)) == set(),
    "a stale bus entry outside the window does not suppress")
 sys.exit(0 if ok else 1)
