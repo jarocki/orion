@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""Verify RFC 5848 event records against an independently saved fingerprint."""
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from rain_broker import SIGNED_LOG  # noqa: E402
+from verify_syslog_sign import verify_log  # noqa: E402
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--path", type=Path, default=SIGNED_LOG)
+    p.add_argument("--fingerprint", required=True,
+                   help="SHA-256 signer certificate fingerprint saved outside this host")
+    args = p.parse_args()
+    try:
+        count = verify_log(args.path, args.fingerprint)
+    except (OSError, ValueError) as exc:
+        print(f"event log verification failed: {exc}", file=sys.stderr)
+        return 1
+    print(f"verified {count} RFC 5848 signed event(s)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

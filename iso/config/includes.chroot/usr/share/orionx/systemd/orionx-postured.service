@@ -32,8 +32,8 @@ Documentation=file:/var/lib/suricata/orionx-README.md
 # ingest were both dormant on the first image that actually shipped Zeek.
 #
 # Detection starts as early as it can; the model joins when it is ready.
-After=network.target orionx-firewall.service
-Wants=orionx-firewall.service
+After=network.target orionx-firewall.service orionx-event-broker.service
+Wants=orionx-firewall.service orionx-event-broker.service
 
 [Service]
 Type=simple

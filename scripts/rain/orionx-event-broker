@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""Run Orion-X's root-owned local event broker under systemd."""
+
+from __future__ import annotations
+
+import sys
+import os
+import socket
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from rain_broker import EventBroker  # noqa: E402
+
+
+def _notify_ready() -> None:
+    address = os.environ.get("NOTIFY_SOCKET")
+    if not address:
+        return
+    if address.startswith("@"):
+        address = "\0" + address[1:]
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sock:
+        sock.connect(address)
+        sock.sendall(b"READY=1")
+
+
+def main() -> int:
+    broker = EventBroker()
+    try:
+        broker.start()
+        _notify_ready()
+        print(f"orionx-event-broker: RFC 5848 signer fingerprint {broker.signer.fingerprint}", flush=True)
+        broker.serve_forever()
+    finally:
+        broker.close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,34 @@
+[Unit]
+Description=Orion-X protected event broker and RFC 5848 signer
+After=systemd-tmpfiles-setup.service
+Before=orionx-heald.service orionx-scanwatch.service orionx-postured.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=root
+ExecStart=/opt/orionx/scripts/rain/orionx-event-broker
+Restart=on-failure
+RestartSec=2s
+StateDirectory=orionx
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/run/orionx /var/lib/orionx /var/log/orionx
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+MemoryMax=128M
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

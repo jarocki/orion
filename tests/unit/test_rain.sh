@@ -45,8 +45,8 @@ else
 fi
 
 TMPFILES="$CHROOT/usr/lib/tmpfiles.d/orionx.conf"
-if grep -qE "^f /run/orionx/events\.jsonl 0666" "$TMPFILES"; then
-    pass "tmpfiles creates the event bus (events.jsonl 0666)"
+if grep -qE "^f /run/orionx/events\.jsonl 0644" "$TMPFILES"; then
+    pass "tmpfiles creates the root-owned event bus (events.jsonl 0644)"
 else
     fail "tmpfiles creates the event bus" "events.jsonl entry missing"
 fi
@@ -101,6 +101,7 @@ from pathlib import Path
 from importlib.machinery import SourceFileLoader
 rain_dir = sys.argv[1]
 sys.path.insert(0, rain_dir)
+sys.path.insert(0, str(Path(rain_dir).parents[1] / "tests/unit"))
 import rain_lib
 
 # severity ordering
@@ -111,9 +112,11 @@ assert rain_lib.normalize_severity("CRITICAL ") == "critical"
 assert rain_lib.normalize_severity("nope") == "notice"
 
 # emit → valid JSON with required fields, atomic append
-tmp = Path(tempfile.mktemp(suffix=".jsonl")); rain_lib.EVENT_LOG = tmp
-assert rain_lib.emit_event("critical", "suricata", "ids", "scan from 10.0.0.5")
-assert rain_lib.emit_event("info", "health", "service", "ok")
+tmp = Path(tempfile.mkdtemp()) / "events.jsonl"; rain_lib.EVENT_LOG = tmp
+from broker_fixture import BrokerFixture
+with BrokerFixture(tmp.parent, rain_lib):
+    assert rain_lib.emit_event("critical", "suricata", "ids", "scan from 10.0.0.5")
+    assert rain_lib.emit_event("info", "health", "service", "ok")
 rows = [json.loads(l) for l in tmp.read_text().splitlines() if l.strip()]
 assert len(rows) == 2, rows
 for k in ("ts","iso","severity","source","category","message"):

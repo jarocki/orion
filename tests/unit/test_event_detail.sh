@@ -37,6 +37,9 @@ def ck(c, label):
 rl = SourceFileLoader("rain_lib", str(root/"scripts/rain/rain_lib.py")).load_module()
 td = pathlib.Path(tempfile.mkdtemp(dir=str(root/"tmp")))
 rl.EVENT_LOG = td/"events.jsonl"; rl.DETAIL_DIR = td/"details"
+sys.path.insert(0, str(root/"tests/unit"))
+from broker_fixture import BrokerFixture
+fixture = BrokerFixture(td, rl); fixture.__enter__()
 
 # Backward compatibility is non-negotiable: every existing emitter calls the
 # 4-arg form and every existing consumer reads these six keys.
@@ -78,6 +81,7 @@ try:
     ck(True, "non-dict detail is ignored rather than raising")
 except Exception as exc:
     ck(False, f"non-dict detail raised {exc!r}")
+fixture.__exit__(None, None, None)
 sys.exit(0 if ok else 1)
 PY
 then pass "bus schema assertions"; else fail "bus schema assertions" "see above"; fi
@@ -93,6 +97,9 @@ def ck(c, label):
 rl = SourceFileLoader("rain_lib", str(root/"scripts/rain/rain_lib.py")).load_module()
 td = pathlib.Path(tempfile.mkdtemp(dir=str(root/"tmp")))
 rl.EVENT_LOG = td/"events.jsonl"; rl.DETAIL_DIR = td/"details"
+sys.path.insert(0, str(root/"tests/unit"))
+from broker_fixture import BrokerFixture
+fixture = BrokerFixture(td, rl); fixture.__enter__()
 sys.modules["rain_lib"] = rl
 cli = SourceFileLoader("orionx_event", str(root/"scripts/rain/orionx-event")).load_module()
 
@@ -106,6 +113,7 @@ ck(cli.main(["--detail",'["a"]',"x"]) == 2, "JSON array rejected (must be an obj
 ck(cli.main(["plain"]) == 0, "omitting --detail still works")
 ck("detail" not in json.loads(rl.EVENT_LOG.read_text().splitlines()[1]),
    "event without --detail carries no detail key")
+fixture.__exit__(None, None, None)
 sys.exit(0 if ok else 1)
 PY
 then pass "CLI assertions"; else fail "CLI assertions" "see above"; fi

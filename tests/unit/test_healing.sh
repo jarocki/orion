@@ -1044,9 +1044,8 @@ def sign(ev):
 
 e = make({"block_ip": "autonomous"})
 check(e.handle_event(scan()) == "unverified" and not e.runner.commands, "an UNSIGNED critical scan at 'autonomous' is NOT executed")
-check(any("NOT acted on" in m and "unsigned" in m for _s, m in e.published), "the operator is told it was not acted on, and why")
-rec = [x for x in e.entries() if x.get("kind") == hl.KIND_PROPOSED]
-check(len(rec) == 1 and "UNVERIFIED" in rec[0]["reason"], "the ledger records it as an UNVERIFIED suggestion")
+check(not e.published and not e.entries(),
+      "an unsigned bus event is dropped before ledger writes or publish subprocesses")
 forged = dict(scan(), auth="0" * 64)
 check(e.handle_event(forged) == "unverified", "a forged signature is refused")
 tampered = sign(scan()); tampered["message"] = "port scan from 198.51.100.7 - 60 ports"
@@ -1060,24 +1059,32 @@ check(e2.handle_event(scan("203.0.113.20")) == "unverified" and not hl.pending_a
       "an unsigned event cannot even park a confirm-level action")
 check(e2.handle_event(scan("203.0.113.21"), trusted=True) == "pending", "--stdin input (trusted=True) still follows consent")
 
-# emit_event signs when (and only when) the writer can read the key
-bus = WORK / "bus.jsonl"; rl.EVENT_LOG = bus
-rl._key_cache.clear()
-rl.emit_event("critical", "firewall", "scan", "port scan from 203.0.113.30 - 60 ports")
-ev = json.loads(bus.read_text().splitlines()[-1])
-check(rl.verify_event(ev, KEY), "emit_event attaches a valid signature when the key is readable")
+# Regression: guards used to run before the unattested-event refusal.  A local
+# writer could target a protected address and turn every forged line into one
+# root ledger append plus one root orionx-event child even with autonomy off.
+e_guard = make({"block_ip": "off"})
+e_guard.guards = hl.GuardContext(local_addrs={"127.0.0.1"})
+before_pub = len(e_guard.published)
+outcomes = [e_guard.handle_event(scan("127.0.0.1")) for _ in range(20)]
+check(outcomes == ["unverified"] * 20, "unsigned protected-target storm is rejected before guards")
+check(not e_guard.entries() and len(e_guard.published) == before_pub,
+      "unsigned protected-target storm causes zero root ledger writes and zero publishes")
+
+# The broker calls build_event only after checking the Unix peer uid.
+ev = rl.build_event("critical", "firewall", "scan",
+                    "port scan from 203.0.113.30 - 60 ports",
+                    trusted=True, attestation_key=KEY)
+check(rl.verify_event(ev, KEY), "trusted broker event carries a valid signature")
 e3 = make({"block_ip": "autonomous"})
 check(e3.handle_event(ev) == "applied", "an event emitted that way is acted on end to end")
-rl.BUS_KEY = WORK / "absent.key"; rl._key_cache.clear()
-rl.emit_event("critical", "health", "compromise", "host compromise asserted")
-ev2 = json.loads(bus.read_text().splitlines()[-1])
-check("auth" not in ev2, "without the key (a non-root writer) nothing is signed")
+ev2 = rl.build_event("critical", "health", "compromise", "host compromise asserted",
+                     trusted=False, attestation_key=KEY)
+check("auth" not in ev2, "untrusted publisher is never signed even when broker has the key")
 bad = WORK / "loose.key"; bad.write_text(KEY.hex()); os.chmod(bad, 0o644)
 k, why = rl.read_bus_key(bad)
 check(k is None and "0600" in why, f"a key readable by others is refused ({why})")
 lnk = WORK / "link.key"; lnk.symlink_to(WORK / "bus.key")
 check(rl.read_bus_key(lnk)[0] is None, "a symlinked key is refused")
-rl.BUS_KEY = WORK / "bus.key"; rl._key_cache.clear()
 
 # ---- the status projection (contract with the Cockpit) ------------------
 SCHEMA = {"ts", "chain_ok", "in_force", "pending", "error"}
@@ -1142,12 +1149,35 @@ mkdir -p "$BUSW"
 cat > "$WORK/autonomy.json" <<'JSON'
 {"block_ip": "propose", "kill_process": "propose"}
 JSON
-cat > "$BUSW/bus.jsonl" <<'JSON'
-{"ts": 1, "severity": "critical", "source": "firewall", "category": "scan", "message": "port scan from 203.0.113.9 - 60 ports"}
-{"ts": 2, "severity": "critical", "source": "go-roast", "category": "process", "message": "malicious pid=31337"}
-{"ts": 3, "severity": "critical", "source": "healing", "category": "heal", "message": "block_ip applied to 203.0.113.9"}
-JSON
-ONCE_OUT="$(python3 "$HEAL_DIR/orionx-heald" --once -v --bus "$BUSW/bus.jsonl" \
+python3 - "$BUSW" "$REPO_ROOT/scripts/rain" <<'PY'
+import json
+import sys
+import time
+from pathlib import Path
+
+bus_dir = Path(sys.argv[1])
+sys.path.insert(0, sys.argv[2])
+import rain_lib as rl
+
+rl.BUS_KEY = bus_dir / "bus.key"
+key, why = rl.ensure_bus_key(rl.BUS_KEY)
+assert key is not None, why
+rows = [
+    {"ts": time.time(), "severity": "critical", "source": "firewall", "category": "scan",
+     "message": "port scan from 203.0.113.9 - 60 ports"},
+    {"ts": time.time(), "severity": "critical", "source": "go-roast", "category": "process",
+     "message": "malicious pid=31337"},
+    {"ts": time.time(), "severity": "critical", "source": "healing", "category": "heal",
+     "message": "block_ip applied to 203.0.113.9"},
+]
+for row in rows:
+    row["auth"] = rl.sign_event(row, key)
+(bus_dir / "bus.jsonl").write_text(
+    "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
+    encoding="utf-8",
+)
+PY
+ONCE_OUT="$(ORIONX_BUS_KEY="$BUSW/bus.key" python3 "$HEAL_DIR/orionx-heald" --once -v --bus "$BUSW/bus.jsonl" \
     --state-dir "$BUSW/state" --no-reconcile --dry-run 2>&1)"
 if echo "$ONCE_OUT" | grep -q 'PROPOSE block_ip 203.0.113.9'; then
     pass "--once reads the bus FROM THE START (regression: it seeked to EOF and did nothing)"

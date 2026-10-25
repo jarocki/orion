@@ -126,6 +126,8 @@ declare -A SCRIPT_MAP=(
     ["orionx-wizard"]="/opt/orionx/scripts/security/first-boot-wizard.sh"
     # R.A.I.N. — event-bus emitter + audible-alert daemon (#88, DEC-PHASE11-045)
     ["orionx-event"]="/opt/orionx/scripts/rain/orionx-event"
+    ["orionx-event-broker"]="/opt/orionx/scripts/rain/orionx-event-broker"
+    ["orionx-verify-event-log"]="/opt/orionx/scripts/rain/orionx-verify-event-log"
     ["orionx-rain"]="/opt/orionx/scripts/rain/orionx-rain"
     # Orion Cockpit — live visualisation dashboard (DEC-PHASE12-007)
     ["orionx-cockpit"]="/opt/orionx/scripts/cockpit/orionx-cockpit"

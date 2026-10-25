@@ -113,13 +113,35 @@ python3 -c 'import json,sys; r=json.loads(sys.argv[1]); sys.exit(0 if r["after_p
 
 echo "[orionx-heald daemon: joins at EOF, acts on a line written in two parts]"
 B="$TMP/heald"; mkdir -p "$B"
-echo '{"ts":1,"severity":"critical","source":"firewall","category":"scan","message":"port scan from 203.0.113.1 - 60 ports"}' > "$B/bus.jsonl"
+python3 - "$ROOT/scripts/rain" "$B" <<'PY'
+import json
+import sys
+import time
+from pathlib import Path
+
+sys.path.insert(0, sys.argv[1])
+import rain_lib as rl
+
+work = Path(sys.argv[2])
+rl.BUS_KEY = work / "bus.key"
+key, why = rl.ensure_bus_key(rl.BUS_KEY)
+assert key is not None, why
+
+def signed(address):
+    row = {"ts": time.time(), "severity": "critical", "source": "firewall",
+           "category": "scan", "message": f"port scan from {address} - 60 ports"}
+    row["auth"] = rl.sign_event(row, key)
+    return json.dumps(row, sort_keys=True)
+
+(work / "bus.jsonl").write_text(signed("203.0.113.1") + "\n", encoding="utf-8")
+(work / "next-line").write_text(signed("203.0.113.2"), encoding="utf-8")
+PY
 echo '{"block_ip": "propose"}' > "$B/autonomy.json"
-ORIONX_AUTONOMY_FILE="$B/autonomy.json" ORIONX_HEALING_STATE="$B/state" ORIONX_HEALING_STATUS="$B/healing-status.json" \
+ORIONX_BUS_KEY="$B/bus.key" ORIONX_AUTONOMY_FILE="$B/autonomy.json" ORIONX_HEALING_STATE="$B/state" ORIONX_HEALING_STATUS="$B/healing-status.json" \
   python3 "$ROOT/scripts/healing/orionx-heald" -v --dry-run --no-reconcile --bus "$B/bus.jsonl" --state-dir "$B/state" > "$B/out.txt" 2>&1 &
 HP=$!
 sleep 1.5
-L='{"ts":2,"severity":"critical","source":"firewall","category":"scan","message":"port scan from 203.0.113.2 - 60 ports"}'
+L="$(cat "$B/next-line")"
 printf '%s' "${L:0:30}" >> "$B/bus.jsonl"; sleep 1.5; printf '%s\n' "${L:30}" >> "$B/bus.jsonl"; sleep 2
 kill "$HP" 2>/dev/null; wait "$HP" 2>/dev/null
 grep -q 'PROPOSE block_ip 203.0.113.2' "$B/out.txt" && pass "heald acted on the event written in two parts" || fail "heald partial line" "$(tail -5 "$B/out.txt")"

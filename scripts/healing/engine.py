@@ -274,16 +274,28 @@ class Engine:
         """Process one bus event end to end. Returns a short outcome token.
 
         `trusted=None` (the bus) verifies the event's attestation; `True` is
-        for input the invoking root process vouches for itself (--stdin)."""
+        for input the invoking root process vouches for itself (--stdin).
+
+        Verification is deliberately completed before ``consider()``.  That
+        function records guard refusals and publishes operator notices, so
+        passing an unsigned shared-bus event into it would let an unprivileged
+        writer amplify one forged line into a root ledger write and a root
+        ``orionx-event`` subprocess even when autonomy is off.  Unattested bus
+        input is therefore a silent drop: the shared 0666 spool is an alert
+        ingress, not an authority to make the root daemon do more work.
+        """
         now = time.time() if now is None else now
         proposal = hl.match_event(event)
         if proposal is None:
             return "no-match"
-        why = ""
         if trusted is None:
             trusted, why = self.attested(event, now)
+            if not trusted:
+                return "unverified"
+        elif not trusted:
+            return "unverified"
         return self.consider(proposal.playbook, proposal.target, proposal.reason,
-                             now=now, verified=bool(trusted), unverified_why=why)
+                             now=now, verified=True)
 
     def consider(self, playbook: str, target: str, reason: str,
                  now: float | None = None, verified: bool = True,
