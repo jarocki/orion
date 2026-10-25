@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition — Cyberdeck for the Good Guys
 
-**Version:** v3.0.0 — [release page](https://github.com/jarocki/orion/releases/tag/v3.0.0). Previous published build: [v2.2.0-beta](https://github.com/jarocki/orion/releases/tag/v2.2.0-beta) (pre-release)
+**Source version:** v3.0.1 security patch. **Latest verified published ISO:** [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0). The v3.0.1 ISO is not a published download until its draft passes the [release process](docs/release-process.md).
 **Base:** Debian 13 "trixie" live (kernel 6.12, Python 3.13, XFCE 4.20) | **Runtime:** Qwen2.5-3B-Instruct (Apache-2.0)
 **Previous line:** v2.1.0-bullseye-rain (final Debian 11 build, kept as a known-good fallback)
 
@@ -21,7 +21,7 @@ that raise active defenses as the situation demands.
 
 Mission verbs: **monitor** / **detect** / **defend** / **triage** / **timeline**.
 
-> **Tested hardware.** Orion-X v3.0.0 has been boot-tested on one reference laptop
+> **Tested hardware.** The published Orion-X v3.0.0 ISO has been boot-tested on one reference laptop
 > (Lenovo, Intel Bay Trail, UEFI; live boot verified 2026-10-18) and in QEMU
 > (BIOS + UEFI); other machines are untested, so
 > please report anything confusing or broken via the
@@ -29,6 +29,13 @@ Mission verbs: **monitor** / **detect** / **defend** / **triage** / **timeline**
 > does **not** do: boot Apple-silicon Macs (x86-64 only), keep your changes
 > between reboots unless you set up persistence, or update itself. See
 > [Known issues](#known-issues).
+
+The v3.0.1 source patch includes the security-review fixes in [PR #100](https://github.com/jarocki/orion/pull/100)
+and [PR #101](https://github.com/jarocki/orion/pull/101). It moves event
+publication behind a root-owned local socket broker and adds RFC 5848 signed
+logging. See the [review](docs/SECURITY_REVIEW_2026-10-24.md) and
+[changelog](CHANGELOG.md) for scope, trust limits, and verification status.
+The videos below show the v3.0.0 image, not the v3.0.1 patch.
 
 [![Watch the Orion-X 3.0 release trailer](docs/media/orionx-trailer-v3.0.0-poster.png)](docs/media/orionx-trailer-v3.0.0.mp4)
 
@@ -170,7 +177,7 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 
 ### 1. Get the ISO
 
-**v3.0.0 (3.13 GB):** GitHub caps release assets
+**Latest verified published ISO, v3.0.0 (3.13 GB):** GitHub caps release assets
 at 2 GB per file, and every Debian 13 build so far has been about 3.1 GB, so
 the ISO is published as signed `.part-*` files (190 MiB each, about seventeen) plus `SHA256SUMS`/`SHA512SUMS`
 and `REASSEMBLE.txt` on the
@@ -280,8 +287,9 @@ sudo orionx-diag --category identity
 sudo orionx-diag --category nebula
 ```
 
-Expected: all identity, manifest, packages, files, and systemd categories PASS,
-and `grep ISO_VERSION= /etc/orionx-version` prints `ISO_VERSION=v3.0.0`.
+Expected: all identity, manifest, packages, files, and systemd categories PASS.
+For the v3.0.0 ISO below, `grep ISO_VERSION= /etc/orionx-version` prints
+`ISO_VERSION=v3.0.0`; a verified v3.0.1 image must print `ISO_VERSION=v3.0.1`.
 See `docs/orionx-diag.md` for interpreting results.
 
 ---
@@ -367,7 +375,7 @@ without the bundled model.
 
 ## Known issues
 
-Open in v3.0.0 (each links to its tracking issue):
+Open in the v3.0.0 published ISO and not claimed resolved by the v3.0.1 source patch (each links to its tracking issue):
 
 - **SSH is installed but not started at boot** (fixes
   [#98](https://github.com/jarocki/orion/issues/98), still open until the owner closes it). The old "SSH admin

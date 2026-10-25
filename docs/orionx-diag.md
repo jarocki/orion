@@ -1,6 +1,6 @@
 # orionx-diag — Diagnostic Tool Reference
 
-**Shipped in:** v3.0.0 and the v2.2.0 release candidates from rc5 (first added in the v2.1.0 Bullseye line, W11-11).
+**Shipped in:** v3.0.0 and the v2.2.0 release candidates from rc5 (first added in the v2.1.0 Bullseye line, W11-11). The v3.0.1 source patch retains it; a v3.0.1 ISO has not yet been verified.
 **Source of truth:** `scripts/orionx-diag`
 **Location on ISO:** `/usr/bin/orionx-diag` (symlink to `/opt/orionx/scripts/orionx-diag`)
 **Decision:** DEC-PHASE11-015
@@ -231,7 +231,7 @@ sudo orionx-diag --json
 ```
 
 Produces one JSON object on stdout, with per-category counts and the individual
-assertions:
+assertions (the version and timestamp below are an example from an older build):
 
 ```json
 {

@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v3.0.1] — 2026-10-24 (security patch; ISO verification pending)
+
+This patch release incorporates the 2026-10-24 [Security Review](docs/SECURITY_REVIEW_2026-10-24.md)
+and the fixes merged in [#100](https://github.com/jarocki/orion/pull/100) and
+[#101](https://github.com/jarocki/orion/pull/101). The findings describe the
+pre-fix revision; they are not a claim that every issue in that snapshot remains
+open. The source changes have focused regression tests, but a v3.0.1 ISO has
+not yet been built, booted, or verified on the reference hardware. The previous
+verified image remains v3.0.0 until the draft release passes the [release
+process](docs/release-process.md) and is published by the operator.
+
+### Security fixes
+
+- Replaced world-writable event-file ingress with a root-owned Unix socket
+  broker. The broker alone writes the live bus, checks peer credentials, bounds
+  message size and rate, and fails closed when unavailable. Root-only HMAC
+  attestation remains separate from untrusted desktop submissions.
+- Added RFC 5424/RFC 5848 signed event logging, a verifier, and persisted
+  signature counters across broker restarts. Signatures detect record changes
+  when checked against an independently saved signer fingerprint; they do not
+  prove that a desktop-originated statement is true or detect a deleted final
+  log segment without an external checkpoint.
+- Hardened privileged healing, posture, mesh discovery, installers, analysis
+  output paths, Pivotglass exports and network requests, and ISO imager download
+  handling against the attack paths documented in the review. Regression tests
+  cover these boundaries.
+
+### Known issues and release status
+
+- This source tag does not by itself establish a releasable ISO. The v3.0.1
+  image still requires build, content-presence checks, BIOS/UEFI boot tests,
+  signature and checksum verification, and an explicit operator publish step.
+- A live, non-persistent session loses its local signed log on reboot. Store
+  the signer fingerprint and final signature counter externally or use a remote
+  collector if truncation and cross-boot continuity matter.
+- The operator account retains passwordless sudo by design. A local process
+  running as that operator can become root; broker peer checks are not a
+  sandbox for already-compromised operator code.
+- Hardware and other deferred v3.0.0 issues below remain open unless separately
+  verified and closed; no v3.0.1 hardware-boot claim is made here. Planned
+  Phase 13 work is not implied to have shipped in this security patch.
+
 ## [v3.0.0] — 2026-10-07 (release; built from the v2.2.0-rc9 line)
 
 **What this release is.** The v2.2.0 release-candidate line (rc5–rc9, below), taken

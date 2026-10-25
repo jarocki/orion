@@ -16,6 +16,9 @@ The pipeline is intentionally split into two halves:
    `DRAFT → Published` (the W8-7 `approve` gate, per DEC-PHASE7-005).
 
 The `DRAFT` boundary is non-negotiable. CI never publishes a release on its own.
+An annotated source tag is not proof that an ISO exists, boots, or is public.
+Keep the README's published-download instructions on the last verified ISO
+until the draft for the new tag passes §4 and the operator publishes it.
 
 ---
 
@@ -64,8 +67,9 @@ Before tagging:
   `README.md` (header, download commands, Known issues), `docs/User_Guide.md`
   (the rendered copy takes its release line from `/etc/orionx-version`; the
   Markdown still names the release in its header and §2), `CHANGELOG.md`,
-  `tools/guided-demo/scenes.yaml` and `tools/guided-demo/cinematic/trailer.yaml`
-  (`version:` — the demo and trailer are re-cut per release), `docs/orionx-diag.md`,
+  `tools/guided-demo/cinematic/walkthrough.yaml` and
+  `tools/guided-demo/cinematic/trailer.yaml` (when new release videos are made),
+  `docs/orionx-diag.md`,
   `manifest.json`, the `Dockerfile` label, and the release notes. Confirm with
   `git grep -n '<previous tag>'` that only historical references remain, and
   that no `<vX.Y.Z SHA-256 — filled at release>` placeholder is left
@@ -256,12 +260,12 @@ Both must pass. A mismatch means rebuilding from the tagged commit (or with
 - Asset list contains exactly: every `.iso.part-*` named in `SHA256SUMS`,
   `SHA256SUMS`, `SHA256SUMS.asc`, `SHA512SUMS`, `SHA512SUMS.asc`,
   `REASSEMBLE.txt`. Byte sizes match (`gh release view <tag> --json assets`).
-- The two videos referenced from the release notes — the guided walkthrough
+- If the release notes claim new videos, the two videos — the guided walkthrough
   (`docs/media/orionx-guided-demo-<tag>.{mp4,vtt,-poster.png,-transcript.md}`)
   and the trailer (`docs/media/orionx-trailer-<tag>.{…}`) — are rebuilt for the
   tag by `tools/guided-demo/cinematic/` (DEC-PHASE13-012): 720p copies under
   60 MB live in `docs/media/`; the 1080p masters are attached to the release.
-  Re-cut per release: `import-rootfs.sh` → `record_scenes.py` →
+  For new video assets: `import-rootfs.sh` → `record_scenes.py` →
   `qemu_capture.py --plan plan-boot.yaml` → `build_trailer.py --script
   {walkthrough,trailer}.yaml`.
 
