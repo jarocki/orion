@@ -482,7 +482,7 @@ ORIONX_WIZARD_SOURCED=1 ORIONX_SUDOERS_LIVE="$R/live" ORIONX_POLKIT_LIVE="$R/sud
     bash -c 'source "$1"; _repoint_privileges orionx-operator jdoe' _ "$WIZARD_SCRIPT" >/dev/null 2>&1
 if grep -qx 'jdoe ALL=(ALL) NOPASSWD: ALL' "$R/live"; then pass "sudoers grant follows the renamed account"; else fail "sudoers repointed" "$(cat "$R/live")"; fi
 if grep -q '"jdoe"' "$R/sudo_on_live.rules" && ! grep -q '"orionx-operator"' "$R/sudo_on_live.rules"; then pass "polkit grant follows the renamed account"; else fail "polkit repointed"; fi
-PERM="$(stat -f '%Lp' "$R/live" 2>/dev/null || stat -c '%a' "$R/live")"
+PERM="$(stat -c '%a' "$R/live" 2>/dev/null || stat -f '%Lp' "$R/live")"
 if [[ "$PERM" == "440" ]]; then pass "sudoers file stays 0440"; else fail "sudoers mode" "$PERM"; fi
 if command -v visudo >/dev/null 2>&1; then
     rm -f "$R/live"; printf 'orionx-operator ALL=(ALL) NOPASSWD: ALL\n' > "$R/live"
@@ -529,7 +529,7 @@ W="$(mktemp -d)"
 ORIONX_WIZARD_SOURCED=1 ORIONX_NM_CONN_DIR="$W" bash -c 'source "$1"; _write_wifi_keyfile "Cafe Net" "s3cret pass" >/dev/null' _ "$WIZARD_SCRIPT"
 KF="$W/orionx-wifi.nmconnection"
 if grep -qx 'psk=s3cret pass' "$KF" 2>/dev/null && grep -qx 'ssid=Cafe Net' "$KF"; then pass "keyfile carries SSID and PSK"; else fail "keyfile content" "$(cat "$KF" 2>/dev/null)"; fi
-KPERM="$(stat -f '%Lp' "$KF" 2>/dev/null || stat -c '%a' "$KF")"
+KPERM="$(stat -c '%a' "$KF" 2>/dev/null || stat -f '%Lp' "$KF")"
 if [[ "$KPERM" == "600" ]]; then pass "keyfile is 0600 (NetworkManager refuses wider)"; else fail "keyfile mode" "$KPERM"; fi
 rm -rf "$W"
 

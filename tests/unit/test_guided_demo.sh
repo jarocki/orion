@@ -75,7 +75,7 @@ for ext in .mp4 .vtt -transcript.md -poster.png; do
     [[ -s "$BASE$ext" ]] && pass "$(basename "$BASE$ext") exists" || fail "$(basename "$BASE$ext")" "missing/empty"
 done
 if [[ -s "$BASE.mp4" ]]; then
-    SZ=$(stat -f %z "$BASE.mp4" 2>/dev/null || stat -c %s "$BASE.mp4")
+    SZ=$(stat -c %s "$BASE.mp4" 2>/dev/null || stat -f %z "$BASE.mp4")
     [[ $SZ -lt 26214400 ]] && pass "MP4 under 25 MB ($((SZ/1048576)) MB — README-embeddable)" || fail "MP4 size" "$SZ bytes"
     if command -v ffprobe >/dev/null; then
         DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$BASE.mp4" | cut -d. -f1)

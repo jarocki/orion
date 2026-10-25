@@ -39,8 +39,8 @@ make_store() {
     # Legacy manifest (what stage_nebula_model wrote) points at the bare GGUF.
     printf '%s  Qwen.gguf\n' "$ORPHAN" > "$d/MANIFEST.sha256"
     local live_size cfg_size
-    live_size=$(stat -f %z "$d/blobs/sha256-$LIVE" 2>/dev/null || stat -c %s "$d/blobs/sha256-$LIVE")
-    cfg_size=$(stat -f %z "$d/blobs/sha256-$CFG" 2>/dev/null || stat -c %s "$d/blobs/sha256-$CFG")
+    live_size=$(stat -c %s "$d/blobs/sha256-$LIVE" 2>/dev/null || stat -f %z "$d/blobs/sha256-$LIVE")
+    cfg_size=$(stat -c %s "$d/blobs/sha256-$CFG" 2>/dev/null || stat -f %z "$d/blobs/sha256-$CFG")
     cat > "$d/manifests/registry.ollama.ai/library/qwen2.5/3b-instruct-q4_K_M" <<EOF
 {"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json",
  "config":{"mediaType":"application/vnd.docker.container.image.v1+json","digest":"sha256:$CFG","size":$cfg_size},

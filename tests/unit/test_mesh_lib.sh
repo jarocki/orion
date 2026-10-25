@@ -410,7 +410,7 @@ GOOD="$TMPDIR_TEST/team.psk"; printf '%s\n' "$(printf 'P%.0s' {1..42})A=" > "$GO
 rc=0; mesh_psk_install "$GOOD" >/dev/null 2>&1 || rc=$?
 assert_eq "installing a real key succeeds" "0" "$rc"
 assert_eq "installed PSK matches the file" "$(cat "$GOOD")" "$(cat "$MESH_PSK_FILE" 2>/dev/null)"
-PERM="$(stat -f '%Lp' "$MESH_PSK_FILE" 2>/dev/null || stat -c '%a' "$MESH_PSK_FILE")"
+PERM="$(stat -c '%a' "$MESH_PSK_FILE" 2>/dev/null || stat -f '%Lp' "$MESH_PSK_FILE")"
 assert_eq "installed PSK is mode 600" "600" "$PERM"
 rc=0; mesh_psk_generate "$GOOD" >/dev/null 2>&1 || rc=$?
 assert_eq "generate refuses to overwrite an existing team PSK" "1" "$rc"

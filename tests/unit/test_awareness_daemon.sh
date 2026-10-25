@@ -174,6 +174,7 @@ same = m.plan_actions(m.tier_plan("1", True), m.tier_plan("1", True))
 ck(same == [], f"re-asserting the same tier is a no-op -> {same}")
 
 # Gate file is the DEC-PHASE11-008 mechanism that actually lets suricata start.
+os.makedirs(os.environ.get("ORIONX_TMP", "tmp"), exist_ok=True)
 with tempfile.TemporaryDirectory(dir=os.environ.get("ORIONX_TMP", "tmp")) as td:
     g = Path(td) / "sub" / "orionx-enabled"
     ck(m.set_gate(True, path=g) is True and g.exists(), "set_gate(True) creates the gate (parents too)")

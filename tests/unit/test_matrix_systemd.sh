@@ -84,8 +84,14 @@ else
 fi
 
 if command -v systemd-analyze >/dev/null 2>&1; then
-    out="$(systemd-analyze verify "$DROPIN" 2>&1 || true)"
-    if grep -qi 'unknown key\|invalid' <<< "$out"; then fail "systemd-analyze: drop-in keys valid" "$out"; else pass "systemd-analyze: drop-in keys valid"; fi
+    # systemd-analyze verifies a unit, not a bare .d/*.conf drop-in.
+    verify_dir="$(mktemp -d)"
+    mkdir -p "$verify_dir/matrix-synapse.service.d"
+    printf '[Unit]\nDescription=verify host\n[Service]\nExecStart=/bin/true\n' > "$verify_dir/matrix-synapse.service"
+    cp "$DROPIN" "$verify_dir/matrix-synapse.service.d/orionx.conf"
+    out="$(systemd-analyze verify "$verify_dir/matrix-synapse.service" 2>&1 || true)"
+    rm -rf -- "$verify_dir"
+    if grep -qiE 'unknown (key|lvalue)|assignment outside of section|failed to parse' <<< "$out"; then fail "systemd-analyze: drop-in keys valid" "$out"; else pass "systemd-analyze: drop-in keys valid"; fi
 fi
 
 echo ""

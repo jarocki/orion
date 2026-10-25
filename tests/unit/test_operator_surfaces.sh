@@ -272,9 +272,9 @@ cmp -s "$GUIDE" "$WORK/User_Guide.md" && pass "the baked .md is left byte-identi
 # ---------------------------------------------------------------------------
 section "Operator docs: current release, current UI, links resolve (docs F04-F07/F11-F20/F27-F34, UX-07, release-tests F-07/F-09)"
 # ---------------------------------------------------------------------------
-# The release this branch documents. When it changes, change it here and in
-# README.md / the guide's release slots together.
-RELEASE="v3.0.0"
+# The manifest is independent of the README and guide release slots; a patch
+# release must not need a hard-coded test literal to verify its own identity.
+RELEASE="v$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$REPO_ROOT/manifest.json")"
 DOCS_REPORT="$(python3 "$SCRIPT_DIR/lib/check_docs_current.py" "$REPO_ROOT" "$RELEASE")"
 if [[ "$DOCS_REPORT" == OK* ]]; then pass "${DOCS_REPORT#OK }"
 else while IFS= read -r l; do fail "docs" "${l#FAIL }"; done <<<"$DOCS_REPORT"; fi
