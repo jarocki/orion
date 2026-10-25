@@ -3,5 +3,5 @@ Type=Application
 Name=Orion-X DJ Deck
 Comment=Tune the generative techno bed (muted automatically by R.A.I.N. alerts)
 Exec=/usr/bin/orionx-dj
-Icon=multimedia-volume-control
+Icon=orionx-dj
 Categories=X-Orion;

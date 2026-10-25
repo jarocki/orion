@@ -190,7 +190,7 @@ Type=Application
 Name=Orion-X Matrix Setup
 Comment=Set up Matrix/Synapse communication server
 Exec=xfce4-terminal --hold -e "bash -c 'setup-matrix.sh; exec bash'"
-Icon=internet-chat
+Icon=orionx-matrix-setup
 Categories=X-Orion;
 DESKTOP_EOF
 
@@ -200,7 +200,7 @@ Type=Application
 Name=Orion-X Artifact Analyzer
 Comment=Forensic artifact analysis tool
 Exec=xfce4-terminal --hold -e "bash -c 'artifact-analyzer.py; exec bash'"
-Icon=utilities-file-archiver
+Icon=orionx-artifact-analyzer
 Categories=X-Orion;
 DESKTOP_EOF
 
@@ -210,7 +210,7 @@ Type=Application
 Name=Orion-X Storyboard Generator
 Comment=Generate intelligence storyboards from forensic data
 Exec=xfce4-terminal --hold -e "bash -c 'storyboard-gen.py; exec bash'"
-Icon=text-editor
+Icon=orionx-storyboard
 Categories=X-Orion;
 DESKTOP_EOF
 
