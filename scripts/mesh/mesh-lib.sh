@@ -52,6 +52,16 @@ MESH_HEALTH_COUNTER_DIR="${MESH_HEALTH_COUNTER_DIR:-$MESH_RUNTIME_DIR}"
 # Per-sender beacon rate limiter state (DEC-PHASE12-096).
 MESH_RATE_DIR="${MESH_RATE_DIR:-$MESH_RUNTIME_DIR/beacon-rate}"
 MESH_BEACON_MIN_INTERVAL="${MESH_BEACON_MIN_INTERVAL:-5}"
+# Unauthenticated discovery never becomes peer authority by itself.  Without a
+# team PSK, validated beacons are held in this bounded, ephemeral candidate
+# queue until the operator approves one explicitly (DEC-PHASE13-009).
+MESH_CANDIDATE_FILE="${MESH_CANDIDATE_FILE:-$MESH_RUNTIME_DIR/candidates.tsv}"
+MESH_CANDIDATE_TTL="${MESH_CANDIDATE_TTL:-300}"
+MESH_CANDIDATE_MAX="${MESH_CANDIDATE_MAX:-64}"
+# The per-sender limiter used to leave one file forever for every spoofed IPv4
+# address.  Keep both the age and cardinality of that state bounded.
+MESH_RATE_STATE_TTL="${MESH_RATE_STATE_TTL:-300}"
+MESH_RATE_MAX_SENDERS="${MESH_RATE_MAX_SENDERS:-256}"
 MESH_PRIVATE_KEY="${MESH_PRIVATE_KEY:-/etc/wireguard/mesh-private.key}"
 MESH_PSK_FILE="${MESH_PSK_FILE:-/etc/wireguard/mesh-psk}"
 
@@ -277,8 +287,8 @@ mesh_interface_down() {
 # =========================================================================
 #
 # @decision DEC-PHASE12-096
-# @title Every peer is validated before it reaches `wg set`; a beacon can add
-#   a peer but never move an address
+# @title Every peer is validated before it reaches `wg set`; a beacon can
+#   propose a peer but never move an address
 # @status accepted
 # @rationale Beacons are unauthenticated UDP from the LAN. vpn_ip went into
 #   `allowed-ips "${vpn_ip}/32"` verbatim, so a beacon carrying
@@ -379,6 +389,158 @@ mesh_add_peer() {
 
     "${cmd[@]}"
     mesh_log INFO "Peer $pubkey added successfully"
+}
+
+# =========================================================================
+# Discovery admission: bounded rate state and operator-approved candidates
+# =========================================================================
+
+# True once per sender per MESH_BEACON_MIN_INTERVAL.  State is protected by a
+# separate lock because socat starts one handler process per accepted datagram.
+# New spoofed addresses evict the oldest entry once the hard cap is reached;
+# expired entries are removed at most once every 30 seconds.
+mesh_beacon_rate_allow() {
+    local sender_ip="$1" now="${2:-$(date +%s)}"
+    mesh_valid_ipv4 "$sender_ip" || return 1
+    command -v flock >/dev/null 2>&1 || return 1
+    mkdir -p "$MESH_RATE_DIR" 2>/dev/null || return 1
+    (
+        flock -w 1 8 || exit 1
+        local cleanup="$MESH_RATE_DIR/.last-cleanup" last_cleanup=0 f ts
+        [[ -f "$cleanup" ]] && last_cleanup="$(cat "$cleanup" 2>/dev/null || echo 0)"
+        [[ "$last_cleanup" =~ ^[0-9]+$ ]] || last_cleanup=0
+        if (( now - last_cleanup >= 30 )); then
+            for f in "$MESH_RATE_DIR"/*.stamp; do
+                [[ -f "$f" ]] || continue
+                ts="$(cat "$f" 2>/dev/null || echo 0)"
+                if [[ ! "$ts" =~ ^[0-9]+$ ]] || (( now - ts > MESH_RATE_STATE_TTL )); then
+                    rm -f -- "$f"
+                fi
+            done
+            printf '%s\n' "$now" > "$cleanup"
+        fi
+
+        local stamp="$MESH_RATE_DIR/$sender_ip.stamp" last=0
+        [[ -f "$stamp" ]] && last="$(cat "$stamp" 2>/dev/null || echo 0)"
+        [[ "$last" =~ ^[0-9]+$ ]] || last=0
+        (( now - last >= MESH_BEACON_MIN_INTERVAL )) || exit 1
+
+        if [[ ! -f "$stamp" ]]; then
+            local count=0 oldest="" oldest_ts="$now"
+            for f in "$MESH_RATE_DIR"/*.stamp; do
+                [[ -f "$f" ]] || continue
+                (( count++ )) || true
+                ts="$(cat "$f" 2>/dev/null || echo 0)"
+                [[ "$ts" =~ ^[0-9]+$ ]] || ts=0
+                if [[ -z "$oldest" || "$ts" -lt "$oldest_ts" ]]; then
+                    oldest="$f"; oldest_ts="$ts"
+                fi
+            done
+            if (( count >= MESH_RATE_MAX_SENDERS )) && [[ -n "$oldest" ]]; then
+                rm -f -- "$oldest"
+            fi
+        fi
+        printf '%s\n' "$now" > "$stamp"
+    ) 8>"$MESH_RATE_DIR/.lock"
+}
+
+# Rewrite the candidate file with only fresh, structurally valid rows.  The
+# queue is chronological, so tail keeps the newest entries if a damaged or old
+# version somehow exceeded the current bound.
+mesh_candidates_prune() {
+    local now="${1:-$(date +%s)}" tmp bounded
+    mkdir -p "$(dirname "$MESH_CANDIDATE_FILE")" 2>/dev/null || return 1
+    tmp="$(mktemp "${MESH_CANDIDATE_FILE}.XXXXXX")" || return 1
+    if [[ -f "$MESH_CANDIDATE_FILE" ]]; then
+        local seen pubkey vpn_ip endpoint port
+        while IFS=$'\t' read -r seen pubkey vpn_ip endpoint port; do
+            [[ "$seen" =~ ^[0-9]+$ ]] || continue
+            (( now >= seen && now - seen <= MESH_CANDIDATE_TTL )) || continue
+            mesh_valid_pubkey "$pubkey" || continue
+            mesh_valid_mesh_ip "$vpn_ip" || continue
+            mesh_valid_ipv4 "$endpoint" || continue
+            mesh_valid_port "$port" || continue
+            printf '%s\t%s\t%s\t%s\t%s\n' "$seen" "$pubkey" "$vpn_ip" "$endpoint" "$port" >> "$tmp"
+        done < "$MESH_CANDIDATE_FILE"
+    fi
+    bounded="${tmp}.bounded"
+    tail -n "$MESH_CANDIDATE_MAX" "$tmp" > "$bounded"
+    chmod 0600 "$bounded"
+    mv -f "$bounded" "$MESH_CANDIDATE_FILE"
+    rm -f "$tmp"
+}
+
+# Record one validated beacon as a candidate.  A candidate may refresh its own
+# endpoint, but two different keys may not claim the same mesh address.
+mesh_candidate_record() {
+    local pubkey="$1" vpn_ip="$2" endpoint="$3" port="$4" now="${5:-$(date +%s)}" reason
+    if ! reason="$(mesh_peer_reject_reason "$pubkey" "$vpn_ip" "$endpoint" "$port")"; then
+        mesh_log WARN "Rejected peer candidate from ${endpoint:-?}: $reason"
+        return 3
+    fi
+    mesh_candidates_prune "$now" || return 1
+    local seen key ip ep po
+    while IFS=$'\t' read -r seen key ip ep po; do
+        if [[ "$key" != "$pubkey" && "$ip" == "$vpn_ip" ]]; then
+            mesh_log WARN "Rejected peer candidate from $endpoint: vpn_ip $vpn_ip is already claimed by another pending key"
+            return 3
+        fi
+    done < "$MESH_CANDIDATE_FILE"
+
+    local tmp bounded
+    tmp="$(mktemp "${MESH_CANDIDATE_FILE}.XXXXXX")" || return 1
+    while IFS=$'\t' read -r seen key ip ep po; do
+        [[ "$key" == "$pubkey" ]] && continue
+        printf '%s\t%s\t%s\t%s\t%s\n' "$seen" "$key" "$ip" "$ep" "$po" >> "$tmp"
+    done < "$MESH_CANDIDATE_FILE"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$now" "$pubkey" "$vpn_ip" "$endpoint" "$port" >> "$tmp"
+    bounded="${tmp}.bounded"
+    tail -n "$MESH_CANDIDATE_MAX" "$tmp" > "$bounded"
+    chmod 0600 "$bounded"
+    mv -f "$bounded" "$MESH_CANDIDATE_FILE"
+    rm -f "$tmp"
+}
+
+mesh_candidates_list() {
+    mesh_candidates_prune || return 1
+    if [[ ! -s "$MESH_CANDIDATE_FILE" ]]; then
+        echo "No pending mesh candidates."
+        return 0
+    fi
+    echo "VPN_IP          ENDPOINT              PUBKEY                                      AGE"
+    local now seen pubkey vpn_ip endpoint port age
+    now="$(date +%s)"
+    while IFS=$'\t' read -r seen pubkey vpn_ip endpoint port; do
+        age=$(( now - seen ))
+        printf '%-15s %-21s %-44s %ss\n' "$vpn_ip" "${endpoint}:${port}" "$pubkey" "$age"
+    done < "$MESH_CANDIDATE_FILE"
+    echo "Approve one with: sudo orionx-mesh candidates approve <VPN_IP>"
+}
+
+mesh_candidate_approve() {
+    local wanted="${1:-}" seen pubkey vpn_ip endpoint port
+    [[ -n "$wanted" ]] || { echo "ERROR: candidate VPN_IP required" >&2; return 1; }
+    mesh_candidates_prune || return 1
+    local found=""
+    while IFS=$'\t' read -r seen pubkey vpn_ip endpoint port; do
+        if [[ "$vpn_ip" == "$wanted" ]]; then
+            found="$seen"$'\t'"$pubkey"$'\t'"$vpn_ip"$'\t'"$endpoint"$'\t'"$port"
+            break
+        fi
+    done < "$MESH_CANDIDATE_FILE"
+    [[ -n "$found" ]] || { echo "ERROR: no fresh candidate for $wanted" >&2; return 1; }
+    IFS=$'\t' read -r seen pubkey vpn_ip endpoint port <<< "$found"
+    mesh_add_peer "$pubkey" "$vpn_ip" "$endpoint" "$port" || return $?
+
+    local tmp
+    tmp="$(mktemp "${MESH_CANDIDATE_FILE}.XXXXXX")" || return 1
+    while IFS=$'\t' read -r seen pubkey vpn_ip endpoint port; do
+        [[ "$vpn_ip" == "$wanted" ]] && continue
+        printf '%s\t%s\t%s\t%s\t%s\n' "$seen" "$pubkey" "$vpn_ip" "$endpoint" "$port" >> "$tmp"
+    done < "$MESH_CANDIDATE_FILE"
+    chmod 0600 "$tmp"
+    mv -f "$tmp" "$MESH_CANDIDATE_FILE"
+    echo "Approved mesh candidate $wanted."
 }
 
 # Remove a peer from the mesh interface.

@@ -61,7 +61,9 @@ mesh_leave() {
     rm -f "$MESH_HEALTH_COUNTER_DIR"/orionx-mesh-health-* \
           "$MESH_HEALTH_COUNTER_DIR"/orionx-mesh-heal-budget \
           "$MESH_HEALTH_COUNTER_DIR"/orionx-mesh-escalated-* \
-          "$MESH_HEALTH_COUNTER_DIR"/orionx-mesh-discovery-announced 2>/dev/null || true
+          "$MESH_HEALTH_COUNTER_DIR"/orionx-mesh-discovery-announced \
+          "$MESH_CANDIDATE_FILE" "$MESH_RATE_DIR"/*.stamp \
+          "$MESH_RATE_DIR"/.last-cleanup 2>/dev/null || true
     mesh_log INFO "State file and health counters removed"
 
     # --- 5. Print message ---

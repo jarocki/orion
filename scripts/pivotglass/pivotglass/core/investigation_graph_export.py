@@ -10,6 +10,7 @@ from xml.etree import ElementTree as ET
 
 from pydantic import BaseModel, ConfigDict
 
+from pivotglass.core.csv_safety import spreadsheet_safe_cell
 from pivotglass.core.investigation_graph import (
     GraphLayer,
     InvestigationGraphEdge,
@@ -138,27 +139,29 @@ def _csv_export(
         writer.writerow(
             {
                 "record_type": "node",
-                "id": _csv_safe(node.id),
+                "id": spreadsheet_safe_cell(node.id),
                 "layer": node.layer.value,
-                "kind": _csv_safe(node.kind),
-                "label": _csv_safe(node.label),
-                "record_ref": _csv_safe(node.record_ref),
-                "state": _csv_safe(node.state or ""),
-                "attributes": _csv_safe(json.dumps(node.attributes, sort_keys=True, default=str)),
+                "kind": spreadsheet_safe_cell(node.kind),
+                "label": spreadsheet_safe_cell(node.label),
+                "record_ref": spreadsheet_safe_cell(node.record_ref),
+                "state": spreadsheet_safe_cell(node.state or ""),
+                "attributes": spreadsheet_safe_cell(
+                    json.dumps(node.attributes, sort_keys=True, default=str)
+                ),
             }
         )
     for edge in edges:
         writer.writerow(
             {
                 "record_type": "edge",
-                "id": _csv_safe(edge.id),
+                "id": spreadsheet_safe_cell(edge.id),
                 "layer": edge.layer.value,
-                "source": _csv_safe(edge.source),
-                "target": _csv_safe(edge.target),
-                "relationship": _csv_safe(edge.relationship),
+                "source": spreadsheet_safe_cell(edge.source),
+                "target": spreadsheet_safe_cell(edge.target),
+                "relationship": spreadsheet_safe_cell(edge.relationship),
                 "truth_kind": edge.truth_kind.value,
-                "provenance_refs": _csv_safe(json.dumps(edge.provenance_refs)),
-                "rationale": _csv_safe(edge.rationale),
+                "provenance_refs": spreadsheet_safe_cell(json.dumps(edge.provenance_refs)),
+                "rationale": spreadsheet_safe_cell(edge.rationale),
                 "directed": str(edge.directed).lower(),
             }
         )
@@ -238,7 +241,3 @@ def _gexf_export(
 
 def _attvalue(parent: ET.Element, attribute_id: str, value: str) -> None:
     ET.SubElement(parent, "attvalue", {"for": attribute_id, "value": value})
-
-
-def _csv_safe(value: str) -> str:
-    return f"'{value}" if value.lstrip().startswith(("=", "+", "-", "@")) else value

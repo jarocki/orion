@@ -37,6 +37,12 @@ grep -q 'while \[ -h "\$_SOURCE" \]' "$P/ap" && pass "launcher resolves its /usr
 # Compile with the bytecode cache redirected — otherwise this very check would
 # write __pycache__ into the vendored package and trip the no-bytecode assertion.
 if PYTHONPYCACHEPREFIX="$(mktemp -d)" python3 -m py_compile "$PKG/__main__.py" "$PKG/web/server.py" 2>/dev/null; then pass "package entry points compile on host python"; else fail "compile" "py_compile error"; fi
+if PYTHONDONTWRITEBYTECODE=1 python3 "$REPO_ROOT/tests/unit/test_pivotglass_security.py" >/tmp/pivotglass-security.$$ 2>&1; then
+    pass "loopback binding and spreadsheet-safe CSV regressions"
+else
+    fail "Pivotglass security regressions" "$(head -8 /tmp/pivotglass-security.$$)"
+fi
+rm -f /tmp/pivotglass-security.$$
 
 section "Dependency split: apt for everything trixie has, pip only for stix2"
 for d in python3-cmd2 python3-rich python3-sqlalchemy python3-httpx python3-pydantic python3-tomli-w python3-yaml python3-requests python3-pytz python3-simplejson python3-prompt-toolkit; do

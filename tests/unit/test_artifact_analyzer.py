@@ -309,6 +309,48 @@ class TestCheckToolsAvailability(unittest.TestCase):
 
 
 # ===================================================================
+# analyze_network_capture — subprocess boundary
+# ===================================================================
+class TestAnalyzeNetworkCapture(unittest.TestCase):
+    """Network evidence paths must never be interpreted by a shell."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_tshark_uses_argv_for_shell_metacharacter_filename(self):
+        artifact = os.path.join(self.tmpdir, "evidence; touch INJECTED; #.pcap")
+        with open(artifact, "wb") as fh:
+            fh.write(b"pcap")
+
+        with unittest.mock.patch(
+            "artifact_analyzer.check_tools_availability", return_value=[]
+        ), unittest.mock.patch(
+            "artifact_analyzer.subprocess.run"
+        ) as run:
+            self.assertTrue(analyzer.analyze_network_capture(artifact, self.tmpdir))
+
+        tshark_calls = [
+            call for call in run.call_args_list if call.args[0][0] == "tshark"
+        ]
+        self.assertEqual(len(tshark_calls), 3)
+        for call in tshark_calls:
+            argv = call.args[0]
+            self.assertIsInstance(argv, list)
+            self.assertEqual(argv[1:3], ["-r", os.path.abspath(artifact)])
+            self.assertNotIn("shell", call.kwargs)
+
+        tshark_dir = os.path.join(self.tmpdir, "network_analysis", "tshark")
+        self.assertEqual(
+            sorted(os.listdir(tshark_dir)),
+            ["dns.txt", "http.txt", "private_ips.txt"],
+        )
+        self.assertFalse(os.path.exists(os.path.join(self.tmpdir, "INJECTED")))
+
+
+# ===================================================================
 # generate_chain_of_custody
 # ===================================================================
 class TestGenerateChainOfCustody(unittest.TestCase):

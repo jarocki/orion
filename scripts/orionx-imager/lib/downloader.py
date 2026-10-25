@@ -159,15 +159,17 @@ def _part_sequence(n: int) -> list[str]:
 def find_sha256sums_asset(release: dict) -> Optional[dict]:
     """Find the SHA256SUMS asset in a release dict.
 
-    Returns None if not found (caller should warn; do not hard-fail on missing
-    SHA256SUMS — that would break legacy releases that predate the manifest).
+    Returns None if not found.  Download callers that have not explicitly
+    disabled verification must treat absence as a hard failure.
     """
     for asset in release.get("assets", []):
         if asset["name"] in _SHA256_ASSET_NAMES:
             return asset
-    # Fallback: any asset whose name contains 'SHA256'
+    # Fallback: legacy checksum names containing SHA256.  Detached signatures
+    # are evidence *about* a manifest, not manifests themselves.
     for asset in release.get("assets", []):
-        if "sha256" in asset["name"].lower():
+        name = asset["name"].lower()
+        if "sha256" in name and not name.endswith((".asc", ".sig", ".minisig")):
             return asset
     return None
 
@@ -256,7 +258,8 @@ def download_and_verify(
         pathlib.Path to the downloaded (and verified) ISO.
 
     Raises:
-        RuntimeError: on download failure, SHA256 mismatch, or missing ISO asset.
+        RuntimeError: on download failure, missing checksum or ISO asset, or
+        SHA256 mismatch.
     """
     cache = get_cache_dir()
     iso_asset = find_iso_asset(release)
@@ -270,8 +273,10 @@ def download_and_verify(
             sha_path = cache / sha_asset["name"]
             download(sha_asset["browser_download_url"], sha_path)
         else:
-            # No SHA256SUMS in this release; warn but do not abort
-            sha_path = None
+            raise RuntimeError(
+                f"Release {release.get('tag_name', '?')} has no SHA256SUMS asset. "
+                "Integrity cannot be verified; refusing to download the ISO."
+            )
 
     # Check if cached ISO is already valid
     if iso_path.exists() and sha_path and not skip_verify:
@@ -298,14 +303,6 @@ def download_and_verify(
                     f"  actual:   {actual}\n"
                     "Download may be corrupt or tampered. Refusing to write."
                 )
-        else:
-            # No manifest available — flag prominently but do not hard-fail
-            # (Layer B may add a stricter mode that refuses without manifest)
-            print(
-                "WARNING: SHA256SUMS not found in release assets. "
-                "Integrity cannot be verified. Proceed with caution.",
-                flush=True,
-            )
 
     return iso_path
 

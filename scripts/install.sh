@@ -12,7 +12,17 @@
 # No default credentials are embedded in this script
 
 set -e
-LOGFILE="/tmp/orionx-install.log"
+
+# This installer formats block devices and must establish its privilege and
+# logging boundary before doing anything else.  /var/log is root-owned, unlike
+# /tmp where an unprivileged process could pre-create the log path.
+if [ "$(id -u)" -ne 0 ]; then
+    echo "ERROR: This script must be run as root" >&2
+    exit 1
+fi
+LOGFILE="/var/log/orionx-install.log"
+: >> "$LOGFILE"
+chmod 0600 "$LOGFILE"
 ISO_PATH=""
 TARGET_DEVICE=""
 ENABLE_PERSISTENCE=false
@@ -36,12 +46,6 @@ check_requirements() {
             exit 1
         fi
     done
-    
-    # Check if running as root
-    if [ "$(id -u)" -ne 0 ]; then
-        log "ERROR: This script must be run as root"
-        exit 1
-    fi
     
     # Check boot mode (UEFI or BIOS)
     if [ -d /sys/firmware/efi ]; then
@@ -97,6 +101,27 @@ get_user_inputs() {
     fi
 }
 
+# Set up encrypted persistence without ever materialising a LUKS key in a
+# temporary file.  The installer is already interactive, so cryptsetup's own
+# passphrase prompt is the clearest authority boundary and leaves a usable key
+# enrolled when installation completes.
+setup_encrypted_persistence() {
+    local partition="$1"
+
+    log "Setting up encrypted persistence..."
+    log "Choose the LUKS passphrase when cryptsetup prompts. It is required at boot."
+    cryptsetup luksFormat "$partition"
+    cryptsetup luksOpen "$partition" orionx_crypt
+
+    if ! mkfs.ext4 -L "ORIONX_PERSIST" /dev/mapper/orionx_crypt; then
+        cryptsetup luksClose orionx_crypt || true
+        return 1
+    fi
+
+    cryptsetup luksClose orionx_crypt
+    log "Encryption setup complete. The LUKS passphrase was set during installation."
+}
+
 # Function to prepare the target device
 prepare_device() {
     log "Preparing target device $TARGET_DEVICE..."
@@ -148,25 +173,7 @@ prepare_device() {
         if [ "$ENABLE_PERSISTENCE" = true ]; then
             log "Setting up persistence partition..."
             if [ "$ENABLE_ENCRYPTION" = true ]; then
-                log "Setting up encrypted persistence..."
-                # Generate a random key file for the first run
-                # This will be replaced with the user's passphrase on first boot
-                dd if=/dev/urandom of=/tmp/tempkey bs=512 count=4
-                
-                # Set up LUKS encryption
-                cryptsetup luksFormat --key-file=/tmp/tempkey "${TARGET_DEVICE}3"
-                cryptsetup luksOpen --key-file=/tmp/tempkey "${TARGET_DEVICE}3" orionx_crypt
-                
-                # Create filesystem on the encrypted partition
-                mkfs.ext4 -L "ORIONX_PERSIST" /dev/mapper/orionx_crypt
-                
-                # Close the encrypted device
-                cryptsetup luksClose orionx_crypt
-                
-                # Remove the temporary key
-                shred -u /tmp/tempkey
-                
-                log "Encryption setup complete. You will be prompted to set a passphrase on first boot."
+                setup_encrypted_persistence "${TARGET_DEVICE}3"
             else
                 log "Setting up unencrypted persistence..."
                 mkfs.ext4 -L "ORIONX_PERSIST" "${TARGET_DEVICE}3"
@@ -180,24 +187,7 @@ prepare_device() {
         if [ "$ENABLE_PERSISTENCE" = true ]; then
             log "Setting up persistence partition..."
             if [ "$ENABLE_ENCRYPTION" = true ]; then
-                # Similar encryption setup for BIOS boot
-                # [BIOS encryption setup code - similar to UEFI version]
-                log "Setting up encrypted persistence..."
-                # Generate a random key file for the first run
-                dd if=/dev/urandom of=/tmp/tempkey bs=512 count=4
-                
-                # Set up LUKS encryption
-                cryptsetup luksFormat --key-file=/tmp/tempkey "${TARGET_DEVICE}3"
-                cryptsetup luksOpen --key-file=/tmp/tempkey "${TARGET_DEVICE}3" orionx_crypt
-                
-                # Create filesystem on the encrypted partition
-                mkfs.ext4 -L "ORIONX_PERSIST" /dev/mapper/orionx_crypt
-                
-                # Close the encrypted device
-                cryptsetup luksClose orionx_crypt
-                
-                # Remove the temporary key
-                shred -u /tmp/tempkey
+                setup_encrypted_persistence "${TARGET_DEVICE}3"
             else
                 log "Setting up unencrypted persistence..."
                 mkfs.ext4 -L "ORIONX_PERSIST" "${TARGET_DEVICE}3"
@@ -337,7 +327,7 @@ cleanup
 
 log "Orion-X Phoenix Edition v1.5.5 has been successfully installed to $TARGET_DEVICE"
 if [ "$ENABLE_PERSISTENCE" = true ] && [ "$ENABLE_ENCRYPTION" = true ]; then
-    log "Note: You will be prompted to set a passphrase for the encrypted persistence on first boot"
+    log "Note: Use the LUKS passphrase set during installation to unlock encrypted persistence"
 fi
 
 echo ""

@@ -68,6 +68,9 @@ Commands:
   join     Join or create a WireGuard mesh network
   status   Show mesh status
   peers    List connected peers
+  candidates  Review LAN beacons held for approval when no team PSK is installed:
+                candidates list
+                candidates approve <VPN_IP>
   leave    Leave the mesh network
   snapshot Write /run/orionx/mesh-status.json for the Cockpit (root; run by a timer)
   psk      Optional team pre-shared key, exchanged out of band (USB stick):
@@ -87,6 +90,8 @@ Examples:
   orionx-mesh join --config peers.conf  # Use pre-planned config
   orionx-mesh status                  # Check mesh health
   orionx-mesh peers                   # List all connected peers
+  orionx-mesh candidates list         # Review unauthenticated LAN beacons
+  orionx-mesh candidates approve 10.0.99.20
   orionx-mesh leave                   # Disconnect from mesh
 EOF
 }
@@ -197,6 +202,37 @@ cmd_psk() {
     esac
 }
 
+cmd_candidates() {
+    local action="${1:-list}"
+    mkdir -p "$MESH_RUNTIME_DIR"
+    command -v flock >/dev/null 2>&1 || {
+        echo "ERROR: flock is required to manage mesh candidates safely" >&2
+        return 1
+    }
+    case "$action" in
+        list)
+            (
+                flock -w 5 9 || { echo "ERROR: mesh candidate queue is busy" >&2; exit 1; }
+                mesh_candidates_list
+            ) 9>"$MESH_RUNTIME_DIR/discover.lock"
+            ;;
+        approve)
+            if ! mesh_is_active; then
+                echo "ERROR: join the mesh before approving a candidate" >&2
+                return 1
+            fi
+            (
+                flock -w 5 9 || { echo "ERROR: mesh candidate queue is busy" >&2; exit 1; }
+                mesh_candidate_approve "${2:-}"
+            ) 9>"$MESH_RUNTIME_DIR/discover.lock"
+            ;;
+        *)
+            echo "ERROR: usage: orionx-mesh candidates list | approve <VPN_IP>" >&2
+            return 1
+            ;;
+    esac
+}
+
 cmd_join() {
     # shellcheck source=mesh-join.sh disable=SC1091
     source "$SCRIPT_DIR/mesh-join.sh"
@@ -268,6 +304,9 @@ main() {
             ;;
         peers)
             cmd_peers "${SUBCOMMAND_ARGS[@]+"${SUBCOMMAND_ARGS[@]}"}"
+            ;;
+        candidates)
+            cmd_candidates "${SUBCOMMAND_ARGS[@]+"${SUBCOMMAND_ARGS[@]}"}"
             ;;
         leave)
             cmd_leave "${SUBCOMMAND_ARGS[@]+"${SUBCOMMAND_ARGS[@]}"}"

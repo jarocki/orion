@@ -127,9 +127,11 @@ from pathlib import Path
 # orionx-postured, so a naive dirname(__file__) is /usr/bin and this import
 # fails at boot with the daemon dead and the tier unenforced.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "rain"))
 import suricata_capture as capture  # noqa: E402
 import tuning_lib  # noqa: E402  (DEC-PHASE12-050: operator squelch/tune authority)
 import deck_vitals  # noqa: E402  (DEC-PHASE12-051: the deck's own addresses -> origin=self)
+import rain_lib  # noqa: E402  (shared bus attestation authority)
 
 # --- Paths (single authorities, all overridable for tests) ------------------
 
@@ -648,7 +650,7 @@ def upstream_scan_reporters(reporter: str) -> tuple[str, ...]:
 def scan_sources_from_bus(lines, now: float,
                           window: float = SCAN_DEDUP_WINDOW,
                           sources: tuple[str, ...] = ("firewall",)) -> set[str]:
-    """Scan sources the named reporters have already published, recently.
+    """Recent, attested scan sources the named reporters have published.
 
     Reads the shared bus rather than duplicating each detector's state: the bus
     is the existing single authority for what has been reported, so there is no
@@ -658,6 +660,9 @@ def scan_sources_from_bus(lines, now: float,
     Suricata behaviour this has always had. Zeek passes the wider tuple from
     upstream_scan_reporters("zeek"), so it defers to both.
     """
+    key, _why = rain_lib.read_bus_key()
+    if key is None:
+        return set()
     out: set[str] = set()
     wanted = set(sources)
     for line in lines:
@@ -671,6 +676,11 @@ def scan_sources_from_bus(lines, now: float,
         if not isinstance(rec, dict):
             continue
         if rec.get("category") != "scan" or rec.get("source") not in wanted:
+            continue
+        # The bus is mode 0666. Source and category are self-asserted by any
+        # local writer and cannot suppress a real IDS alert without the same
+        # root attestation required for privileged healing actions.
+        if not rain_lib.verify_event(rec, key):
             continue
         try:
             ts = float(rec.get("ts", 0.0))
@@ -1621,6 +1631,14 @@ DECOY_BANNERS = {
 }
 DECOY_MAX_CONNECTIONS = 32     # bounded: a decoy must not exhaust the deck
 DECOY_HOLD_SECONDS = 120.0     # tarpit dwell cap, then close politely
+# Detection must be bounded separately from tarpit occupancy: the accept loop
+# reports a hit before it asks the semaphore for a holding slot.  Without this
+# limiter, connections rejected at the 32-socket cap still created one root
+# event-publisher subprocess apiece.
+DECOY_PEER_REANNOUNCE = 10.0
+DECOY_GLOBAL_WINDOW = 10.0
+DECOY_GLOBAL_MAX_EVENTS = 8
+DECOY_MAX_HIT_KEYS = 256
 
 CANARY_MARKER = "ORIONX-CANARY-DO-NOT-USE"
 CANARY_FILES = ("credentials.txt", "wallet.dat", "id_rsa_backup",
@@ -1669,10 +1687,11 @@ def canary_tripped(baseline_atime: float, current_atime: float) -> bool:
     return current_atime > baseline_atime
 
 
-def decoy_alert_message(port: int, peer: str) -> str:
+def decoy_alert_message(port: int, peer: str, count: int = 1) -> str:
     tech = ATTACK_DECOY
+    aggregate = (f" ({count} connections since the last alert)" if count > 1 else "")
     return (f"DECEPTION TRIPPED — decoy service on tcp/{port} was contacted by "
-            f"{peer} [{tech[0]} {tech[1]}]. Nothing on this deck legitimately "
+            f"{peer}{aggregate} [{tech[0]} {tech[1]}]. Nothing on this deck legitimately "
             f"listens on tcp/{port}; this connection is unsolicited.")
 
 
@@ -1681,6 +1700,60 @@ def canary_alert_message(path: str) -> str:
     return (f"CANARY READ — honeytoken file {path} was opened "
             f"[{tech[0]} {tech[1]}]. No Orion-X process reads this file; "
             "something enumerated the filesystem for credentials.")
+
+
+class DecoyHitLimiter:
+    """Thread-safe, bounded publication authority for all decoy listeners.
+
+    The per-peer clock collapses repeat connects into the next published event;
+    the global window stops a spoofed-source fan-out from bypassing that clock.
+    Socket acceptance and hit counters continue regardless, so rate limiting
+    presentation never becomes a claim that the probes did not happen.
+    """
+
+    def __init__(self, peer_reannounce: float = DECOY_PEER_REANNOUNCE,
+                 global_window: float = DECOY_GLOBAL_WINDOW,
+                 global_max: int = DECOY_GLOBAL_MAX_EVENTS,
+                 max_keys: int = DECOY_MAX_HIT_KEYS):
+        self.peer_reannounce = peer_reannounce
+        self.global_window = global_window
+        self.global_max = max(1, int(global_max))
+        self.max_keys = max(1, int(max_keys))
+        self._keys: OrderedDict[tuple[int, str], dict] = OrderedDict()
+        self._published: list[float] = []
+        self._lock = threading.Lock()
+
+    def observe(self, port: int, peer: str, now: float) -> int | None:
+        key = (int(port), str(peer))
+        with self._lock:
+            state = self._keys.get(key)
+            if state is None:
+                if len(self._keys) >= self.max_keys:
+                    self._keys.popitem(last=False)
+                state = {"last": None, "suppressed": 0}
+                self._keys[key] = state
+            self._keys.move_to_end(key)
+
+            last = state["last"]
+            if last is not None and (now - last) < self.peer_reannounce:
+                state["suppressed"] += 1
+                return None
+
+            cutoff = now - self.global_window
+            self._published = [ts for ts in self._published if ts > cutoff]
+            if len(self._published) >= self.global_max:
+                state["suppressed"] += 1
+                return None
+
+            count = 1 + int(state["suppressed"])
+            state["suppressed"] = 0
+            state["last"] = now
+            self._published.append(now)
+            return count
+
+    def tracked(self) -> int:
+        with self._lock:
+            return len(self._keys)
 
 
 class DecoyListener:
@@ -1803,7 +1876,9 @@ class DeceptionField:
     def open_firewall(self) -> bool:
         ports = ", ".join(str(p) for p in self.ports)
         return self._nft(["insert", "rule", *NFT_TABLE.split(), NFT_CHAIN,
-                          "tcp", "dport", "{", ports, "}", "accept",
+                          "ct", "state", "new", "tcp", "dport", "{", ports, "}",
+                          "limit", "rate", "8/second", "burst", "16", "packets",
+                          "accept",
                           "comment", f'"{NFT_COMMENT}"'])
 
     def close_firewall(self) -> bool:
@@ -2272,6 +2347,7 @@ class PostureDaemon:
         self.tailer = LogTailer(self.eve_path, on_line=self._on_eve_line)
         self.deception = DeceptionField(Path(args.canary_dir),
                                         dry_run=self.dry_run)
+        self.decoy_hits = DecoyHitLimiter()
         self.nebula = Contextualizer(dry_run=self.dry_run)
         if args.no_nebula:
             self.nebula = None
@@ -2800,7 +2876,9 @@ class PostureDaemon:
 
     # --- deception callbacks ---
     def _on_decoy_hit(self, port: int, peer: str) -> None:
-        self.emit("critical", "deception", decoy_alert_message(port, peer))
+        count = self.decoy_hits.observe(port, peer, time.monotonic())
+        if count is not None:
+            self.emit("critical", "deception", decoy_alert_message(port, peer, count))
 
     def _check_canaries(self) -> None:
         if not self.deception.armed:

@@ -453,6 +453,9 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "--- Production Sequence: Multiple Peer Discovery ---"
 setup
+# Automatic enrollment is permitted only for a mesh with a configured team
+# PSK.  No-PSK discovery is candidate-only and is exercised below.
+printf '%s\n' 'team-psk' > "$MESH_PSK_FILE"
 
 # Simulate receiving beacons from 3 different peers, then a duplicate
 OUR_KEY="LocalNodeKey=="
@@ -504,6 +507,10 @@ assert_match "peer 2 added with correct pubkey" '^PeerKey2==' "${MOCK_ADD_PEER_C
 assert_match "peer 3 added with correct pubkey" '^PeerKey3==' "${MOCK_ADD_PEER_CALLS[2]}"
 
 teardown
+# Restore the production helper and external wg command after this section's
+# in-process mocks; later tests exercise the real candidate approval path.
+unset -f wg
+source "$MESH_LIB"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -534,8 +541,16 @@ cat > "$STUB/socat" <<'STUBEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$SOCAT_ARGS"
 STUBEOF
-chmod +x "$STUB/wg" "$STUB/socat"
+cat > "$STUB/flock" <<'STUBEOF'
+#!/usr/bin/env bash
+# util-linux flock is present on the target Debian live system.  This no-op
+# stub lets the pure unit test exercise the state transitions on macOS, where
+# flock(1) is not installed; concurrency is covered by the production lock.
+exit 0
+STUBEOF
+chmod +x "$STUB/wg" "$STUB/socat" "$STUB/flock"
 export MESH_RUNTIME_DIR="$TMPDIR_TEST/run" MESH_RATE_DIR="$TMPDIR_TEST/run/rate"
+export MESH_CANDIDATE_FILE="$TMPDIR_TEST/run/candidates.tsv"
 echo "private" > "$MESH_PRIVATE_KEY"
 PATH="$STUB:$PATH" mesh_state_write wg0 10.0.99.1 discovery "$OUR_K" 2>/dev/null
 
@@ -554,6 +569,12 @@ deliver() {  # deliver <peeraddr> <line>
 
 rc=0; deliver 192.168.7.20 "$(_mesh_build_beacon "$KEY_B" 10.0.99.20 51820)" || rc=$?
 assert_eq "handler exits 0 for a good beacon" "0" "$rc"
+assert_eq "without a team PSK, a valid beacon is NOT auto-added" "" "$(cat "$WG_CALLS")"
+assert_match "without a team PSK, the beacon is held as a candidate" \
+    "$KEY_B.*10\.0\.99\.20.*192\.168\.7\.20.*51820" "$(cat "$MESH_CANDIDATE_FILE")"
+
+# Explicit operator approval is the authority that admits a no-PSK candidate.
+PATH="$STUB:$PATH" mesh_candidate_approve 10.0.99.20 >/dev/null
 assert_match "peer added with the SENDER's real address as endpoint" \
     "peer $KEY_B allowed-ips 10\.0\.99\.20/32 endpoint 192\.168\.7\.20:51820" "$(cat "$WG_CALLS")"
 if grep -q "unknown" "$WG_CALLS"; then
@@ -561,6 +582,12 @@ if grep -q "unknown" "$WG_CALLS"; then
 else
     echo "  PASS: no 'unknown' endpoint"; (( PASS_COUNT++ )) || true
 fi
+
+# With an out-of-band team PSK installed, validated discovery may auto-add.
+: > "$WG_CALLS"; echo "team-psk" > "$MESH_PSK_FILE"
+deliver 192.168.7.27 "$(_mesh_build_beacon "$KEY_C" 10.0.99.27 51820)" || true
+assert_match "a PSK-backed beacon is auto-added" \
+    "peer $KEY_C allowed-ips 10\.0\.99\.27/32 endpoint 192\.168\.7\.27:51820 preshared-key $MESH_PSK_FILE" "$(cat "$WG_CALLS")"
 
 : > "$WG_CALLS"
 rc=0; deliver 192.168.7.21 "{\"pubkey\":\"$KEY_C\",\"vpn_ip\":\"10.0.99.0/24,10.0.99.1\",\"wg_port\":51820}" || rc=$?
@@ -593,6 +620,41 @@ deliver 192.168.7.30 "$(_mesh_build_beacon "$KEY_D" 10.0.99.31 51820)" || true
 assert_eq "rate limit: a second beacon from one sender within the interval is dropped" \
     "1" "$(grep -c 'peer ' "$WG_CALLS" || true)"
 
+# Candidate and per-sender state are both hard-bounded and expire.
+rm -f "$MESH_PSK_FILE" "$MESH_CANDIDATE_FILE"; : > "$WG_CALLS"
+MESH_CANDIDATE_MAX=3 MESH_CANDIDATE_TTL=5
+mesh_candidate_record "$KEY_B" 10.0.99.40 192.168.7.40 51820 100
+mesh_candidate_record "$KEY_C" 10.0.99.41 192.168.7.41 51820 101
+mesh_candidate_record "$KEY_D" 10.0.99.42 192.168.7.42 51820 102
+mesh_candidate_record "$KEY_E" 10.0.99.43 192.168.7.43 51820 103
+assert_eq "candidate queue is capped" "3" "$(wc -l < "$MESH_CANDIDATE_FILE" | tr -d ' ')"
+if grep -qF "$KEY_B" "$MESH_CANDIDATE_FILE"; then
+    echo "  FAIL: oldest candidate should be evicted"; (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: oldest candidate is evicted at the cap"; (( PASS_COUNT++ )) || true
+fi
+mesh_candidates_prune 109
+assert_eq "expired candidates are removed" "0" "$(wc -l < "$MESH_CANDIDATE_FILE" | tr -d ' ')"
+
+rm -rf "$MESH_RATE_DIR"; mkdir -p "$MESH_RATE_DIR"
+MESH_RATE_MAX_SENDERS=3 MESH_RATE_STATE_TTL=5 MESH_BEACON_MIN_INTERVAL=5
+PATH="$STUB:$PATH" mesh_beacon_rate_allow 192.0.2.1 100
+PATH="$STUB:$PATH" mesh_beacon_rate_allow 192.0.2.2 100
+PATH="$STUB:$PATH" mesh_beacon_rate_allow 192.0.2.3 100
+PATH="$STUB:$PATH" mesh_beacon_rate_allow 192.0.2.4 100
+assert_eq "sender-rate state is capped" "3" "$(find "$MESH_RATE_DIR" -name '*.stamp' -type f | wc -l | tr -d ' ')"
+PATH="$STUB:$PATH" mesh_beacon_rate_allow 192.0.2.5 131
+assert_eq "expired sender-rate state is removed" "1" "$(find "$MESH_RATE_DIR" -name '*.stamp' -type f | wc -l | tr -d ' ')"
+
+UNIT="$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/orionx-mesh-discover.service"
+for bound in '^TasksMax=32$' '^MemoryMax=128M$' '^CPUQuota=60%$'; do
+    if grep -q "$bound" "$UNIT"; then
+        echo "  PASS: discovery service carries resource bound $bound"; (( PASS_COUNT++ )) || true
+    else
+        echo "  FAIL: discovery service missing resource bound $bound"; (( FAIL_COUNT++ )) || true
+    fi
+done
+
 # Beacons are only sent after a DISCOVERY-mode join (security F14).
 rm -f "$SOCAT_ARGS"
 PATH="$STUB:$PATH" mesh_state_write wg0 10.0.99.1 config "$OUR_K" 2>/dev/null
@@ -605,7 +667,7 @@ PATH="$STUB:$PATH" mesh_state_write wg0 10.0.99.1 discovery "$OUR_K" 2>/dev/null
 PATH="$STUB:$PATH" bash "$DISCOVER_SCRIPT" send 2>/dev/null || true
 assert_file_exists "a discovery-mode join does send its beacon" "$SOCAT_ARGS"
 
-unset WG_CALLS WG_PEERS WG_ALLOWED SOCAT_ARGS MESH_RUNTIME_DIR MESH_RATE_DIR
+unset WG_CALLS WG_PEERS WG_ALLOWED SOCAT_ARGS MESH_RUNTIME_DIR MESH_RATE_DIR MESH_CANDIDATE_FILE
 teardown
 echo ""
 

@@ -15,10 +15,12 @@
 #     mesh.log                            -> LogsDirectory=orionx
 #     jq / sed / grep / awk               -> no privilege
 #
-#   This unit accepts unauthenticated UDP from the local segment and feeds
-#   it to `wg set`, which makes it the most exposed thing in the mesh and
-#   the one that most deserves RestrictAddressFamilies: a compromised socat
-#   cannot open AF_PACKET and start sniffing.
+#   This unit accepts unauthenticated UDP from the local segment. Without a
+#   team PSK it records only bounded, expiring candidates for explicit operator
+#   approval; with a PSK it may feed validated fields to `wg set`. That still
+#   makes it the most exposed mesh component and the one that most deserves
+#   RestrictAddressFamilies: a compromised socat cannot open AF_PACKET and
+#   start sniffing.
 #
 #   ProtectKernelModules=yes is omitted here for the same reason as in
 #   orionx-mesh-health.service: shared RuntimeDirectory, shared assumptions.
@@ -61,6 +63,12 @@ RestrictSUIDSGID=yes
 RestrictRealtime=yes
 LockPersonality=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# The listener deliberately delegates each accepted datagram to a short-lived
+# handler.  nftables rate-limits ingress; these cgroup limits are the second,
+# reliable bound if a hostile LAN sustains that rate or forces lock waits.
+TasksMax=32
+MemoryMax=128M
+CPUQuota=60%
 
 [Install]
 WantedBy=multi-user.target

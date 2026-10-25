@@ -191,6 +191,33 @@ ck(m.canary_tripped(100.0, 200.0) is True, "canary read (atime advanced) is dete
 ck(m.canary_tripped(100.0, 100.0) is False, "untouched canary does not trip")
 ck(m.canary_tripped(200.0, 100.0) is False, "clock skew backwards does not false-trip")
 ck("10.0.0.9" in m.decoy_alert_message(2222, "10.0.0.9"), "decoy alert names the peer")
+lim = m.DecoyHitLimiter(peer_reannounce=10.0, global_window=10.0,
+                        global_max=2, max_keys=2)
+ck(lim.observe(2222, "10.0.0.9", 0.0) == 1, "first decoy hit publishes")
+ck(lim.observe(2222, "10.0.0.9", 1.0) is None, "repeat peer is suppressed inside its window")
+ck(lim.observe(2222, "10.0.0.9", 11.0) == 2, "next decoy alert aggregates the suppressed repeat")
+ck("2 connections" in m.decoy_alert_message(2222, "10.0.0.9", 2),
+   "aggregated decoy alert says how many connections it represents")
+global_lim = m.DecoyHitLimiter(peer_reannounce=0.0, global_window=10.0,
+                               global_max=2, max_keys=2)
+ck(global_lim.observe(23, "10.0.0.1", 0.0) == 1 and
+   global_lim.observe(23, "10.0.0.2", 0.0) == 1 and
+   global_lim.observe(23, "10.0.0.3", 0.0) is None,
+   "global decoy publication budget stops spoofed-source fan-out")
+ck(global_lim.tracked() == 2, "decoy hit-key memory is bounded")
+
+calls = []
+class Result:
+    returncode = 0
+    stdout = ""
+def nft_runner(argv, **_kwargs):
+    calls.append(argv)
+    return Result()
+field = m.DeceptionField(Path(tempfile.mkdtemp()) / "canary", ports=(23, 2222),
+                         runner=nft_runner)
+ck(field.open_firewall() and "ct state new" in " ".join(calls[0]) and
+   "limit rate 8/second burst 16 packets" in " ".join(calls[0]),
+   "decoy firewall opening rate-limits new connections")
 sys.exit(0 if ok else 1)
 PY
 then pass "tier transition + effect assertions"; else fail "tier transition + effect assertions" "see output above"; fi
@@ -201,6 +228,9 @@ if grep -qE '127\.0\.0\.1:11434' "$PD"; then pass "Nebula pinned to localhost on
 if ! grep -qE 'pip install|import requests|import yaml' "$PD"; then pass "stdlib only (air-gapped safe)"; else fail "stdlib only" "external dependency found"; fi
 if grep -q 'ConditionPathExists\|orionx-enabled' "$PD"; then pass "knows the DEC-PHASE11-008 suricata gate"; else fail "knows the suricata gate"; fi
 if grep -qE 'ExecStart=.*orionx-postured' "$UNIT"; then pass "unit ExecStart points at the daemon"; else fail "unit ExecStart points at the daemon"; fi
+for bound in '^MemoryMax=128M$' '^TasksMax=64$' '^CPUQuota=60%$'; do
+  if grep -q "$bound" "$UNIT"; then pass "postured carries resource bound $bound"; else fail "postured resource bound" "missing $bound"; fi
+done
 # DEC-PHASE12-032: detection must not wait on the optional model runtime.
 # On rc3 this unit sat inactive with a pending job because it was ordered
 # After=nebula-runtime.service, so Shields Up enforcement and Zeek ingest were

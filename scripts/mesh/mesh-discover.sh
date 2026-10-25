@@ -13,7 +13,8 @@
 # The beacon is a JSON payload broadcast on MESH_DISCOVER_PORT (55555)
 # containing the node's WireGuard public key, VPN IP and WG port (no hostname, DEC-PHASE12-099).
 # Listeners parse incoming beacons, filter own beacons, deduplicate against
-# existing WireGuard peers, and call mesh_add_peer for new discoveries.
+# existing WireGuard peers, and either hold them for explicit operator approval
+# or, when a team PSK is installed, call mesh_add_peer.
 #
 # Dependencies: socat, jq (optional, sed fallback), mesh-lib.sh
 #
@@ -201,10 +202,16 @@ _mesh_process_beacon() {
         return 0
     fi
 
-    # New peer — mesh_add_peer is the validation gate (DEC-PHASE12-096) and
-    # logs the reason when it rejects. A rejection is not an error for the
-    # listener: one bad beacon must never stop discovery.
-    mesh_log INFO "Discovered peer candidate ($vpn_ip) at $sender_ip"
+    # A team PSK is the only unattended-enrolment authority.  Without one the
+    # LAN is unauthenticated, so a well-formed beacon is held in the bounded,
+    # expiring candidate queue until the operator explicitly approves it.
+    if [[ ! -f "$MESH_PSK_FILE" ]]; then
+        mesh_candidate_record "$pubkey" "$vpn_ip" "$sender_ip" "$wg_port" || true
+        return 0
+    fi
+
+    # PSK-backed discovery may auto-add. mesh_add_peer remains the final
+    # validation gate and logs the reason when it rejects.
     mesh_add_peer "$pubkey" "$vpn_ip" "$sender_ip" "$wg_port" || true
 }
 
@@ -242,18 +249,11 @@ mesh_beacon_handle() {
     fi
 
     # Per-sender rate limit: at most one beacon per MESH_BEACON_MIN_INTERVAL
-    # seconds from one address (beacons are sent every 10 s). Excess is
-    # dropped silently so a flood cannot also flood the log.
-    local now stamp last=0
+    # seconds from one address (beacons are sent every 10 s). State is bounded
+    # and expires; excess is dropped silently so a flood cannot flood the log.
+    local now
     now="$(date +%s)"
-    mkdir -p "$MESH_RATE_DIR" 2>/dev/null || true
-    stamp="$MESH_RATE_DIR/$sender_ip"
-    [[ -f "$stamp" ]] && last="$(cat "$stamp" 2>/dev/null || echo 0)"
-    [[ "$last" =~ ^[0-9]+$ ]] || last=0
-    if (( now - last < MESH_BEACON_MIN_INTERVAL )); then
-        return 0
-    fi
-    echo "$now" > "$stamp" 2>/dev/null || true
+    mesh_beacon_rate_allow "$sender_ip" "$now" || return 0
 
     local our_pubkey
     our_pubkey="$(mesh_get_pubkey 2>/dev/null)" || {
