@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] — v3.1.0
+
+### Fixed
+
+- `orionx-logquery` no longer appears to hang when run without `--path`.
+  `--path` defaulted to stdin, so the command that the Workbench card, the
+  Attack Map and `orionx-help` all advertise (`orionx-logquery --report
+  summary`) sat on an interactive terminal waiting for input and printed
+  nothing. Piped input is still read as before. An interactive run without
+  `--path` now reads this deck's event stream (`/run/orionx/events.jsonl`) and
+  says so. If that file is not present, the tool exits at once with examples.
+
+### Added
+
+- `orionx-logquery -v/--verbose` narrates each step on stderr, stamped with
+  elapsed seconds: the files to be read and their total size, each file as it
+  starts and finishes, a heartbeat every 100,000 lines, object-store listing
+  and fetch counts, and how long intel loading, enrichment, correlation, the
+  SQL engine load and the query took. Report output on stdout is unchanged.
+
 ## [v3.0.2] — 2026-10-24 (application security patch; ISO verification pending)
 
 This patch release incorporates the 2026-10-24 [Security Review](docs/SECURITY_REVIEW_2026-10-24.md)

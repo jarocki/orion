@@ -803,6 +803,121 @@ else
 fi
 rm -rf "$_LT"
 
+section "Never silent — a bare run cannot hang, and -v narrates the work"
+# The reported "hang": --path defaulted to stdin, so the advertised bare
+# command (Workbench card, Attack Map, orionx-help) sat on an interactive
+# terminal waiting for input, printing nothing. Run it on a real pty, the way
+# an operator does, and require an answer within seconds.
+if python3 - "$LQ" <<'PY'
+import os, pty, select, sys, time
+pid, fd = pty.fork()
+if pid == 0:
+    os.environ["NO_COLOR"] = "1"
+    os.execvp("python3", ["python3", sys.argv[1], "--report", "summary"])
+out, deadline, status = b"", time.time() + 10, None
+while time.time() < deadline:
+    if select.select([fd], [], [], 0.2)[0]:
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:  # EIO: the child closed the pty on exit
+            chunk = b""
+        out += chunk
+    done, wstatus = os.waitpid(pid, os.WNOHANG)
+    if done:
+        status = wstatus
+        break
+if status is None:
+    os.kill(pid, 9)
+    print("    still running after 10s with no input", file=sys.stderr)
+    sys.exit(1)
+text = out.decode(errors="replace")
+# Off-deck, /run/orionx/events.jsonl is absent: it must say so and exit 1.
+# On a deck it reads that stream instead; either way it must have spoken.
+if os.path.exists("/run/orionx/events.jsonl"):
+    sys.exit(0 if "event stream" in text else 1)
+sys.exit(0 if "no evidence to read" in text and os.WEXITSTATUS(status) == 1 else 1)
+PY
+then pass "a bare run on a terminal answers at once instead of waiting on stdin"
+else fail "a bare run on a terminal answers at once instead of waiting on stdin"
+fi
+
+if python3 - "$LQ_DIR" "$WORK/evidence/events.jsonl" <<'PY'
+import sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+cli = SourceFileLoader("lq_cli", sys.argv[1] + "/orionx-logquery").load_module()
+fails = []
+def check(cond, label):
+    if not cond:
+        fails.append(label)
+check(cli.resolve_local_path(None, stdin_is_tty=False) == "-",
+      "piped input is still read from stdin")
+check(cli.resolve_local_path("/x/y", stdin_is_tty=True) == "/x/y",
+      "an explicit --path is used as given")
+cli.DECK_EVIDENCE = Path(sys.argv[2])
+check(cli.resolve_local_path(None, stdin_is_tty=True) == sys.argv[2],
+      "an interactive bare run reads the deck's event stream")
+cli.DECK_EVIDENCE = Path(sys.argv[2] + ".absent")
+try:
+    cli.resolve_local_path(None, stdin_is_tty=True)
+    fails.append("no stream and no input raises instead of waiting")
+except cli.sources.SourceError as exc:
+    check("--path" in exc.hint, "the refusal says how to point it at evidence")
+for f in fails:
+    print("    " + f, file=sys.stderr)
+sys.exit(1 if fails else 0)
+PY
+then pass "default evidence: piped -> stdin, terminal -> deck stream, neither -> refuse"
+else fail "default evidence: piped -> stdin, terminal -> deck stream, neither -> refuse"
+fi
+
+QUIET_OUT="$(python3 "$LQ" --path "$WORK/evidence" --report targeted --format csv 2>"$WORK/quiet.err")"
+LOUD_OUT="$(python3 "$LQ" -v --path "$WORK/evidence" --report targeted --format csv 2>"$WORK/loud.err")"
+if [[ "$QUIET_OUT" == "$LOUD_OUT" && -n "$QUIET_OUT" ]]; then
+    pass "-v leaves the report itself byte-identical"
+else
+    fail "-v leaves the report itself byte-identical" "stdout differs"
+fi
+if grep -qE '^\[ *[0-9]+\.[0-9]s\]' "$WORK/quiet.err"; then
+    fail "without -v there is no step narration" "$(head -2 "$WORK/quiet.err")"
+else
+    pass "without -v there is no step narration"
+fi
+_missing=""
+for want in 'acquire from local' 'file\(s\) to read' '\[1/3\]' 'load intel' \
+            'enrich [0-9,]+ record' 'correlate [0-9,]+ record'; do
+    grep -qE "^\[ *[0-9]+\.[0-9]s\] .*$want" "$WORK/loud.err" || _missing+=" '$want'"
+done
+if [[ -z "$_missing" ]]; then
+    pass "-v narrates acquisition per file, intel, enrichment and correlation, timed"
+else
+    fail "-v narrates acquisition per file, intel, enrichment and correlation, timed" \
+         "missing:$_missing"
+fi
+python3 "$LQ" -v --path "$WORK/evidence" --report summary --format csv \
+    >/dev/null 2>"$WORK/sql.err"
+if grep -q 'load .* into sqlite' "$WORK/sql.err" && grep -q 'query returned' "$WORK/sql.err"; then
+    pass "-v narrates the SQL engine load and the query"
+else
+    fail "-v narrates the SQL engine load and the query" "$(tail -3 "$WORK/sql.err")"
+fi
+
+# The heartbeat is what separates a slow read from a hang on a big file.
+if python3 - "$LQ_DIR" "$WORK/evidence/kern.log" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import logquery_sources as S
+S.PROGRESS_EVERY_LINES = 10
+seen = []
+records, _ = S.read_local(sys.argv[2], progress=seen.append)
+beats = [m for m in seen if "line(s) read" in m]
+sys.exit(0 if len(records) == 30 and len(beats) == 3 else 1)
+PY
+then pass "long reads emit a heartbeat every PROGRESS_EVERY_LINES lines"
+else fail "long reads emit a heartbeat every PROGRESS_EVERY_LINES lines"
+fi
+
 printf "  Results: ${GREEN}%s passed${NC}, ${RED}%s failed${NC}\n" "$PASS" "$FAIL"
 if [[ $PEND -gt 0 ]]; then
     printf "  (${YEL}%s pending${NC} central hook wiring — see WIRING above)\n" "$PEND"
