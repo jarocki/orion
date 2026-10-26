@@ -7,15 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [v3.1.0] — 2026-10-25 (feature release; ISO verification pending)
+## [v3.1.0] — 2026-10-25 (feature release)
 
 Five operator-requested changes, tracked under the
 [v3.1.0 milestone](https://github.com/jarocki/orion/milestone/1) (#103–#111)
 and defined in MASTER_PLAN.md (DEC-PHASE13-013…022). The release includes the
 v3.0.1 and v3.0.2 security patches. Unit, lint and headless GTK tests cover
 the source changes. The icon fix was reproduced and verified against the
-v3.0.0 squashfs's own GTK. A v3.1.0 ISO has not yet been built, booted, or
-verified on the reference hardware.
+v3.0.0 squashfs's own GTK. The ISO was built by CI from the tag commit and
+booted on an HP Pavilion laptop (identity below).
+
+**ISO identity.** SHA-256 `38ca9d833e93e53fc6e9dd1bcab68207e2ce37d31d6d51702b67985f983ad6c5`,
+3,151,036,416 bytes (3.15 GB), built 2026-10-25 by the Release Pipeline (Actions
+run 40237454360) from `19bd77ea9a99`, the tag commit, with a clean chroot (no
+stale-stage reuse in the build log). Baked `ISO_VERSION=v3.1.0`. Gates on this
+image: `.sha256` sidecar matches; hooks-applied 20/0 against the CI build log;
+content-presence in release mode (`ORIONX_RELEASE_GATE=1
+ORIONX_EXPECT_VERSION=v3.1.0`) passed in the same CI run; QEMU BIOS 108 s / UEFI
+115 s on the build host. Booted by the owner on an HP Pavilion (8 GB) on
+2026-10-26: works, with the hardware findings listed under *Known issues*. Not
+re-tested on the Lenovo reference deck. The CHANGELOG, README and User Guide
+copies baked into the image predate this identity line, as every release's must.
 
 ### Fixed
 
@@ -67,19 +79,21 @@ verified on the reference hardware.
 
 ### Known issues and release status
 
-- Not verified on the reference deck, which was offline. The Network tab's
-  VPN connect/import and capture start/stop/export were tested against
-  fixtures and a headless GTK session, not against a live NetworkManager or a
-  real capture.
+- Booted on an HP Pavilion (8 GB); not re-tested on the Lenovo reference deck.
+  The Network tab's VPN connect/import and capture start/stop/export were
+  tested against fixtures and a headless GTK session, not against a live
+  NetworkManager or a real capture.
+- Found on hardware on 2026-10-26, all present in v3.0.0 as well, tracked under
+  the v3.1.1 and v3.2.0 milestones: no display-brightness handler (#119), no volume/battery/brightness panel widgets (#120; #121 asks for the apt evidence), spoken alerts that fail silently when piper fails and are cut at 10 s (#122), acronym pronunciation (#123), no click-through from the Cockpit to the Attack Map (#124), Suricata running with zero signatures (#125), a DEFENSIVE ACTIONS pane that cannot show proposals or active sources (#126), `orionx-logquery` dropping IDS/Zeek/scan detail (#127) and no scanning-tool attribution (#128).
 - The Workbench still launches as a terminal plus Firefox, so its running
   windows show those programs' icons. The menu, desktop and panel icon are
   fixed.
 - Per-interface protocol counts need capture or Zeek data. The Network tab
   shows protocol traffic for the whole deck and says so (#93).
-- Signing secrets are not provisioned in CI. The v3.0.2 release run stopped
-  at *Import GPG signing key*, and a v3.1.0 tag run will stop at the same
-  step. Stage and sign through the manual path (release-process §10), or
-  provision the secrets.
+- CI builds and verifies the ISO; signing happens on the owner's machine
+  (release-process §10). The v3.1.0 release run stopped at *Import GPG signing
+  key* because no signing key is provisioned in CI; the staged assets come from
+  that run's build artifact.
 - The v3.0.0 known issues listed below remain open unless separately closed.
 
 ## [v3.0.2] — 2026-10-24 (application security patch; ISO verification pending)

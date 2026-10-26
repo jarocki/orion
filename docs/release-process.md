@@ -422,6 +422,17 @@ Used for `v2.1.0-bullseye-rain` (6.62 GB, 4 parts) and `v2.2.0-beta`
 build host, or when CI cannot build or upload. It publishes the same asset
 set as CI (§0), staged by the same script; only the upload is manual.
 
+**When CI built the ISO but could not sign (v3.1.0, 2026-10-26):** skip step 0.
+Download the run's artifact (`gh run download <run-id> -n
+release-artifacts-<run-id> -D tmp/release-<tag>-ci`; it holds the ISO, its
+`.sha256` and the build log), verify the sidecar, run
+`BUILD_LOG=tmp/release-<tag>-ci/tmp/release-build-iso.log
+tests/integration/test-iso-hooks-applied.sh` and `scripts/qemu-boot-test.sh
+--mode both --iso <that iso>`, then start at step 1 with that ISO. The
+staging script reads `CHANGELOG.md` from the checkout it runs in, so that
+checkout must be at the tag: a stale local `main` fails with
+"no CHANGELOG.md section for <tag>".
+
 ```bash
 # 0. Build with the tag's identity, then run §4.3 on output/<iso>.
 ORIONX_VERSION=<tag> bash scripts/build-iso.sh

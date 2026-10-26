@@ -1,6 +1,6 @@
 # orionx-diag — Diagnostic Tool Reference
 
-**Shipped in:** the verified v3.0.0 ISO and the v2.2.0 release candidates from rc5 (first added in the v2.1.0 Bullseye line, W11-11). The v3.1.0 source retains it; a v3.1.0 ISO has not yet been verified.
+**Shipped in:** the verified v3.0.0 ISO and the v2.2.0 release candidates from rc5 (first added in the v2.1.0 Bullseye line, W11-11). The v3.1.0 ISO ships it too.
 **Source of truth:** `scripts/orionx-diag`
 **Location on ISO:** `/usr/bin/orionx-diag` (symlink to `/opt/orionx/scripts/orionx-diag`)
 **Decision:** DEC-PHASE11-015

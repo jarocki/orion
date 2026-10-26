@@ -26,6 +26,6 @@
     { "version": "3.0.0", "date": "2026-10-07", "summary": "First stable Debian 13 Phoenix Edition release." },
     { "version": "3.0.1", "date": "2026-10-24", "status": "source-patch; ISO verification pending", "summary": "PHP/Trixie security maintenance and fail-closed package floor." },
     { "version": "3.0.2", "date": "2026-10-24", "status": "source-patch; ISO verification pending", "summary": "Security review remediations and root-owned signed event broker." },
-    { "version": "3.1.0", "date": "2026-10-25", "status": "source release; ISO verification pending", "summary": "LIVE look and status strip on every Cockpit tab, a full Network tab (interfaces, protocol traffic, WireGuard VPNs, bounded capture to Wireshark), fixed and themed app icons, and an orionx-logquery that never waits silently." }
+    { "version": "3.1.0", "date": "2026-10-25", "status": "release; ISO CI-built from the tag, QEMU-gated, booted on an HP Pavilion 2026-10-26", "summary": "LIVE look and status strip on every Cockpit tab, a full Network tab (interfaces, protocol traffic, WireGuard VPNs, bounded capture to Wireshark), fixed and themed app icons, and an orionx-logquery that never waits silently." }
   ]
 }

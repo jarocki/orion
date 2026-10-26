@@ -111,7 +111,7 @@ Orion-X Phoenix Edition is a complete Linux system on a USB stick for incident r
 
 The "Phoenix" name symbolizes the toolkit's ability to help organizations rise from the ashes of security incidents through effective investigation and response. This release is built on Debian 13 "trixie" with Python 3.13 and Linux 6.12. It brings an on-device AI assistant (Nebula), audible intrusion alerts (R.A.I.N.), the Orion Cockpit — a live dashboard whose tabs also hold the network, mesh, comms, awareness, tool, AI and auto-healing controls — and a peer-to-peer WireGuard mesh.
 
-**Known limits.** The published Orion-X v3.0.0 ISO has been boot-tested on one reference laptop (Lenovo, Intel Bay Trail, UEFI — live boot verified 2026-10-18) and in QEMU; v3.0.1, v3.0.2 and v3.1.0 have not yet been boot-tested on it. Other hardware is untested. Please report anything confusing or broken (see [Support](SUPPORT.md)).
+**Known limits.** Orion-X v3.0.0 has been boot-tested on the Lenovo reference laptop (Intel Bay Trail, UEFI — 2026-10-18); v3.1.0 on an HP Pavilion (8 GB — 2026-10-26) and in QEMU, not yet on the Lenovo. v3.0.1 and v3.0.2 were never built as ISOs. Other hardware is untested. Please report anything confusing or broken (see [Support](SUPPORT.md)).
 
 - x86-64 PCs only (it does not boot Apple-silicon Macs); Secure Boot must be off.
 - Nothing you change survives a reboot unless you set up [persistence](#persistence-options).
@@ -276,13 +276,13 @@ Nothing is installed on the computer — this checks the file you downloaded and
    Get-FileHash orionx-phoenix-edition-<version>.iso -Algorithm SHA256
    ```
 
-2. Compare the result with the hash on the release page and in `SHA256SUMS` (`orionx-imager` does this for you when it downloads the release). The published v3.0.0 ISO hashes to `c952ca5be03789208e39ef1807c1f09c1c15fb1f82c223272c8c3c2007332386`; do not reuse that hash for a patch release.
+2. Compare the result with the hash on the release page and in `SHA256SUMS` (`orionx-imager` does this for you when it downloads the release). The v3.1.0 ISO hashes to `38ca9d833e93e53fc6e9dd1bcab68207e2ce37d31d6d51702b67985f983ad6c5`; v3.0.0 to `c952ca5be03789208e39ef1807c1f09c1c15fb1f82c223272c8c3c2007332386`. Never carry a hash across releases.
 
 3. After booting Orion-X, open a terminal and check the image identity:
    ```bash
    grep ISO_VERSION= /etc/orionx-version
    ```
-   The published v3.0.0 ISO prints `ISO_VERSION=v3.0.0`; a verified v3.1.0 ISO must print `ISO_VERSION=v3.1.0`. (The patch images print `ISO_VERSION=v3.0.1` and `ISO_VERSION=v3.0.2`.)
+   The v3.1.0 ISO prints `ISO_VERSION=v3.1.0`; v3.0.0 prints `ISO_VERSION=v3.0.0`. (The patch images print `ISO_VERSION=v3.0.1` and `ISO_VERSION=v3.0.2`.)
 
 4. Run the built-in self-check: `sudo orionx-diag` (without `sudo` the systemd and AppArmor checks are skipped). See [orionx-diag.md](orionx-diag.md).
 
@@ -2118,4 +2118,4 @@ Ctrl+E                         # Export packet dissections
 
 ---
 
-This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.1.0<!--/orionx:release--> source (Debian 13 "trixie"); the published v3.0.0 ISO remains the verified download until a later ISO passes release checks. For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.
+This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.1.0<!--/orionx:release--> source (Debian 13 "trixie"); the v3.1.0 ISO passed the release checks and a hardware boot (CHANGELOG, *ISO identity*). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.
