@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition — Cyberdeck for the Good Guys
 
-**Source version:** v3.1.0 (Cockpit, Network tab, icons and logquery; includes the v3.0.1 and v3.0.2 security patches). **Latest verified published ISO:** [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0). New ISO artifacts remain pending the [release process](docs/release-process.md).
+**Source version:** v3.1.0 (Cockpit, Network tab, icons and logquery; includes the v3.0.1 and v3.0.2 security patches). **Latest ISO:** [v3.1.0](https://github.com/jarocki/orion/releases/tag/v3.1.0) — CI-built from the tag, QEMU-gated, booted on an HP Pavilion (2026-10-26); previous: [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0).
 **Base:** Debian 13 "trixie" live (kernel 6.12, Python 3.13, XFCE 4.20) | **Runtime:** Qwen2.5-3B-Instruct (Apache-2.0)
 **Previous line:** v2.1.0-bullseye-rain (final Debian 11 build, kept as a known-good fallback)
 
@@ -21,9 +21,9 @@ that raise active defenses as the situation demands.
 
 Mission verbs: **monitor** / **detect** / **defend** / **triage** / **timeline**.
 
-> **Tested hardware.** The published Orion-X v3.0.0 ISO has been boot-tested on one reference laptop
-> (Lenovo, Intel Bay Trail, UEFI; live boot verified 2026-10-18) and in QEMU
-> (BIOS + UEFI); other machines are untested, so
+> **Tested hardware.** Orion-X v3.0.0 has been boot-tested on the Lenovo reference
+> laptop (Intel Bay Trail, UEFI; 2026-10-18); v3.1.0 on an HP Pavilion (8 GB;
+> 2026-10-26) and in QEMU (BIOS + UEFI); other machines are untested, so
 > please report anything confusing or broken via the
 > [issue tracker](https://github.com/jarocki/orion/issues/new/choose). What it
 > does **not** do: boot Apple-silicon Macs (x86-64 only), keep your changes
@@ -181,7 +181,7 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 
 ### 1. Get the ISO
 
-**Latest verified published ISO, v3.0.0 (3.13 GB):** GitHub caps release assets
+**Latest ISO, v3.1.0 (3.15 GB):** GitHub caps release assets
 at 2 GB per file, and every Debian 13 build so far has been about 3.1 GB, so
 the ISO is published as signed `.part-*` files (190 MiB each, about seventeen) plus `SHA256SUMS`/`SHA512SUMS`
 and `REASSEMBLE.txt` on the
@@ -292,8 +292,8 @@ sudo orionx-diag --category nebula
 ```
 
 Expected: all identity, manifest, packages, files, and systemd categories PASS.
-For the v3.0.0 ISO below, `grep ISO_VERSION= /etc/orionx-version` prints
-`ISO_VERSION=v3.0.0`; a verified v3.1.0 image must print `ISO_VERSION=v3.1.0`.
+For the v3.1.0 ISO, `grep ISO_VERSION= /etc/orionx-version` prints
+`ISO_VERSION=v3.1.0` (the v3.0.0 ISO prints `ISO_VERSION=v3.0.0`).
 See `docs/orionx-diag.md` for interpreting results.
 
 ---
@@ -379,7 +379,13 @@ without the bundled model.
 
 ## Known issues
 
-Open in the v3.0.0 published ISO and not claimed resolved by the v3.1.0 source (each links to its tracking issue):
+Open in the v3.1.0 ISO (each links to its tracking issue):
+
+- **Found on hardware (HP Pavilion, 2026-10-26; also present in v3.0.0):** display
+  brightness #119, panel widgets #120/#121, spoken-alert fallback #122 and
+  pronunciation #123, Cockpit → Attack Map #124, Suricata ruleset #125,
+  DEFENSIVE ACTIONS pane #126, logquery depth #127, tool attribution #128
+  (milestones v3.1.1 and v3.2.0).
 
 - **SSH is installed but not started at boot** (fixes
   [#98](https://github.com/jarocki/orion/issues/98), still open until the owner closes it). The old "SSH admin
@@ -396,7 +402,7 @@ Open in the v3.0.0 published ISO and not claimed resolved by the v3.1.0 source (
   `/opt/orionx/optional/install-ghidra.sh`; Hack is the monospace font.
 - **The operator account is root without a prompt** (by design; see the User
   Guide, §3 *The Live Account and Administrator Rights*).
-- **Hardware coverage:** boot-tested on one reference laptop (Lenovo; v3.0.0 live boot verified 2026-10-18) and in QEMU (BIOS + UEFI). Other hardware is untested — reports welcome.
+- **Hardware coverage:** boot-tested on two laptops (Lenovo Bay Trail: v3.0.0, 2026-10-18; HP Pavilion: v3.1.0, 2026-10-26) and in QEMU (BIOS + UEFI). Other hardware is untested — reports welcome.
 - **Deferred items and their decisions** (Zeek capture unit, gomuks removal, TrID
   pins, MAC randomisation, exim4, firmware, mesh auto-peering, daemon user,
   duckdb/GeoIP pinning, the old demo recorder) are listed in the CHANGELOG under
