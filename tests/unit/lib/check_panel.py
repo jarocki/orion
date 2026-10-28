@@ -67,6 +67,40 @@ rc_ids = sorted(int(x) for x in re.findall(r"^_orionx_genmon_rc (\d+) ", src0100
 if genmon_ids != rc_ids:
     out.append(f"FAIL genmon plugin ids {genmon_ids} != genmon-<id>.rc ids {rc_ids}")
 
+# 5. Laptop controls are panel plugins, not systray luck (#120, DEC-PHASE13-023):
+#    volume/mute (pulseaudio) and battery + brightness (power-manager-plugin),
+#    after the last genmon widget and before the clock.
+for kind in ("pulseaudio", "power-manager-plugin"):
+    if kind not in kinds:
+        out.append(f"FAIL panel has no {kind} plugin: {kinds}")
+    elif "genmon" in kinds and "clock" in kinds and not (
+            max(i for i, k in enumerate(kinds) if k == "genmon")
+            < kinds.index(kind) < kinds.index("clock")):
+        out.append(f"FAIL {kind} is not between the status widgets and the clock: {kinds}")
+pa = next((plugins[i] for i in order if plugins.get(i) is not None
+           and plugins[i].get("value") == "pulseaudio"), None)
+if pa is not None:
+    ks = prop(pa, "enable-keyboard-shortcuts")
+    if ks is None or ks.get("value") != "true":
+        out.append("FAIL pulseaudio plugin does not bind the volume/mute keys")
+# The power manager that plugin 16 fronts must be seeded to keep the deck
+# visible (#76): DPMS off, no blanking, lid closes the display only.
+pm = re.search(r"xfce4-power-manager\.xml << EOF\n(.*?)\nEOF\n", src0100, re.S)
+if pm is None:
+    out.append("FAIL 0100 does not seed xfce4-power-manager.xml (DEC-PHASE13-023)")
+else:
+    pmx = ET.fromstring(pm.group(1))
+    want = {"handle-brightness-keys": "true", "dpms-enabled": "false",
+            "dpms-on-ac-sleep": "0", "dpms-on-ac-off": "0",
+            "dpms-on-battery-sleep": "0", "dpms-on-battery-off": "0",
+            "lid-action-on-ac": "0", "lid-action-on-battery": "0",
+            "inactivity-on-ac": "14", "inactivity-on-battery": "14",
+            "lock-screen-suspend-hibernate": "false"}
+    got = {p.get("name"): p.get("value") for p in prop(pmx, "xfce4-power-manager").findall("property")}
+    bad = {k: got.get(k) for k, v in want.items() if got.get(k) != v}
+    if bad:
+        out.append(f"FAIL xfce4-power-manager.xml seed differs from DEC-PHASE13-023: {bad}")
+
 # 4. The Cockpit has a desktop icon, derived from the same menu entry.
 if "/etc/skel/Desktop" not in src0700 or "orionx-cockpit.desktop" not in src0700:
     out.append("FAIL 0700 does not derive a Cockpit desktop icon into /etc/skel/Desktop")

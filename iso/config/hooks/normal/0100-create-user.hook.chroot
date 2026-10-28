@@ -208,6 +208,44 @@ cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml <
 EOF
 
 # ---
+# xfce4-power-manager.xml — v3.1.1 (#119, #120).
+# @decision DEC-PHASE13-023
+# @title xfce4-power-manager ships, owns brightness and battery, never blanks or suspends the deck
+# @status accepted
+# @rationale The xfce4 metapackage only Suggests xfce4-power-manager, so no
+#   shipped image handled the Fn brightness keys or /sys/class/backlight and the
+#   panel had no battery meter (owner report, HP Pavilion, 2026-10-26). Installing
+#   it alone would re-enable DPMS blanking and lid-close suspend, contradicting
+#   DEC-PHASE9-002 / #76 (a monitoring deck stays visible; Layer 2 runs `xset -dpms`).
+#   So the same hook that disables the screensaver seeds the power manager: keys
+#   handled, DPMS off (and its timers zeroed), lid closes the display only, no
+#   inactivity suspend, no lock on suspend. Battery dimming keeps its defaults.
+#   Key names are the ones common/xfpm-config.h defines (4.20: no tray icon, no
+#   blank-on-* keys; blanking is xfce4-screensaver's, disabled above). Single
+#   writer, same /etc/skel authority (DEC-PHASE11-014); nothing else in the
+#   image writes this channel.
+# ---
+cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-power-manager.xml << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-power-manager" version="1.0">
+  <property name="xfce4-power-manager" type="empty">
+    <property name="handle-brightness-keys" type="bool" value="true"/>
+    <property name="dpms-enabled" type="bool" value="false"/>
+    <property name="dpms-on-ac-sleep" type="uint" value="0"/>
+    <property name="dpms-on-ac-off" type="uint" value="0"/>
+    <property name="dpms-on-battery-sleep" type="uint" value="0"/>
+    <property name="dpms-on-battery-off" type="uint" value="0"/>
+    <property name="inactivity-on-ac" type="uint" value="14"/>
+    <property name="inactivity-on-battery" type="uint" value="14"/>
+    <property name="lid-action-on-ac" type="uint" value="0"/>
+    <property name="lid-action-on-battery" type="uint" value="0"/>
+    <property name="lock-screen-suspend-hibernate" type="bool" value="false"/>
+    <property name="logind-handle-lid-switch" type="bool" value="false"/>
+  </property>
+</channel>
+EOF
+
+# ---
 # xsettings.xml — GTK theme, icon theme, cursor theme, font defaults.
 # NEW in W11-9b (DEC-PHASE11-014 + DEC-PHASE11-010):
 #   ThemeName=Orion-X-Cyberdeck (GTK3 dark theme with Phoenix accent)
@@ -336,6 +374,11 @@ EOF
 # hooks/live/0700-orionx-setup into launcher-11/. Plugins 12-14 are transparent
 # separators so the four widgets no longer run together. New ids are appended
 # rather than renumbered: genmon-<id>.rc below is keyed on ids 4-7.
+# v3.1.1 (#120, DEC-PHASE13-023): plugins 15 (pulseaudio: volume + mute, media
+# keys) and 16 (power-manager-plugin: battery meter + brightness slider) sit
+# between the separator 8 and the clock, so the laptop controls are always on
+# the panel instead of depending on a systray icon. Packages: xfce4-pulseaudio-plugin,
+# xfce4-power-manager-plugins (orionx.list.chroot).
 # ---
 cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -371,6 +414,8 @@ cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml << 'EOF
         <value type="int" value="14"/>
         <value type="int" value="7"/>
         <value type="int" value="8"/>
+        <value type="int" value="15"/>
+        <value type="int" value="16"/>
         <value type="int" value="9"/>
         <value type="int" value="10"/>
       </property>
@@ -423,6 +468,11 @@ cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml << 'EOF
     <property name="plugin-8" type="string" value="separator">
       <property name="style" type="uint" value="1"/>
     </property>
+    <property name="plugin-15" type="string" value="pulseaudio">
+      <property name="enable-keyboard-shortcuts" type="bool" value="true"/>
+      <property name="show-notifications" type="uint" value="1"/>
+    </property>
+    <property name="plugin-16" type="string" value="power-manager-plugin"/>
     <property name="plugin-9" type="string" value="clock">
       <property name="digital-format" type="string" value="%a %d %b  %H:%M"/>
     </property>

@@ -642,6 +642,36 @@ for gtk_pkg in python3-gi gir1.2-gtk-3.0 gir1.2-glib-2.0 xfce4-genmon-plugin; do
     fi
 done
 
+# (g) v3.1.1 (#119, #120, DEC-PHASE13-023): laptop controls. The power manager
+#     (brightness keys, backlight, battery via upower), its panel plugin and the
+#     pulseaudio panel plugin must be installed, the seeded panel must list both
+#     plugins, and the power-manager seed must keep DPMS off (#76).
+for pm_pkg in xfce4-power-manager xfce4-power-manager-plugins xfce4-pulseaudio-plugin upower; do
+    if [[ -f "$DPKG_STATUS" ]] && grep -q "^Package: ${pm_pkg}$" "$DPKG_STATUS" 2>/dev/null; then
+        pass "14g: package installed in chroot: $pm_pkg (DEC-PHASE13-023)"
+    else
+        fail "14g: package installed in chroot: $pm_pkg" \
+             "Check orionx.list.chroot includes $pm_pkg (#119/#120 brightness, battery, volume)"
+    fi
+done
+SKEL_PANEL_XML="$SQF/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml"
+for pm_plugin in pulseaudio power-manager-plugin; do
+    if [[ -f "$SKEL_PANEL_XML" ]] && grep -q "value=\"${pm_plugin}\"" "$SKEL_PANEL_XML" 2>/dev/null; then
+        pass "14g: skel xfce4-panel.xml lists the $pm_plugin plugin (#120)"
+    else
+        fail "14g: skel xfce4-panel.xml lists the $pm_plugin plugin" \
+             "0100-create-user.hook.chroot panel heredoc must define a $pm_plugin plugin (#120)"
+    fi
+done
+SKEL_PM_XML="$SQF/etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-power-manager.xml"
+if [[ -f "$SKEL_PM_XML" ]] && grep -q 'name="dpms-enabled" type="bool" value="false"' "$SKEL_PM_XML" \
+        && grep -q 'name="handle-brightness-keys" type="bool" value="true"' "$SKEL_PM_XML"; then
+    pass "14g: skel xfce4-power-manager.xml seeded: brightness keys on, DPMS off (#119, #76)"
+else
+    fail "14g: skel xfce4-power-manager.xml seeded with brightness keys on and DPMS off" \
+         "Missing or wrong: $SKEL_PM_XML (0100-create-user.hook.chroot, DEC-PHASE13-023)"
+fi
+
 # ===========================================================================
 # 15. W10-1 — Nebula runtime: model + manifest + ollama + units staged
 #

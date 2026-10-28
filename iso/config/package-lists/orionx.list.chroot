@@ -317,6 +317,17 @@ gir1.2-glib-2.0
 python3-gi-cairo
 # xfce4-genmon-plugin: generic monitor plugin for XFCE panel (drives panel widgets)
 xfce4-genmon-plugin
+# v3.1.1 (#119, #120; DEC-PHASE13-023): the xfce4 metapackage only *Suggests*
+# xfce4-power-manager, so v3.0.0-v3.1.0 shipped no handler for the laptop
+# brightness keys or /sys/class/backlight, and no battery meter.
+# xfce4-power-manager: binds XF86MonBrightness*, drives the backlight, pulls upower.
+xfce4-power-manager
+# xfce4-power-manager-plugins: the panel widget (battery + brightness slider) that
+# 0100-create-user seeds as panel plugin 16.
+xfce4-power-manager-plugins
+# xfce4-pulseaudio-plugin: volume/mute panel widget (panel plugin 15). Already a
+# hard dependency of xfce4; listed so the seeded panel cannot silently lose it.
+xfce4-pulseaudio-plugin
 
 # W11-9a: Boot chain branding — Plymouth splash + LightDM greeter (DEC-PHASE11-010)
 # plymouth: boot splash framework

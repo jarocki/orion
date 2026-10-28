@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased] — v3.1.1 (patch release)
+
+Fixes for the hardware findings reported on the HP Pavilion with the v3.1.0
+ISO (2026-10-26), tracked under the
+[v3.1.1 milestone](https://github.com/jarocki/orion/milestone/2). All of them
+are also present in v3.0.0. No ISO has been built from this section yet.
+
+### Fixed
+
+- **Display brightness** (#119). The image installs `xfce4-power-manager`
+  (with `upower`), so the laptop's Fn brightness keys and `/sys/class/backlight`
+  are handled. The `xfce4` metapackage only suggests it, so no earlier ISO had
+  a brightness handler at all. The same hook that disables the screensaver
+  seeds the power manager to keep the deck visible: DPMS off, lid close
+  switches the display off instead of suspending, no inactivity suspend,
+  no lock on resume (DEC-PHASE13-023, consistent with #76). An
+  `acpi_backlight=` kernel option is still pending the Pavilion's backlight
+  evidence; if `/sys/class/backlight/` is empty there, it goes in a follow-up.
+- **Panel widgets** (#120). The seeded panel gains a volume/mute widget
+  (`xfce4-pulseaudio-plugin`, media keys bound) and a battery meter with a
+  brightness slider (`xfce4-power-manager-plugins`), between the status
+  widgets and the clock. `tests/unit/lib/check_panel.py` asserts both plugins
+  and the power-manager seed; `test-iso-content-presence.sh` 14g asserts the
+  packages and the seeded files in the squashfs.
+
+---
+
 ## [v3.1.0] — 2026-10-25 (feature release)
 
 Five operator-requested changes, tracked under the
