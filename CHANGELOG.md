@@ -31,6 +31,19 @@ are also present in v3.0.0. No ISO has been built from this section yet.
   widgets and the clock. `tests/unit/lib/check_panel.py` asserts both plugins
   and the power-manager seed; `test-iso-content-presence.sh` 14g asserts the
   packages and the seeded files in the squashfs.
+- **Spoken alerts** (#122). A failing or hanging `piper` no longer costs the
+  line silently: `speak_with_fallback()` falls through to `espeak-ng` and the
+  Narrator tells the operator once, as a `tooling` status event, what piper
+  did wrong and how to repair it. Playback is no longer killed at a fixed
+  10 s: the player's timeout follows the WAV's measured length (estimate from
+  the text for `espeak-ng`), so narrations near the 360-character cap are
+  spoken to the end. `piper_voice()` honours the installer's
+  `ORIONX_VOICE_DIR` and requires the `.onnx.json` sidecar. `orionx-rain
+  --speech-status` now synthesises once and reports the measured time
+  instead of file presence. The installer pins `piper-tts==1.8.0`, verifies
+  with the runtime flags, and states the live-USB caveat: pip's piper lives in
+  the RAM overlay and is gone after a reboot unless persistence covers `/`
+  (DEC-PHASE13-024). The pin has not yet been exercised on a deck.
 
 ---
 

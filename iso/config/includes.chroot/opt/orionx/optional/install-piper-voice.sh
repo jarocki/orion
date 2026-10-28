@@ -31,6 +31,16 @@
 #   installer finishes by SYNTHESISING REAL AUDIO from the installed voice and
 #   checking that the result is a RIFF WAV of plausible length. If that fails,
 #   the install is declared failed even though every command "succeeded".
+#   The check runs piper with the SAME flags rain_speech.py uses (PIPER_ARGS),
+#   and piper-tts is pinned to one version, so "verified" means the thing
+#   that will run was verified (#122).
+#
+#   Live USB caveat (#122): pip puts piper under /usr/local and this script puts
+#   the voice under /usr/share/orionx/voices. Both live in the RAM overlay, so
+#   after a reboot they are gone unless the persistence volume covers `/`
+#   (a `persistence.conf` of `/ union`). Re-running this installer only fetches
+#   what is missing; a voice that survived is kept. Until then R.A.I.N. speaks
+#   through espeak-ng and says so once on the event bus.
 #
 # Usage:
 #   sudo /opt/orionx/optional/install-piper-voice.sh
@@ -47,6 +57,13 @@ source "${ORIONX_INSTALLER_LIB:-/opt/orionx/optional/lib/orionx-installer-common
 # --verify-only CHECK is runnable without root (RESILIENCE rule 1: a
 # verification nobody can run is not a verification).
 VOICE_DIR="${ORIONX_VOICE_DIR:-/usr/share/orionx/voices}"
+# Pinned: a TTS engine on an incident-response deck is not "whatever pip has
+# today". 1.8.0 is the PyPI release of 2026-09-04. Bump deliberately, then
+# re-run --verify-only on a deck.
+PIPER_TTS_VERSION="1.8.0"
+# The flags R.A.I.N. runs piper with (rain_speech.PIPER_ARGS). The synthesis
+# check below uses them so it verifies the real invocation, not piper's defaults.
+PIPER_ARGS=(--length-scale 1.04 --sentence-silence 0.25)
 VOICE="$VOICE_DIR/en_US-lessac-medium.onnx"
 VOICE_CFG="$VOICE.json"
 BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium"
@@ -86,6 +103,10 @@ report() {
     if have_piper && have_voice; then
         orionx_log_info "R.A.I.N. speech will use piper."
         orionx_log_info "  Verify with: orionx-rain --speech-status"
+    elif have_voice; then
+        orionx_log_info "R.A.I.N. speech will use espeak-ng: the voice is here but piper is not."
+        orionx_log_info "  On a live USB pip's install lives in the RAM overlay and does not"
+        orionx_log_info "  survive a reboot unless persistence covers /. Re-run: sudo $0"
     else
         orionx_log_info "R.A.I.N. speech will use espeak-ng (shipped). Nothing is broken."
         orionx_log_info "  Natural voice: sudo $0"
@@ -108,10 +129,10 @@ verify_synthesis() {
     orionx_log_info "verifying by synthesising actual audio"
     PROBE="$(mktemp -t piper-probe.XXXXXX)" || return 1
     if ! printf 'Port scan from 192 dot 168 dot 4 dot 77.' \
-            | piper -m "$VOICE" -f "$PROBE" >/dev/null 2>&1; then
+            | piper -m "$VOICE" -f "$PROBE" "${PIPER_ARGS[@]}" >/dev/null 2>&1; then
         orionx_log_error "piper ran but failed to synthesise."
         orionx_log_error "  R.A.I.N. keeps using espeak-ng. Diagnose with:"
-        orionx_log_error "  echo hello | piper -m $VOICE -f ./t.wav"
+        orionx_log_error "  echo hello | piper -m $VOICE -f ./t.wav ${PIPER_ARGS[*]}"
         return 1
     fi
     local probe_bytes
@@ -164,8 +185,8 @@ trap cleanup EXIT
 
 # --- the engine ------------------------------------------------------------
 if ! have_piper || [[ "$MODE" == "force" ]]; then
-    orionx_log_info "installing piper-tts (pulls onnxruntime + numpy)"
-    if ! pip3 install --break-system-packages -q piper-tts; then
+    orionx_log_info "installing piper-tts==${PIPER_TTS_VERSION} (pulls onnxruntime + numpy)"
+    if ! pip3 install --break-system-packages -q "piper-tts==${PIPER_TTS_VERSION}"; then
         orionx_log_error "pip3 install piper-tts failed."
         orionx_log_error "  Nothing was changed; espeak-ng still speaks for R.A.I.N."
         exit 1
@@ -209,4 +230,5 @@ verify_synthesis || exit 1
 
 report
 orionx_log_info "done. R.A.I.N. picks piper up on its next narration; no restart needed."
+orionx_log_info "  Live USB: unless persistence covers /, re-run this after a reboot."
 exit 0

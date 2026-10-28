@@ -539,6 +539,190 @@ sys.exit(0 if ok else 1)
 PY
 then pass "loud-once degradation assertions"; else fail "loud-once degradation assertions" "see output above"; fi
 
+section "Piper failures fall through to espeak-ng, announced once; playback follows the audio (#122)"
+# Real engines are not on the build host, so stub the three binaries R.A.I.N.
+# runs (piper, espeak-ng, paplay) and drive the REAL speak_with_fallback() and
+# Narrator against them. What is asserted is the effect: which binary ran, what
+# the operator was told, how long the player was allowed to run.
+mkdir -p "$WORK/fb/bin" "$WORK/fb/voices" "$WORK/fb/onlyonnx"
+: > "$WORK/fb/voices/en_US-lessac-medium.onnx"
+: > "$WORK/fb/voices/en_US-lessac-medium.onnx.json"
+: > "$WORK/fb/onlyonnx/en_US-lessac-medium.onnx"
+cat > "$WORK/fb/mkwav.py" <<'PYEOF'
+import sys, wave
+path, secs = sys.argv[1], float(sys.argv[2])
+with wave.open(path, "wb") as w:
+    w.setnchannels(1); w.setsampwidth(2); w.setframerate(22050)
+    w.writeframes(b"\0\0" * int(22050 * secs))
+PYEOF
+cat > "$WORK/fb/bin/piper" <<'STUBEOF'
+#!/usr/bin/env bash
+out=""; args="$*"
+while [[ $# -gt 0 ]]; do case "$1" in -f) out="$2"; shift 2 ;; *) shift ;; esac; done
+cat >/dev/null
+echo "piper $args" >> "$STUB_LOG"
+case "${STUB_MODE:-good}" in
+    fail)  echo "Error: could not load model" >&2; exit 3 ;;
+    hang)  sleep 30 ;;
+    good)  python3 "$STUB_MKWAV" "$out" "${STUB_SECS:-12}" ;;
+esac
+exit 0
+STUBEOF
+cat > "$WORK/fb/bin/espeak-ng" <<'STUBEOF'
+#!/usr/bin/env bash
+echo "espeak-ng $*" >> "$STUB_LOG"
+out=""
+while [[ $# -gt 0 ]]; do case "$1" in -w) out="$2"; shift 2 ;; --) break ;; *) shift ;; esac; done
+[[ -n "$out" ]] && python3 "$STUB_MKWAV" "$out" 2
+exit 0
+STUBEOF
+cat > "$WORK/fb/bin/paplay" <<'STUBEOF'
+#!/usr/bin/env bash
+echo "paplay $*" >> "$STUB_LOG"
+exit 0
+STUBEOF
+chmod +x "$WORK/fb/bin/"*
+if STUB_LOG="$WORK/fb/stub.log" STUB_MKWAV="$WORK/fb/mkwav.py" PATH="$WORK/fb/bin:$PATH" \
+   python3 - "$REPO_ROOT" "$WORK/fb" <<'PY'
+import json, os, subprocess, sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+root, fb = Path(sys.argv[1]), Path(sys.argv[2])
+rl = SourceFileLoader("rain_lib", str(root / "scripts/rain/rain_lib.py")).load_module()
+sys.modules["rain_lib"] = rl
+rl.CONFIG_FILE = fb / "rain.json"
+rl.CONFIG_FILE.write_text(json.dumps({"enabled": True, "min_severity": "warning",
+                                      "volume": 0.8, "voice": False, "speech": True}))
+sys.path.insert(0, str(root / "scripts/rain"))
+import rain_speech as rs                                            # noqa: E402
+rs.PIPER_VOICE_PATHS = (str(fb / "voices/en_US-lessac-medium.onnx"),)
+rs.SPEECH_SCRATCH = fb / "scratch"
+log = fb / "stub.log"
+ok = True
+def check(cond, label):
+    global ok
+    print(("  ok   " if cond else "  BAD  ") + label)
+    ok = ok and bool(cond)
+def lines():
+    return log.read_text().splitlines() if log.exists() else []
+def reset(mode, secs="12"):
+    log.write_text("")
+    os.environ["STUB_MODE"] = mode
+    os.environ["STUB_SECS"] = secs
+
+# 1. piper fails -> espeak-ng speaks the same line, and the caller is told why.
+reset("fail")
+spoken, why = rs.speak_with_fallback("Port scan from 192.168.4.77, 900 ports.", rl.load_config())
+check(spoken is True, f"the line is still spoken when piper fails -> {spoken}")
+check(why is not None and "piper exited 3" in why, f"the degradation names piper's failure -> {why!r}")
+check(why is not None and "could not load model" in why, "and carries piper's own last stderr line")
+check(sum(l.startswith("espeak-ng ") for l in lines()) == 1, f"espeak-ng ran exactly once -> {lines()}")
+check(not any(l.startswith("paplay") for l in lines()), "nothing was played from a failed synthesis")
+check(not list((fb / "scratch").glob("*.wav")), "the scratch WAV is removed after a failure")
+
+# 2. The Narrator tells the operator ONCE across many alerts, as a status event.
+reset("fail")
+emitted = []
+n = rs.Narrator(transport=lambda p: None,
+                emitter=lambda *a, **k: emitted.append(a) or True,
+                clock=lambda: 1000.0, backend_probe=lambda: "piper")
+for i in range(5):
+    n._last_spoken = 0.0
+    n.offer({"ts": 1000.0, "severity": "critical", "source": "firewall",
+             "category": "scan", "message": "port scan from 192.168.4.77"})
+    n.pump_one(block=0.0)
+check(n.spoken == 5, f"all five alerts were spoken (by espeak-ng) -> {n.spoken}")
+fallback = [e for e in emitted if "piper" in e[3]]
+check(len(fallback) == 1, f"the piper failure is announced exactly once -> {len(fallback)}")
+if fallback:
+    sev, src, cat, msg = fallback[0][:4]
+    check(sev == "notice" and cat == "tooling", f"announced at notice/tooling -> {sev}/{cat}")
+    check("espeak-ng" in msg and "unaffected" in msg, "names the consequence and what still works")
+    check("install-piper-voice.sh --force" in msg and "--speech-status" in msg, "names the repair and the check")
+
+# 3. A good piper: the player gets a timeout that follows the WAV, not 10 s.
+reset("good", "12")
+captured = []
+real_run = rl._run
+rl._run = lambda cmd, timeout=10.0: captured.append((cmd[0], timeout)) or True
+spoken, why = rs.speak_with_fallback("Port scan from 192.168.4.77, 900 ports.", rl.load_config())
+rl._run = real_run
+check(spoken is True and why is None, f"a working piper reports no degradation -> {spoken}, {why!r}")
+check(captured and captured[0][0] == "paplay", f"the WAV went to paplay -> {captured}")
+check(captured and 14.9 <= captured[0][1] <= 16.0,
+      f"a 12 s WAV gets a ~15 s playback timeout (12 + 3 margin), not 10 -> {captured}")
+check(any(l.startswith("piper ") and "--length-scale 1.04" in l and "--sentence-silence 0.25" in l
+          for l in lines()), "piper ran with the runtime flags the installer verifies with")
+check(rs.playback_timeout(None, "one two three four") >= 5.0, "no WAV -> estimate, floor 5 s")
+check(rs.playback_timeout(None, " ".join(["w"] * 400)) == rs.PLAYBACK_MAX_SECONDS,
+      "an absurd text is capped at PLAYBACK_MAX_SECONDS")
+check(rs.estimated_seconds(" ".join(["w"] * 60)) > 12.0,
+      "a 60-word narration is estimated above the old 12 s duck cap")
+
+# 4. A piper that hangs is cut at TTS_TIMEOUT and espeak-ng takes over.
+rs.TTS_TIMEOUT = 1.0
+reset("hang")
+spoken, why = rs.speak_with_fallback("Port scan.", rl.load_config())
+check(spoken is True and why is not None and "timed out" in why, f"a hanging piper -> espeak-ng, reason names the timeout -> {why!r}")
+rs.TTS_TIMEOUT = 15.0
+
+# 5. probe_synthesis: evidence, not presence.
+reset("good", "3")
+p = rs.probe_synthesis("piper")
+check(p["ok"] and 2.9 <= p["audio_seconds"] <= 3.1, f"probe measures the audio piper made -> {p}")
+reset("fail")
+p = rs.probe_synthesis("piper")
+check(not p["ok"] and "piper exited 3" in (p["reason"] or ""), f"probe reports a failing piper -> {p}")
+reset("good")
+p = rs.probe_synthesis("espeak-ng")
+check(p["ok"] and p["audio_seconds"] > 0, f"probe works for espeak-ng too -> {p}")
+check(not any(l.startswith("paplay") for l in lines()), "the probe plays nothing")
+
+# 6. piper_voice(): the installer's ORIONX_VOICE_DIR is honoured, .json required.
+def voice_with(env):
+    e = dict(os.environ); e.update(env)
+    e.pop("ORIONX_PIPER_VOICE", None); e.pop("ORIONX_VOICE_DIR", None); e.update(env)
+    return subprocess.run([sys.executable, "-c",
+        "import sys; sys.path.insert(0, sys.argv[1]); import rain_speech as r; "
+        "print(r.piper_voice() or '')", str(root / "scripts/rain")],
+        env=e, capture_output=True, text=True).stdout.strip()
+check(voice_with({"ORIONX_VOICE_DIR": str(fb / "voices")}) == str(fb / "voices/en_US-lessac-medium.onnx"),
+      "ORIONX_VOICE_DIR (the installer's override) is where rain_speech looks too")
+check(voice_with({"ORIONX_VOICE_DIR": str(fb / "onlyonnx")}) == "",
+      "a .onnx without its .json sidecar is not a voice")
+check(voice_with({"ORIONX_PIPER_VOICE": str(fb / "onlyonnx/en_US-lessac-medium.onnx")}) == "",
+      "ORIONX_PIPER_VOICE without the sidecar is not a voice either")
+sys.exit(0 if ok else 1)
+PY
+then pass "piper fallback, once-announcement, WAV-derived timeout, probe, voice discovery"; else fail "piper fallback assertions" "see output above"; fi
+
+# --speech-status performs the timed synthesis (the real CLI, stub engines).
+OUT="$(STUB_LOG="$WORK/fb/stub.log" STUB_MKWAV="$WORK/fb/mkwav.py" STUB_MODE=good STUB_SECS=3 \
+       ORIONX_VOICE_DIR="$WORK/fb/voices" PATH="$WORK/fb/bin:$PATH" python3 "$RAIN" --speech-status 2>&1)"
+if echo "$OUT" | grep -qE 'synthesis +: piper made 3\.0s of audio in [0-9.]+s'; then
+    pass "--speech-status reports a timed, measured synthesis, not just presence"
+else
+    fail "--speech-status timed synthesis" "$(echo "$OUT" | grep -i 'synthesis\|engine' | head -3)"
+fi
+OUT="$(STUB_LOG="$WORK/fb/stub.log" STUB_MKWAV="$WORK/fb/mkwav.py" STUB_MODE=fail \
+       ORIONX_VOICE_DIR="$WORK/fb/voices" PATH="$WORK/fb/bin:$PATH" python3 "$RAIN" --speech-status 2>&1)"
+if echo "$OUT" | grep -q 'synthesis     : FAILED' && echo "$OUT" | grep -q 'install-piper-voice.sh --force'; then
+    pass "--speech-status names a failing piper and the repair"
+else
+    fail "--speech-status failing piper" "$(echo "$OUT" | grep -i 'synthesis' | head -3)"
+fi
+if grep -q 'PIPER_TTS_VERSION="[0-9]' "$INSTALLER" && grep -q 'piper-tts==\${PIPER_TTS_VERSION}' "$INSTALLER"; then
+    pass "the installer pins piper-tts to one version"
+else
+    fail "installer pins piper-tts" "unpinned pip install"
+fi
+if grep -q '"\${PIPER_ARGS\[@\]}"' "$INSTALLER" && grep -q 'PIPER_ARGS=(--length-scale 1.04 --sentence-silence 0.25)' "$INSTALLER" \
+   && grep -q 'PIPER_ARGS = ("--length-scale", "1.04", "--sentence-silence", "0.25")' "$RS"; then
+    pass "the installer verifies with the same piper flags rain_speech runs with"
+else
+    fail "installer flags == runtime flags" "PIPER_ARGS drift between installer and rain_speech"
+fi
+
 section "Piper decision + build wiring"
 if [[ -f "$INSTALLER" ]]; then pass "optional piper installer is staged in includes.chroot"; else fail "optional piper installer staged" "missing $INSTALLER"; fi
 if [[ -x "$INSTALLER" ]]; then pass "installer is executable"; else fail "installer is executable"; fi

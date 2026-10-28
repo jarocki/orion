@@ -629,15 +629,20 @@ def play_cue(severity: str, cfg: dict[str, Any] | None = None) -> bool:
     return played
 
 
-def _run(cmd: list[str]) -> bool:
-    """Run an audio command, swallowing failure (no device, missing bin, etc.)."""
+def _run(cmd: list[str], timeout: float = 10.0) -> bool:
+    """Run an audio command, swallowing failure (no device, missing bin, etc.).
+
+    `timeout` defaults to 10 s, enough for any cue. Narration passes the
+    length of the audio it is about to play (rain_speech.playback_timeout):
+    a fixed 10 s cut long narrations mid-sentence (#122).
+    """
     try:
         subprocess.run(
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             check=False,
-            timeout=10,
+            timeout=timeout,
         )
         return True
     except (OSError, subprocess.SubprocessError):
