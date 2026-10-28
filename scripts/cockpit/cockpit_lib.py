@@ -646,6 +646,45 @@ def live_layout(W: float, H: float, pad: int = 16,
     return out
 
 
+# ---------------------------------------------------------------------------
+# #124 — the Attack Map from the Cockpit.
+# @decision DEC-PHASE13-026
+# @title A click on THREAT PRESSURE or DEFENSIVE ACTIONS opens the Attack Map (orionx-osint --page pewpew), detached
+# @status accepted
+# @rationale The owner asked for the Attack Map inside the Cockpit, or at least
+#   one click away. Embedding means WebKitGTK: a browser engine inside a Cairo
+#   window that must stay thread-free and cheap on Bay Trail (module header).
+#   The map already has a launcher that reuses a running osint server and
+#   opens Firefox in its own profile (DEC-PHASE12-142); the Cockpit spawns
+#   exactly that, in its own session so closing the Cockpit does not kill it.
+#   Resolution is a pure function of the layout the frame was drawn with, so
+#   clicks and pixels cannot disagree. The APPROVE button keeps precedence.
+# ---------------------------------------------------------------------------
+ATTACK_MAP_PANELS = ("gauge", "actions")
+ATTACK_MAP_ARGV = ("orionx-osint", "--page", "pewpew")
+
+
+def panel_at(lay: dict[str, tuple[float, float, float, float]],
+             x: float, y: float) -> str | None:
+    """Name of the live_layout() panel containing (x, y), or None."""
+    for name, (px, py, pw, ph) in lay.items():
+        if pw > 0 and ph > 0 and px <= x <= px + pw and py <= y <= py + ph:
+            return name
+    return None
+
+
+def open_attack_map(spawn=subprocess.Popen, which=shutil.which) -> tuple[bool, str]:
+    """Launch the Attack Map detached. Returns (ok, toast text)."""
+    if not which(ATTACK_MAP_ARGV[0]):
+        return False, f"\u2717 Attack Map: {ATTACK_MAP_ARGV[0]} is not installed on this deck"
+    try:
+        spawn(list(ATTACK_MAP_ARGV), stdout=subprocess.DEVNULL,
+              stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as exc:
+        return False, f"\u2717 Attack Map could not start: {exc}"
+    return True, "opening the Attack Map in the browser\u2026"
+
+
 def ellipsize(text: str, max_w: float, measure) -> str:
     """Longest prefix of `text` (+ '…') whose measured width fits `max_w`."""
     if measure(text) <= max_w:

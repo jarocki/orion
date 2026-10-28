@@ -111,9 +111,23 @@ p=Path(tempfile.mktemp()); p.write_text('{"ts":1,"severity":"info","source":"s",
 t=L.EventTail(p,backfill=5); t.poll(); assert len(t.events)==1
 # Real bus rotation = the tmpfs file is recreated (NEW inode); model that, not an in-place rewrite.
 p.unlink(); p.write_text('{"ts":2,"severity":"critical","source":"s","category":"c","message":"rot"}\n'); n=t.poll(); assert n and n[0]["message"]=="rot", n; p.unlink()
+# #124 (DEC-PHASE13-026): click resolution is pure; the launcher contract is
+# checked with an injected spawn. The GTK suite clicks the real canvas.
+lay=L.live_layout(1366,701)
+gx,gy,gw,gh=lay["gauge"]; assert L.panel_at(lay,gx+1,gy+1)=="gauge" and L.panel_at(lay,gx+gw,gy+gh)=="gauge"
+assert L.panel_at(lay,1,1) is None and L.panel_at(lay,*lay["events"][:2])=="events" and L.panel_at(lay,*lay["actions"][:2])=="actions"
+assert set(L.ATTACK_MAP_PANELS)=={"gauge","actions"} and L.ATTACK_MAP_ARGV==("orionx-osint","--page","pewpew")
+calls=[]
+ok,msg=L.open_attack_map(spawn=lambda argv,**kw: calls.append((argv,kw)), which=lambda n: "/usr/bin/"+n)
+assert ok and calls[0][0]==["orionx-osint","--page","pewpew"] and calls[0][1]["start_new_session"] is True, calls
+ok,msg=L.open_attack_map(spawn=lambda *a,**k: None, which=lambda n: None); assert not ok and "not installed" in msg, msg
+def boom(*a,**k): raise OSError("exec format error")
+ok,msg=L.open_attack_map(spawn=boom, which=lambda n: "/x"); assert not ok and "could not start" in msg, msg
 print("ok")
 PY
-then pass "cockpit_lib logic (pressure decay/clamp/bands, parse, sparkline, rates, tail+rotation)"; else fail "cockpit_lib logic" "assertion failed"; fi
+then pass "cockpit_lib logic (pressure decay/clamp/bands, parse, sparkline, rates, tail+rotation, #124 click->Attack Map)"; else fail "cockpit_lib logic" "assertion failed"; fi
+# The argv the Cockpit spawns must be a page the osint launcher knows (DEC-PHASE12-142).
+if grep -q '"pewpew"' "$REPO_ROOT/scripts/osint/osint_server.py" && grep -q -- '--page' "$REPO_ROOT/scripts/osint/osint_server.py"; then pass "orionx-osint --page pewpew is a real launcher page (#124)"; else fail "Attack Map launcher page" "osint_server.py no longer knows --page pewpew"; fi
 
 section "Deck theming (DEC-PHASE12-008)"
 grep -q "DEC-PHASE12-008" "$APP" && pass "DEC-PHASE12-008 annotation in app.py" || fail "DEC-PHASE12-008 annotation" "missing"
