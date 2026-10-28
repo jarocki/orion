@@ -152,6 +152,30 @@ check(not _s.endswith(" .") and _s[-2].isalnum(), f"spoken text does not end mid
 _short = "Warning. port scan from 192.168.4.77, 900 ports in 11 seconds."
 check(rs.speakable(_short).startswith("Warning. port scan from 192 dot 168 dot 4 dot 77"), "short text is spoken whole, with the address expanded")
 
+# Pronunciation (#123): the engines are handed spoken forms, the guard is not.
+_ids = rs.speakable("IDS COVERAGE GAP — Suricata has NO threat rules. Exploits, malware, C2 and scans will NOT be detected.")
+check(_ids.startswith("I D S COVERAGE GAP"), f"IDS is spelled out, not 'eye-dees': {_ids[:24]!r}")
+check("C two" in _ids, "C2 is 'C two'")
+_sur = rs.speakable("ET SCAN Nmap probe [T1595 Active Scanning] — 192.168.4.77:4444 → 10.0.0.5:22 (tcp) sid:2009582")
+check("→" not in _sur and " to " in _sur, f"the arrow is said as 'to': {_sur!r}")
+check("E T SCAN" in _sur and "en map" in _sur and "T C P" in _sur, "ET / Nmap / tcp get their spoken forms")
+check("T 1595" in _sur, "an ATT&CK technique id is read as T then the number")
+check("10 dot 0 dot 0 dot 5 port 22" in _sur and "77 port 4444" in _sur, f"address:port is said as 'port', not a time of day: {_sur!r}")
+check("S I D 2009582" in _sur, "sid: is spelled out")
+_zeek = rs.speakable("Zeek SSH::Password_Guessing [T1110 Brute Force]: 192.168.4.77 → 10.0.0.5:22 — THIS IS A SENSOR PROBLEM")
+check("S S H Password Guessing" in _zeek, f"Zeek notice names are spoken as words: {_zeek!r}")
+check(rs.speakable("R.A.I.N. speech is ON but ATT&CK context is missing") == "Rain speech is ON but attack context is missing", "R.A.I.N. is 'Rain', ATT&CK is 'attack'")
+check(rs.speakable("the ids of the ports and the ips") == "the ids of the ports and the ips", "lower-case prose is not an acronym (case-sensitive)")
+check(rs.speakable("WireGuard via nftables on the VPN") == "wire guard via N F tables on the V P N", "healing playbook vocabulary")
+check(rs.speakable("MIDST") == "MIDST" and rs.speakable("IDSx") == "IDSx", "no replacement inside longer words")
+# The guard is unaffected: it still sees the screen spelling.
+_ev = {"severity": "critical", "source": "firewall", "category": "scan", "message": "port scan from 192.168.4.77 — 900 distinct ports", "detail": {"src_ip": "192.168.4.77", "distinct_ports": 900}}
+_acc, _why = rs.validate_line("Port scan from 192.168.4.77, 900 ports.", _ev)
+check(_acc is not None, f"validate_line still accepts the screen spelling ({_why})")
+# Every acronym the shipped templates emit has a spoken form (drift guard).
+_need = {"IDS", "C2", "ET", "tcp", "udp", "icmp", "TCP", "UDP", "ICMP", "nmap", "Nmap", "nftables", "WireGuard", "SSH", "DNS", "HTTP", "VPN", "CPU", "TTS", "IP", "dport"}
+check(_need <= set(rs._SPOKEN_FORMS), f"template vocabulary covered; missing: {sorted(_need - set(rs._SPOKEN_FORMS))}")
+
 # --- and these are the fabrications it must refuse ------------------------
 FABRICATIONS = [
     ("invented attribution",

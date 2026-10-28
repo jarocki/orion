@@ -44,6 +44,14 @@ are also present in v3.0.0. No ISO has been built from this section yet.
   with the runtime flags, and states the live-USB caveat: pip's piper lives in
   the RAM overlay and is gone after a reboot unless persistence covers `/`
   (DEC-PHASE13-024). The pin has not yet been exercised on a deck.
+- **Pronunciation** (#123). `speakable()` now rewrites screen spellings into
+  spoken forms before either engine sees them: acronyms are spelled out
+  (IDS → "I D S", C2 → "C two", tcp → "T C P"), `→` is "to",
+  `10.0.0.5:22` is "… port 22" instead of a time of day, `sid:` and ATT&CK
+  ids are read as letters and numbers, Zeek notice names become words, and
+  R.A.I.N., ATT&CK, nmap, nftables, WireGuard, SQL get their names. The map
+  is applied after the fabrication guard, so it cannot widen what the model
+  may claim (DEC-PHASE13-025).
 
 ---
 
