@@ -140,6 +140,7 @@ echo "  Working directory: $WORK"
 echo "  Extracting /live/filesystem.squashfs from ISO..."
 xorriso -osirrox on -indev "$ISO_PATH" \
     -extract /live/filesystem.squashfs "$WORK/squashfs.img" \
+    -extract /live/vmlinuz "$WORK/vmlinuz" \
     2>/dev/null
 
 if [[ ! -f "$WORK/squashfs.img" ]]; then
@@ -197,13 +198,14 @@ SQF="$WORK/sqfs"
 # Verify the installed package database in the shipped root filesystem.
 # This complements build-iso.sh's check of /live/filesystem.packages and
 # prevents a release gate from trusting source package lists alone.
-section "PHP security floor in shipped root filesystem"
+section "PHP and kernel security floors in shipped root filesystem"
 if python3 "$REPO_ROOT/iso/config/includes.chroot/usr/lib/orionx/check-package-security.py" \
-    --dpkg-status "$SQF/var/lib/dpkg/status"; then
-    pass "shipped PHP packages satisfy Debian DSA-6574-1 security floor"
+    --dpkg-status "$SQF/var/lib/dpkg/status" --require-kernel \
+    --squashfs "$WORK/squashfs.img" --boot-kernel "$WORK/vmlinuz"; then
+    pass "shipped packages and boot kernel satisfy Debian security floors"
 else
-    fail "shipped PHP packages satisfy Debian DSA-6574-1 security floor" \
-         "missing package database or PHP 8.4 below 8.4.27-1~deb13u1"
+    fail "shipped packages and boot kernel satisfy Debian security floors" \
+         "missing/unsupported/stale PHP or kernel package, or mismatched boot kernel"
 fi
 
 # Image-reading helpers (sqf_resolve, dpkg_state, assert_release_promises).

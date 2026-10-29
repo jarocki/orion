@@ -85,14 +85,16 @@ if [[ $SIGN -eq 1 ]]; then
     xorriso -osirrox on -indev "$ISO" \
         -extract /live/filesystem.packages "$gate_dir/filesystem.packages" \
         -extract /live/filesystem.squashfs "$gate_dir/filesystem.squashfs" \
+        -extract /live/vmlinuz "$gate_dir/vmlinuz" \
         >/dev/null 2>&1 || die "ISO package inventory or root filesystem is unreadable"
     unsquashfs -cat "$gate_dir/filesystem.squashfs" var/lib/dpkg/status \
         > "$gate_dir/status" 2>/dev/null || die "ISO dpkg status is unreadable"
     checker="$REPO_ROOT/iso/config/includes.chroot/usr/lib/orionx/check-package-security.py"
-    python3 "$checker" --packages "$gate_dir/filesystem.packages" \
-        || die "ISO package inventory fails PHP security floor"
-    python3 "$checker" --dpkg-status "$gate_dir/status" \
-        || die "shipped root filesystem fails PHP security floor"
+    python3 "$checker" --packages "$gate_dir/filesystem.packages" --require-kernel \
+        || die "ISO package inventory fails package/kernel security floors"
+    python3 "$checker" --dpkg-status "$gate_dir/status" --require-kernel \
+        --squashfs "$gate_dir/filesystem.squashfs" --boot-kernel "$gate_dir/vmlinuz" \
+        || die "shipped root filesystem fails package/kernel security floors"
     rm -rf -- "$gate_dir"
     trap - EXIT
 fi

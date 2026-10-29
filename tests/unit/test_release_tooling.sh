@@ -54,9 +54,12 @@ TAG="v2.2.0-rc9"
 NAME="orionx-phoenix-edition-$TAG.iso"
 # A small but real ISO: signed staging now checks its shipped inventory and
 # squashfs package database, not just an adjacent checksum file.
-mkdir -p "$S/root/var/lib/dpkg" "$S/iso/live"
-printf 'Package: bash\nStatus: install ok installed\nVersion: 5.2.15-2\n' > "$S/root/var/lib/dpkg/status"
-printf 'bash 5.2.15-2\n' > "$S/iso/live/filesystem.packages"
+mkdir -p "$S/root/var/lib/dpkg" "$S/root/boot" "$S/iso/live"
+printf 'Package: bash\nStatus: install ok installed\nVersion: 5.2.15-2\n\n' > "$S/root/var/lib/dpkg/status"
+printf 'Package: linux-image-6.12.113+deb13-amd64\nStatus: hold ok installed\nVersion: 6.12.113-1\n' >> "$S/root/var/lib/dpkg/status"
+printf 'bash 5.2.15-2\nlinux-image-6.12.113+deb13-amd64 6.12.113-1\n' > "$S/iso/live/filesystem.packages"
+printf 'fixed kernel fixture' > "$S/root/boot/vmlinuz-6.12.113+deb13-amd64"
+cp "$S/root/boot/vmlinuz-6.12.113+deb13-amd64" "$S/iso/live/vmlinuz"
 mksquashfs "$S/root" "$S/iso/live/filesystem.squashfs" -noappend -quiet >/dev/null
 head -c 2621440 /dev/urandom > "$S/iso/filler"   # 2.5 MiB
 xorriso -as mkisofs -quiet -o "$S/build.iso" "$S/iso" >/dev/null 2>&1
@@ -89,6 +92,14 @@ if gpg --batch --passphrase '' --quick-gen-key "Release Test <release-test@examp
     grep -q "Not yet booted on the deck\|release candidate" "$S/rel/RELEASE-NOTES.md" && pass "release notes body comes from the CHANGELOG section" || fail "notes body" "CHANGELOG text absent"
     OUT="$(bash "$STAGE" "$S/build.iso" "$TAG" --out "$S/rel" --part-size 1m --key "$FPR" 2>&1)" \
         && fail "non-empty --out" "accepted" || pass "refuses to mix with an existing asset set"
+    # Safe package databases cannot mask a stale boot payload.
+    printf 'old kernel fixture' > "$S/iso/live/vmlinuz"
+    xorriso -as mkisofs -quiet -o "$S/stale-kernel.iso" "$S/iso" >/dev/null 2>&1
+    OUT="$(bash "$STAGE" "$S/stale-kernel.iso" "$TAG" --out "$S/stale-kernel-release" --part-size 1m --key "$FPR" 2>&1)"; RC=$?
+    [[ $RC -ne 0 && "$OUT" == *"does not match a checked packaged kernel"* ]] \
+        && pass "signed staging rejects a stale boot kernel despite fixed package versions" \
+        || fail "stale boot kernel" "rc=$RC $OUT"
+    cp "$S/root/boot/vmlinuz-6.12.113+deb13-amd64" "$S/iso/live/vmlinuz"
     if command -v dpkg >/dev/null 2>&1; then
         # The manifest stays safe while the shipped dpkg database is stale.
         # Signed staging must inspect both, not trust only filesystem.packages.
@@ -97,7 +108,7 @@ if gpg --batch --passphrase '' --quick-gen-key "Release Test <release-test@examp
         mksquashfs "$S/root" "$S/iso/live/filesystem.squashfs" -noappend -quiet >/dev/null
         xorriso -as mkisofs -quiet -o "$S/stale.iso" "$S/iso" >/dev/null 2>&1
         OUT="$(bash "$STAGE" "$S/stale.iso" "$TAG" --out "$S/stale-release" --part-size 1m --key "$FPR" 2>&1)"; RC=$?
-        [[ $RC -ne 0 && "$OUT" == *"shipped root filesystem fails PHP security floor"* ]] \
+        [[ $RC -ne 0 && "$OUT" == *"shipped root filesystem fails package/kernel security floors"* ]] \
             && pass "signed staging rejects old PHP hidden from the ISO package inventory" \
             || fail "stale shipped PHP" "rc=$RC $OUT"
     fi

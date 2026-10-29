@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Security
+
+- Add a Trixie kernel release floor of `6.12.113-1` for CVE-2026-98432
+  (DSA-6568-1). Require a real supported kernel image, include held installed
+  packages, and bind the ISO boot kernel to a checked payload in its squashfs.
+  This prevents regressions; the v3.1.0 build already installed the fixed
+  kernel package. Existing published ISO bytes have not been revalidated.
+
 ## [v3.1.0] — 2026-10-25 (feature release)
 
 Five operator-requested changes, tracked under the

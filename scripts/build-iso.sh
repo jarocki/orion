@@ -1503,19 +1503,22 @@ build_iso() {
     fi
 
     # Check the actual ISO inventory, not the source package lists. A build
-    # containing PHP below DSA-6574-1 must never be copied or checksummed.
+    # containing PHP/kernel packages below the security floors must never be copied or checksummed.
     local package_gate_dir
-    package_gate_dir="$(mktemp -d "$TMP_DIR/php-package-gate.XXXXXXXX")"
+    package_gate_dir="$(mktemp -d "$TMP_DIR/package-gate.XXXXXXXX")"
     if ! xorriso -osirrox on -indev "$built_iso" \
         -extract /live/filesystem.packages "$package_gate_dir/filesystem.packages" \
+        -extract /live/filesystem.squashfs "$package_gate_dir/filesystem.squashfs" \
+        -extract /live/vmlinuz "$package_gate_dir/vmlinuz" \
         >/dev/null 2>&1; then
-        log "ERROR: ISO has no readable /live/filesystem.packages"
+        log "ERROR: ISO package inventory, squashfs or boot kernel is unreadable"
         rm -rf -- "$package_gate_dir"
         exit 1
     fi
     if ! python3 "$ISO_DIR/config/includes.chroot/usr/lib/orionx/check-package-security.py" \
-        --packages "$package_gate_dir/filesystem.packages"; then
-        log "ERROR: ISO failed the PHP package security gate"
+        --packages "$package_gate_dir/filesystem.packages" --require-kernel \
+        --squashfs "$package_gate_dir/filesystem.squashfs" --boot-kernel "$package_gate_dir/vmlinuz"; then
+        log "ERROR: ISO failed the package/kernel security gate"
         rm -rf -- "$package_gate_dir"
         exit 1
     fi

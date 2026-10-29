@@ -50,12 +50,20 @@ from a pushed tag alone.
 
 Before tagging:
 
-- **PHP/Trixie security floor:** the image build refreshes Debian package
+- **PHP and kernel/Trixie security floors:** the image build refreshes Debian package
   indices and upgrades before sealing. The build checks the actual ISO package
   inventory, and the release content gate checks the shipped dpkg database.
   If PHP 8.4 is present, every versioned PHP binary package must be at least
   `8.4.27-1~deb13u1` (DSA-6574-1); a missing inventory or failed update
   blocks release. An image with no PHP package does not expose these PHP CVEs.
+  Every real amd64 kernel image must be from the supported Trixie 6.12 series
+  and at least `6.12.113-1` (DSA-6568-1 / CVE-2026-98432). A metapackage or
+  headers alone do not count. Held installed packages are checked too. The
+  ISO `/live/vmlinuz` must match a checked `/boot/vmlinuz-*` in its squashfs;
+  this checks the shipped payload rather than the build host kernel.
+  These are regression guards: the v3.1.0 build log already records installing
+  `linux-image-6.12.113+deb13-amd64` at `6.12.113-1`. This does not independently
+  verify the bytes of an existing published ISO.
 
 - **The branch is at the head you intend to release** — `release/2.2.0` for
   the v2.2.0 line (merged back to `develop` after the tag). The image is built
@@ -440,7 +448,7 @@ ORIONX_VERSION=<tag> bash scripts/build-iso.sh
 # 1. Stage, split (190 MiB parts, see §10.1), checksum, sign with the release
 #    key from your local keyring, render REASSEMBLE.txt + RELEASE-NOTES.md,
 #    and self-verify. Signed staging also checks the ISO inventory and shipped
-#    dpkg status against the PHP security floor; run this on a Debian host or
+#    dpkg status and boot payload against the PHP/kernel security floors; run this on a Debian host or
 #    in a Debian container with xorriso, unsquashfs, Python and dpkg installed.
 #    Refuses a missing CHANGELOG section, bad ISO, or signing failure.
 bash scripts/release/stage-split-release.sh output/orionx-phoenix-edition-<tag>.iso <tag> \
