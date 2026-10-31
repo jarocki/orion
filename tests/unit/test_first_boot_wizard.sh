@@ -634,11 +634,19 @@ else
 fi
 # DEC-PHASE11-044: the unit must quit Plymouth before prompting, or the splash
 # holds tty1/DRM and the wizard's prompts are invisible (and quit-wait could hang).
-if grep -qE '^ExecStartPre=-?/bin/plymouth quit' "$SYSTEMD_UNIT"; then
+if grep -qE '^ExecStartPre=-?(/usr/bin/timeout [0-9]+ )?/bin/plymouth quit' "$SYSTEMD_UNIT"; then
     pass "wizard unit quits Plymouth before prompting (ExecStartPre=plymouth quit — DEC-PHASE11-044)"
 else
     fail "wizard unit quits Plymouth before prompting" \
          "Without ExecStartPre=plymouth quit, the splash hides the wizard prompts on tty1"
+fi
+# DEC-PHASE13-028 (#141): a wedged plymouthd makes `plymouth quit` block forever;
+# the quit must be bounded so it cannot stall onboarding on top of the splash.
+if grep -qE '^ExecStartPre=-/usr/bin/timeout [0-9]+ /bin/plymouth quit' "$SYSTEMD_UNIT"; then
+    pass "wizard unit bounds plymouth quit with timeout (a wedged splash cannot stall onboarding — #141)"
+else
+    fail "wizard unit bounds plymouth quit with timeout" \
+         "ExecStartPre must be -/usr/bin/timeout N /bin/plymouth quit (QEMU plymouth wedge, #141)"
 fi
 
 # ===========================================================================

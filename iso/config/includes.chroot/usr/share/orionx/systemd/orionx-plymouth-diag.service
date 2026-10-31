@@ -1,0 +1,35 @@
+# Orion-X Phoenix Edition — explain a plymouth-quit-wait failure in the serial log.
+#
+# @decision DEC-PHASE13-028
+# @title plymouth-quit-wait failures dump plymouth/getty/console state via /dev/kmsg
+# @status accepted
+# @rationale The QEMU Boot Test fails intermittently in either firmware mode
+#   (BIOS and UEFI have both failed, #141): the first-boot wizard's `plymouth
+#   quit` never satisfies plymouth-quit-wait, the 25 s cap (DEC-PHASE11-044)
+#   fires, serial-getty@ttyS0 starts and then never prints a login prompt, and
+#   from that point nothing user space writes to the console tty appears while
+#   kernel messages keep arriving. The first version of this unit used
+#   StandardOutput=tty on /dev/console and never printed a line either: systemd
+#   waits to acquire a terminal another session holds as its controlling tty.
+#   So this unit writes through /dev/kmsg — the kernel console path, which does
+#   reach the serial log — and is pulled in by OnFailure= from
+#   plymouth-quit-wait.service (drop-in 20-orionx-diag.conf). It runs only when
+#   the cap has already fired, so a healthy boot never sees it; it is never
+#   enabled, has no [Install] section, and is itself bounded so it cannot add
+#   to the hang. Every line carries the ORIONX-PLYMOUTH-DIAG prefix so
+#   qemu-boot-test.sh can lift the block out of the serial log.
+
+[Unit]
+Description=Orion-X plymouth-quit-wait failure diagnostics (kmsg dump)
+DefaultDependencies=no
+# Pulled in by OnFailure=, never enabled. Independent of the graphical stack so
+# it can run while that stack is the thing being diagnosed.
+After=plymouth-quit-wait.service
+
+[Service]
+Type=oneshot
+# No tty here on purpose: acquiring /dev/console is part of what hangs (#141).
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=90
+ExecStart=/usr/lib/orionx/plymouth-diag.sh
