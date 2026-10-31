@@ -24,19 +24,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in `docs/User_Guide.md`, so `test_operator_surfaces.sh` failed on develop and
   main at the tag ("release slots say v3.1.0, want v3.1.1"). Both slots now say
   v3.1.1; the footer states which ISO passed which checks.
-- **QEMU UEFI boot flake made diagnosable (#141, DEC-PHASE13-028).** The QEMU
-  Boot Test has failed intermittently since 2026-10-25, always UEFI-only: the
-  first-boot wizard's `plymouth quit` never satisfies `plymouth-quit-wait`,
-  the 25 s cap fires, `serial-getty@ttyS0` starts and no login prompt ever
-  prints while the guest stays alive. BIOS mode, local QEMU and the HP Pavilion
-  all boot. Three changes, none of which alters a healthy boot: the wizard's
-  `plymouth quit` is bounded (`timeout 10`) so a wedged splash cannot stall
-  onboarding; `plymouth-quit-wait.service` gains `OnFailure=` →
-  `orionx-plymouth-diag.service`, which writes plymouth, getty, DRM and ttyS0
-  state to `/dev/console` (prefix `ORIONX-PLYMOUTH-DIAG`); and
-  `qemu-boot-test.sh` prints that block plus every systemd failure line when a
-  mode fails, instead of only the last 50 lines. The root cause is still open
-  in #141; the next failure will carry its own evidence.
+- **QEMU boot flake made diagnosable (#141, DEC-PHASE13-028).** The QEMU Boot
+  Test has failed intermittently since 2026-10-25, in one firmware mode per run
+  (UEFI six times, BIOS once) while the other mode passes: the first-boot
+  wizard's `plymouth quit` never satisfies `plymouth-quit-wait`, the 25 s cap
+  fires, `serial-getty@ttyS0` starts and no login prompt ever prints, and from
+  then on nothing user space writes to the console tty appears while kernel
+  messages keep arriving. Local QEMU and the HP Pavilion boot. Three changes,
+  none of which alters a healthy boot: the wizard's `plymouth quit` is bounded
+  (`timeout 10`) so a wedged splash cannot stall onboarding;
+  `plymouth-quit-wait.service` gains `OnFailure=` →
+  `orionx-plymouth-diag.service`, which records plymouth, getty, DRM, serial
+  driver and console termios state plus every holder of the console through
+  `/dev/kmsg` (prefix `ORIONX-PLYMOUTH-DIAG`), the kernel path that provably
+  reaches the serial log when the tty path does not; and `qemu-boot-test.sh`
+  prints that block plus every systemd failure line when a mode fails,
+  instead of only the last 50 lines. The root cause is still open in #141;
+  the next failure will carry its own evidence.
 
 ## [v3.1.1] — 2026-10-31 (security and patch release)
 

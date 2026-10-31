@@ -646,7 +646,7 @@ if grep -qE '^ExecStartPre=-/usr/bin/timeout [0-9]+ /bin/plymouth quit' "$SYSTEM
     pass "wizard unit bounds plymouth quit with timeout (a wedged splash cannot stall onboarding — #141)"
 else
     fail "wizard unit bounds plymouth quit with timeout" \
-         "ExecStartPre must be -/usr/bin/timeout N /bin/plymouth quit (QEMU UEFI wedge, #141)"
+         "ExecStartPre must be -/usr/bin/timeout N /bin/plymouth quit (QEMU plymouth wedge, #141)"
 fi
 
 # ===========================================================================
