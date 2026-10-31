@@ -219,7 +219,9 @@ EOF
 #   DEC-PHASE9-002 / #76 (a monitoring deck stays visible; Layer 2 runs `xset -dpms`).
 #   So the same hook that disables the screensaver seeds the power manager: keys
 #   handled, DPMS off (and its timers zeroed), lid closes the display only, no
-#   inactivity suspend, no lock on suspend. Battery dimming keeps its defaults.
+#   inactivity suspend, no lock on suspend. Xfce 4.20 uses 0 to disable each
+#   inactivity alarm; nonzero values are minutes (14 is not "never").
+#   Battery dimming keeps its defaults.
 #   Key names are the ones common/xfpm-config.h defines (4.20: no tray icon, no
 #   blank-on-* keys; blanking is xfce4-screensaver's, disabled above). Single
 #   writer, same /etc/skel authority (DEC-PHASE11-014); nothing else in the
@@ -235,8 +237,8 @@ cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-power-manager.xml
     <property name="dpms-on-ac-off" type="uint" value="0"/>
     <property name="dpms-on-battery-sleep" type="uint" value="0"/>
     <property name="dpms-on-battery-off" type="uint" value="0"/>
-    <property name="inactivity-on-ac" type="uint" value="14"/>
-    <property name="inactivity-on-battery" type="uint" value="14"/>
+    <property name="inactivity-on-ac" type="uint" value="0"/>
+    <property name="inactivity-on-battery" type="uint" value="0"/>
     <property name="lid-action-on-ac" type="uint" value="0"/>
     <property name="lid-action-on-battery" type="uint" value="0"/>
     <property name="lock-screen-suspend-hibernate" type="bool" value="false"/>
