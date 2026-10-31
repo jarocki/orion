@@ -98,7 +98,11 @@ Before tagging:
   `tools/guided-demo/cinematic/walkthrough.yaml` and
   `tools/guided-demo/cinematic/trailer.yaml` (when new release videos are made),
   `docs/orionx-diag.md`,
-  `manifest.json`, the `Dockerfile` label, and the release notes. Confirm with
+  `manifest.json`, the `Dockerfile` label, and the release notes. Run
+  `bash tests/unit/test_operator_surfaces.sh` before tagging: it derives the
+  release from `manifest.json` and fails if the README version line or either
+  `<!--orionx:release-->` slot in the User Guide disagrees (the v3.1.1 prep
+  missed the guide, and lint was red on develop and main at the tag). Confirm with
   `git grep -n '<previous tag>'` that only historical references remain, and
   that no `<vX.Y.Z SHA-256 — filled at release>` placeholder is left
   (`git grep -n 'filled at release'` must be empty before the tag).
