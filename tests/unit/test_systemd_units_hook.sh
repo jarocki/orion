@@ -243,6 +243,8 @@ EXPECTED_UNITS=(
     "orionx-mesh-discover.timer"
     "orionx-firewall.service"
     "orionx-first-boot.service"
+    # DEC-PHASE13-028 (#141): OnFailure= target of plymouth-quit-wait, installed, never autostarted
+    "orionx-plymouth-diag.service"
     "orionx-scanwatch.service"
     "orionx-event-broker.service"
     # W10-1 added 3 Nebula units (DEC-PHASE10-009 integrity + DEC-PHASE11-033 runtime; socket removed)

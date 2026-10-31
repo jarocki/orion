@@ -43,6 +43,9 @@ UNIT_FILES=(
     "orionx-mesh-discover.timer"
     "orionx-firewall.service"
     "orionx-first-boot.service"
+    # DEC-PHASE13-028 (#141): console dump when plymouth-quit-wait's cap fires.
+    # Pulled in by OnFailure= (drop-in 20-orionx-diag.conf); never autostarted.
+    "orionx-plymouth-diag.service"
     # DEC-PHASE12-022: consumes the firewall's own drop log and emits scan
     # events onto the R.A.I.N. bus. Pairs with orionx-firewall.service, which
     # produces the log it reads.

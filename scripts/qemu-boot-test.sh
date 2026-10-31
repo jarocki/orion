@@ -633,6 +633,16 @@ run_mode() {
             echo "--- Last 50 lines of serial log ---"
             tail -50 "${serial_log}" 2>/dev/null || true
             echo "--- End of serial log tail ---"
+            # DEC-PHASE13-028 (#141): the image dumps plymouth/getty/DRM state to the
+            # console when plymouth-quit-wait's cap fires; the tail above is usually
+            # audit noise by then, so lift the diagnostic block and the systemd
+            # failure lines out of the whole log.
+            echo ""
+            echo "--- systemd failures and ORIONX-PLYMOUTH-DIAG block (whole log) ---"
+            tr -d '\r' < "${serial_log}" 2>/dev/null \
+                | grep -aE 'ORIONX-PLYMOUTH-DIAG|\[FAILED\]|Failed to start|Timed out|timed out' \
+                | sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g' | head -200 || true
+            echo "--- End of diagnostic block ---"
         fi
         kill_qemu "${QEMU_PID}"
 

@@ -1,0 +1,31 @@
+# Orion-X Phoenix Edition — explain a plymouth-quit-wait failure on the console.
+#
+# @decision DEC-PHASE13-028
+# @title plymouth-quit-wait failures dump plymouth/getty/DRM state to /dev/console
+# @status accepted
+# @rationale The QEMU Boot Test fails intermittently in UEFI mode only: the
+#   first-boot wizard's `plymouth quit` never satisfies plymouth-quit-wait, the
+#   25 s cap (DEC-PHASE11-044) fires, serial-getty@ttyS0 starts and then never
+#   prints a login prompt. Six failures since 2026-10-25 share that shape and
+#   the serial log — the only evidence the harness has — ends in ollama audit
+#   noise (#141). This unit is pulled in by OnFailure= from
+#   plymouth-quit-wait.service (drop-in 20-orionx-diag.conf) and writes the
+#   state that would settle the question to /dev/console, which is the serial
+#   line in QEMU and the screen on a deck. It runs only when the cap has
+#   already fired, so a healthy boot never sees it; it is never enabled and has
+#   no [Install] section. Every line carries the ORIONX-PLYMOUTH-DIAG prefix so
+#   qemu-boot-test.sh can lift the block out of the serial log.
+
+[Unit]
+Description=Orion-X plymouth-quit-wait failure diagnostics (console dump)
+DefaultDependencies=no
+# Pulled in by OnFailure=, never enabled. Independent of the graphical stack so
+# it can run while that stack is the thing being diagnosed.
+After=plymouth-quit-wait.service
+
+[Service]
+Type=oneshot
+StandardOutput=tty
+StandardError=inherit
+TTYPath=/dev/console
+ExecStart=/usr/lib/orionx/plymouth-diag.sh
