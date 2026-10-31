@@ -104,7 +104,7 @@ jobs:
           (cd output && sha256sum -c "$(basename "${ISO}").sha256")
           echo "ISO=${ISO}" >> "${GITHUB_ENV}"
 
-      - name: Verify shipped filesystem and PHP security floor
+      - name: Verify shipped filesystem and Debian security floors
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace:ro" -w /workspace \

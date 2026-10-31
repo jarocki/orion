@@ -50,12 +50,27 @@ from a pushed tag alone.
 
 Before tagging:
 
-- **PHP/Trixie security floor:** the image build refreshes Debian package
-  indices and upgrades before sealing. The build checks the actual ISO package
-  inventory, and the release content gate checks the shipped dpkg database.
-  If PHP 8.4 is present, every versioned PHP binary package must be at least
-  `8.4.27-1~deb13u1` (DSA-6574-1); a missing inventory or failed update
-  blocks release. An image with no PHP package does not expose these PHP CVEs.
+- **Debian security floors:** the image build refreshes Debian package
+  indices and upgrades before sealing (hook 0890). The build checks the actual
+  ISO package inventory, and the release content gate and the signed-staging
+  script check the shipped dpkg database, all against the one floor table in
+  `iso/config/includes.chroot/usr/lib/orionx/check-package-security.py`
+  (`--list` prints it; DEC-PHASE13-027). Each row names the advisory it
+  enforces (PHP2Shell DSA-6574-1, Node2Shell/Brotli DSA-6582-1, the kernel,
+  firefox-esr, OpenSSL, curl, Expat, xz, Wireshark, BIND, Unbound, Zeek), and
+  `tests/unit/test_package_security.py` fails if `CHANGELOG.md` does not cite
+  it. A floor applies only to packages that are present: an image with no PHP
+  or Node.js does not expose those CVEs, and the gate reports them as not
+  shipped. A missing inventory, a missing `dpkg`, or a failed update blocks
+  release. The kernel is the one floor that also demands presence (#136):
+  a real, supported 6.12 amd64 `linux-image-*` must be installed (metapackage
+  or headers alone do not count), held packages are checked too, and the ISO
+  `/live/vmlinuz` must match a checked `/boot/vmlinuz-*` in its squashfs, so
+  the gate checks the shipped payload rather than the build host kernel.
+  Before tagging a security patch, walk the DSA index
+  (<https://lists.debian.org/debian-security-announce/>) from the previous
+  tag's build date, add a row for every advisory whose fixed version the notes
+  promise, and raise rows that already exist; never lower one.
 
 - **The branch is at the head you intend to release** — `release/2.2.0` for
   the v2.2.0 line (merged back to `develop` after the tag). The image is built
@@ -440,7 +455,7 @@ ORIONX_VERSION=<tag> bash scripts/build-iso.sh
 # 1. Stage, split (190 MiB parts, see §10.1), checksum, sign with the release
 #    key from your local keyring, render REASSEMBLE.txt + RELEASE-NOTES.md,
 #    and self-verify. Signed staging also checks the ISO inventory and shipped
-#    dpkg status against the PHP security floor; run this on a Debian host or
+#    dpkg status against the Debian security floors; run this on a Debian host or
 #    in a Debian container with xorriso, unsquashfs, Python and dpkg installed.
 #    Refuses a missing CHANGELOG section, bad ISO, or signing failure.
 bash scripts/release/stage-split-release.sh output/orionx-phoenix-edition-<tag>.iso <tag> \
