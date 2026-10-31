@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition — Cyberdeck for the Good Guys
 
-**Source version:** v3.1.1 (security update: Debian security floors for PHP2Shell, Node2Shell/Brotli, kernel CVE-2026-98432, firefox-esr and Zeek 9.0.1, plus the HP Pavilion fixes for brightness, panel widgets, spoken alerts and Cockpit → Attack Map; includes v3.0.1 through v3.1.0). **Latest ISO:** [v3.1.0](https://github.com/jarocki/orion/releases/tag/v3.1.0) — CI-built from the tag, QEMU-gated, booted on an HP Pavilion (2026-10-26); previous: [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0).
+**Source version:** v3.1.2 (release pipeline patch on v3.1.1: the tag run now stages and signs the release itself; same shipped software as v3.1.1 — Debian security floors for PHP2Shell, Node2Shell/Brotli, kernel CVE-2026-98432, firefox-esr and Zeek 9.0.1, plus the HP Pavilion fixes for brightness, panel widgets, spoken alerts and Cockpit → Attack Map; includes v3.0.1 through v3.1.1). **Latest ISO:** [v3.1.0](https://github.com/jarocki/orion/releases/tag/v3.1.0) — CI-built from the tag, QEMU-gated, booted on an HP Pavilion (2026-10-26); previous: [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0).
 **Base:** Debian 13 "trixie" live (kernel 6.12, Python 3.13, XFCE 4.20) | **Runtime:** Qwen2.5-3B-Instruct (Apache-2.0)
 **Previous line:** v2.1.0-bullseye-rain (final Debian 11 build, kept as a known-good fallback)
 
