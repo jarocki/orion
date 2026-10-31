@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [v3.1.2] — 2026-10-31 (release pipeline patch)
+
+Same shipped software as v3.1.1 (the Debian security floors and the HP
+Pavilion fixes), re-tagged so the release is produced end to end by CI:
+the v3.1.1 tag run built and gated the ISO and imported the signing key,
+then died staging the signed assets because the runner had no xorriso or
+unsquashfs. Tags are immutable, so v3.1.1 stays a source tag with a
+CI-built but unpublished ISO; v3.1.2 is the first release whose split,
+signed assets and draft GitHub Release come from the tag run alone
+(release-process §10 remains the fallback). Also carries the User Guide
+version slots the v3.1.1 prep missed and the QEMU boot-flake diagnostics
+(#141).
 
 ### Fixed
 
