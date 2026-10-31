@@ -373,5 +373,57 @@ ck(cw.select_tab("mesh") and cw.nb.get_current_page() == cw._pages["mesh"], "--t
 ck(cw.select_tab("live") and cw.nb.get_current_page() == 0, "and back to LIVE")
 ck(not cw.select_tab("no-such-tab"), "unknown tab key is refused, not ignored")
 
+print("[cockpit: THREAT PRESSURE / DEFENSIVE ACTIONS click opens the Attack Map (#124)]")
+from types import SimpleNamespace  # noqa: E402
+argv_log = WORK / "osint-argv"
+stub("orionx-osint", f'echo "$@" >> "{argv_log}"')
+cw.select_tab("live")
+pump(0.3)
+cw._draw(cw.da, cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)))   # refresh the click layout
+lay = CK.L.live_layout(W, H)
+
+
+def _lines() -> list:
+    return argv_log.read_text().splitlines() if argv_log.exists() else []
+
+
+def click(name: str, dx: float = 8, dy: float = 30):
+    x, y, w, h = lay[name]
+    cw.drill = False
+    return cw._on_click(None, SimpleNamespace(x=x + dx, y=y + dy, type=None))
+
+
+n0 = len(_lines())
+ck(click("gauge") is True and wait_for(lambda: len(_lines()) == n0 + 1, 5.0), "a click on THREAT PRESSURE launches orionx-osint")
+ck(_lines()[-1:] == ["--page pewpew"], f"with --page pewpew ({_lines()[-1:]})")
+ck("Attack Map" in cw.toast_bar._label.get_text(), f"and the toast says so ({cw.toast_bar._label.get_text()!r})")
+n1 = len(_lines())
+click("actions")                                              # the title row, above the button
+ck(wait_for(lambda: len(_lines()) == n1 + 1, 5.0), "a click on DEFENSIVE ACTIONS (off the button) launches it too")
+# Paint a frame with an action pending (the heal poller has long since replaced
+# the render test's state) and click the APPROVE button where it actually is.
+cw.heal = {"readable": True, "chain_ok": True, "active": [],
+           "pending": [{"id": "p2", "action": "block_ip", "target": "10.0.0.5", "proposed_ts": time.time()}]}
+cw._draw(cw.da, cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)))
+r = cw._approve_rect
+ck(r is not None and CK.L.panel_at(lay, r[0], r[1]) == "actions", f"the APPROVE button is drawn inside DEFENSIVE ACTIONS ({r})")
+n2 = len(_lines())
+approved = []
+cw._approve_selected = lambda: approved.append(1)
+cw.drill = False
+if r is not None:
+    cw._on_click(None, SimpleNamespace(x=r[0] + r[2] / 2, y=r[1] + r[3] / 2, type=None))
+pump(0.5)
+ck(approved and len(_lines()) == n2, "the APPROVE button still approves and does not open the map")
+click("events")
+click("net")
+click("systems")
+pump(0.5)
+ck(len(_lines()) == n2, "clicks on EVENTS / NETWORK / SYSTEMS launch nothing")
+(BIN / "orionx-osint").unlink()
+click("gauge")
+pump(0.3)
+ck("not installed" in cw.toast_bar._label.get_text(), f"missing orionx-osint -> error toast ({cw.toast_bar._label.get_text()!r})")
+
 print(f"Results: {PASS} passed, {FAIL} failed", flush=True)
 os._exit(1 if FAIL else 0)   # skip GTK teardown: it can hang under Xvfb

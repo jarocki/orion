@@ -52,6 +52,13 @@ are also present in v3.0.0. No ISO has been built from this section yet.
   R.A.I.N., ATT&CK, nmap, nftables, WireGuard, SQL get their names. The map
   is applied after the fabrication guard, so it cannot widen what the model
   may claim (DEC-PHASE13-025).
+- **Cockpit → Attack Map** (#124). A click on the THREAT PRESSURE gauge or
+  the DEFENSIVE ACTIONS pane opens the Attack Map (`orionx-osint --page
+  pewpew`, detached, reusing a running osint server); the gauge caption says
+  so. The APPROVE button keeps precedence; EVENTS, NETWORK and SYSTEMS are
+  unchanged. Embedding the map was rejected: a browser engine inside the
+  thread-free Cairo window would break the Bay Trail budget
+  (DEC-PHASE13-026). Verified with synthetic clicks under Xvfb.
 
 ---
 

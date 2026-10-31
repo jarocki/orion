@@ -161,6 +161,7 @@ class Cockpit(Gtk.Window):
         self.drill_scroll = 0          # first drill-down row shown
         self._approve_rect: tuple[float, float, float, float] | None = None
         self._close_rect: tuple[float, float, float, float] | None = None
+        self._live_lay: dict = {}      # panel rects as last drawn (#124 click targets)
         self._shown: list = []         # events as last drawn, so keys and clicks agree
         self.t0 = time.time()
 
@@ -395,6 +396,12 @@ class Cockpit(Gtk.Window):
         if r and r[0] <= ev.x <= r[0] + r[2] and r[1] <= ev.y <= r[1] + r[3]:
             self._approve_selected()
             return True
+        # #124 (DEC-PHASE13-026): THREAT PRESSURE and DEFENSIVE ACTIONS open
+        # the Attack Map, resolved against the layout this frame was drawn with.
+        if L.panel_at(self._live_lay, ev.x, ev.y) in L.ATTACK_MAP_PANELS:
+            ok, msg = L.open_attack_map()
+            self._say(msg, "ok" if ok else "error")
+            return True
         # Click an event row to select it; double-click opens the drill-down.
         for i, (ry, rh) in enumerate(getattr(self, "_row_rects", [])):
             if ry <= ev.y <= ry + rh:
@@ -411,6 +418,7 @@ class Cockpit(Gtk.Window):
         H = da.get_allocated_height()
         self._background(cr, W, H, self._origin(da), sweep=True)
         lay = L.live_layout(W, H)
+        self._live_lay = lay           # clicks resolve against what was drawn (#124)
         # Every panel is clipped to its own rectangle (UX-17): nothing a panel
         # draws can land on its neighbour or below the window.
         for name, fn in (("events", self._events_panel), ("deck", self._deck_panel),
@@ -932,7 +940,7 @@ class Cockpit(Gtk.Window):
         self._text(cr, cxm, cym - 10, f"{int(round(p))}", 34, col, bold=True, align="center", glow=1.0)
         band = "CALM" if p < 25 else "ELEVATED" if p < 60 else "HOSTILE"
         self._text(cr, cxm, cym + 14, band, 12, col, bold=True, align="center")
-        self._text(cr, cxm, cy0 + ch - 4, "severity-weighted · 60s half-life", 11, L.DIM, align="center", max_w=cw)
+        self._text(cr, cxm, cy0 + ch - 4, "severity-weighted · 60s half-life · click: Attack Map", 11, L.DIM, align="center", max_w=cw)
 
     # --- network sparkline ---
     def _net_panel(self, cr, x, y, w, h):

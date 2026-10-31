@@ -402,7 +402,7 @@ Applications → **Orion** (Phoenix icon) groups the Orion-X tools:
 - **Pivotglass**
 - **Orion Workbench** — the analyst toolbox: local web tools and every Orion-X tool in one page (§7)
 - **CyberChef (local)**
-- **Orion-X Attack Map**
+- **Orion-X Attack Map** — also one click away in the Cockpit: click the THREAT PRESSURE gauge or the DEFENSIVE ACTIONS pane
 - **GODSEYE (globe)** — opens the network preflight, not the globe (§7)
 - **Orion-X DJ Deck** — optional music, off by default (§7)
 
