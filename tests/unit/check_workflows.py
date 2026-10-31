@@ -46,6 +46,15 @@ check("release stays a DRAFT", gh.get("draft") is True)
 check("release body is the staged RELEASE-NOTES.md", gh.get("body_path") == "output/release/RELEASE-NOTES.md")
 stage = by_name.get("Stage signed split release assets", {}).get("run", "")
 check("assets are staged by scripts/release/stage-split-release.sh", "scripts/release/stage-split-release.sh" in stage)
+# Signed staging runs xorriso and unsquashfs ON THE RUNNER (not in the build
+# container); the v3.1.1 run failed with "xorriso is required" because nothing
+# installed them. The install step must exist and come before staging.
+names = [s.get("name", "") for s in steps]
+tools = [s for s in steps if "xorriso" in s.get("run", "") and "squashfs-tools" in s.get("run", "")
+         and "apt-get install" in s.get("run", "") and "docker run" not in s.get("run", "")]
+check("release.yml installs xorriso + squashfs-tools on the runner (v3.1.1 staging failure)", bool(tools))
+check("the runner tooling step precedes signed staging",
+      bool(tools) and names.index(tools[0].get("name", "")) < names.index("Stage signed split release assets"))
 check("no step sets continue-on-error (signing is hard-fail)", not any("continue-on-error" in s for s in steps))
 check("the unreachable 'Report signing status' step is gone (P3-12)", "Report signing status" not in by_name)
 verify = by_name["Verify ISO artifact"]["run"]
