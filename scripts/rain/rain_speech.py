@@ -142,6 +142,69 @@ info notice warning critical
 """.split())
 
 _IP_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
+
+# ---------------------------------------------------------------------------
+# Pronunciation: how the engines should SAY tokens that are spelled for the
+# screen (#123, DEC-PHASE13-025). Both piper and espeak-ng read "IDS" as a
+# word ("eye-dees", HP Pavilion 2026-10-26), "→" as nothing or "arrow",
+# "10.0.0.5:22" as a time of day, "SSH::Password_Guessing" as one mangled
+# word. Applied inside speakable(), which runs AFTER validate_line(), so a
+# spoken form can never widen what the model is allowed to claim: the guard
+# sees the screen spelling, the speaker gets the spoken one. Word-boundary
+# and case-sensitive on purpose: "IDS" is the acronym, "ids" in prose is not.
+# Letters to be spoken one at a time are written spaced ("I D S").
+# ---------------------------------------------------------------------------
+_SPOKEN_FORMS: dict[str, str] = {
+    # detection
+    "IDS": "I D S", "IPS": "I P S", "C2": "C two", "ET": "E T", "SID": "S I D",
+    "IOC": "I O C", "CVE": "C V E", "YARA": "yara", "OSINT": "oh sint",
+    # protocols and addressing
+    "IP": "I P", "IPv4": "I P v 4", "IPv6": "I P v 6", "TCP": "T C P",
+    "tcp": "T C P", "UDP": "U D P", "udp": "U D P", "ICMP": "I C M P",
+    "icmp": "I C M P", "DNS": "D N S", "SSH": "S S H", "HTTP": "H T T P",
+    "HTTPS": "H T T P S", "TLS": "T L S", "SMB": "S M B", "RDP": "R D P",
+    "SQL": "sequel", "FTP": "F T P", "SMTP": "S M T P", "NTP": "N T P",
+    "ARP": "arp", "MAC": "mack", "VPN": "V P N", "URL": "U R L", "API": "A P I",
+    "src": "source", "dst": "destination", "sport": "source port",
+    "dport": "destination port", "pcap": "P cap",
+    # tools and components
+    "nmap": "en map", "Nmap": "en map", "NMAP": "en map", "Nuclei": "new clee eye",
+    "nuclei": "new clee eye", "nftables": "N F tables", "WireGuard": "wire guard",
+    "wireguard": "wire guard", "nmcli": "N M C L I", "sudo": "sue doo",
+    "TTS": "T T S", "LLM": "L L M", "GPU": "G P U", "CPU": "C P U",
+    "USB": "U S B", "ISO": "I S O", "UEFI": "U E F I", "BIOS": "bye oss",
+    "XFCE": "X F C E", "QEMU": "kemu",
+}
+# Spellings that are not single words: replaced literally, first.
+_SPOKEN_LITERALS: tuple[tuple[str, str], ...] = (
+    ("R.A.I.N.", "Rain"), ("ATT&CK", "attack"), ("→", " to "), ("::", " "),
+)
+_SPOKEN_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # 10 dot 0 dot 0 dot 5:22 is a time of day to an engine; say the port.
+    (re.compile(r"\b(\d{1,3} dot \d{1,3} dot \d{1,3} dot \d{1,3}):(\d{1,5})\b"),
+     r"\1 port \2"),
+    (re.compile(r"\bsid:(\d+)\b"), r"S I D \1"),
+    # ATT&CK technique ids: T1595, T1595.001.
+    (re.compile(r"\bT(\d{4})(?:\.(\d{3}))?\b"),
+     lambda m: f"T {m.group(1)}" + (f" point {m.group(2)}" if m.group(2) else "")),
+    # Zeek notice names: Password_Guessing -> Password Guessing.
+    (re.compile(r"(?<=[A-Za-z])_(?=[A-Za-z])"), " "),
+)
+_SPOKEN_WORD_RE = re.compile(
+    r"(?<![A-Za-z0-9])(" + "|".join(
+        re.escape(k) for k in sorted(_SPOKEN_FORMS, key=len, reverse=True))
+    + r")(?![A-Za-z0-9])")
+
+
+def spoken_forms(text: str) -> str:
+    """Rewrite screen spellings into what the engine should say. Pure."""
+    out = str(text)
+    for literal, said in _SPOKEN_LITERALS:
+        out = out.replace(literal, said)
+    for pat, repl in _SPOKEN_PATTERNS:
+        out = pat.sub(repl, out)
+    return _SPOKEN_WORD_RE.sub(lambda m: _SPOKEN_FORMS[m.group(1)], out)
+
 _NUM_RE = re.compile(r"\d+(?:\.\d+)?")
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z']*")
 # Characters a spoken line may contain. Anything else (markdown, brackets,
@@ -356,11 +419,13 @@ def speakable(text: str) -> str:
 
     Dotted quads are expanded ("192 dot 168 dot 4 dot 77") because both piper
     and espeak-ng otherwise read 192.168.4.77 as a decimal number, which is
-    the one thing the operator most needs to hear correctly.
+    the one thing the operator most needs to hear correctly. Acronyms,
+    arrows, ports and notice names get their spoken forms (_SPOKEN_FORMS).
     """
     flat = " ".join(str(text).split())
     flat = "".join(c for c in flat if c == " " or c.isprintable())
     flat = _IP_RE.sub(lambda m: " dot ".join(m.group(0).split(".")), flat)
+    flat = spoken_forms(flat)                      # #123: after the guard, before the engine
     flat = flat.replace("—", ", ").replace("–", ", ").replace("…", ".")
     flat = " ".join(flat.split())
     if len(flat) <= SPEAK_MAX_CHARS:
