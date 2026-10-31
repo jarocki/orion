@@ -131,6 +131,19 @@ if heredoc_body "$H0100" /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce
 else
     fail "0100 panel heredoc" "xfce4-panel.xml heredoc not found"
 fi
+# Regression: either inactivity timer must stay disabled independently. In
+# Xfce 4.20 a nonzero value is minutes, even with DPMS disabled (#131).
+for timer in inactivity-on-ac inactivity-on-battery; do
+    MUTATED_H0100="$WORK/0100-$timer.hook.chroot"
+    sed "s/name=\"$timer\" type=\"uint\" value=\"0\"/name=\"$timer\" type=\"uint\" value=\"14\"/" \
+        "$H0100" > "$MUTATED_H0100"
+    TIMER_REPORT="$(python3 "$SCRIPT_DIR/lib/check_panel.py" "$PANEL_XML" "$MUTATED_H0100" "$H0700" 2>&1)"
+    if [[ "$TIMER_REPORT" == *"FAIL xfce4-power-manager.xml seed"* && "$TIMER_REPORT" == *"$timer"* ]]; then
+        pass "power-manager check rejects $timer=14 while the other timer stays disabled"
+    else
+        fail "power-manager check rejects $timer=14" "$TIMER_REPORT"
+    fi
+done
 # Execute the derivation block 0700 uses, against a scratch root, and check
 # that each derived copy is byte-identical to the menu entry and executable
 # (xfdesktop shows non-executable .desktop files as plain files).

@@ -94,7 +94,7 @@ else:
             "dpms-on-ac-sleep": "0", "dpms-on-ac-off": "0",
             "dpms-on-battery-sleep": "0", "dpms-on-battery-off": "0",
             "lid-action-on-ac": "0", "lid-action-on-battery": "0",
-            "inactivity-on-ac": "14", "inactivity-on-battery": "14",
+            "inactivity-on-ac": "0", "inactivity-on-battery": "0",
             "lock-screen-suspend-hibernate": "false"}
     got = {p.get("name"): p.get("value") for p in prop(pmx, "xfce4-power-manager").findall("property")}
     bad = {k: got.get(k) for k, v in want.items() if got.get(k) != v}
