@@ -55,6 +55,18 @@ tools = [s for s in steps if "xorriso" in s.get("run", "") and "squashfs-tools" 
 check("release.yml installs xorriso + squashfs-tools on the runner (v3.1.1 staging failure)", bool(tools))
 check("the runner tooling step precedes signed staging",
       bool(tools) and names.index(tools[0].get("name", "")) < names.index("Stage signed split release assets"))
+# The v3.1.2 tag run built for 16 minutes and then could not sign because the
+# GPG_PASSPHRASE secret was never set (the import action seeds gpg-agent only
+# when given a passphrase). A tag run must check both secrets before building.
+secrets_step = by_name.get("Check release signing secrets are present", {})
+secrets_env = secrets_step.get("env", {})
+check("release.yml checks GPG_PRIVATE_KEY and GPG_PASSPHRASE before the build (v3.1.2 signing failure)",
+      "secrets.GPG_PRIVATE_KEY" in str(secrets_env.get("HAVE_KEY", ""))
+      and "secrets.GPG_PASSPHRASE" in str(secrets_env.get("HAVE_PASSPHRASE", ""))
+      and "HAVE_PASSPHRASE" in secrets_step.get("run", ""))
+check("the secrets check runs on tag refs and precedes the ISO build",
+      str(secrets_step.get("if", "")).startswith("startsWith(github.ref, 'refs/tags/v')")
+      and bool(secrets_step) and names.index(secrets_step.get("name", "")) < names.index("Build ISO in debian:trixie container"))
 check("no step sets continue-on-error (signing is hard-fail)", not any("continue-on-error" in s for s in steps))
 check("the unreachable 'Report signing status' step is gone (P3-12)", "Report signing status" not in by_name)
 verify = by_name["Verify ISO artifact"]["run"]

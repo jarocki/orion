@@ -64,6 +64,28 @@ jobs:
             echo "ORIONX_VERSION=dev-dispatch-${GITHUB_RUN_ID}" >> "${GITHUB_ENV}"
           fi
 
+      # A tag run that cannot sign must fail here, in seconds, not after the
+      # 16-minute build. crazy-max/ghaction-import-gpg seeds gpg-agent with the
+      # passphrase only when its `passphrase` input is non-empty; the v3.1.2 tag
+      # run reached signing with GPG_PASSPHRASE unset and died with "gpg: Sorry,
+      # we are in batchmode - can't get input". Secrets cannot be tested in `if:`,
+      # so they are reduced to booleans in env and asserted in the shell.
+      - name: Check release signing secrets are present
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          HAVE_KEY: ${{ secrets.GPG_PRIVATE_KEY != '' }}
+          HAVE_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE != '' }}
+        run: |
+          ok=1
+          if [[ "${HAVE_KEY}" != "true" ]]; then
+            echo "ERROR: repository secret GPG_PRIVATE_KEY is not set; a tag run cannot sign." >&2; ok=0
+          fi
+          if [[ "${HAVE_PASSPHRASE}" != "true" ]]; then
+            echo "ERROR: repository secret GPG_PASSPHRASE is not set; the signing key is passphrase-protected and gpg-agent is seeded only when the import step is given it." >&2; ok=0
+          fi
+          [[ "${ok}" -eq 1 ]]
+          echo "signing secrets present"
+
       - name: Build ISO in debian:trixie container
         run: |
           set -o pipefail

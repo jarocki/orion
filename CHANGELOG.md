@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Release pipeline: signing secrets are checked before the build.** The
+  v3.1.2 tag run built and gated the ISO, imported the signing key, and then
+  failed to sign: "gpg: Sorry, we are in batchmode - can't get input". The
+  import action seeds gpg-agent with the passphrase only when its `passphrase`
+  input is non-empty, and the `GPG_PASSPHRASE` repository secret had never
+  been created (only `GPG_PRIVATE_KEY` had). `release.yml` now asserts both
+  secrets are present as the first tag-only step, so a run that cannot sign
+  fails in seconds; `check_workflows.py` asserts the step exists, is
+  tag-gated and precedes the build. The v3.1.2 run itself is re-run once the
+  secret exists (the workflow at the tag is correct; only the secret was
+  missing).
+
 ## [v3.1.2] — 2026-10-31 (release pipeline patch)
 
 Same shipped software as v3.1.1 (the Debian security floors and the HP
