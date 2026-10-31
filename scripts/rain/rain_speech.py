@@ -58,6 +58,7 @@ import sys
 import tempfile
 import threading
 import time
+import wave
 from pathlib import Path
 from queue import Empty, Full, Queue
 from typing import Any, Callable
@@ -449,10 +450,19 @@ def ollama_generate(prompt: str, base_url: str = NEBULA_URL,
 # operator has installed it via /opt/orionx/optional/install-piper-voice.sh.
 # ---------------------------------------------------------------------------
 
+VOICE_BASENAME = "en_US-lessac-medium.onnx"
+# Same precedence as install-piper-voice.sh: ORIONX_VOICE_DIR is the
+# installer's override (a voice on a persistence volume is then found by both
+# sides, #122 root cause 3); ORIONX_PIPER_VOICE names one file for tests and
+# experiments. A voice is only a voice WITH its .json sidecar: piper refuses
+# to load the .onnx alone, so finding the model by itself used to select piper
+# and then fail every line.
 PIPER_VOICE_PATHS = (
     os.environ.get("ORIONX_PIPER_VOICE", ""),
-    "/usr/share/orionx/voices/en_US-lessac-medium.onnx",
-    "/opt/orionx/voices/en_US-lessac-medium.onnx",
+    (os.path.join(os.environ["ORIONX_VOICE_DIR"], VOICE_BASENAME)
+     if os.environ.get("ORIONX_VOICE_DIR") else ""),
+    "/usr/share/orionx/voices/" + VOICE_BASENAME,
+    "/opt/orionx/voices/" + VOICE_BASENAME,
 )
 SPEECH_SCRATCH = Path("/run/orionx/speech")
 SPEECH_SOURCE = "rain"          # the daemon must never narrate its own events
@@ -462,9 +472,9 @@ _DEFAULT = object()
 
 
 def piper_voice() -> str | None:
-    """Path to an installed piper voice model, or None."""
+    """Path to an installed piper voice model (with its .json sidecar), or None."""
     for cand in PIPER_VOICE_PATHS:
-        if cand and Path(cand).is_file():
+        if cand and Path(cand).is_file() and Path(cand + ".json").is_file():
             return cand
     return None
 
@@ -478,60 +488,218 @@ def tts_backend() -> str | None:
     return None
 
 
-def speak(text: str, cfg: dict[str, Any] | None = None,
-          backend: str | None = None) -> bool:
-    """Say one line. Returns True only if a TTS process actually ran."""
+# The flags piper is RUN with. The installer's synthesis check uses the same
+# ones (install-piper-voice.sh PIPER_ARGS), so "verified" means verified with
+# the flags that will be used, not with piper's defaults (#122 root cause 5).
+PIPER_ARGS = ("--length-scale", "1.04", "--sentence-silence", "0.25")
+# espeak-ng words per minute. 160 is a touch slower than default, which matters
+# for an address read out as digits. Also the basis of the spoken-time estimate.
+ESPEAK_WPM = 160
+# How long after the audio should end we wait before killing the player.
+PLAYBACK_MARGIN_SECONDS = 3.0
+# Narrations are short by construction (SPEAK_MAX_CHARS); no legitimate one
+# plays for a minute. A cap keeps a wedged player from holding the thread.
+PLAYBACK_MAX_SECONDS = 60.0
+
+
+def wav_seconds(path: str) -> float | None:
+    """Duration of a WAV file in seconds, or None if it is not a playable WAV."""
+    try:
+        with wave.open(path, "rb") as w:
+            frames, rate = w.getnframes(), w.getframerate()
+        if frames <= 0 or rate <= 0:
+            return None
+        return frames / float(rate)
+    except (OSError, EOFError, wave.Error):
+        return None
+
+
+def estimated_seconds(text: str) -> float:
+    """Spoken length of `text` at ESPEAK_WPM, plus a one-second tail."""
+    return len(str(text).split()) / (ESPEAK_WPM / 60.0) + 1.0
+
+
+def playback_timeout(wav: str | None, text: str) -> float:
+    """How long the player may run: measured from the WAV when there is one.
+
+    #122 root cause 2: rain_lib._run used to kill every player after 10 s while
+    SPEAK_MAX_CHARS allows ~20 s of speech, so long narrations were cut
+    mid-sentence and counted as not spoken. The timeout now follows the audio.
+    """
+    secs = wav_seconds(wav) if wav else None
+    if secs is None:
+        secs = estimated_seconds(text)
+    return max(5.0, min(PLAYBACK_MAX_SECONDS, secs + PLAYBACK_MARGIN_SECONDS))
+
+
+def synthesize_piper(line: str, voice: str, wav: str) -> str | None:
+    """Run piper into `wav`. Returns None on success, else one sentence of why."""
+    try:
+        proc = subprocess.run(
+            ["piper", "-m", voice, "-f", wav, *PIPER_ARGS],
+            input=line, text=True, stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE, check=False, timeout=TTS_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return f"piper timed out after {TTS_TIMEOUT:.0f}s"
+    except OSError as exc:
+        return f"piper could not be run ({exc.strerror or exc})"
+    if proc.returncode != 0:
+        tail = (proc.stderr or "").strip().splitlines()
+        why = f"piper exited {proc.returncode}"
+        return f"{why}: {tail[-1][:120]}" if tail else why
+    if wav_seconds(wav) is None:
+        return "piper wrote no audio"
+    return None
+
+
+def probe_synthesis(backend: str | None = None) -> dict[str, Any]:
+    """Time one real synthesis without playing it (for --speech-status).
+
+    Presence of a binary and a model file is not evidence that the deck can
+    speak (#122, RESILIENCE rule 3); a WAV with audio in it is.
+    """
+    backend = backend or tts_backend()
+    line = "Port scan from 192 dot 168 dot 4 dot 77, 900 ports in 11 seconds."
+    out: dict[str, Any] = {"backend": backend, "ok": False, "seconds": 0.0,
+                           "audio_seconds": 0.0, "reason": None}
+    if backend is None:
+        out["reason"] = "no text-to-speech engine installed"
+        return out
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as fh:
+            wav = fh.name
+    except OSError as exc:
+        out["reason"] = f"cannot create a scratch WAV ({exc.strerror or exc})"
+        return out
+    try:
+        t0 = time.monotonic()
+        if backend == "piper":
+            voice = piper_voice()
+            if not voice:
+                out["reason"] = ("piper is installed but no voice model with its "
+                                 ".json sidecar was found")
+                return out
+            why = synthesize_piper(line, voice, wav)
+        else:
+            try:
+                proc = subprocess.run(
+                    ["espeak-ng", "-w", wav, "-s", str(ESPEAK_WPM), "--", line],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    check=False, timeout=TTS_TIMEOUT)
+                why = None if proc.returncode == 0 else f"espeak-ng exited {proc.returncode}"
+            except (OSError, subprocess.SubprocessError) as exc:
+                why = f"espeak-ng could not be run ({exc})"
+            if why is None and wav_seconds(wav) is None:
+                why = "espeak-ng wrote no audio"
+        out["seconds"] = time.monotonic() - t0
+        if why:
+            out["reason"] = why
+            return out
+        out["ok"] = True
+        out["audio_seconds"] = wav_seconds(wav) or 0.0
+        return out
+    finally:
+        try:
+            os.unlink(wav)
+        except OSError:
+            pass
+
+
+def _scratch_wav() -> str | None:
+    try:
+        SPEECH_SCRATCH.mkdir(parents=True, exist_ok=True)
+        scratch = str(SPEECH_SCRATCH)
+    except OSError:
+        scratch = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", dir=scratch,
+                                         delete=False) as fh:
+            return fh.name
+    except OSError:
+        return None
+
+
+def _play_wav(wav: str, vol: float, timeout: float) -> bool:
+    if shutil.which("paplay"):
+        return rain_lib._run(["paplay", f"--volume={int(vol * 65536)}", wav],
+                             timeout=timeout)
+    if shutil.which("aplay"):
+        return rain_lib._run(["aplay", "-q", wav], timeout=timeout)
+    return False
+
+
+def _speak_espeak(line: str, vol: float) -> bool:
+    # -a 0..200 amplitude, -s words/min.
+    return rain_lib._run(
+        ["espeak-ng", "-a", str(int(vol * 200)), "-s", str(ESPEAK_WPM), "--", line],
+        timeout=playback_timeout(None, line))
+
+
+def speak_with_fallback(text: str, cfg: dict[str, Any] | None = None,
+                        backend: str | None = None) -> tuple[bool, str | None]:
+    """Say one line. Returns (spoken, degradation).
+
+    `spoken` is True only if a player actually ran. `degradation` is None when
+    the chosen engine did the work, otherwise one sentence saying what piper
+    did wrong so the Narrator can tell the operator once (#122 root cause 1:
+    a failing piper used to cost the line silently and never reach espeak-ng).
+    """
     cfg = cfg or rain_lib.default_config()
     line = speakable(text)
     if not line:
-        return False
+        return False, None
     backend = backend or tts_backend()
     vol = max(0.0, min(1.0, float(cfg.get("volume", 0.8))))
 
     if backend == "piper":
         voice = piper_voice()
         if not voice:
-            return False
-        try:
-            SPEECH_SCRATCH.mkdir(parents=True, exist_ok=True)
-            scratch = str(SPEECH_SCRATCH)
-        except OSError:
-            scratch = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", dir=scratch,
-                                             delete=False) as fh:
-                wav = fh.name
-        except OSError:
-            return False
-        try:
-            proc = subprocess.run(
-                ["piper", "-m", voice, "-f", wav,
-                 "--length-scale", "1.04", "--sentence-silence", "0.25"],
-                input=line, text=True, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, check=False, timeout=TTS_TIMEOUT)
-            if proc.returncode != 0 or not os.path.getsize(wav):
-                return False
-            if shutil.which("paplay"):
-                return rain_lib._run(
-                    ["paplay", f"--volume={int(vol * 65536)}", wav])
-            if shutil.which("aplay"):
-                return rain_lib._run(["aplay", "-q", wav])
-            return False
-        except (OSError, subprocess.SubprocessError):
-            return False
-        finally:
-            try:
-                os.unlink(wav)
-            except OSError:
-                pass
+            why: str | None = ("piper is installed but no voice model with its "
+                               ".json sidecar was found")
+        else:
+            wav = _scratch_wav()
+            if wav is None:
+                why = f"cannot write a scratch WAV under {SPEECH_SCRATCH}"
+            else:
+                try:
+                    why = synthesize_piper(line, voice, wav)
+                    if why is None:
+                        return _play_wav(wav, vol, playback_timeout(wav, line)), None
+                finally:
+                    try:
+                        os.unlink(wav)
+                    except OSError:
+                        pass
+        if shutil.which("espeak-ng"):
+            return _speak_espeak(line, vol), why
+        return False, f"{why}; espeak-ng is not installed, so the line was lost"
 
     if backend == "espeak-ng":
-        # -a 0..200 amplitude, -s words/min. 160 is a touch slower than
-        # default, which matters for an address read out as digits.
-        return rain_lib._run(
-            ["espeak-ng", "-a", str(int(vol * 200)), "-s", "160", "--", line])
+        return _speak_espeak(line, vol), None
 
-    return False
+    return False, None
+
+
+class SpeakResult(int):
+    """What speak() returns: truthy when a player ran, like the bool it used to
+    be, plus `.why` naming the degradation when piper failed and espeak-ng
+    spoke instead (None otherwise). An int subclass so every existing caller
+    and test double that treats the result as a bool keeps working."""
+    why: str | None
+
+    def __new__(cls, spoken: bool, why: str | None = None) -> "SpeakResult":
+        obj = super().__new__(cls, 1 if spoken else 0)
+        obj.why = why
+        return obj
+
+    def __repr__(self) -> str:
+        return f"SpeakResult({bool(self)}, why={self.why!r})"
+
+
+def speak(text: str, cfg: dict[str, Any] | None = None,
+          backend: str | None = None) -> SpeakResult:
+    """Say one line. Truthy only if a TTS process actually ran; see SpeakResult."""
+    return SpeakResult(*speak_with_fallback(text, cfg, backend))
 
 
 # ---------------------------------------------------------------------------
@@ -544,6 +712,12 @@ NO_TTS_MESSAGE = (
     "sudo apt-get install -y espeak-ng  (or, for the natural voice, "
     "sudo /opt/orionx/optional/install-piper-voice.sh). "
     "Check with: orionx-rain --speech-status"
+)
+PIPER_FALLBACK_MESSAGE = (
+    "R.A.I.N. speech: the piper voice failed ({why}). Alerts are spoken by "
+    "espeak-ng instead; detection and the cues are unaffected. Check with: "
+    "orionx-rain --speech-status  Repair: "
+    "sudo /opt/orionx/optional/install-piper-voice.sh --force"
 )
 NO_MODEL_MESSAGE = (
     "R.A.I.N. speech is using built-in phrasing: Nebula did not answer within "
@@ -580,6 +754,7 @@ class Narrator:
         self._last_spoken = 0.0
         self._no_tts_announced = False
         self._no_model_announced = False
+        self._piper_fallback_announced = False
         # Counters, so a storm is provable rather than asserted.
         self.spoken = 0
         self.dropped_rate = 0
@@ -649,20 +824,28 @@ class Narrator:
             self.from_template += 1
             if reason in ("empty", "no transport") or reason.startswith("transport error"):
                 self._announce_once("_no_model_announced", "info", NO_MODEL_MESSAGE)
-        ok = False
-        # Hold the music for as long as this line will take (DEC-PHASE12-044).
-        # espeak-ng runs near 175 wpm; 2.5 words/s plus a 1s tail is generous
-        # without being open-ended. A narration is capped at 24 words by
-        # validate_line(), so this cannot exceed ~11s. Best-effort: duck_music
-        # never raises, and a failure here costs music, never the alert.
+        ok, why = False, None
+        # Hold the music for as long as this line will take (DEC-PHASE12-044):
+        # the same ESPEAK_WPM estimate the playback timeout uses, capped at
+        # PLAYBACK_MAX_SECONDS. Best-effort: duck_music never raises, and a
+        # failure here costs music, never the alert.
         try:
-            rain_lib.duck_music(min(12.0, len(text.split()) / 2.5 + 1.0))
+            rain_lib.duck_music(min(PLAYBACK_MAX_SECONDS, estimated_seconds(text)))
         except Exception:                            # noqa: BLE001
             pass
         try:
-            ok = bool(self.speaker(text, rain_lib.load_config()))
+            result = self.speaker(text, rain_lib.load_config())
         except Exception:                            # noqa: BLE001
-            ok = False
+            result = False
+        # A speaker returns a SpeakResult (speak), the (spoken, degradation)
+        # pair of speak_with_fallback, or a bare bool (test doubles).
+        if isinstance(result, tuple):
+            ok, why = bool(result[0]), (result[1] if len(result) > 1 else None)
+        else:
+            ok, why = bool(result), getattr(result, "why", None)
+        if why:
+            self._announce_once("_piper_fallback_announced", "notice",
+                                PIPER_FALLBACK_MESSAGE.format(why=why))
         if ok:
             self.spoken += 1
             self._last_spoken = self.clock()

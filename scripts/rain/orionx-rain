@@ -267,6 +267,25 @@ def speech_status() -> int:
               "install-piper-voice.sh")
     else:
         print(f"                  piper voice: {voice}")
+    if backend is not None:
+        # Presence is not proof (#122): synthesise once, timed, nothing played.
+        probe = mod.probe_synthesis(backend)
+        if probe["ok"]:
+            print(f"  synthesis     : {backend} made {probe['audio_seconds']:.1f}s "
+                  f"of audio in {probe['seconds']:.1f}s")
+        else:
+            print(f"  synthesis     : FAILED — {probe['reason']}")
+            if backend == "piper":
+                print("                  Consequence: alerts fall through to espeak-ng,")
+                print("                  announced once on the event bus. Still spoken.")
+                print("                  Fix: sudo /opt/orionx/optional/"
+                      "install-piper-voice.sh --force")
+                print("                  (live USB: pip's piper lives in the RAM overlay")
+                print("                  and is gone after a reboot unless persistence")
+                print("                  covers /; the installer refetches only what is missing)")
+            else:
+                print("                  Consequence: TONE-ONLY until espeak-ng works.")
+                print("                  Fix: sudo apt-get install --reinstall -y espeak-ng")
     reachable = mod.ollama_generate("Reply with the single word: ok") is not None
     print(f"  nebula        : {'reachable' if reachable else 'not answering'}"
           f"  ({mod.NEBULA_URL})")
@@ -303,8 +322,11 @@ def speech_test() -> int:
     print(f"source   : {provenance} ({reason}) in {time.time() - t0:.2f}s")
     backend = mod.tts_backend()
     print(f"engine   : {backend or 'NONE'}")
-    ok = mod.speak(text, rain_lib.load_config()) if backend else False
+    ok, why = (mod.speak_with_fallback(text, rain_lib.load_config())
+               if backend else (False, None))
     print(f"played   : {ok}")
+    if why:
+        print(f"fallback : {why}")
     return 0
 
 
