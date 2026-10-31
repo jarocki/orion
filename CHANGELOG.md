@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Release pipeline: signed staging on the runner.** The v3.1.1 tag build
+  passed every gate and imported the signing key, then died at "xorriso is
+  required to verify a signed ISO": `stage-split-release.sh` verifies the
+  ISO's inventory, dpkg database and boot kernel with xorriso and unsquashfs on
+  the runner, and ubuntu-latest ships neither. `release.yml` now installs
+  `xorriso` and `squashfs-tools` before staging, and `check_workflows.py`
+  asserts the step exists and precedes staging. v3.1.1 itself was finished the
+  manual way (release-process §10) from the run's artifact.
+
 ## [v3.1.1] — 2026-10-31 (security and patch release)
 
 Security update plus fixes for the hardware findings reported on the HP
