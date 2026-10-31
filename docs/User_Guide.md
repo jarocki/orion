@@ -416,6 +416,8 @@ Left of the window list sit the **Orion-X** applications menu and the Orion Cock
 | ◆ *N* peers | Live mesh peers from the root-written snapshot (`◆ 3 peers`); `◆ stale (N s)` when the snapshot timer is not refreshing; `— (no snapshot)` when the mesh is idle |
 | ◎ *scans* | Number of scan / intrusion-detection events published to the event bus since boot (categories `ids`, `scan`, `recon`, `probe`, or sources `suricata`, `zeek`, `nucleotide`). `◎ 0` on a quiet deck is normal |
 | ◉ *clients* | Number of other machines on the local network segment that have exchanged traffic with this deck (live entries in the ARP/neighbour table) |
+| speaker | Volume and mute (click for the slider, scroll to adjust, middle-click to mute); the keyboard's volume keys do the same |
+| battery | Charge level and time remaining, with a display-brightness slider in its menu; the keyboard's brightness keys adjust the backlight directly (v3.1.1 and later; on earlier ISOs neither worked) |
 
 ### Cockpit tabs (formerly the Control Center)
 
