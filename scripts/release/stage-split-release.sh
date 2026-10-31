@@ -90,9 +90,9 @@ if [[ $SIGN -eq 1 ]]; then
         > "$gate_dir/status" 2>/dev/null || die "ISO dpkg status is unreadable"
     checker="$REPO_ROOT/iso/config/includes.chroot/usr/lib/orionx/check-package-security.py"
     python3 "$checker" --packages "$gate_dir/filesystem.packages" \
-        || die "ISO package inventory fails PHP security floor"
+        || die "ISO package inventory fails the package security floors"
     python3 "$checker" --dpkg-status "$gate_dir/status" \
-        || die "shipped root filesystem fails PHP security floor"
+        || die "shipped root filesystem fails the package security floors"
     rm -rf -- "$gate_dir"
     trap - EXIT
 fi

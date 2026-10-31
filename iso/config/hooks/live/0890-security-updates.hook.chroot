@@ -1,6 +1,9 @@
 #!/bin/sh
 # Refresh Trixie security metadata and upgrade before the image is sealed.
 # Failure is fatal: an offline/stale mirror must not silently publish an ISO.
+# The gate that follows holds the image to the floor table in
+# check-package-security.py (one row per advisory the release notes promise,
+# DEC-PHASE13-027); a stale mirror that leaves a floored package behind fails here.
 set -eu
 
 export DEBIAN_FRONTEND=noninteractive

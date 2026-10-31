@@ -1505,7 +1505,7 @@ build_iso() {
     # Check the actual ISO inventory, not the source package lists. A build
     # containing PHP below DSA-6574-1 must never be copied or checksummed.
     local package_gate_dir
-    package_gate_dir="$(mktemp -d "$TMP_DIR/php-package-gate.XXXXXXXX")"
+    package_gate_dir="$(mktemp -d "$TMP_DIR/package-gate.XXXXXXXX")"
     if ! xorriso -osirrox on -indev "$built_iso" \
         -extract /live/filesystem.packages "$package_gate_dir/filesystem.packages" \
         >/dev/null 2>&1; then
@@ -1515,7 +1515,7 @@ build_iso() {
     fi
     if ! python3 "$ISO_DIR/config/includes.chroot/usr/lib/orionx/check-package-security.py" \
         --packages "$package_gate_dir/filesystem.packages"; then
-        log "ERROR: ISO failed the PHP package security gate"
+        log "ERROR: ISO failed the package security gate (Debian security floors, DEC-PHASE13-027)"
         rm -rf -- "$package_gate_dir"
         exit 1
     fi

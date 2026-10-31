@@ -97,7 +97,7 @@ if gpg --batch --passphrase '' --quick-gen-key "Release Test <release-test@examp
         mksquashfs "$S/root" "$S/iso/live/filesystem.squashfs" -noappend -quiet >/dev/null
         xorriso -as mkisofs -quiet -o "$S/stale.iso" "$S/iso" >/dev/null 2>&1
         OUT="$(bash "$STAGE" "$S/stale.iso" "$TAG" --out "$S/stale-release" --part-size 1m --key "$FPR" 2>&1)"; RC=$?
-        [[ $RC -ne 0 && "$OUT" == *"shipped root filesystem fails PHP security floor"* ]] \
+        [[ $RC -ne 0 && "$OUT" == *"shipped root filesystem fails the package security floors"* ]] \
             && pass "signed staging rejects old PHP hidden from the ISO package inventory" \
             || fail "stale shipped PHP" "rc=$RC $OUT"
     fi

@@ -9,10 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — v3.1.1 (patch release)
 
-Fixes for the hardware findings reported on the HP Pavilion with the v3.1.0
-ISO (2026-10-26), tracked under the
-[v3.1.1 milestone](https://github.com/jarocki/orion/milestone/2). All of them
-are also present in v3.0.0. No ISO has been built from this section yet.
+Security update plus fixes for the hardware findings reported on the HP
+Pavilion with the v3.1.0 ISO (2026-10-26), tracked under the
+[v3.1.1 milestone](https://github.com/jarocki/orion/milestone/2). All of the
+fixes are also present in v3.0.0. A development ISO built from the stack on
+2026-10-28 (`v3.1.0-6-gfa63020`, SHA-256 `f18fe348…bec3f4`) booted on the
+Pavilion and confirmed the five fixes; the release ISO is built by CI from
+the tag.
+
+### Security
+
+- **Rebuilt against Debian 13 security as of 2026-10-30.** Every advisory from
+  DSA-6500-1 (2026-09-16) to DSA-6598-1 (2026-10-30) was checked against the
+  image's package inventory: 26 of them touch packages the deck ships, and the
+  2026-10-28 build carries the fixed version of each. Relative to the v3.1.0
+  release ISO (built 2026-10-25), two shipped packages changed for security
+  reasons: **firefox-esr** 153.5.1 → 153.6.0esr-1~deb13u1 (DSA-6590-1,
+  145 CVEs, published three days after v3.1.0 was cut) and **zeek-core**
+  9.0.0 → 9.0.1 (Zeek's 2026-10-26 batch of ten analyser advisories,
+  GHSA-85jg-jxjg-3rvh et al.; v3.1.0 shipped 9.0.0 from the OBS repository).
+- **PHP2Shell (CVE-2026-109618, CVE-2026-109619; DSA-6574-1).** Not exposed:
+  no PHP runtime is in the image, and the gate now states that rather than
+  staying silent. The 8.4.27-1~deb13u1 floor from v3.0.1 remains for any image
+  that adds PHP.
+- **Node2Shell (CVE-2026-111497; DSA-6582-1).** The flaw is in the Brotli
+  decoder, which this image ships as `libbrotli1` (linked by curl and Firefox)
+  and `python3-brotli`; no Node.js is shipped. Both are at the fixed
+  1.1.0-2+deb13u1, which v3.1.0 already carried; the v3.0.x images (built
+  2026-10-08) predate the fix and should be replaced by this release.
+- **Security floors generalised (DEC-PHASE13-027).** The build hook, the ISO
+  inventory check in `build-iso.sh`, the content-presence release gate and
+  the signed-staging script now enforce one floor table in
+  `check-package-security.py` instead of a PHP-only constant: PHP 8.4, Brotli,
+  Node.js (20.19.2+dfsg-1+deb13u3, DSA-6517-1, for any image that adds it),
+  the kernel (6.12.113-1, DSA-6568-1), Firefox ESR, OpenSSL
+  (3.5.7-1~deb13u3, DSA-6531-1), curl (8.14.1-2+deb13u7, DSA-6558-1), Expat
+  (2.9.0-1~deb13u1, DSA-6566-1), xz (5.8.1-1+deb13u2, DSA-6549-1), Wireshark
+  (4.4.19-0+deb13u1, DSA-6541-1), BIND tools (1:9.20.30-1~deb13u1,
+  DSA-6576-1), Unbound (1.26.2-0+deb13u1, DSA-6581-1) and Zeek (9.0.1-0).
+  A floor applies only to packages that are present; comparison is dpkg's.
+  `tests/unit/test_package_security.py` asserts that this changelog cites
+  every advisory the table enforces, so a promised fix cannot go unchecked.
+- **Not changed in this release.** Ollama stays at the pinned 0.30.7 (2026-06):
+  no published advisory covers that version, the service is confined to
+  loopback (DEC-006), and moving to the 0.40 line is a tested upgrade, not a
+  patch. Tracked separately.
 
 ### Fixed
 
