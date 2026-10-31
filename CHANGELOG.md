@@ -17,7 +17,7 @@ unsquashfs. Tags are immutable, so v3.1.1 stays a source tag with a
 CI-built but unpublished ISO; v3.1.2 is the first release whose split,
 signed assets and draft GitHub Release come from the tag run alone
 (release-process §10 remains the fallback). Also carries the User Guide
-version slots the v3.1.1 prep missed and the QEMU UEFI boot diagnostics
+version slots the v3.1.1 prep missed and the QEMU boot-flake diagnostics
 (#141).
 
 ### Fixed
