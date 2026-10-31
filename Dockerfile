@@ -1,7 +1,7 @@
 FROM ubuntu:22.04
 
 LABEL maintainer="Orion-X Project"
-LABEL version="3.1.0"
+LABEL version="3.1.1"
 LABEL description="Orion-X Phoenix Edition - Incident Response & Digital Forensics Toolkit"
 
 # Prevent interactive prompts during installation
@@ -73,7 +73,7 @@ RUN chmod +x /opt/orionx/scripts/*.sh /opt/orionx/scripts/*.py /opt/orionx/scrip
     ln -sf /opt/orionx/scripts/download-samples.sh /usr/bin/
 
 # Create welcome message
-RUN echo '#!/bin/bash\necho ""\necho "Welcome to Orion-X Phoenix Edition v3.1.0 Docker Environment"\necho "Type \"orionx-help\" for a list of available commands"\necho ""' > /etc/update-motd.d/10-orionx && \
+RUN echo '#!/bin/bash\necho ""\necho "Welcome to Orion-X Phoenix Edition v3.1.1 Docker Environment"\necho "Type \"orionx-help\" for a list of available commands"\necho ""' > /etc/update-motd.d/10-orionx && \
     chmod +x /etc/update-motd.d/10-orionx
 
 # Add bash aliases and help function for user

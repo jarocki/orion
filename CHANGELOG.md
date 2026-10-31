@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased] — v3.1.1 (patch release)
+## [v3.1.1] — 2026-10-31 (security and patch release)
 
 Security update plus fixes for the hardware findings reported on the HP
 Pavilion with the v3.1.0 ISO (2026-10-26), tracked under the
