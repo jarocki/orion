@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `xorriso` and `squashfs-tools` before staging, and `check_workflows.py`
   asserts the step exists and precedes staging. v3.1.1 itself was finished the
   manual way (release-process §10) from the run's artifact.
+- **User Guide release slots.** The v3.1.1 release prep bumped `manifest.json`,
+  the README and the Dockerfile but not the two `<!--orionx:release-->` slots
+  in `docs/User_Guide.md`, so `test_operator_surfaces.sh` failed on develop and
+  main at the tag ("release slots say v3.1.0, want v3.1.1"). Both slots now say
+  v3.1.1; the footer states which ISO passed which checks.
 
 ## [v3.1.1] — 2026-10-31 (security and patch release)
 
