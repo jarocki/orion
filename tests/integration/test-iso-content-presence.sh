@@ -140,6 +140,7 @@ echo "  Working directory: $WORK"
 echo "  Extracting /live/filesystem.squashfs from ISO..."
 xorriso -osirrox on -indev "$ISO_PATH" \
     -extract /live/filesystem.squashfs "$WORK/squashfs.img" \
+    -extract /live/vmlinuz "$WORK/vmlinuz" \
     2>/dev/null
 
 if [[ ! -f "$WORK/squashfs.img" ]]; then
@@ -199,11 +200,12 @@ SQF="$WORK/sqfs"
 # prevents a release gate from trusting source package lists alone.
 section "Debian security floors in shipped root filesystem (DEC-PHASE13-027)"
 if python3 "$REPO_ROOT/iso/config/includes.chroot/usr/lib/orionx/check-package-security.py" \
-    --dpkg-status "$SQF/var/lib/dpkg/status"; then
-    pass "every shipped package is at or above its Debian security floor (check-package-security.py --list)"
+    --dpkg-status "$SQF/var/lib/dpkg/status" --require-kernel \
+    --squashfs "$WORK/squashfs.img" --boot-kernel "$WORK/vmlinuz"; then
+    pass "every shipped package is at or above its Debian security floor, and the boot kernel is the packaged one (check-package-security.py --list)"
 else
-    fail "every shipped package is at or above its Debian security floor" \
-         "missing package database, or a package below a floor (see ERROR line above)"
+    fail "every shipped package is at or above its Debian security floor, and the boot kernel is the packaged one" \
+         "missing package database, a package below a floor, no real kernel, or a boot kernel that is not in the squashfs (see ERROR line above)"
 fi
 
 # Image-reading helpers (sqf_resolve, dpkg_state, assert_release_promises).

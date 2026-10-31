@@ -62,7 +62,12 @@ Before tagging:
   it. A floor applies only to packages that are present: an image with no PHP
   or Node.js does not expose those CVEs, and the gate reports them as not
   shipped. A missing inventory, a missing `dpkg`, or a failed update blocks
-  release. Before tagging a security patch, walk the DSA index
+  release. The kernel is the one floor that also demands presence (#136):
+  a real, supported 6.12 amd64 `linux-image-*` must be installed (metapackage
+  or headers alone do not count), held packages are checked too, and the ISO
+  `/live/vmlinuz` must match a checked `/boot/vmlinuz-*` in its squashfs, so
+  the gate checks the shipped payload rather than the build host kernel.
+  Before tagging a security patch, walk the DSA index
   (<https://lists.debian.org/debian-security-announce/>) from the previous
   tag's build date, add a row for every advisory whose fixed version the notes
   promise, and raise rows that already exist; never lower one.

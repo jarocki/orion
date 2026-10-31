@@ -42,12 +42,19 @@ the tag.
   the signed-staging script now enforce one floor table in
   `check-package-security.py` instead of a PHP-only constant: PHP 8.4, Brotli,
   Node.js (20.19.2+dfsg-1+deb13u3, DSA-6517-1, for any image that adds it),
-  the kernel (6.12.113-1, DSA-6568-1), Firefox ESR, OpenSSL
+  the kernel (6.12.113-1, DSA-6568-1 / CVE-2026-98432), Firefox ESR, OpenSSL
   (3.5.7-1~deb13u3, DSA-6531-1), curl (8.14.1-2+deb13u7, DSA-6558-1), Expat
   (2.9.0-1~deb13u1, DSA-6566-1), xz (5.8.1-1+deb13u2, DSA-6549-1), Wireshark
   (4.4.19-0+deb13u1, DSA-6541-1), BIND tools (1:9.20.30-1~deb13u1,
   DSA-6576-1), Unbound (1.26.2-0+deb13u1, DSA-6581-1) and Zeek (9.0.1-0).
   A floor applies only to packages that are present; comparison is dpkg's.
+  The kernel is the exception (#136): at every release boundary a real,
+  supported 6.12 amd64 `linux-image-*` must be present (metapackages,
+  headers and `-dbg` do not count), held packages count as installed, and
+  the ISO's `/live/vmlinuz` must be byte-identical to a checked
+  `/boot/vmlinuz-*` inside the squashfs, so a stale boot payload cannot hide
+  behind a fixed package list. These are regression guards: the v3.1.0 build
+  already installed `linux-image-6.12.113+deb13-amd64` at 6.12.113-1.
   `tests/unit/test_package_security.py` asserts that this changelog cites
   every advisory the table enforces, so a promised fix cannot go unchecked.
 - **Not changed in this release.** Ollama stays at the pinned 0.30.7 (2026-06):

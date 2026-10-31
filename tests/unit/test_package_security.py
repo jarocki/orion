@@ -86,8 +86,9 @@ def test_name_patterns_match_shipped_binaries_not_neighbours():
 def test_inventory_without_floored_packages_is_safe(tmp_path):
     inventory = tmp_path / "filesystem.packages"
     inventory.write_text("bash 5.2.15-2\n")
-    checked = MODULE.check(MODULE.installed_packages(inventory, "packages"))
-    assert checked and all(n == 0 for n in checked.values())
+    packages = MODULE.installed_packages(inventory, "packages")
+    assert MODULE.check(packages) == []
+    assert all(n == 0 for n in MODULE.coverage(packages).values())
 
 
 def test_other_php_runtime_rejected():
@@ -137,6 +138,15 @@ def test_list_prints_every_floor():
     assert "DSA-6582-1" in out and "Node2Shell" in out
 
 
+@needs_dpkg
+def test_kernel_presence_is_required_only_when_asked():
+    """Libraries are absence-safe; the kernel is not, but only at release boundaries."""
+    assert MODULE.check({"bash": "5.2.15-2"}) == []
+    with pytest.raises(ValueError, match="no checked versioned"):
+        MODULE.check({"bash": "5.2.15-2"}, require_kernel=True)
+    assert MODULE.check({"linux-image-6.12.113+deb13-amd64": "6.12.113-1"}, require_kernel=True) == ["6.12.113+deb13-amd64"]
+
+
 # --- version ordering, by dpkg ---------------------------------------------
 
 @needs_dpkg
@@ -173,8 +183,8 @@ def test_php_floor(version, passes):
 def test_floors_by_dpkg(name, version, passes):
     packages = {name: version, "bash": "5.2.15-2"}
     if passes:
-        checked = MODULE.check(packages)
-        assert sum(checked.values()) == 1
+        MODULE.check(packages)
+        assert sum(MODULE.coverage(packages).values()) == 1
     else:
         with pytest.raises(ValueError, match="below Debian security floor"):
             MODULE.check(packages)

@@ -9,4 +9,4 @@ set -eu
 export DEBIAN_FRONTEND=noninteractive
 apt-get -o APT::Update::Error-Mode=any update
 apt-get -y -o Dpkg::Options::=--force-confold upgrade --with-new-pkgs
-python3 /usr/lib/orionx/check-package-security.py --dpkg-status /var/lib/dpkg/status
+python3 /usr/lib/orionx/check-package-security.py --dpkg-status /var/lib/dpkg/status --require-kernel
