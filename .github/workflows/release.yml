@@ -64,6 +64,36 @@ jobs:
             echo "ORIONX_VERSION=dev-dispatch-${GITHUB_RUN_ID}" >> "${GITHUB_ENV}"
           fi
 
+      # @decision DEC-PHASE13-029
+      # @title CI builds and gates; the owner signs. The passphrase is never a secret.
+      # @status accepted
+      # @rationale The signing key's passphrase stays on the owner's Mac. The
+      #   v3.1.2 tag run (41248480723) built, gated and imported the key, then
+      #   died at the signature with "gpg: Sorry, we are in batchmode - can't get
+      #   input" because gpg-agent is seeded only when the import action is given
+      #   a passphrase. That is not a failure of the release; it is where the
+      #   automated pipeline ends by design. So: decide up front whether this run
+      #   can sign (both secrets present). If it can, stage, sign and draft as
+      #   before. If it cannot, skip those steps, upload the gated ISO as the run
+      #   artifact, and hand off to release-process §10 with a green run. An
+      #   unsigned draft is still impossible (DEC-PHASE12-026): the draft step
+      #   only runs after signed staging. Secrets cannot be tested in `if:`, so
+      #   they are reduced to booleans in env here.
+      - name: Decide whether this run can sign (DEC-PHASE13-029)
+        id: signing
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          HAVE_KEY: ${{ secrets.GPG_PRIVATE_KEY != '' }}
+          HAVE_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE != '' }}
+        run: |
+          if [[ "${HAVE_KEY}" == "true" && "${HAVE_PASSPHRASE}" == "true" ]]; then
+            echo "can_sign=true" >> "${GITHUB_OUTPUT}"
+            echo "signing key and passphrase present: this run will stage, sign and draft"
+          else
+            echo "can_sign=false" >> "${GITHUB_OUTPUT}"
+            echo "no signing passphrase in CI (by design, DEC-PHASE13-029): this run builds, gates and uploads the ISO; signing is the owner's step (release-process §10)"
+          fi
+
       - name: Build ISO in debian:trixie container
         run: |
           set -o pipefail
@@ -133,13 +163,13 @@ jobs:
       # /boot/vmlinuz-*. ubuntu-latest has neither (the v3.1.1 run died here with
       # "xorriso is required to verify a signed ISO"); python3, dpkg and gpg it has.
       - name: Install release tooling on the runner (xorriso, squashfs-tools)
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.can_sign == 'true'
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends xorriso squashfs-tools
 
       - name: Import GPG signing key
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.can_sign == 'true'
         uses: crazy-max/ghaction-import-gpg@v6
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
@@ -150,14 +180,14 @@ jobs:
       # (CHANGELOG section + download/verify instructions), and verifies all
       # of it before returning. It fails if the tag has no CHANGELOG section.
       - name: Stage signed split release assets
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.can_sign == 'true'
         env:
           ORIONX_GPG_EXTRA_ARGS: --pinentry-mode loopback
         run: |
           bash scripts/release/stage-split-release.sh "${ISO}" "${GITHUB_REF_NAME}" --out output/release
 
       - name: Assert every release asset is under GitHub's 2 GiB cap
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.can_sign == 'true'
         run: |
           over="$(find output/release -type f -size +2097151k)"
           if [[ -n "${over}" ]]; then
@@ -170,7 +200,7 @@ jobs:
       # explicit approve gate. prerelease: auto-flagged for -rc/-beta/-alpha.
       # Every listed file must exist (fail_on_unmatched_files: true).
       - name: Create DRAFT GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.can_sign == 'true'
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
@@ -202,6 +232,30 @@ jobs:
             output/release/RELEASE-NOTES.md
             tmp/release-build-iso.log
           if-no-files-found: warn
+
+      # The designed end of a tag run without the passphrase: say exactly what the
+      # owner does next, in the log and in the job summary.
+      - name: Hand off to the owner for signing (release-process §10)
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.can_sign != 'true'
+        run: |
+          {
+            echo "## ${GITHUB_REF_NAME}: built and gated; signing is the owner's step"
+            echo
+            echo "This run built \`${ISO}\`, verified its sidecar and passed the Debian security floors and the content-presence release gate."
+            echo "CI holds no signing passphrase (DEC-PHASE13-029), so staging, signing and the draft release are done on the owner's Mac:"
+            echo
+            echo '```'
+            echo "gh run download ${GITHUB_RUN_ID} -n release-artifacts-${GITHUB_RUN_ID} -D tmp/release-${GITHUB_REF_NAME}-ci"
+            echo "(cd tmp/release-${GITHUB_REF_NAME}-ci/output && shasum -a 256 -c orionx-phoenix-edition-${GITHUB_REF_NAME}.iso.sha256)"
+            echo "bash scripts/release/stage-split-release.sh tmp/release-${GITHUB_REF_NAME}-ci/output/orionx-phoenix-edition-${GITHUB_REF_NAME}.iso ${GITHUB_REF_NAME} --out tmp/release-${GITHUB_REF_NAME} --key 4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF"
+            echo "R=tmp/release-${GITHUB_REF_NAME}"
+            echo "gh release create ${GITHUB_REF_NAME} --draft --title \"${GITHUB_REF_NAME} <title>\" --notes-file \"\$R/RELEASE-NOTES.md\" \"\$R/SHA256SUMS\" \"\$R/SHA256SUMS.asc\" \"\$R/SHA512SUMS\" \"\$R/SHA512SUMS.asc\" \"\$R/REASSEMBLE.txt\""
+            echo "for p in \"\$R\"/*.iso.part-*; do caffeinate -i gh release upload ${GITHUB_REF_NAME} --clobber \"\$p\"; done"
+            echo "gh release view ${GITHUB_REF_NAME} --json assets --jq '.assets[]|[.name,.size]|@tsv'"
+            echo '```'
+            echo
+            echo "Then flip the draft: \`gh release edit ${GITHUB_REF_NAME} --draft=false\`. See docs/release-process.md §10."
+          } | tee -a "${GITHUB_STEP_SUMMARY}"
 
       - name: Release summary
         if: always()

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Release pipeline: a tag run without the passphrase ends green at the
+  gated artifact (DEC-PHASE13-029).** The v3.1.2 tag run built and gated the
+  ISO, imported the signing key, and then failed to sign: "gpg: Sorry, we are
+  in batchmode - can't get input". The import action seeds gpg-agent only when
+  given a passphrase, and the passphrase is not and will not be a repository
+  secret. `release.yml` now decides up front whether it can sign (both secrets
+  present). If not, it skips the runner tooling, key import, staging and draft
+  steps, uploads the gated ISO as `release-artifacts-<run>`, and prints the
+  release-process §10 commands for that exact run in the log and the job
+  summary. The draft step still runs only after signed staging, so an unsigned
+  draft remains impossible. `check_workflows.py` asserts the decision step,
+  the `can_sign` guards on every signing step, the hand-off step and the
+  always-on artifact upload.
+
 ## [v3.1.2] — 2026-10-31 (release pipeline patch)
 
 Same shipped software as v3.1.1 (the Debian security floors and the HP

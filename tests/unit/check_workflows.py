@@ -55,6 +55,29 @@ tools = [s for s in steps if "xorriso" in s.get("run", "") and "squashfs-tools" 
 check("release.yml installs xorriso + squashfs-tools on the runner (v3.1.1 staging failure)", bool(tools))
 check("the runner tooling step precedes signed staging",
       bool(tools) and names.index(tools[0].get("name", "")) < names.index("Stage signed split release assets"))
+# DEC-PHASE13-029: CI builds and gates; the owner signs. The passphrase is never
+# a repository secret, so a tag run decides up front whether it can sign, and
+# when it cannot it skips signing/staging/draft and hands off to §10 — green,
+# with the gated ISO as the run artifact. An unsigned draft stays impossible.
+decide = by_name.get("Decide whether this run can sign (DEC-PHASE13-029)", {})
+decide_env = decide.get("env", {})
+check("release.yml decides can_sign from both secrets before the build (DEC-PHASE13-029)",
+      decide.get("id") == "signing"
+      and "secrets.GPG_PRIVATE_KEY" in str(decide_env.get("HAVE_KEY", ""))
+      and "secrets.GPG_PASSPHRASE" in str(decide_env.get("HAVE_PASSPHRASE", ""))
+      and "can_sign=false" in decide.get("run", "") and "can_sign=true" in decide.get("run", "")
+      and bool(decide) and names.index(decide["name"]) < names.index("Build ISO in debian:trixie container"))
+signing_steps = ["Install release tooling on the runner (xorriso, squashfs-tools)", "Import GPG signing key",
+                 "Stage signed split release assets", "Assert every release asset is under GitHub's 2 GiB cap",
+                 "Create DRAFT GitHub Release"]
+check("every signing/staging/draft step runs only when can_sign is true (no unsigned draft, DEC-PHASE12-026)",
+      all("steps.signing.outputs.can_sign == 'true'" in str(by_name.get(n, {}).get("if", "")) for n in signing_steps))
+handoff = by_name.get("Hand off to the owner for signing (release-process §10)", {})
+check("a tag run that cannot sign hands off to release-process §10 instead of failing",
+      "can_sign != 'true'" in str(handoff.get("if", ""))
+      and "release-artifacts-" in handoff.get("run", "") and "stage-split-release.sh" in handoff.get("run", "")
+      and "GITHUB_STEP_SUMMARY" in handoff.get("run", ""))
+check("the ISO artifact upload still runs on every outcome", str(by_name["Upload build artifacts to Actions"].get("if", "")) == "always()")
 check("no step sets continue-on-error (signing is hard-fail)", not any("continue-on-error" in s for s in steps))
 check("the unreachable 'Report signing status' step is gone (P3-12)", "Report signing status" not in by_name)
 verify = by_name["Verify ISO artifact"]["run"]
