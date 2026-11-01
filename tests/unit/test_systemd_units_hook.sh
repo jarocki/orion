@@ -243,6 +243,8 @@ EXPECTED_UNITS=(
     "orionx-mesh-discover.timer"
     "orionx-firewall.service"
     "orionx-first-boot.service"
+    # DEC-PHASE13-030 (#141): quits the splash with no TTY; Wants= target of the wizard, never autostarted
+    "orionx-plymouth-quit.service"
     # DEC-PHASE13-028 (#141): OnFailure= target of plymouth-quit-wait, installed, never autostarted
     "orionx-plymouth-diag.service"
     "orionx-scanwatch.service"
