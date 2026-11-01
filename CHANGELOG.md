@@ -10,15 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v3.1.2] — 2026-10-31 (release pipeline patch)
 
 Same shipped software as v3.1.1 (the Debian security floors and the HP
-Pavilion fixes), re-tagged so the release is produced end to end by CI:
-the v3.1.1 tag run built and gated the ISO and imported the signing key,
-then died staging the signed assets because the runner had no xorriso or
-unsquashfs. Tags are immutable, so v3.1.1 stays a source tag with a
-CI-built but unpublished ISO; v3.1.2 is the first release whose split,
-signed assets and draft GitHub Release come from the tag run alone
-(release-process §10 remains the fallback). Also carries the User Guide
-version slots the v3.1.1 prep missed and the QEMU boot-flake diagnostics
-(#141).
+Pavilion fixes), re-tagged after the v3.1.1 tag run died staging its assets
+because the runner had no xorriso or unsquashfs. Tags are immutable, so
+v3.1.1 stays a source tag with a CI-built but unpublished ISO. The v3.1.2 tag
+run built the ISO, passed every gate, installed the runner tooling and
+imported the signing key, then stopped at the signature itself: the key's
+passphrase is not, and will not be, a repository secret (DEC-PHASE13-029),
+so CI cannot sign. That is where the automated pipeline ends by design. The
+owner staged, split and signed the CI-built ISO on his Mac (release-process
+§10) and uploaded the 21 assets. Also carries the User Guide version slots
+the v3.1.1 prep missed and the QEMU boot-flake diagnostics (#141).
+
+**ISO identity.** SHA-256 `2718be02e596ddd5a5750252af5accc22865552b583dc0a0bd3a79c170b14d5c`,
+3,151,036,416 bytes (3.15 GB), built 2026-10-31 by the Release Pipeline (Actions
+run 41248480723) from `6be7ba0`, the tag commit. Baked `ISO_VERSION=v3.1.2`.
+Gates on this image, all in the same CI run: `.sha256` sidecar matches;
+Debian security floors (13 floors, 26 shipped packages at or above floor) with
+the boot kernel bound to the packaged one; content-presence in release mode
+(`ORIONX_RELEASE_GATE=1 ORIONX_EXPECT_VERSION=v3.1.2`). The release workflow
+has no QEMU step; the same tree minus the version literals (develop 7225ce2)
+passed QEMU BIOS and UEFI on the shared runner that day. Not yet booted on
+hardware. Signed by the owner with `4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF`;
+16 parts of 190 MiB plus `SHA256SUMS`, `SHA512SUMS`, their `.asc` signatures and
+`REASSEMBLE.txt`, every asset size verified against the staging directory.
 
 ### Fixed
 
