@@ -106,9 +106,19 @@ Before tagging:
   `git grep -n '<previous tag>'` that only historical references remain, and
   that no `<vX.Y.Z SHA-256 — filled at release>` placeholder is left
   (`git grep -n 'filled at release'` must be empty before the tag).
-- **GPG signing key** is provisioned as repository secrets:
-  - `secrets.GPG_PRIVATE_KEY` — ASCII-armored private key
-  - `secrets.GPG_PASSPHRASE` — passphrase for the key
+- **GPG signing is the owner's step, not CI's (DEC-PHASE13-029).** The
+  repository holds `secrets.GPG_PRIVATE_KEY` (the owner added it 2026-10-26, so
+  the tag run can import the key and prove the fingerprint), but the key's
+  passphrase is **not** a repository secret and will not become one: the repo
+  has no branch or tag protection, a write-capable default token and
+  third-party actions on movable tags, so anything stored there is exposed to
+  any workflow push. Without the passphrase gpg-agent on the runner has nothing
+  to offer and the tag run ends at "Stage signed split release assets" with
+  `gpg: Sorry, we are in batchmode - can't get input`. That is the designed
+  end of the automated pipeline: it has built, gated and uploaded the ISO as
+  the `release-artifacts-<run>` Actions artifact. Staging, signing and the
+  draft release are then done on the owner's Mac (§10). v3.1.2 was produced
+  exactly this way.
 
   The release signing identity is:
 
@@ -134,8 +144,10 @@ Before tagging:
   it proves only that the file matches what that page claims. Anyone who can
   replace the ISO can replace the checksum beside it.
 
-  If the signing step fails, provision the secrets. Do not re-add
-  `continue-on-error` to get a release out.
+  The tag run is expected to stop at the signature (no passphrase in CI);
+  download its artifact and sign per §10. Do not re-add `continue-on-error`
+  to get a release out, and do not put the passphrase in a secret to make
+  the run go green.
 - **`CHANGELOG.md` is updated** with a section for the version you are about
   to tag, including its *Known issues* list. The section heading must match
   one of:
@@ -263,9 +275,10 @@ whole ISO and every part, so signing them signs the release; there is no
 separate signature over the multi-GB ISO.
 
 A draft without `.asc` files cannot exist: the import and staging steps are
-hard-fail. If they failed, provision `secrets.GPG_PRIVATE_KEY` and
-`secrets.GPG_PASSPHRASE` and re-run the tag build; do not sign by hand into
-a CI draft.
+hard-fail, and CI cannot sign at all because the passphrase is never a
+repository secret (DEC-PHASE13-029). The tag run therefore never creates the
+draft; the owner stages, signs and creates it from the run's artifact (§10).
+Never sign by hand into a CI-created draft, and never relax the hard-fail.
 
 ### 4.3. Assert the image's identity matches the tag
 
