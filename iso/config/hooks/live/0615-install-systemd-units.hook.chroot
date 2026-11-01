@@ -43,6 +43,10 @@ UNIT_FILES=(
     "orionx-mesh-discover.timer"
     "orionx-firewall.service"
     "orionx-first-boot.service"
+    # DEC-PHASE13-030 (#141): quits the splash from a unit with no TTY before
+    # the wizard takes tty1. Pulled in by orionx-first-boot.service (Wants=);
+    # never autostarted, and a no-op once the first-boot guard file exists.
+    "orionx-plymouth-quit.service"
     # DEC-PHASE13-028 (#141): console dump when plymouth-quit-wait's cap fires.
     # Pulled in by OnFailure= (drop-in 20-orionx-diag.conf); never autostarted.
     "orionx-plymouth-diag.service"
@@ -182,11 +186,15 @@ done
 #   (1) a TimeoutStartSec cap drop-in for plymouth-quit-wait.service
 #       (includes.chroot/etc/systemd/system/plymouth-quit-wait.service.d/
 #        10-orionx-timeout.conf) — worst case a few extra seconds, never a hang;
-#   (2) the first-boot wizard unit runs `plymouth quit` in ExecStartPre, which
-#       both frees tty1 for the interactive wizard and satisfies quit-wait.
+#   (2) orionx-plymouth-quit.service quits the splash on first boot from a
+#       unit with NO TTY, and the wizard orders after it and after quit-wait
+#       (DEC-PHASE13-030). It used to be an ExecStartPre of the wizard unit
+#       itself; that ran inside the wizard's tty1 exec context and deadlocked
+#       systemd's pre-exec TTY reset against plymouthd some of the time (#141).
 # `splash` is back on the cmdline (DEC-PHASE11-044) and plymouth.enable=0 is
-# gone. Unmask the units (idempotent) so the splash paints; plymouth-quit.service
-# (Before=display-manager) still releases DRM before X starts.
+# gone. Unmask the units (idempotent) so the splash paints. Note that the stock
+# plymouth-quit.service never runs on this image: lightdm.service Conflicts=
+# it and quits plymouth itself (--retain-splash) on every boot after the first.
 for punit in plymouth-start.service plymouth-quit.service plymouth-quit-wait.service plymouth-read-write.service; do
     systemctl unmask "$punit" 2>/dev/null && echo "[install-systemd-units] unmasked: $punit"
 done

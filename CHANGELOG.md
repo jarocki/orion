@@ -11,6 +11,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **QEMU boot flake root-caused and fixed: plymouth is quit from a unit with
+  no TTY (#141, DEC-PHASE13-030).** The first two failures caught by the
+  `ORIONX-PLYMOUTH-DIAG` block (runs 41272254094 and 41272250733 on develop,
+  both BIOS, the eighth and ninth failures since 2026-10-25) carry the same
+  signature: plymouthd alive and not blocked, and two of systemd's own
+  pre-exec children stuck: the wizard's `ExecStartPre=plymouth quit`, shown by
+  `ps` as `(timeout)` because it never execed, holding tty1 on fds 0-2 and the
+  `/dev/console` lock on fd 3; and serial-getty's `(agetty)` waiting on that
+  lock (`locks_lock_inode_wait`). The mechanism, from systemd v257's
+  `exec-invoke.c`: a unit with `StandardInput=tty` and `TTYReset=yes` has its
+  TTY acquired, locked and reset before anything execs, and the wizard unit did
+  that to tty1 while plymouthd still owned the VT, because the only thing that
+  would have quit the splash was the very command waiting to exec. Nothing
+  else quits plymouth on first boot: `lightdm.service` conflicts out the stock
+  `plymouth-quit.service` and quits the splash itself, after the wizard. The
+  `timeout 10` wrapper added by DEC-PHASE13-028 never applied, since the block
+  is before exec. Fix, the same rule the stock `getty@.service` follows: a new
+  `orionx-plymouth-quit.service` (no TTY, `ExecStart=-/usr/bin/plymouth quit`,
+  20 s bound, same first-boot guard as the wizard) quits the splash, and the
+  wizard `Wants=` it and orders `After=` it and `plymouth-quit-wait.service`,
+  so plymouthd is gone before systemd touches tty1. The wizard unit runs no
+  plymouth command of its own any more. `test_first_boot_wizard.sh` asserts the
+  new shape and rejects any plymouth command in the wizard's exec context; the
+  0615 hook installs the unit (never autostarted). The diagnostics script now
+  also records the kernel stack, wchan and syscall of every console holder and
+  every pre-exec child, plus `/proc/locks`, so a recurrence names the blocking
+  call. Not yet reproduced locally; the PR's own QEMU runs are the evidence.
 - **Release pipeline: a tag run without the passphrase ends green at the
   gated artifact (DEC-PHASE13-029).** The v3.1.2 tag run built and gated the
   ISO, imported the signing key, and then failed to sign: "gpg: Sorry, we are

@@ -1,0 +1,49 @@
+# Orion-X Phoenix Edition — quit the Plymouth splash before the first-boot
+# wizard takes tty1.
+#
+# @decision DEC-PHASE13-030
+# @title Plymouth is quit from a unit with no TTY, never from the wizard's own
+#   exec context (#141)
+# @status accepted
+# @rationale The QEMU boot flake (#141, one firmware mode per run, BIOS and
+#   UEFI both seen) is a deadlock in systemd's pre-exec TTY setup, not a wedged
+#   plymouthd. orionx-first-boot.service is StandardInput=tty on /dev/tty1
+#   with TTYReset=yes, so BEFORE it can exec anything — including its old
+#   `ExecStartPre=plymouth quit` — systemd's child acquires tty1, takes the
+#   /dev/console lock and resets the terminal (exec-invoke.c, v257). plymouthd
+#   still owns tty1 at that moment because the only thing that would quit it is
+#   that very ExecStartPre; some of the time the reset blocks on tty1, the child
+#   never execs (`ps` shows it as "(timeout)", the pre-exec name), it holds the
+#   console lock forever, serial-getty@ttyS0's child then blocks on the same
+#   lock (wchan locks_lock_inode_wait), and no login prompt ever prints. The
+#   run 41272254094 diagnostics block (ORIONX-PLYMOUTH-DIAG) shows exactly
+#   that: plymouthd healthy in epoll_wait, "(timeout)" holding fds 0-2 on tty1
+#   and fd 3 on /dev/console, "(agetty)" waiting on the lock.
+#   The stock answer already exists: getty@.service is After=plymouth-quit-wait
+#   so it never touches a VT while plymouth owns it, and plymouth-quit.service
+#   quits the splash from a unit with no TTY. On this image lightdm.service
+#   Conflicts= and replaces plymouth-quit.service (it quits plymouth itself),
+#   so on first boot nothing quits the splash before the wizard — hence the
+#   ExecStartPre hack (DEC-PHASE11-044) and the deadlock. This unit is the
+#   first-boot stand-in for plymouth-quit.service: no TTY, no console lock,
+#   nothing to block on; the wizard Wants= it and orders After= it and after
+#   plymouth-quit-wait.service, so by the time systemd prepares tty1 for the
+#   wizard, plymouthd is gone. It runs only while the wizard's own guard file
+#   is absent; later boots leave the splash to lightdm as before.
+# @see orionx-first-boot.service, DEC-PHASE11-044, DEC-PHASE13-028
+
+[Unit]
+Description=Orion-X: quit the Plymouth splash before the first-boot wizard takes tty1
+After=plymouth-start.service systemd-user-sessions.service
+ConditionPathExists=!/var/lib/orionx/.first-boot-done
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# `-`: non-fatal when plymouthd is not running (splash disabled, or already
+# gone). No StandardInput=tty / TTYPath here, deliberately: that is the whole
+# point of this unit.
+ExecStart=-/usr/bin/plymouth quit
+# `plymouth quit` returns when plymouthd acknowledges; a splash that does not
+# answer must not hold onboarding. Same bound as the stock plymouth-quit.service.
+TimeoutStartSec=20

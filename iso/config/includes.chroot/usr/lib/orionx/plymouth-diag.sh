@@ -13,6 +13,14 @@
 # reaches the serial log — and, best effort and bounded, to /dev/console as
 # well. Each probe is independent and time-limited: one hanging or missing
 # tool must not hide the rest, and nothing here exits non-zero.
+#
+# Run 41272254094 (the first failure this unit caught) showed the deadlock is
+# in systemd's pre-exec TTY setup: a child that never execed — ps names such a
+# child "(timeout)" / "(agetty)" — holding the /dev/console lock, another
+# waiting on it (wchan locks_lock_inode_wait), plymouthd idle. The fix is
+# DEC-PHASE13-030 (orionx-plymouth-quit.service). What this script adds since:
+# the kernel stack, wchan and syscall of every console holder and of every
+# pre-exec child, and /proc/locks, so a recurrence names the blocking call.
 p="ORIONX-PLYMOUTH-DIAG"
 
 say() {
@@ -27,11 +35,21 @@ probe() {
     timeout 15 "$@" 2>&1 | while IFS= read -r line; do say "$label: $line"; done
 }
 
+# Where is a process stuck: kernel stack, wait channel, current syscall.
+# Reading /proc/PID/stack of a sleeping task is safe and needs only root.
+where() {
+    pid="$1"; label="$2"
+    [ -d "/proc/$pid" ] || return 0
+    say "$label state: $(awk '/^State:/ {print $2, $3}' "/proc/$pid/status" 2>/dev/null) wchan: $(cat "/proc/$pid/wchan" 2>/dev/null) syscall: $(cut -c1-60 "/proc/$pid/syscall" 2>/dev/null)"
+    [ -r "/proc/$pid/stack" ] && probe "$label stack" cat "/proc/$pid/stack"
+}
+
 up="$(cut -d' ' -f1 /proc/uptime 2>/dev/null || echo '?')"
 say "begin (uptime ${up}s)"
 
 set -- plymouth-start.service plymouth-quit.service plymouth-quit-wait.service \
-       orionx-first-boot.service serial-getty@ttyS0.service getty@tty1.service
+       orionx-plymouth-quit.service orionx-first-boot.service \
+       serial-getty@ttyS0.service getty@tty1.service
 probe status systemctl --no-pager --no-legend status "$@"
 
 jargs=""
@@ -39,21 +57,42 @@ for u in "$@"; do jargs="$jargs -u $u"; done
 # shellcheck disable=SC2086  # jargs is a flag list built above; splitting is the point
 probe journal sh -c "journalctl -b --no-pager -o short-monotonic $jargs 2>&1 | tail -n 60"
 
-probe proc sh -c "ps -eo pid,ppid,stat,wchan:24,etimes,args 2>/dev/null | awk '/plymouth|agetty/ && !/awk/'"
+# plymouth, getty, and every child systemd forked but that has not execed yet:
+# such a child shows its future command in parentheses, "(agetty)".
+probe proc sh -c "ps -eo pid,ppid,stat,wchan:24,etimes,args 2>/dev/null | awk '/plymouth|agetty|first-boot|^ *[0-9]+ +[0-9]+ +[A-Za-z<>+]+ +[^ ]+ +[0-9]+ +\\(/ && !/awk/'"
 
 for pid in $(pidof plymouthd 2>/dev/null); do
-    [ -r "/proc/$pid/stack" ] && probe "plymouthd[$pid] stack" cat "/proc/$pid/stack"
+    where "$pid" "plymouthd[$pid]"
 done
 
-# Who holds the console and the serial line (an fd on either).
+# Who holds the console and the serial line (an fd on either), and where each
+# holder is blocked. A holder that has not execed yet is systemd's pre-exec
+# child for a unit with StandardInput=tty (the deadlock of DEC-PHASE13-030).
+seen=""
 for fdlink in /proc/[0-9]*/fd/*; do
     target="$(readlink "$fdlink" 2>/dev/null)" || continue
     case "$target" in
         /dev/console|/dev/ttyS0|/dev/tty0|/dev/tty1)
             pid="${fdlink#/proc/}"; pid="${pid%%/*}"
-            say "holder: pid $pid ($(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | cut -c1-60)) fd ${fdlink##*/} -> $target" ;;
+            say "holder: pid $pid ($(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | cut -c1-60)) fd ${fdlink##*/} -> $target"
+            case " $seen " in *" $pid "*) ;; *) seen="$seen $pid"; where "$pid" "holder[$pid]" ;; esac ;;
     esac
 done
+
+# Pre-exec children that hold none of the nodes above (e.g. blocked earlier,
+# acquiring the terminal) still show up by their "(name)" comm.
+for st in /proc/[0-9]*/stat; do
+    pid="${st#/proc/}"; pid="${pid%%/*}"
+    case " $seen " in *" $pid "*) continue ;; esac
+    comm="$(sed -n 's/^[0-9]* (\(.*\)) .*/\1/p' "$st" 2>/dev/null)"
+    case "$comm" in
+        "("*")") where "$pid" "pre-exec[$pid] $comm" ;;
+    esac
+done
+
+# File locks: the /dev/console BSD lock systemd takes around every TTY reset
+# (lock_dev_console) shows here with its holder's pid.
+probe locks cat /proc/locks
 
 # Serial line state: tx/rx counters and modem lines (DCD/CTS) tell flow-control
 # and carrier stories; termios tells whether the line is -clocal or ixon.

@@ -606,8 +606,9 @@ fi
 # off-tty1 fix). W11-14d moved the wizard off tty1 because a NON-interactive
 # wizard writing to tty1 collided with the PLYMOUTH SPLASH on cold boot (boot
 # loop). Two things make interactive-on-tty1 safe now: (1) Plymouth is RE-ENABLED
-# (DEC-PHASE11-044) but the wizard unit runs `plymouth quit` in ExecStartPre, so
-# the splash releases tty1 + DRM before the wizard prompts (no collision); and
+# (DEC-PHASE11-044) but the splash is quit before the wizard takes tty1 — by
+# orionx-plymouth-quit.service, a unit with no TTY, which the wizard Wants= and
+# orders After= together with plymouth-quit-wait.service (DEC-PHASE13-030); and
 # (2) the unit uses Conflicts=getty@tty1 + Before=display-manager.service, the correct way
 # to own the console without contending with getty or the display manager. The
 # operator MUST be prompted for hostname/username/Wi-Fi, which requires a tty.
@@ -632,21 +633,73 @@ if grep -qE '^Before=display-manager.service' "$SYSTEMD_UNIT"; then
 else
     fail "wizard unit ordered Before=display-manager.service"
 fi
-# DEC-PHASE11-044: the unit must quit Plymouth before prompting, or the splash
-# holds tty1/DRM and the wizard's prompts are invisible (and quit-wait could hang).
-if grep -qE '^ExecStartPre=-?(/usr/bin/timeout [0-9]+ )?/bin/plymouth quit' "$SYSTEMD_UNIT"; then
-    pass "wizard unit quits Plymouth before prompting (ExecStartPre=plymouth quit — DEC-PHASE11-044)"
+# DEC-PHASE13-030 (#141): the splash must be gone BEFORE systemd prepares tty1
+# for this unit. Running `plymouth quit` from the wizard's own exec context
+# (the old ExecStartPre) deadlocked: with StandardInput=tty + TTYReset=yes,
+# systemd's pre-exec child acquires tty1, takes the /dev/console lock and
+# resets the terminal while plymouthd still owns the VT — some of the time
+# that never returns, the child never execs, and serial-getty blocks on the
+# same lock (run 41272254094). So: no plymouth command in this unit at all; the
+# quit lives in a unit with no TTY, and this unit orders after it and after
+# plymouth-quit-wait.service, exactly as the stock getty@.service does.
+section "DEC-PHASE13-030: plymouth is quit from a unit with no TTY (#141)"
+QUIT_UNIT="$(dirname "$SYSTEMD_UNIT")/orionx-plymouth-quit.service"
+if grep -qE '^ExecStartPre=.*plymouth' "$SYSTEMD_UNIT"; then
+    fail "wizard unit runs no plymouth command in its own (tty1) exec context" \
+         "ExecStartPre=plymouth quit inside a StandardInput=tty unit deadlocks systemd's pre-exec TTY reset against plymouthd (#141, DEC-PHASE13-030)"
 else
-    fail "wizard unit quits Plymouth before prompting" \
-         "Without ExecStartPre=plymouth quit, the splash hides the wizard prompts on tty1"
+    pass "wizard unit runs no plymouth command in its own (tty1) exec context"
 fi
-# DEC-PHASE13-028 (#141): a wedged plymouthd makes `plymouth quit` block forever;
-# the quit must be bounded so it cannot stall onboarding on top of the splash.
-if grep -qE '^ExecStartPre=-/usr/bin/timeout [0-9]+ /bin/plymouth quit' "$SYSTEMD_UNIT"; then
-    pass "wizard unit bounds plymouth quit with timeout (a wedged splash cannot stall onboarding — #141)"
+if grep -qE '^Wants=orionx-plymouth-quit.service' "$SYSTEMD_UNIT"; then
+    pass "wizard unit Wants=orionx-plymouth-quit.service (the splash is quit on first boot by a unit with no TTY)"
 else
-    fail "wizard unit bounds plymouth quit with timeout" \
-         "ExecStartPre must be -/usr/bin/timeout N /bin/plymouth quit (QEMU plymouth wedge, #141)"
+    fail "wizard unit Wants=orionx-plymouth-quit.service" \
+         "Nothing else quits the splash on first boot: lightdm replaces plymouth-quit.service and runs after the wizard"
+fi
+if grep -qE '^After=.*orionx-plymouth-quit.service' "$SYSTEMD_UNIT"; then
+    pass "wizard unit ordered After=orionx-plymouth-quit.service"
+else
+    fail "wizard unit ordered After=orionx-plymouth-quit.service" \
+         "Without the ordering, systemd may reset tty1 for the wizard while plymouthd still owns it"
+fi
+if grep -qE '^After=.*plymouth-quit-wait.service' "$SYSTEMD_UNIT"; then
+    pass "wizard unit ordered After=plymouth-quit-wait.service (same rule as the stock getty@.service)"
+else
+    fail "wizard unit ordered After=plymouth-quit-wait.service" \
+         "quit-wait confirms plymouthd has exited (bounded by the 25 s cap); the VT is only safe to reset after that"
+fi
+if [[ -f "$QUIT_UNIT" ]]; then
+    pass "orionx-plymouth-quit.service exists next to the wizard unit"
+    if grep -qE '^ExecStart=-/usr/bin/plymouth quit$' "$QUIT_UNIT"; then
+        pass "quit unit runs exactly ExecStart=-/usr/bin/plymouth quit (non-fatal when no splash)"
+    else
+        fail "quit unit runs exactly ExecStart=-/usr/bin/plymouth quit"
+    fi
+    if grep -qE '^(StandardInput|StandardOutput|StandardError|TTYPath|TTYReset|TTYVHangup)=' "$QUIT_UNIT"; then
+        fail "quit unit has no TTY settings" \
+             "Any TTY binding reintroduces the pre-exec reset that deadlocks against plymouthd"
+    else
+        pass "quit unit has no TTY settings (nothing for systemd to lock or reset before exec)"
+    fi
+    if grep -qE '^TimeoutStartSec=[0-9]+' "$QUIT_UNIT"; then
+        pass "quit unit bounds plymouth quit with TimeoutStartSec (a splash that does not answer cannot hold onboarding)"
+    else
+        fail "quit unit bounds plymouth quit with TimeoutStartSec"
+    fi
+    WIZ_GUARD="$(grep -E '^ConditionPathExists=' "$SYSTEMD_UNIT")"
+    if [[ -n "$WIZ_GUARD" ]] && grep -qxF "$WIZ_GUARD" "$QUIT_UNIT"; then
+        pass "quit unit shares the wizard's first-boot guard ($WIZ_GUARD): later boots leave the splash to lightdm"
+    else
+        fail "quit unit shares the wizard's first-boot guard" \
+             "Expected the same ConditionPathExists line as the wizard unit"
+    fi
+    if grep -qE '^After=.*systemd-user-sessions.service' "$QUIT_UNIT"; then
+        pass "quit unit ordered After=systemd-user-sessions.service (same point as the stock plymouth-quit.service)"
+    else
+        fail "quit unit ordered After=systemd-user-sessions.service"
+    fi
+else
+    fail "orionx-plymouth-quit.service exists next to the wizard unit" "Missing: $QUIT_UNIT"
 fi
 
 # ===========================================================================

@@ -13,12 +13,37 @@
 #   rename. Every wizard prompt has an input timeout (falls back to defaults),
 #   and this unit is oneshot ordered-before (not required-by) the DM, so it can
 #   never permanently block boot. Runs once, guarded by the flag file.
+#
+# @decision DEC-PHASE13-030 (supersedes the ExecStartPre part of DEC-PHASE11-044
+#   and the `timeout 10` part of DEC-PHASE13-028)
+# @title The wizard never touches tty1 while plymouth owns it (#141)
+# @rationale This unit used to run `plymouth quit` itself, as ExecStartPre. That
+#   command runs in this unit's exec context — StandardInput=tty on tty1 with
+#   TTYReset=yes — so before it could exec, systemd's child acquired tty1, took
+#   the /dev/console lock and reset the terminal while plymouthd still owned
+#   tty1 (nothing else quits the splash on first boot: lightdm replaces
+#   plymouth-quit.service and runs after us). Some of the time that reset
+#   blocked, the child never execed, the console lock was never released, and
+#   serial-getty@ttyS0 blocked on the same lock: the QEMU flake (#141). The
+#   `timeout 10` wrapper could not help, because the block is before exec. The
+#   quit now lives in orionx-plymouth-quit.service, a unit with no TTY, and this
+#   unit orders after it and after plymouth-quit-wait.service — the same rule
+#   the stock getty@.service follows — so plymouthd is gone before systemd
+#   prepares tty1 for the wizard. Evidence: run 41272254094, the
+#   ORIONX-PLYMOUTH-DIAG block ("(timeout)" holding tty1 + /dev/console,
+#   "(agetty)" in locks_lock_inode_wait, plymouthd idle in epoll_wait).
 
 [Unit]
 Description=Orion-X First-Boot Setup Wizard (interactive console)
 # Take the console from getty and run before the graphical login. NetworkManager
 # is ordered before us so the Wi-Fi step's nmcli calls work.
+# DEC-PHASE13-030: the splash must be gone before systemd prepares tty1 for
+# us. orionx-plymouth-quit.service quits it (no TTY of its own, so nothing to
+# deadlock on) and plymouth-quit-wait.service confirms plymouthd has exited
+# (bounded by its 25 s cap, DEC-PHASE11-044).
+Wants=orionx-plymouth-quit.service
 After=systemd-user-sessions.service getty@tty1.service NetworkManager.service
+After=orionx-plymouth-quit.service plymouth-quit-wait.service
 Conflicts=getty@tty1.service
 Before=display-manager.service
 ConditionPathExists=!/var/lib/orionx/.first-boot-done
@@ -26,16 +51,10 @@ ConditionPathExists=!/var/lib/orionx/.first-boot-done
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# Quit the Plymouth splash before the wizard prompts: the splash otherwise holds
-# tty1 + DRM-master, so its prompts would be invisible, and this also satisfies
-# plymouth-quit-wait.service on first boot. `-` prefix = non-fatal if plymouth is
-# not running (e.g. subsequent boots, or splash already gone). (DEC-PHASE11-044)
-# Bounded: `plymouth quit` blocks until plymouthd answers, and a wedged
-# plymouthd (QEMU, intermittent, either firmware — #141, DEC-PHASE13-028) must not stall
-# onboarding as well. 10 s is far beyond a healthy quit (well under 1 s).
-ExecStartPre=-/usr/bin/timeout 10 /bin/plymouth quit
 ExecStart=/opt/orionx/scripts/security/first-boot-wizard.sh
-# Interactive on the primary virtual console.
+# Interactive on the primary virtual console. Safe only because of the
+# ordering above: systemd resets tty1 (TTYReset/TTYVHangup) before exec, and
+# that must not happen while plymouthd holds the VT (DEC-PHASE13-030).
 StandardInput=tty
 StandardOutput=tty
 StandardError=tty
