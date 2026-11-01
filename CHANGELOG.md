@@ -11,6 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Clock and timezone wrong at boot; apt refused every Release file (#148,
+  DEC-PHASE13-032).** On a laptop whose hardware clock keeps local time
+  (Windows dual-boot) the live system read it as UTC, so real UTC was hours
+  off, the clock showed local digits under `TZ=UTC`, and `apt install` failed
+  with "not valid yet". Nothing on the image could correct it: no NTP client,
+  no timezone, and live-config's `utc=no` only rewrites `/etc/adjtime` after
+  the kernel has read the RTC. The first-boot wizard now owns the clock with
+  three prompts after Wi-Fi: **timezone** (`Area/City`, validated against
+  `/usr/share/zoneinfo`, `timedatectl set-timezone`), **hardware clock keeps
+  local time?** (`timedatectl set-local-rtc 1 --adjust-system-clock`, which
+  re-reads the RTC as local time at once and keeps writing it that way), and
+  **sync the clock from the internet?** (`timedatectl set-ntp true`).
+  `systemd-timesyncd` is now installed but disabled at boot by the 0620
+  hook, never masked: the User Guide's promise that the image makes no
+  outbound connection on its own stands, and blank or timed-out answers
+  change nothing. CLI: `--timezone`, `--rtc-local`, `--ntp`. Tests: wizard
+  suite (flags, prompts, zoneinfo validation, path traversal, bash 3.2),
+  `test_build_iso.sh` T44 (package + hook), `test_service_hardening.sh`
+  (disable, not mask), content-presence §38 (installed, not enabled, not
+  masked, timedated + zoneinfo present). User Guide §First-Boot Wizard and
+  §Network updated.
+
 - **build-iso.sh bakes the identity of the repository that owns it, not the
   caller's cwd (#152, DEC-PHASE13-031).** `ORIONX_GIT_SHA`/`ORIONX_GIT_TITLE`
   were derived with a bare `git rev-parse`/`git log` that resolved against

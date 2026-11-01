@@ -1562,6 +1562,25 @@ not_contains "T43.f: no cwd-relative 'git rev-parse' remains" '$(git rev-parse -
 not_contains "T43.g: no cwd-relative 'git log -1' remains" '$(git log -1 --format=%s' "$SCRIPT_CONTENT"
 echo ""
 
+echo "[T44] systemd-timesyncd shipped (installed, opt-in at runtime) — #148, DEC-PHASE13-032"
+if grep -qE "^systemd-timesyncd$" "$PKG_LIST"; then
+    pass "systemd-timesyncd present in orionx.list.chroot"
+else
+    fail "systemd-timesyncd missing from orionx.list.chroot — the deck cannot correct its clock"
+fi
+_t44_hook="$REPO_ROOT/iso/config/hooks/live/0620-service-hardening.hook.chroot"
+if grep -qF 'systemctl disable systemd-timesyncd.service' "$_t44_hook"; then
+    pass "0620 hook disables systemd-timesyncd at boot (opt-in via timedatectl set-ntp true)"
+else
+    fail "0620 hook does not disable systemd-timesyncd — the image would phone out on its own"
+fi
+if grep -qF 'systemctl mask systemd-timesyncd' "$_t44_hook"; then
+    fail "0620 hook MASKS systemd-timesyncd — timedatectl set-ntp true could never start it"
+else
+    pass "0620 hook does not mask systemd-timesyncd (set-ntp true must be able to start it)"
+fi
+echo ""
+
 echo "[T42] the test run never reached Docker"
 if [[ -s "$DOCKER_SHIM_LOG" ]]; then
     fail "T42: build-iso.sh invoked docker during the unit tests: $(cat "$DOCKER_SHIM_LOG")"

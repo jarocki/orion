@@ -3479,6 +3479,55 @@ section "37. Release promises: README tools + rc5-rc9 deck fixes, in the image (
 assert_release_promises
 
 # ===========================================================================
+# 38. Clock authority in the image (DEC-PHASE13-032, #148): systemd-timesyncd is
+#     INSTALLED (the clock can be corrected) but NOT enabled at boot (the image
+#     makes no outbound connection on its own); timedated + zoneinfo present so
+#     the wizard's timedatectl calls can work.
+# ===========================================================================
+section "38. Clock: timesyncd installed but opt-in, timedated + zoneinfo present (DEC-PHASE13-032)"
+
+DPKG_STATUS_38="$SQF/var/lib/dpkg/status"
+if grep -q "^Package: systemd-timesyncd$" "$DPKG_STATUS_38" 2>/dev/null; then
+    pass "systemd-timesyncd installed in the squashfs"
+else
+    fail "systemd-timesyncd installed in the squashfs" \
+         "orionx.list.chroot must list systemd-timesyncd (#148)"
+fi
+if [[ -f "$SQF/usr/lib/systemd/system/systemd-timesyncd.service" ]]; then
+    pass "systemd-timesyncd.service unit file present"
+else
+    fail "systemd-timesyncd.service unit file present"
+fi
+if [[ -e "$SQF/etc/systemd/system/sysinit.target.wants/systemd-timesyncd.service" ]]; then
+    fail "systemd-timesyncd is NOT enabled at boot" \
+         "sysinit.target.wants/systemd-timesyncd.service exists: the image would sync a clock over the internet on its own (0620 hook must disable it)"
+else
+    pass "systemd-timesyncd is NOT enabled at boot (opt-in: wizard yes or timedatectl set-ntp true)"
+fi
+if [[ -L "$SQF/etc/systemd/system/systemd-timesyncd.service" && "$(readlink "$SQF/etc/systemd/system/systemd-timesyncd.service")" == "/dev/null" ]]; then
+    fail "systemd-timesyncd is not masked" "masked: timedatectl set-ntp true could never start it"
+else
+    pass "systemd-timesyncd is not masked (timedatectl set-ntp true can start it)"
+fi
+if [[ -f "$SQF/usr/lib/systemd/system/systemd-timedated.service" ]]; then
+    pass "systemd-timedated present (timedatectl set-timezone / set-local-rtc / set-ntp)"
+else
+    fail "systemd-timedated present"
+fi
+if [[ -f "$SQF/usr/share/zoneinfo/America/Denver" && -f "$SQF/usr/share/zoneinfo/UTC" ]]; then
+    pass "zoneinfo database present (the wizard validates timezones against it)"
+else
+    fail "zoneinfo database present"
+fi
+if grep -qE '^(UTC|LOCAL)$' "$SQF/etc/adjtime" 2>/dev/null && grep -q '^UTC$' "$SQF/etc/adjtime"; then
+    pass "/etc/adjtime ships UTC (the wizard's --rtc-local answer switches it)"
+elif [[ ! -f "$SQF/etc/adjtime" ]]; then
+    pass "/etc/adjtime absent in the image (UTC by default; the wizard's --rtc-local answer writes it)"
+else
+    fail "/etc/adjtime ships UTC" "$(cat "$SQF/etc/adjtime")"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
