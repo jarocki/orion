@@ -112,11 +112,13 @@ Before tagging:
   passphrase is **not** a repository secret and will not become one: the repo
   has no branch or tag protection, a write-capable default token and
   third-party actions on movable tags, so anything stored there is exposed to
-  any workflow push. Without the passphrase gpg-agent on the runner has nothing
-  to offer and the tag run ends at "Stage signed split release assets" with
-  `gpg: Sorry, we are in batchmode - can't get input`. That is the designed
-  end of the automated pipeline: it has built, gated and uploaded the ISO as
-  the `release-artifacts-<run>` Actions artifact. Staging, signing and the
+  any workflow push. Without the passphrase the tag run decides `can_sign=false` up front,
+  skips the tooling, import, staging and draft steps, uploads the gated ISO
+  as the `release-artifacts-<run>` Actions artifact, and ends green with a
+  "Hand off to the owner for signing" step that prints the §10 commands for
+  that run (the v3.1.2 run predates this and died at the signature with
+  `gpg: Sorry, we are in batchmode - can't get input`). That is the designed
+  end of the automated pipeline. Staging, signing and the
   draft release are then done on the owner's Mac (§10). v3.1.2 was produced
   exactly this way.
 
@@ -144,7 +146,7 @@ Before tagging:
   it proves only that the file matches what that page claims. Anyone who can
   replace the ISO can replace the checksum beside it.
 
-  The tag run is expected to stop at the signature (no passphrase in CI);
+  The tag run is expected to end at the hand-off step (no passphrase in CI);
   download its artifact and sign per §10. Do not re-add `continue-on-error`
   to get a release out, and do not put the passphrase in a secret to make
   the run go green.
