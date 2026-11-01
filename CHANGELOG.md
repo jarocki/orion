@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **build-iso.sh bakes the identity of the repository that owns it, not the
+  caller's cwd (#152, DEC-PHASE13-031).** `ORIONX_GIT_SHA`/`ORIONX_GIT_TITLE`
+  were derived with a bare `git rev-parse`/`git log` that resolved against
+  `$PWD`, so `bash tmp/wt-x/scripts/build-iso.sh` run from the main checkout
+  wrote the main checkout's HEAD into `/etc/orionx-version` while
+  `ISO_VERSION` came from the worktree. Both the macOS Docker wrapper and the
+  inner derivation now use `git -C <script's repo>`; the banner prints
+  `git_sha`; `test_build_iso.sh` T43 runs `--dry-run` from an unrelated git
+  repository and asserts the owner's SHA, and rejects any bare identity call.
+
 - **QEMU boot flake root-caused and fixed: plymouth is quit from a unit with
   no TTY (#141, DEC-PHASE13-030).** The first two failures caught by the
   `ORIONX-PLYMOUTH-DIAG` block (runs 41272254094 and 41272250733 on develop,

@@ -1537,6 +1537,31 @@ not_contains "T41.g: wrapper APT_OPTIONS no longer carries --allow-remove-essent
     'APT_OPTIONS="--yes -o Acquire::Retries=5 --allow-remove-essential' "$SCRIPT_CONTENT"
 echo ""
 
+echo "[T43] build identity comes from the script's repository, not the caller's cwd (#152, DEC-PHASE13-031)"
+# Two scratch git repositories with different HEADs: the "owner" holds the
+# script (a worktree in real life); the "caller" is only the cwd. The dry-run
+# banner must print the owner's SHA. Before the fix it printed the caller's.
+_t43_owner="$SCRATCH/t43_owner"; make_fake_repo "$_t43_owner"
+_t43_caller="$SCRATCH/t43_caller"; mkdir -p "$_t43_caller"
+for _r in "$_t43_owner" "$_t43_caller"; do
+    git -C "$_r" init -q
+    git -C "$_r" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "head of $(basename "$_r")"
+done
+_t43_owner_sha="$(git -C "$_t43_owner" rev-parse --short=12 HEAD)"
+_t43_caller_sha="$(git -C "$_t43_caller" rev-parse --short=12 HEAD)"
+[[ "$_t43_owner_sha" != "$_t43_caller_sha" ]] && pass "T43.a: fixture repos have distinct HEADs" || fail "T43.a: fixture HEADs collide"
+_t43_out="$( (cd "$_t43_caller" && bash "$_t43_owner/scripts/build-iso.sh" --dry-run) 2>&1 )" \
+    && pass "T43.b: --dry-run from an unrelated cwd exits 0" || fail "T43.b: --dry-run failed: $_t43_out"
+contains "T43.c: banner reports the OWNER repo's HEAD" "git_sha   : $_t43_owner_sha" "$_t43_out"
+not_contains "T43.d: banner does not carry the CALLER's HEAD" "$_t43_caller_sha" "$_t43_out"
+# The inherited value still wins (DEC-PHASE11-020: the Docker wrapper passes it in).
+_t43_env="$( (cd "$_t43_caller" && ORIONX_GIT_SHA=feedfacecafe bash "$_t43_owner/scripts/build-iso.sh" --dry-run) 2>&1 )"
+contains "T43.e: an inherited ORIONX_GIT_SHA is respected" "git_sha   : feedfacecafe" "$_t43_env"
+# Source-level guard: no bare (cwd-relative) git identity call may come back.
+not_contains "T43.f: no cwd-relative 'git rev-parse' remains" '$(git rev-parse --short=12 HEAD' "$SCRIPT_CONTENT"
+not_contains "T43.g: no cwd-relative 'git log -1' remains" '$(git log -1 --format=%s' "$SCRIPT_CONTENT"
+echo ""
+
 echo "[T42] the test run never reached Docker"
 if [[ -s "$DOCKER_SHIM_LOG" ]]; then
     fail "T42: build-iso.sh invoked docker during the unit tests: $(cat "$DOCKER_SHIM_LOG")"

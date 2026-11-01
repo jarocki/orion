@@ -380,8 +380,8 @@ if [[ "$(uname -s)" == "Darwin" ]] && [[ "$_IS_DRY_RUN_ARG" == "false" ]]; then
              -e ORIONX_MODEL_LOCAL="${ORIONX_MODEL_LOCAL:-}" \
              -e ORIONX_MIRROR="${ORIONX_MIRROR:-}" \
              -e ORIONX_SECURITY_MIRROR="${ORIONX_SECURITY_MIRROR:-}" \
-             -e ORIONX_GIT_SHA="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)" \
-             -e ORIONX_GIT_TITLE="$(git log -1 --format=%s 2>/dev/null || echo unknown)" \
+             -e ORIONX_GIT_SHA="$(git -C "$REPO_ROOT_MACOS" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)" \
+             -e ORIONX_GIT_TITLE="$(git -C "$REPO_ROOT_MACOS" log -1 --format=%s 2>/dev/null || echo unknown)" \
              -e ORIONX_PHASE_11_SLICES="${ORIONX_PHASE_11_SLICES:-W11-1,W11-2,W11-2b,W11-2c,W11-2d,W11-2e,W11-2f,W11-3,W11-4,W11-5,W11-6,W11-7,W11-8,W11-9a,W11-9a2,W11-9b,W11-11,W11-12,W11-13}" \
              -e APT_OPTIONS="--yes -o Acquire::Retries=5${APT_VALID_UNTIL}" \
              -e APTITUDE_OPTIONS="--assume-yes -o Acquire::Retries=5${APT_VALID_UNTIL}" \
@@ -501,10 +501,25 @@ fi
 # whose /build tree EXCLUDES /.git (see the wrapper's rsync), so `git rev-parse`
 # there always fails and would clobber the correct value the wrapper passed in
 # via `docker run -e`. Derive only when the caller supplied nothing.
+#
+# @decision DEC-PHASE13-031
+# @title Build identity is derived from the repository that owns build-iso.sh,
+#   never from the caller's working directory
+# @status accepted
+# @rationale `git rev-parse HEAD` with no -C resolves against $PWD. Running
+#   `bash tmp/wt-x/scripts/build-iso.sh` from the main checkout therefore baked
+#   the main checkout's HEAD into /etc/orionx-version (GIT_HEAD_SHA/TITLE)
+#   while ISO_VERSION came from the worktree (the version derivation above
+#   already used the script's own root) — a self-contradicting identity file
+#   (#152, found building the 2026-10-28 development ISO). Both values now use
+#   the same root as the version: the directory above this script. The macOS
+#   wrapper does the same with REPO_ROOT_MACOS before `docker run -e`.
+_GIT_ID_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export ORIONX_GIT_SHA
-ORIONX_GIT_SHA="${ORIONX_GIT_SHA:-$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)}"
+ORIONX_GIT_SHA="${ORIONX_GIT_SHA:-$(git -C "$_GIT_ID_ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)}"
 export ORIONX_GIT_TITLE
-ORIONX_GIT_TITLE="${ORIONX_GIT_TITLE:-$(git log -1 --format=%s 2>/dev/null || echo unknown)}"
+ORIONX_GIT_TITLE="${ORIONX_GIT_TITLE:-$(git -C "$_GIT_ID_ROOT" log -1 --format=%s 2>/dev/null || echo unknown)}"
+unset _GIT_ID_ROOT
 export ORIONX_PHASE_11_SLICES="W11-1,W11-2,W11-2b,W11-2c,W11-2d,W11-2e,W11-2f,W11-3,W11-4,W11-5,W11-6,W11-7,W11-8,W11-9a,W11-9a2,W11-9b,W11-11,W11-12,W11-13"
 
 # ---------------------------------------------------------------------------
@@ -1561,6 +1576,7 @@ log "Orion-X Phoenix Edition ${VERSION} ISO build"
 log "  iso_dir   : $ISO_DIR"
 log "  output    : $OUTPUT_DIR"
 log "  dry_run   : $DRY_RUN"
+log "  git_sha   : ${ORIONX_GIT_SHA:-unknown}  (repo: $REPO_ROOT, DEC-PHASE13-031)"
 log "  logfile   : $LOGFILE"
 log "========================================================"
 
