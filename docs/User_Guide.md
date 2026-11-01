@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition User Guide
 
-Source version: **<!--orionx:release-->v3.1.2<!--/orionx:release-->** — Debian 13 "trixie", Python 3.13, Linux 6.12. On the deck, the rendered guide shows the exact build from `/etc/orionx-version`. The latest verified published ISO is v3.0.0 until a later ISO passes its release checks.
+Source version: **<!--orionx:release-->v3.1.2<!--/orionx:release-->** — Debian 13 "trixie", Python 3.13, Linux 6.12. On the deck, the rendered guide shows the exact build from `/etc/orionx-version`. The latest published ISO is v3.1.2 (CI-built and gated from the tag, signed by the owner); v3.1.0 is the latest one also booted on hardware.
 
 ## Table of Contents
 
@@ -276,13 +276,13 @@ Nothing is installed on the computer — this checks the file you downloaded and
    Get-FileHash orionx-phoenix-edition-<version>.iso -Algorithm SHA256
    ```
 
-2. Compare the result with the hash on the release page and in `SHA256SUMS` (`orionx-imager` does this for you when it downloads the release). The v3.1.0 ISO hashes to `38ca9d833e93e53fc6e9dd1bcab68207e2ce37d31d6d51702b67985f983ad6c5`; v3.0.0 to `c952ca5be03789208e39ef1807c1f09c1c15fb1f82c223272c8c3c2007332386`. Never carry a hash across releases.
+2. Compare the result with the hash on the release page and in `SHA256SUMS` (`orionx-imager` does this for you when it downloads the release). The v3.1.2 ISO hashes to `2718be02e596ddd5a5750252af5accc22865552b583dc0a0bd3a79c170b14d5c`; v3.1.0 to `38ca9d833e93e53fc6e9dd1bcab68207e2ce37d31d6d51702b67985f983ad6c5`; v3.0.0 to `c952ca5be03789208e39ef1807c1f09c1c15fb1f82c223272c8c3c2007332386`. Never carry a hash across releases.
 
 3. After booting Orion-X, open a terminal and check the image identity:
    ```bash
    grep ISO_VERSION= /etc/orionx-version
    ```
-   The v3.1.0 ISO prints `ISO_VERSION=v3.1.0`; v3.0.0 prints `ISO_VERSION=v3.0.0`. (The patch images print `ISO_VERSION=v3.0.1` and `ISO_VERSION=v3.0.2`.)
+   The v3.1.2 ISO prints `ISO_VERSION=v3.1.2`; v3.1.0 prints `ISO_VERSION=v3.1.0`; v3.0.0 prints `ISO_VERSION=v3.0.0`. (The patch images print `ISO_VERSION=v3.0.1` and `ISO_VERSION=v3.0.2`.)
 
 4. Run the built-in self-check: `sudo orionx-diag` (without `sudo` the systemd and AppArmor checks are skipped). See [orionx-diag.md](orionx-diag.md).
 
@@ -2120,4 +2120,4 @@ Ctrl+E                         # Export packet dissections
 
 ---
 
-This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.1.2<!--/orionx:release--> source (Debian 13 "trixie"); the v3.1.2 ISO is built, gated, split and signed by CI from the tag, and v3.1.0 is the latest ISO that also passed a hardware boot (CHANGELOG, *ISO identity*). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.
+This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.1.2<!--/orionx:release--> source (Debian 13 "trixie"); the v3.1.2 ISO was built and gated by CI from the tag and signed by the owner, and v3.1.0 is the latest ISO that also passed a hardware boot (CHANGELOG, *ISO identity*). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.
