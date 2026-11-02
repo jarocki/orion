@@ -8,10 +8,12 @@
 #   1. Set hostname
 #   2. Set primary account username + password (rename the live user if changed)
 #   3. Wi-Fi setup (SSID + password) — only when there is no wired link
-#   4. Matrix admin registration (only if Synapse is already set up)
-#   5. Report the SSH posture (sshd is NOT started at boot; --skip-ssh also
+#   4. Clock: timezone, hardware-clock convention (Windows dual-boot), and
+#      opt-in network time sync (DEC-PHASE13-032, #148)
+#   5. Matrix admin registration (only if Synapse is already set up)
+#   6. Report the SSH posture (sshd is NOT started at boot; --skip-ssh also
 #      stops it now)
-#   6. Write completion flag to prevent re-runs
+#   7. Write completion flag to prevent re-runs
 #   (Mesh keys are created by `orionx-mesh join`, the single authority, not
 #   here: DEC-PHASE12-105.)
 #
@@ -54,6 +56,14 @@ DRY_RUN="${ORIONX_FIRST_BOOT_DRY_RUN:-0}"
 NON_INTERACTIVE=0
 SKIP_SSH=0
 CUSTOM_HOSTNAME=""
+CUSTOM_TIMEZONE=""
+RTC_LOCAL=0
+ENABLE_NTP=0
+
+# Clock authorities (DEC-PHASE13-032). Overridable for tests.
+ZONEINFO_DIR="${ORIONX_ZONEINFO_DIR:-/usr/share/zoneinfo}"
+TIMEZONE_FILE="${ORIONX_TIMEZONE_FILE:-/etc/timezone}"
+LOCALTIME_LINK="${ORIONX_LOCALTIME_LINK:-/etc/localtime}"
 
 # Primary live account (from live-config.username / DEC-PHASE11-012). The operator
 # can rename it in the interactive wizard. Overridable for tests.
@@ -113,6 +123,12 @@ Boot with orionx.wizard=0 on the kernel command line to skip all prompts.
 Options:
   --non-interactive     Run without prompts (uses defaults or CLI args)
   --hostname <name>     Set the node hostname (default: auto-generated)
+  --timezone <Area/City>
+                        Set the timezone (default: unchanged, UTC on the image)
+  --rtc-local           The hardware clock keeps LOCAL time (Windows dual-boot);
+                        re-read it as such now and keep writing it that way
+  --ntp                 Sync the clock from the internet once online
+                        (systemd-timesyncd; off unless asked, see User Guide)
   --skip-ssh            Also stop sshd now (it is never started at boot)
   -h, --help            Show this help message and exit
 
@@ -150,6 +166,22 @@ parse_args() {
                 fi
                 CUSTOM_HOSTNAME="$2"
                 shift 2
+                ;;
+            --timezone)
+                if [[ -z "${2:-}" ]]; then
+                    log_warn "--timezone requires a value (Area/City)"
+                    exit 1
+                fi
+                CUSTOM_TIMEZONE="$2"
+                shift 2
+                ;;
+            --rtc-local)
+                RTC_LOCAL=1
+                shift
+                ;;
+            --ntp)
+                ENABLE_NTP=1
+                shift
                 ;;
             --skip-ssh)
                 SKIP_SSH=1
@@ -452,6 +484,137 @@ step_setup_wifi() {
 }
 
 # ---------------------------------------------------------------------------
+# Step 2c: clock — timezone, RTC convention, network time
+#
+# @decision DEC-PHASE13-032
+# @title The wizard owns the deck's clock: timezone and RTC convention are
+#   operator answers; network time sync is installed but opt-in
+# @status accepted
+# @rationale On the Pavilion (#148) the clock read local digits under TZ=UTC:
+#   the laptop's RTC keeps local time (Windows convention) and the live system
+#   read it as UTC, so real UTC was hours off and apt rejected every Release
+#   file ("not valid yet"). Nothing on the image corrected it: no NTP client,
+#   no timezone, and live-config's utc=no only rewrites /etc/adjtime late in
+#   userspace (1120-util-linux), after the kernel has already read the RTC as
+#   UTC, so a boot-menu variant could not fix the running clock either.
+#   Three answers, in this order, fix it offline and keep the deck's posture:
+#     1. timezone: `timedatectl set-timezone` (falls back to the /etc/localtime
+#        symlink + /etc/timezone when timedated is unavailable); validated
+#        against /usr/share/zoneinfo, never against free text.
+#     2. RTC convention: `timedatectl set-local-rtc 1 --adjust-system-clock`
+#        re-reads the RTC as local time NOW (the system clock jumps to the
+#        right UTC) and writes /etc/adjtime LOCAL so later RTC writes keep the
+#        convention the other OS expects. Only on a yes.
+#     3. network time: systemd-timesyncd is INSTALLED but not started at boot
+#        (0620 hook) because the User Guide promises the image makes no
+#        outbound connection on its own (DEC-PHASE12-104 family). The wizard
+#        offers it; `timedatectl set-ntp true` enables and starts it. Default
+#        on timeout/blank is NO for the same reason: an unattended boot must
+#        not phone out.
+#   Every prompt keeps the 30 s input timeout (DEC-PHASE12-106).
+# ---------------------------------------------------------------------------
+
+_current_timezone() {
+    local tz=""
+    if [[ -r "$TIMEZONE_FILE" ]]; then
+        tz="$(head -n1 "$TIMEZONE_FILE" 2>/dev/null || true)"
+    fi
+    if [[ -z "$tz" && -L "$LOCALTIME_LINK" ]]; then
+        tz="$(readlink "$LOCALTIME_LINK" 2>/dev/null | sed -n 's#.*/zoneinfo/##p')"
+    fi
+    printf '%s' "${tz:-UTC}"
+}
+
+# A timezone is valid when it names a zoneinfo file: Area/City or a bare zone
+# like UTC. Letters, digits, '_', '+', '-', '/' only; no '..' segments.
+_valid_timezone() {
+    local tz="$1"
+    [[ -n "$tz" ]] || return 1
+    [[ "$tz" =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$ ]] || return 1
+    [[ -f "$ZONEINFO_DIR/$tz" ]]
+}
+
+_apply_timezone() {
+    local tz="$1"
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+        log_dry "timedatectl set-timezone $tz"
+        return 0
+    fi
+    if timedatectl set-timezone "$tz" 2>/dev/null; then
+        log_info "Timezone set: $tz"
+    elif ln -sfn "$ZONEINFO_DIR/$tz" "$LOCALTIME_LINK" 2>/dev/null && \
+         printf '%s\n' "$tz" > "$TIMEZONE_FILE" 2>/dev/null; then
+        log_info "Timezone set: $tz (timedated unavailable; /etc/localtime + /etc/timezone written)"
+    else
+        log_warn "Could not set timezone $tz (not running as root?)"
+    fi
+}
+
+step_set_clock() {
+    log_step "Clock: timezone, hardware-clock convention, network time"
+
+    local tz="$CUSTOM_TIMEZONE" current
+    current="$(_current_timezone)"
+
+    if [[ "$NON_INTERACTIVE" -eq 0 && -z "$tz" ]]; then
+        printf "Timezone (Area/City, e.g. America/Denver) [%s]: " "$current"
+        read -r -t "$PROMPT_TIMEOUT" tz || tz=""
+        tz="${tz:-$current}"
+    fi
+    if [[ -n "$tz" && "$tz" != "$current" ]]; then
+        if _valid_timezone "$tz"; then
+            _apply_timezone "$tz"
+        else
+            log_warn "Unknown timezone '$tz' (not in $ZONEINFO_DIR) — keeping $current"
+            tz="$current"
+        fi
+    else
+        log_info "Timezone unchanged: $current"
+    fi
+    APPLIED_TIMEZONE="${tz:-$current}"
+
+    local rtc_local="$RTC_LOCAL"
+    if [[ "$NON_INTERACTIVE" -eq 0 && "$rtc_local" -eq 0 ]]; then
+        local answer=""
+        printf "Does this machine also run Windows, i.e. its hardware clock keeps LOCAL time? [y/N]: "
+        read -r -t "$PROMPT_TIMEOUT" answer || answer=""
+        [[ "$answer" == [yY] ]] && rtc_local=1   # not ${answer,,}: tests run under bash 3.2 too
+    fi
+    if [[ "$rtc_local" -eq 1 ]]; then
+        if [[ "$DRY_RUN" -eq 1 ]]; then
+            log_dry "timedatectl set-local-rtc 1 --adjust-system-clock"
+        elif timedatectl set-local-rtc 1 --adjust-system-clock 2>/dev/null; then
+            log_info "Hardware clock treated as local time; system clock re-read from it"
+        else
+            log_warn "Could not switch the hardware-clock convention (timedatectl set-local-rtc failed)"
+        fi
+    else
+        log_info "Hardware clock treated as UTC (unchanged)"
+    fi
+    APPLIED_RTC_LOCAL="$rtc_local"
+
+    local ntp="$ENABLE_NTP"
+    if [[ "$NON_INTERACTIVE" -eq 0 && "$ntp" -eq 0 ]]; then
+        local answer=""
+        printf "Sync the clock from the internet once online (systemd-timesyncd)? [y/N]: "
+        read -r -t "$PROMPT_TIMEOUT" answer || answer=""
+        [[ "$answer" == [yY] ]] && ntp=1
+    fi
+    if [[ "$ntp" -eq 1 ]]; then
+        if [[ "$DRY_RUN" -eq 1 ]]; then
+            log_dry "timedatectl set-ntp true"
+        elif timedatectl set-ntp true 2>/dev/null; then
+            log_info "Network time sync enabled (systemd-timesyncd starts when a link is up)"
+        else
+            log_warn "Could not enable network time sync (timedatectl set-ntp failed)"
+        fi
+    else
+        log_info "Network time sync stays off (enable later: sudo timedatectl set-ntp true)"
+    fi
+    APPLIED_NTP="$ntp"
+}
+
+# ---------------------------------------------------------------------------
 # Step 3: Matrix admin registration (only when Synapse is already set up)
 #
 # @decision DEC-PHASE12-105
@@ -553,6 +716,9 @@ print_summary() {
 === Orion-X First-Boot Setup Complete ===
 
   Hostname:        $hostname_display
+  Timezone:        ${APPLIED_TIMEZONE:-unchanged}
+  Hardware clock:  $(if [[ "${APPLIED_RTC_LOCAL:-0}" -eq 1 ]]; then echo "local time (Windows dual-boot)"; else echo "UTC"; fi)
+  Network time:    $(if [[ "${APPLIED_NTP:-0}" -eq 1 ]]; then echo "on (systemd-timesyncd)"; else echo "off (sudo timedatectl set-ntp true)"; fi)
   SSH daemon:      $(if [[ "$SKIP_SSH" -eq 1 ]]; then echo "stopped"; else echo "not started at boot (sudo systemctl start ssh)"; fi)
   Flag file:       $FLAG_FILE
   Dry-run mode:    $(if [[ "$DRY_RUN" -eq 1 ]]; then echo "yes"; else echo "no"; fi)
@@ -594,7 +760,8 @@ announce_interactive_start() {
     printf '%s%s%s\n\n' "$RED" "$rule" "$RST"
     printf '  %s>>>  The boot has PAUSED — this system needs your input.  <<<%s\n\n' "$BOLD" "$RST"
     printf '  Answer the prompts below to configure this node:\n'
-    printf '    hostname  ·  primary account + password  ·  Wi-Fi (if no cable)\n\n'
+    printf '    hostname  ·  primary account + password  ·  Wi-Fi (if no cable)\n'
+    printf '    timezone  ·  hardware-clock convention  ·  network time sync\n\n'
     printf '  %sEach prompt auto-continues with its default after %ss if left blank.%s\n' \
         "$DIM" "$PROMPT_TIMEOUT" "$RST"
     printf '  %sTo boot without these questions: add orionx.wizard=0 to the kernel command line.%s\n\n' \
@@ -646,6 +813,7 @@ main() {
     step_set_hostname
     step_set_user_credentials
     step_setup_wifi
+    step_set_clock
     step_set_matrix_creds
     step_disable_ssh
     write_flag_file

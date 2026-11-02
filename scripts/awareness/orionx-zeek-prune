@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""orionx-zeek-prune — Zeek rotation postprocessor that keeps the archive bounded.
+
+@decision DEC-PHASE13-033
+@title A rotated Zeek log triggers a prune of its archive directory to a byte
+  cap and an age cap; the live overlay is RAM, so the sensor must bound itself
+@status accepted
+@rationale Zeek invokes Log::default_rotation_postprocessor_cmd after every
+  rotation with six positional arguments (frameworks/logging/main.zeek,
+  run_rotation_postprocessor_cmd):
+
+      <rotated-path> <log-path> <open yy-mm-dd_HH.MM.SS> <close ...> <terminating 0|1> <writer>
+
+  Only the first matters here: the directory it lives in is the archive, and
+  that directory is pruned oldest-first until it is under
+  ORIONX_ZEEK_ARCHIVE_MAX_BYTES (default 64 MiB) and holds nothing older
+  than ORIONX_ZEEK_ARCHIVE_MAX_AGE seconds (default 24 h). Both caps are per
+  instance directory (/var/log/zeek/<iface>/archive), which is how the unit
+  is scoped (orionx-zeek@.service).
+
+  Safety rails, each deliberate:
+    - it refuses to touch a directory not named `archive`, so a mistaken
+      redef of Log::default_rotation_dir can never make it prune the live
+      logs or anything else;
+    - it deletes regular files only, never follows symlinks, never recurses;
+    - it exits 0 on every path. Zeek ignores the postprocessor's status, but
+      a traceback into the journal every hour is noise, and a prune failure
+      must never be mistaken for a sensor failure. What it removed, and why,
+      goes to stderr (the unit's journal) in one line.
+  Pure function + thin main, so the test suite exercises the policy on a
+  fixture directory without Zeek.
+"""
+from __future__ import annotations
+
+import os
+import sys
+import time
+from pathlib import Path
+
+DEFAULT_MAX_BYTES = 64 * 1024 * 1024
+DEFAULT_MAX_AGE = 24 * 3600
+ARCHIVE_NAME = "archive"
+
+
+def archive_entries(directory: Path) -> list[tuple[float, int, Path]]:
+    """(mtime, size, path) for every regular, non-symlink file in `directory`."""
+    out: list[tuple[float, int, Path]] = []
+    try:
+        names = list(directory.iterdir())
+    except OSError:
+        return out
+    for p in names:
+        try:
+            st = p.lstat()
+        except OSError:
+            continue
+        if not os.path.isfile(p) or os.path.islink(p):
+            continue
+        out.append((st.st_mtime, st.st_size, p))
+    return out
+
+
+def plan_prune(entries: list[tuple[float, int, Path]], max_bytes: int,
+               max_age: float, now: float) -> list[tuple[Path, str]]:
+    """Which files to remove and why. Oldest first; pure; no I/O.
+
+    Age first, then bytes: a file past the age cap goes regardless of space,
+    and the byte cap is then applied to what remains, oldest first, until the
+    total is under the cap.
+    """
+    doomed: list[tuple[Path, str]] = []
+    keep: list[tuple[float, int, Path]] = []
+    for mtime, size, path in sorted(entries):
+        if max_age > 0 and (now - mtime) > max_age:
+            doomed.append((path, "age"))
+        else:
+            keep.append((mtime, size, path))
+    total = sum(size for _, size, _ in keep)
+    for mtime, size, path in keep:
+        if total <= max_bytes:
+            break
+        doomed.append((path, "bytes"))
+        total -= size
+    return doomed
+
+
+def prune(rotated: Path, max_bytes: int = DEFAULT_MAX_BYTES,
+          max_age: float = DEFAULT_MAX_AGE, now: float | None = None,
+          dry_run: bool = False) -> dict:
+    """Prune the archive directory that holds `rotated`. Never raises."""
+    now = time.time() if now is None else now
+    directory = rotated.parent
+    result = {"dir": str(directory), "removed": [], "refused": None,
+              "bytes_after": None}
+    if directory.name != ARCHIVE_NAME:
+        result["refused"] = (f"{directory} is not an '{ARCHIVE_NAME}' "
+                             "directory; refusing to prune anything else")
+        return result
+    entries = archive_entries(directory)
+    for path, why in plan_prune(entries, max_bytes, max_age, now):
+        if not dry_run:
+            try:
+                path.unlink()
+            except OSError as exc:
+                result["removed"].append((str(path), f"{why}:failed:{exc.errno}"))
+                continue
+        result["removed"].append((str(path), why))
+    removed_paths = {p for p, _ in result["removed"]}
+    result["bytes_after"] = sum(size for _, size, p in entries
+                                if str(p) not in removed_paths)
+    return result
+
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.split("\n\n")[0], file=sys.stderr)
+        print("usage: orionx-zeek-prune <rotated-log> [log-path open close "
+              "terminating writer]", file=sys.stderr)
+        return 0 if argv else 2
+    try:
+        max_bytes = int(os.environ.get("ORIONX_ZEEK_ARCHIVE_MAX_BYTES",
+                                       DEFAULT_MAX_BYTES))
+        max_age = float(os.environ.get("ORIONX_ZEEK_ARCHIVE_MAX_AGE",
+                                       DEFAULT_MAX_AGE))
+    except ValueError:
+        max_bytes, max_age = DEFAULT_MAX_BYTES, DEFAULT_MAX_AGE
+    try:
+        res = prune(Path(argv[0]).absolute(), max_bytes=max_bytes,
+                    max_age=max_age)
+    except Exception as exc:  # noqa: BLE001 — a prune must never kill Zeek
+        print(f"orionx-zeek-prune: error: {exc}", file=sys.stderr)
+        return 0
+    if res["refused"]:
+        print(f"orionx-zeek-prune: {res['refused']}", file=sys.stderr)
+    elif res["removed"]:
+        names = ", ".join(f"{Path(p).name} ({why})" for p, why in res["removed"])
+        print(f"orionx-zeek-prune: {res['dir']}: removed {len(res['removed'])} "
+              f"file(s), {res['bytes_after']} bytes remain: {names}",
+              file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

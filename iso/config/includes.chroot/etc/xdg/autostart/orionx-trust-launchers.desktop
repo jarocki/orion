@@ -1,0 +1,25 @@
+[Desktop Entry]
+# Orion-X Phoenix Edition — trust the shipped Desktop launchers at session start
+#
+# @decision DEC-PHASE13-034
+# @title XDG autostart marks the Desktop's .desktop launchers trusted for XFCE 4.20
+# @status accepted
+# @rationale xfdesktop 4.20 hands a launch to Thunar, which opens a .desktop
+#   file silently only when the gvfs attribute metadata::xfce-exe-checksum
+#   equals the file's SHA-256 (libxfce4util xfce_g_file_is_trusted). That
+#   attribute lives in the user's own ~/.local/share/gvfs-metadata, which does
+#   not exist until live-config creates the account at boot, so neither
+#   /etc/skel nor a build hook can carry it. This entry runs
+#   orionx-trust-launchers.sh in the session, where `gio set` can write it,
+#   before the operator reaches a desktop icon. Idempotent (only differing
+#   attributes are written); never fails the session. Same shape as
+#   orionx-wallpaper.desktop (DEC-PHASE11-017). Reported on the Pavilion as
+#   #149: every desktop icon asked "untrusted application launcher" once.
+Type=Application
+Name=Orion-X: trust Desktop launchers
+Comment=Mark the shipped Desktop launchers trusted (xfdesktop/Thunar 4.20 checksum) so they open on the first double-click
+Exec=/opt/orionx/scripts/orionx-trust-launchers.sh
+OnlyShowIn=XFCE;
+X-XFCE-Autostart-Enabled=true
+X-GNOME-Autostart-enabled=true
+NoDisplay=true

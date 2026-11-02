@@ -703,6 +703,110 @@ else
 fi
 
 # ===========================================================================
+# DEC-PHASE13-032 (#148): the wizard owns the clock — timezone, RTC convention,
+# opt-in network time. Zoneinfo and /etc/timezone are fixtures here.
+# ===========================================================================
+section "DEC-PHASE13-032: clock — timezone, RTC convention, opt-in network time (#148)"
+
+CLOCK_DIR="$DRY_RUN_DIR/clock"
+rm -rf "$CLOCK_DIR"; mkdir -p "$CLOCK_DIR/zoneinfo/America" "$CLOCK_DIR/zoneinfo/Etc"
+touch "$CLOCK_DIR/zoneinfo/America/Denver" "$CLOCK_DIR/zoneinfo/Etc/UTC" "$CLOCK_DIR/zoneinfo/UTC"
+printf 'UTC\n' > "$CLOCK_DIR/timezone"
+clock_run() {
+    # $1 = flag-file suffix, rest = wizard args. stdin from the caller.
+    local tag="$1"; shift
+    ORIONX_FIRST_BOOT_DRY_RUN=1 ORIONX_FIRST_BOOT_FLAG="$CLOCK_DIR/.fb-$tag" \
+    ORIONX_ZONEINFO_DIR="$CLOCK_DIR/zoneinfo" ORIONX_TIMEZONE_FILE="$CLOCK_DIR/timezone" \
+    ORIONX_FIRST_BOOT_PROMPT_TIMEOUT=2 \
+        bash "$WIZARD_SCRIPT" "$@" 2>&1
+}
+
+for flag in --timezone --rtc-local --ntp; do
+    if echo "$help_output" | grep -q -- "$flag"; then
+        pass "--help mentions $flag"
+    else
+        fail "--help mentions $flag"
+    fi
+done
+
+set +e
+clk_default="$(clock_run default --non-interactive </dev/null)"; clk_default_rc=$?
+clk_flags="$(clock_run flags --non-interactive --timezone America/Denver --rtc-local --ntp </dev/null)"; clk_flags_rc=$?
+clk_bad="$(clock_run bad --non-interactive --timezone Mars/Olympus </dev/null)"; clk_bad_rc=$?
+clk_trav="$(clock_run trav --non-interactive --timezone ../../etc/passwd </dev/null)"; clk_trav_rc=$?
+clk_same="$(clock_run same --non-interactive --timezone UTC </dev/null)"
+# Interactive, in dry-run: hostname, account name (the dry-run account step
+# reads only the name), then the three clock answers. Wi-Fi asks nothing here.
+clk_inter="$(printf 'h\n\nAmerica/Denver\ny\nn\n' | clock_run inter)"; clk_inter_rc=$?
+clk_blank="$(printf '\n\n\n\n\n' | clock_run blank)"
+set -e
+
+[[ $clk_default_rc -eq 0 ]] && pass "non-interactive run with no clock flags exits 0" || fail "non-interactive run exits 0" "rc=$clk_default_rc"
+if echo "$clk_default" | grep -q 'Timezone unchanged: UTC' && ! echo "$clk_default" | grep -q 'set-timezone'; then
+    pass "no --timezone: timezone left alone (UTC on the image)"
+else
+    fail "no --timezone: timezone left alone" "$clk_default"
+fi
+if ! echo "$clk_default" | grep -qE '^\[DRY\] +timedatectl set-ntp true' && echo "$clk_default" | grep -q 'Network time sync stays off'; then
+    pass "no --ntp: network time stays OFF (the image makes no outbound connection on its own)"
+else
+    fail "no --ntp: network time stays OFF" "$clk_default"
+fi
+if ! echo "$clk_default" | grep -qE '^\[DRY\] +timedatectl set-local-rtc'; then
+    pass "no --rtc-local: hardware-clock convention untouched"
+else
+    fail "no --rtc-local: hardware-clock convention untouched" "$clk_default"
+fi
+
+[[ $clk_flags_rc -eq 0 ]] && pass "--timezone/--rtc-local/--ntp accepted" || fail "--timezone/--rtc-local/--ntp accepted" "rc=$clk_flags_rc"
+echo "$clk_flags" | grep -qF 'timedatectl set-timezone America/Denver' && pass "--timezone America/Denver -> timedatectl set-timezone" || fail "--timezone -> timedatectl set-timezone" "$clk_flags"
+echo "$clk_flags" | grep -qF 'timedatectl set-local-rtc 1 --adjust-system-clock' && pass "--rtc-local -> set-local-rtc 1 --adjust-system-clock (re-reads the RTC as local time NOW)" || fail "--rtc-local -> set-local-rtc 1 --adjust-system-clock" "$clk_flags"
+echo "$clk_flags" | grep -qF 'timedatectl set-ntp true' && pass "--ntp -> timedatectl set-ntp true" || fail "--ntp -> set-ntp true" "$clk_flags"
+echo "$clk_flags" | grep -qE 'Timezone: +America/Denver' && pass "summary reports the timezone" || fail "summary reports the timezone" "$clk_flags"
+echo "$clk_flags" | grep -qE 'Hardware clock: +local time' && pass "summary reports the hardware-clock convention" || fail "summary reports the RTC convention" "$clk_flags"
+echo "$clk_flags" | grep -qE 'Network time: +on' && pass "summary reports network time on" || fail "summary reports network time" "$clk_flags"
+
+[[ $clk_bad_rc -eq 0 ]] && pass "unknown timezone does not abort the wizard" || fail "unknown timezone does not abort" "rc=$clk_bad_rc"
+if echo "$clk_bad" | grep -q "Unknown timezone 'Mars/Olympus'" && ! echo "$clk_bad" | grep -q 'set-timezone'; then
+    pass "unknown timezone is refused with a warning and nothing is applied"
+else
+    fail "unknown timezone refused" "$clk_bad"
+fi
+if [[ $clk_trav_rc -eq 0 ]] && ! echo "$clk_trav" | grep -q 'set-timezone' && echo "$clk_trav" | grep -q 'Unknown timezone'; then
+    pass "path traversal in --timezone is refused (zoneinfo-validated, never free text)"
+else
+    fail "path traversal in --timezone is refused" "$clk_trav"
+fi
+echo "$clk_same" | grep -q 'Timezone unchanged: UTC' && pass "--timezone equal to the current zone is a no-op" || fail "--timezone equal to current is a no-op" "$clk_same"
+
+[[ $clk_inter_rc -eq 0 ]] && pass "interactive run with clock answers exits 0" || fail "interactive run exits 0" "rc=$clk_inter_rc"
+echo "$clk_inter" | grep -q 'Timezone (Area/City' && pass "interactive: timezone prompt shown with the current zone as default" || fail "interactive: timezone prompt shown" "$clk_inter"
+echo "$clk_inter" | grep -qF 'timedatectl set-timezone America/Denver' && pass "interactive: typed timezone applied" || fail "interactive: typed timezone applied" "$clk_inter"
+echo "$clk_inter" | grep -qF 'set-local-rtc 1 --adjust-system-clock' && pass "interactive: 'y' to Windows dual-boot switches the RTC convention" || fail "interactive: RTC 'y' applied" "$clk_inter"
+if ! echo "$clk_inter" | grep -qE '^\[DRY\] +timedatectl set-ntp true'; then
+    pass "interactive: 'n' to network time leaves it off"
+else
+    fail "interactive: 'n' to network time leaves it off" "$clk_inter"
+fi
+if ! echo "$clk_blank" | grep -qE '^\[DRY\] +timedatectl (set-ntp true|set-local-rtc|set-timezone)'; then
+    pass "interactive: blank/timeout answers change nothing (unattended boot never phones out)"
+else
+    fail "interactive: blank answers change nothing" "$clk_blank"
+fi
+if echo "$clk_inter$clk_blank" | grep -qi 'bad substitution'; then
+    fail "clock prompts run under bash 3.2 as well (no \${var,,})"
+else
+    pass "clock prompts run under bash 3.2 as well (no \${var,,})"
+fi
+grep -qF 'timezone  ·  hardware-clock convention  ·  network time sync' "$WIZARD_SCRIPT" && pass "banner announces the clock prompts" || fail "banner announces the clock prompts"
+if [[ "$(grep -E '^    step_(setup_wifi|set_clock|set_matrix_creds)$' "$WIZARD_SCRIPT" | tr -d ' ' | tr '\n' ' ')" == "step_setup_wifi step_set_clock step_set_matrix_creds " ]]; then
+    pass "step_set_clock runs in main after Wi-Fi and before Matrix"
+else
+    fail "step_set_clock order in main" "$(grep -nE '^    step_' "$WIZARD_SCRIPT")"
+fi
+grep -qE '@decision DEC-PHASE13-032' "$WIZARD_SCRIPT" && pass "DEC-PHASE13-032 annotated at the step" || fail "DEC-PHASE13-032 annotated"
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

@@ -330,6 +330,16 @@
       "probe": [
         "/usr/local/bin/gomuks"
       ]
+    },
+    {
+      "id": "bluetooth",
+      "name": "Bluetooth support (mouse, keyboard, headset)",
+      "command": "sudo /opt/orionx/optional/install-bluetooth.sh",
+      "runtime_path": "/opt/orionx/optional/install-bluetooth.sh",
+      "blurb": "bluez + blueman, no reboot. The image ships no Bluetooth userspace by default (fewer radios on); this turns the radio on, starts bluetooth.service and opens Blueman for pairing. ~7 MB, installed from a cache on the ISO when there is no network. Off again: sudo rfkill block bluetooth.",
+      "probe": [
+        "/usr/bin/blueman-manager"
+      ]
     }
   ],
   "online": [

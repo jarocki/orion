@@ -356,6 +356,14 @@ echo ""
 # DEC-PHASE12-104: EXECUTE the hook (in a throwaway trixie container, with a
 # recording systemctl) and check what it actually disables and masks.
 # =========================================================================
+echo "--- DEC-PHASE13-032: network time is installed but opt-in ---"
+assert_contains "hook disables systemd-timesyncd at boot" "systemctl disable systemd-timesyncd.service" "$(cat "$HOOK_FILE")"
+if grep -q "mask systemd-timesyncd" "$HOOK_FILE"; then
+    echo "  FAIL: hook never masks systemd-timesyncd"; (( FAIL_COUNT++ )) || true
+else
+    echo "  PASS: hook never masks systemd-timesyncd"; (( PASS_COUNT++ )) || true
+fi
+
 echo "--- Hook execution: sshd off at boot, apt timers and exim masked ---"
 if [[ "${ORIONX_SKIP_DOCKER:-0}" != 1 ]] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     CALLS="$(docker run --rm -v "$HOOK_FILE:/hook:ro" debian:trixie-slim bash -c '
@@ -367,6 +375,12 @@ if [[ "${ORIONX_SKIP_DOCKER:-0}" != 1 ]] && command -v docker >/dev/null 2>&1 &&
     for u in apt-daily.timer apt-daily-upgrade.timer exim4.service exim4-base.timer; do
         assert_contains "$u is masked" "mask $u" "$CALLS"
     done
+    assert_contains "systemd-timesyncd is disabled at boot (DEC-PHASE13-032: opt-in via timedatectl set-ntp true)" "disable systemd-timesyncd.service" "$CALLS"
+    if [[ "$CALLS" == *"mask systemd-timesyncd"* ]]; then
+        echo "  FAIL: systemd-timesyncd is not masked (set-ntp true must be able to start it)"; (( FAIL_COUNT++ )) || true
+    else
+        echo "  PASS: systemd-timesyncd is not masked (set-ntp true must be able to start it)"; (( PASS_COUNT++ )) || true
+    fi
     assert_contains "root login stays refused" "PermitRootLogin no" "$CALLS"
     assert_contains "password auth stays off" "PasswordAuthentication no" "$CALLS"
     if [[ "$CALLS" == *"enable ssh"* ]]; then

@@ -7,9 +7,139 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [v3.1.3] — 2026-11-01 (deck patch release)
+
+The fixes from the 2026-10-31 HP Pavilion boot of the v3.1.1 stack, plus the
+QEMU boot-flake root cause, shipped on CI and QEMU evidence alone: the next
+hardware boot is planned for v3.2.0. Six issues (#148 #149 #150 #151 #152
+#153) and the #141 fix (DEC-PHASE13-030) landed as a stacked series of PRs
+(#156 #157 #158 #159 #161 #162 #164). Clock, timezone and hardware-clock
+convention become first-boot wizard answers and network time stays opt-in;
+Zeek finally runs, per live interface, at Tier 1; the Desktop launchers are
+trusted at every login; Bluetooth is an offline-capable optional installer;
+build identity follows the repository that owns the build script; and the
+Ollama pin was evaluated against 0.40.13 and kept, with a review date the
+test suite enforces. The release itself follows DEC-PHASE13-029: CI builds
+and gates the ISO from the tag, the owner signs (release-process §10).
+
+### Added
+
+- **Optional Bluetooth support installer (#151, DEC-PHASE13-035).**
+  `install-bluetooth.sh` installs bluez, blueman and the PulseAudio
+  Bluetooth module with `--no-install-recommends` (20 to 21 debs, ~7 MB
+  measured against the v3.1.2 package set; blueman's Recommends would be
+  75 MB of multimedia), unmasks and starts `bluetooth.service`, unblocks the
+  radio, and opens Blueman for pairing. No reboot: the kernel modules and
+  firmware were always on the image. The 0500 hook now caches those debs on
+  the ISO at build time (soft-fail, package list read from the installer),
+  so the installer works offline and from the same package set the image
+  was built from; it falls back to the network when the cache is absent or
+  rejected. `--check` is a verdict, `--dry-run` prints the plan (cache or
+  network), a re-run re-asserts the service and radio without apt. Listed
+  in the Orion Tools catalogue (Install button), README and User Guide §15.
+  The banner says plainly that this turns a radio on and how to turn it off.
+
+### Security
+
+- **Ollama pin evaluated and kept at 0.30.7 for v3.1.3; the upgrade is a
+  store-layout migration tracked for v3.2.0 as #163 (#153, DEC-PHASE13-036).**
+  Evaluated v0.40.13 (2026-10-28) in an amd64 trixie container against the
+  shipped Qwen store. Eight 2026 advisories (CVE-2026-103663 critical
+  `/api/pull` traversal fixed in 0.35.0, CVE-2026-108836 pull-name SSRF fixed
+  in 0.34.2, CVE-2026-85180, CVE-2026-65315, CVE-2026-15685, CVE-2026-5757,
+  CVE-2026-86289, and CVE-2026-102697 in the CLI agent mode the deck never
+  runs); none is reachable from the network on this deck (127.0.0.1 bind,
+  `IPAddressDeny=any`, AppArmor, read-only `/usr`), and the pull-path ones
+  need egress the unit cannot make. 0.40.13 serves the shipped store offline
+  (tags, show, chat, generate), but its `ollama create` writes `manifests-v2/`
+  and no `manifests/`, so the build's store consolidation refuses: the
+  upgrade needs store.py and the 0510 hook to learn the new layout and an
+  AppArmor grant for `metadata/` and `manifests-v2/` under the model store.
+  Footprint is unchanged (both versions disable mmap on CPU; resident size
+  with the model loaded 2.19 GB in both; the sse42 backend loads in both).
+  Shipped now: the 0.30.7 pin cross-verified against the release's
+  `sha256sum.txt`, `OLLAMA_PIN_REVIEW_BY=2027-01-31` enforced by the hook
+  suite (the build's tests fail once the date passes), and
+  `OLLAMA_NO_CLOUD=1` on `nebula-runtime.service` and the build's temporary
+  server (honoured by 0.30.7 and 0.40.x). Measured: the shipped 0.30.7
+  contacted ollama.com at startup for its cloud model cache and retried the
+  model-recommendations fetch every ~5 minutes on failure; with the flag the
+  cloud cache is gone and only the recommendations fetch remains (no knob in
+  envconfig; `IPAddressDeny=any` blocks it on the deck).
 
 ### Fixed
+
+- **Desktop launchers no longer ask "untrusted application launcher" on the
+  first double-click (#149, DEC-PHASE13-034).** xfdesktop 4.20 hands the
+  launch to Thunar, which runs a `.desktop` file silently only when the gvfs
+  attribute `metadata::xfce-exe-checksum` equals the file's SHA-256
+  (libxfce4util `xfce_g_file_is_trusted`). That attribute lives in the
+  user's `~/.local/share/gvfs-metadata`, which does not exist until
+  live-config creates the account at boot, so the image cannot pre-seed it.
+  New `orionx-trust-launchers.sh`, run by an XDG autostart entry at every
+  XFCE session start, sets it with `gio set` for every `*.desktop` regular
+  file on the Desktop (symlinks and other files untouched), keeps `+x`, and
+  writes only when the stored value differs. `orionx-trust-launchers --check`
+  reports the state (exit 1 if anything is untrusted). Tests: desktop-wiring
+  suite against a stub `gio` with a backing store (attribute equals the
+  hash, idempotent, content change re-detected, dry-run, no gio, missing
+  dir); content-presence §40. Manual verification stays on the v3.2.0
+  Pavilion boot (no headless xfdesktop).
+
+- **Ingest every Zeek instance (follow-up to #159).** Discovery no longer
+  selects just the first populated directory: notices, weird events and
+  connection records from all discovered instances are tailed. Retained logs
+  from a departed interface cannot hide another sensor. Newly appearing
+  directories and log files are attached without resetting existing tailers;
+  TSV headers are isolated by full path, including after rotation. Status
+  reports all source directories while retaining the legacy `log_dir` field.
+  Covered with local fixtures; live Tier-1 traffic remains unverified.
+
+- **Zeek now runs on the deck (#150, DEC-PHASE13-033, implementing
+  DEC-PHASE13-004).** `zeek-core` shipped on every image and nothing ever
+  started it: no unit and no `/var/log/zeek`, so every Zeek-fed surface was
+  empty. New `orionx-zeek@.service`, a template on the interface like
+  `orionx-capture@`: `orionx-postured`'s Tier-1 plan starts one instance per
+  measured live interface (the same set Suricata captures on) after Suricata
+  and stops them before it on the way down; an interface change touches only
+  the instance that changed. Each instance writes `/var/log/zeek/<iface>/`
+  (`LogsDirectory=zeek/%i`), which the ingest now discovers. Zeek loads the
+  curated `/usr/share/orionx/zeek/orionx.zeek`, not the stock `local`:
+  `detect-MHR` (DNS to Team Cymru per file hash), `extend-email/hostnames`
+  (reverse DNS per notice) and `ssh/geo-data` are left out, and the unit has
+  no AF_INET so the omission is enforced. Logs rotate hourly into
+  `./archive`, pruned by `orionx-zeek-prune` to 64 MiB and 24 h per instance
+  (the overlay is RAM). Exactly `CAP_NET_RAW`, `ProtectSystem=strict`,
+  `MemoryMax=512M`, bounded restarts; `ConditionPathExists` on the binary
+  keeps a soft-failed build a clean no-op that postured already reports.
+  Not in `AUTOSTART_UNITS`: Tier 0 is passive. Status file gains
+  `zeek_capture` (desired vs active). Tests: daemon plan/actions, Zeek
+  suite (unit, policy, prune on a fixture), unit-hook arrays,
+  content-presence §39, runtime-verify `zeek_unit_staged`; `systemd-analyze
+  verify` clean on trixie. Not verified: a Tier-1 boot with traffic (needs
+  the Pavilion; v3.2.0 boot test) and the Zeek policy under `zeek` itself.
+
+- **Clock and timezone wrong at boot; apt refused every Release file (#148,
+  DEC-PHASE13-032).** On a laptop whose hardware clock keeps local time
+  (Windows dual-boot) the live system read it as UTC, so real UTC was hours
+  off, the clock showed local digits under `TZ=UTC`, and `apt install` failed
+  with "not valid yet". Nothing on the image could correct it: no NTP client,
+  no timezone, and live-config's `utc=no` only rewrites `/etc/adjtime` after
+  the kernel has read the RTC. The first-boot wizard now owns the clock with
+  three prompts after Wi-Fi: **timezone** (`Area/City`, validated against
+  `/usr/share/zoneinfo`, `timedatectl set-timezone`), **hardware clock keeps
+  local time?** (`timedatectl set-local-rtc 1 --adjust-system-clock`, which
+  re-reads the RTC as local time at once and keeps writing it that way), and
+  **sync the clock from the internet?** (`timedatectl set-ntp true`).
+  `systemd-timesyncd` is now installed but disabled at boot by the 0620
+  hook, never masked: the User Guide's promise that the image makes no
+  outbound connection on its own stands, and blank or timed-out answers
+  change nothing. CLI: `--timezone`, `--rtc-local`, `--ntp`. Tests: wizard
+  suite (flags, prompts, zoneinfo validation, path traversal, bash 3.2),
+  `test_build_iso.sh` T44 (package + hook), `test_service_hardening.sh`
+  (disable, not mask), content-presence §38 (installed, not enabled, not
+  masked, timedated + zoneinfo present). User Guide §First-Boot Wizard and
+  §Network updated.
 
 - **build-iso.sh bakes the identity of the repository that owns it, not the
   caller's cwd (#152, DEC-PHASE13-031).** `ORIONX_GIT_SHA`/`ORIONX_GIT_TITLE`

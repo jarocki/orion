@@ -222,6 +222,7 @@ for serial_log in "${SERIAL_LOGS[@]}"; do
         "mesh_discover_enabled"
         "matrix_synapse_state"
         "apparmor_enforcing"
+        "zeek_unit_staged"
     )
 
     assertion_failures=()

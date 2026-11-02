@@ -409,6 +409,65 @@ else
          "writes that evaporate were being reported as success"
 fi
 
+# ---------------------------------------------------------------------------
+# DEC-PHASE13-034 (#149): the Desktop launchers are marked trusted per session.
+# Executed against a stub gio with a real backing store, so the assertion is on
+# what was written (attribute = SHA-256 of the file), not on the source text.
+# ---------------------------------------------------------------------------
+section "Desktop launchers trusted for XFCE 4.20 (DEC-PHASE13-034, #149)"
+TL="$REPO_ROOT/scripts/orionx-trust-launchers.sh"
+TL_AUTOSTART="$REPO_ROOT/iso/config/includes.chroot/etc/xdg/autostart/orionx-trust-launchers.desktop"
+TL_HOOK="$REPO_ROOT/iso/config/hooks/live/0700-orionx-setup.hook.chroot"
+TLS="$SCRATCH/trust"; mkdir -p "$TLS/bin" "$TLS/Desktop"
+if [[ -x "$TL" ]]; then pass "orionx-trust-launchers.sh present + executable"; else fail "orionx-trust-launchers.sh present+exec" "missing/not +x"; fi
+grep -q '@decision DEC-PHASE13-034' "$TL" && pass "script carries DEC-PHASE13-034" || fail "script decision annotation"
+if [[ -f "$TL_AUTOSTART" ]]; then pass "autostart entry staged"; else fail "autostart entry staged" "missing $TL_AUTOSTART"; fi
+grep -qE '^Exec=/opt/orionx/scripts/orionx-trust-launchers.sh$' "$TL_AUTOSTART" && pass "autostart runs the staged script" || fail "autostart Exec"
+grep -qE '^OnlyShowIn=XFCE;?$' "$TL_AUTOSTART" && pass "autostart is XFCE-only" || fail "autostart OnlyShowIn"
+grep -qE '^NoDisplay=true$' "$TL_AUTOSTART" && pass "autostart entry is hidden from menus" || fail "autostart NoDisplay"
+grep -qF '["orionx-trust-launchers"]="/opt/orionx/scripts/orionx-trust-launchers.sh"' "$TL_HOOK" && pass "0700 puts orionx-trust-launchers on PATH (--check by hand)" || fail "0700 SCRIPT_MAP entry"
+# stub gio with a backing store: info -a ATTR FILE / set -t string FILE ATTR VALUE
+cat > "$TLS/bin/gio" <<'STUB'
+#!/usr/bin/env bash
+db="${STUB_DB:?}"; touch "$db"
+case "$1" in
+  info) attr="$3"; f="$4"; v="$(grep -F "$f|$attr|" "$db" | tail -1 | cut -d'|' -f3-)"; [[ -n "$v" ]] && printf '  %s: %s\n' "$attr" "$v"; echo "info" >> "$db.calls" ;;
+  set)  f="$4"; attr="$5"; v="$6"; echo "$f|$attr|$v" >> "$db"; echo "set $f" >> "$db.calls" ;;
+  *) exit 1 ;;
+esac
+STUB
+chmod +x "$TLS/bin/gio"
+printf '[Desktop Entry]\nType=Application\nName=A\nExec=true\n' > "$TLS/Desktop/a.desktop"; chmod 755 "$TLS/Desktop/a.desktop"
+printf '[Desktop Entry]\nType=Application\nName=B\nExec=true\n' > "$TLS/Desktop/b.desktop"; chmod 644 "$TLS/Desktop/b.desktop"
+echo "notes" > "$TLS/Desktop/notes.txt"
+ln -s a.desktop "$TLS/Desktop/link.desktop"
+tl_sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+tl_run() { STUB_DB="$TLS/db" PATH="$TLS/bin:$PATH" bash "$TL" --desktop-dir "$TLS/Desktop" "$@"; }
+tl_run --check >/dev/null 2>&1; [[ $? -eq 1 ]] && pass "--check on untrusted launchers exits 1" || fail "--check exit on untrusted"
+[[ ! -f "$TLS/db" || ! -s "$TLS/db" ]] && pass "--check writes nothing" || fail "--check wrote attributes" "$(cat "$TLS/db")"
+TL_OUT="$(tl_run 2>&1)"; TL_RC=$?
+[[ $TL_RC -eq 0 ]] && pass "apply exits 0" || fail "apply exit" "rc=$TL_RC $TL_OUT"
+grep -qF "$TLS/Desktop/a.desktop|metadata::xfce-exe-checksum|$(tl_sha "$TLS/Desktop/a.desktop")" "$TLS/db" \
+    && pass "a.desktop: attribute set to the file's SHA-256 (what xfce_g_file_is_trusted compares)" || fail "a.desktop attribute" "$(cat "$TLS/db")"
+grep -qF "$TLS/Desktop/b.desktop|metadata::xfce-exe-checksum|$(tl_sha "$TLS/Desktop/b.desktop")" "$TLS/db" \
+    && pass "b.desktop: attribute set" || fail "b.desktop attribute" "$(cat "$TLS/db")"
+[[ -x "$TLS/Desktop/b.desktop" ]] && pass "a launcher without +x is made executable (Thunar classifies on it too)" || fail "b.desktop +x"
+grep -q "notes.txt" "$TLS/db" && fail "non-launcher file was touched" || pass "notes.txt (not a launcher) is left alone"
+grep -q "link.desktop" "$TLS/db" && fail "symlink launcher was trusted" || pass "a symlink is never trusted (not the operator's file)"
+echo "$TL_OUT" | grep -q '2 marked, 1 made executable, 0 failed' && pass "summary line reports 2 marked, 1 made executable" || fail "summary" "$TL_OUT"
+: > "$TLS/db.calls"
+TL_OUT2="$(tl_run 2>&1)"
+grep -q '^set' "$TLS/db.calls" && fail "second run rewrote attributes (not idempotent)" || pass "second run writes nothing (idempotent)"
+echo "$TL_OUT2" | grep -q '2 already trusted, 0 marked' && pass "second run reports everything already trusted" || fail "second run summary" "$TL_OUT2"
+tl_run --check >/dev/null 2>&1 && pass "--check after apply exits 0" || fail "--check after apply"
+printf '[Desktop Entry]\nType=Application\nName=A2\nExec=true\n' > "$TLS/Desktop/a.desktop"
+tl_run --check >/dev/null 2>&1; [[ $? -eq 1 ]] && pass "a changed launcher is untrusted again (content hash, not a flag)" || fail "content change not detected"
+TL_DRY="$(tl_run --dry-run 2>&1)"; : > "$TLS/db.calls"
+echo "$TL_DRY" | grep -q 'would set' && ! grep -q '^set' "$TLS/db.calls" && pass "--dry-run says what it would write and writes nothing" || fail "--dry-run" "$TL_DRY"
+ORIONX_GIO_BIN=/nonexistent/gio bash "$TL" --desktop-dir "$TLS/Desktop" >/dev/null 2>&1 && pass "no gio: warns, exits 0 (never breaks the session)" || fail "no gio apply exit"
+ORIONX_GIO_BIN=/nonexistent/gio bash "$TL" --desktop-dir "$TLS/Desktop" --check >/dev/null 2>&1; [[ $? -eq 2 ]] && pass "no gio: --check exits 2 (cannot verify)" || fail "no gio check exit"
+bash "$TL" --desktop-dir "$TLS/nope" >/dev/null 2>&1 && pass "missing Desktop directory: exits 0" || fail "missing dir exit"
+
 rm -rf "$SCRATCH"
 
 printf "\n===========================================\n"

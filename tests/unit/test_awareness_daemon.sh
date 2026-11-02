@@ -173,6 +173,32 @@ ck(kinds.index("deception") < kinds.index("service"),
 same = m.plan_actions(m.tier_plan("1", True), m.tier_plan("1", True))
 ck(same == [], f"re-asserting the same tier is a no-op -> {same}")
 
+# --- DEC-PHASE13-033 (implements DEC-PHASE13-004): Zeek runs where Suricata runs
+z0 = m.tier_plan("0", True, live_ifaces=("eth0",))
+z1 = m.tier_plan("1", True, live_ifaces=("eth0", "wlan0"))
+z1n = m.tier_plan("1", True, live_ifaces=())
+ck(z0["zeek"] is False, "Tier 0 runs no Zeek instance (passive)")
+ck(z1["zeek"] is True, "Tier 1 with live interfaces runs Zeek")
+ck(z1n["zeek"] is False, "Tier 1 with NOTHING live starts no Zeek (same rule as Suricata)")
+ck(m.tier_plan("1", True)["zeek"] is True, "unmeasured plan states the tier's intent: Zeek on")
+cold = m.plan_actions(None, z1)
+starts = [a[2] for a in cold if a[0] == "service" and a[1] == "start"]
+ck(starts == ["suricata.service", "orionx-zeek@eth0.service", "orionx-zeek@wlan0.service"],
+   f"cold Tier 1 starts Suricata, then one orionx-zeek@<iface> per live interface -> {starts}")
+chg = m.plan_actions(z1, m.tier_plan("1", True, live_ifaces=("eth0", "usb0")))
+ck(("service", "stop", "orionx-zeek@wlan0.service") in chg and ("service", "start", "orionx-zeek@usb0.service") in chg
+   and not any(a[2] == "orionx-zeek@eth0.service" for a in chg if a[0] == "service"),
+   f"interface change stops the departed instance and starts the new one, leaving eth0 alone -> {chg}")
+ck(chg.index(("service", "stop", "orionx-zeek@wlan0.service")) < chg.index(("service", "restart", "suricata.service")),
+   "the departed Zeek instance stops before Suricata restarts")
+down = m.plan_actions(m.tier_plan("2", True, live_ifaces=("eth0",)), m.tier_plan("0", True, live_ifaces=("eth0",)))
+ck(("service", "stop", "orionx-zeek@eth0.service") in down, "dropping to Tier 0 stops the Zeek instance")
+ck(down.index(("service", "stop", "orionx-zeek@eth0.service")) < down.index(("service", "stop", "suricata.service")),
+   "Zeek instance stops before Suricata on the way down")
+ck(m.plan_actions(z1, m.tier_plan("1", True, live_ifaces=("wlan0", "eth0"))) == [],
+   "the same live set in a different order is a no-op")
+ck(m.zeek_unit("enp2s0") == "orionx-zeek@enp2s0.service", "zeek_unit() names the template instance")
+
 # Gate file is the DEC-PHASE11-008 mechanism that actually lets suricata start.
 os.makedirs(os.environ.get("ORIONX_TMP", "tmp"), exist_ok=True)  # Fresh CI checkouts have no tmp/.
 with tempfile.TemporaryDirectory(dir=os.environ.get("ORIONX_TMP", "tmp")) as td:

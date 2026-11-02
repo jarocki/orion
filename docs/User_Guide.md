@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition User Guide
 
-Source version: **<!--orionx:release-->v3.1.2<!--/orionx:release-->** — Debian 13 "trixie", Python 3.13, Linux 6.12. On the deck, the rendered guide shows the exact build from `/etc/orionx-version`. The latest published ISO is v3.1.2 (CI-built and gated from the tag, signed by the owner); v3.1.0 is the latest one also booted on hardware.
+Source version: **<!--orionx:release-->v3.1.3<!--/orionx:release-->** — Debian 13 "trixie", Python 3.13, Linux 6.12. On the deck, the rendered guide shows the exact build from `/etc/orionx-version`. The latest published ISO is v3.1.2 (CI-built and gated from the tag, signed by the owner); v3.1.0 is the latest one also booted on hardware.
 
 ## Table of Contents
 
@@ -310,8 +310,9 @@ Before the desktop appears, Orion-X pauses on the text console (tty1) and shows 
 1. **Hostname** for this deck — press Enter for the default `orionx-node`
 2. **Primary account** — the account name (default `orionx-operator`; if you change it, the live user is renamed) and a password. **Leave the password blank to keep the default password, `live`.** The account can use `sudo` without a password either way (next section).
 3. **Wi-Fi** — network name (SSID) and password, asked **only** when no wired link is detected
+4. **Clock** — three short questions. **Timezone** as `Area/City` (for example `America/Denver`; Enter keeps UTC). **Does this machine also run Windows?** Answer `y` when the laptop dual-boots Windows: its hardware clock then keeps local time, and without this answer the deck reads it as UTC, shows a clock hours off and `apt install` fails with "Release file is not valid yet". The deck re-reads the clock at once and keeps writing it the way Windows expects. **Sync the clock from the internet?** `y` enables `systemd-timesyncd`, which corrects the clock within seconds of a link coming up. It is **off by default** so that the deck never reaches out on its own (§10); turn it on later with `sudo timedatectl set-ntp true`.
 
-Every prompt auto-continues with its default after 30 seconds, so an unattended boot still completes: about 2 minutes at the banner with a network cable plugged in, about 2½ without one (the Wi-Fi question is added). To skip the questions entirely, pick **"Orion-X Live (no questions)"** in the boot menu (it adds `orionx.wizard=0` to the kernel command line); the wizard then takes every default.
+Every prompt auto-continues with its default after 30 seconds, so an unattended boot still completes: about 3½ minutes at the banner with a network cable plugged in, about 4 without one (the Wi-Fi question is added). To skip the questions entirely, pick **"Orion-X Live (no questions)"** in the boot menu (it adds `orionx.wizard=0` to the kernel command line); the wizard then takes every default.
 
 The wizard does **not** create mesh keys or any SSH credential. Mesh keys are made by `sudo orionx-mesh join` (§5), and SSH is off at boot (§5, *Remote access*). Matrix registration is skipped on the image (the Synapse server is not installed until you run `setup-matrix.sh --mode server`, §6).
 
@@ -381,7 +382,7 @@ For an **unencrypted** persistence volume, skip the `cryptsetup` lines (`sudo mk
 
 ## 4. The Desktop
 
-After login you land on the XFCE desktop with the Phoenix wallpaper and a top panel with live status widgets. Open the Orion Cockpit from its desktop icon, from the gauge icon next to the **Orion-X** menu button in the panel, or from Applications → **Orion** → **Orion Cockpit**.
+After login you land on the XFCE desktop with the Phoenix wallpaper and a top panel with live status widgets. Open the Orion Cockpit from its desktop icon, from the gauge icon next to the **Orion-X** menu button in the panel, or from Applications → **Orion** → **Orion Cockpit**. The desktop icons open on the first double-click: XFCE 4.20 only runs a launcher it has marked trusted, and a small step at every login marks the shipped ones (`orionx-trust-launchers --check` reports their state). A launcher you add yourself asks once, as XFCE intends.
 
 ![Orion-X desktop](images/desktop_screenshot.png)
 
@@ -570,7 +571,7 @@ To verify your network configuration:
    traceroute <host>
    ```
 
-Orion-X makes **no outbound connection on its own**. A wired link is configured automatically when a cable is plugged in, and the wizard offers Wi-Fi when there is no cable, but nothing on the image phones home, checks for updates or syncs a clock over the internet. The commands that do reach out are the ones you run: `orionx-freshen-yara`, `orionx-freshen-suricata`, `download-samples.sh`, `nucleotide build`, `setup-matrix.sh`, the optional installers (§15), Pivotglass intelligence modules once you add API keys (§8), and `artifact-analyzer.py --upload` (§12). If you are investigating a compromised network, leave the cable out until you have decided the deck should be on it.
+Orion-X makes **no outbound connection on its own**. A wired link is configured automatically when a cable is plugged in, and the wizard offers Wi-Fi when there is no cable, but nothing on the image phones home, checks for updates or syncs a clock over the internet unless you asked for it: network time sync (`systemd-timesyncd`) is installed but off until you say yes in the wizard or run `sudo timedatectl set-ntp true`. The commands that do reach out are the ones you run: `orionx-freshen-yara`, `orionx-freshen-suricata`, `download-samples.sh`, `nucleotide build`, `setup-matrix.sh`, the optional installers (§15), Pivotglass intelligence modules once you add API keys (§8), and `artifact-analyzer.py --upload` (§12). If you are investigating a compromised network, leave the cable out until you have decided the deck should be on it.
 
 ## 6. Secure Communication
 
@@ -1088,7 +1089,7 @@ For analyzing network captures:
    pcap-analyzer.py /path/to/capture.pcap
    ```
 
-4. Using Zeek for protocol analysis (`zeek` and `zeek-cut` are on the image, installed under `/opt/zeek`). Zeek writes one log per protocol (`conn.log`, `dns.log`, `http.log`, …) into the current directory:
+4. Using Zeek for protocol analysis (`zeek` and `zeek-cut` are on the image, installed under `/opt/zeek`). Zeek writes one log per protocol (`conn.log`, `dns.log`, `http.log`, …) into the current directory: At threat-posture Tier 1 and above the deck runs Zeek itself: `orionx-postured` starts `orionx-zeek@<iface>` on every interface that carries traffic and its logs land in `/var/log/zeek/<iface>/` (rotated hourly into `archive/`, kept under 64 MB and 24 h per interface); at Tier 0 nothing runs Zeek until you do.
    ```bash
    mkdir zeek-out && cd zeek-out
    zeek -r /path/to/capture.pcap
@@ -1144,7 +1145,7 @@ For analyzing log files:
   ```bash
   sudo suricata -r /path/to/capture.pcap -l /path/to/output_dir
   ```
-  Alerts land in `/var/log/suricata/` (`fast.log`, `eve.json`) and the journal. At threat-posture Tier 1 and above, `orionx-postured` tails `eve.json` and publishes each alert to the event bus (with its MITRE ATT&CK technique where one is mapped), so R.A.I.N. sounds it and the Cockpit shows it.
+  Alerts land in `/var/log/suricata/` (`fast.log`, `eve.json`) and the journal. At threat-posture Tier 1 and above, `orionx-postured` tails `eve.json` and publishes each alert to the event bus (with its MITRE ATT&CK technique where one is mapped), so R.A.I.N. sounds it and the Cockpit shows it. Tier 1 also starts Zeek (`orionx-zeek@<iface>`, one instance per live interface, logs in `/var/log/zeek/<iface>/`) and ingests its `notice.log`, `weird.log` and `conn.log`; the Zeek sensor never makes an outbound connection of its own.
 - **yara** — pattern matching against files, disk images and memory dumps. **No rules ship on the image**: `/opt/orionx/yara/` holds only a README and a lock file until you fetch rulesets (network). Scanning takes a rules *file* first, then the target:
   ```bash
   sudo orionx-freshen-yara                         # network: git-clones four rulesets into /opt/orionx/yara/rules-*/
@@ -1630,6 +1631,7 @@ as post-boot installers under `/opt/orionx/optional/`:
 | `install-geoip.sh` | DB-IP Lite country + ASN labels for the attack map | ~70 MB |
 | `install-duckdb.sh` | DuckDB accelerator for `orionx-logquery` | ~30 MB |
 | `install-piper-voice.sh` | Piper natural voice for R.A.I.N. narration (en_US-lessac-medium, SHA-256-pinned; installer synthesises audio to prove it works) | ~63 MB model, >150 MB installed with onnxruntime |
+| `install-bluetooth.sh` | Bluetooth support (bluez + blueman): turns the radio on, starts `bluetooth.service`, opens Blueman for pairing. No reboot. Installs from a cache baked into the ISO when there is no network; `--check` reports, `--dry-run` plans. Off again: `sudo rfkill block bluetooth` | ~7 MB |
 
 ### Usage
 
@@ -2120,4 +2122,4 @@ Ctrl+E                         # Export packet dissections
 
 ---
 
-This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.1.2<!--/orionx:release--> source (Debian 13 "trixie"); the v3.1.2 ISO was built and gated by CI from the tag and signed by the owner, and v3.1.0 is the latest ISO that also passed a hardware boot (CHANGELOG, *ISO identity*). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.
+This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.1.3<!--/orionx:release--> source (Debian 13 "trixie"); the v3.1.3 ISO is built and gated by CI from the tag and signed by the owner, and v3.1.0 is the latest ISO that also passed a hardware boot (CHANGELOG, *ISO identity*). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.

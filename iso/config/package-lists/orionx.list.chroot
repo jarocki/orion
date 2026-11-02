@@ -44,6 +44,12 @@ eject
 locales
 sudo
 user-setup
+# Network time client, INSTALLED but not started at boot (0620 hook disables
+# it): the image makes no outbound connection on its own (User Guide, OPSEC).
+# The first-boot wizard offers it; `timedatectl set-ntp true` turns it on.
+# Without it the deck had no way to correct a clock read from a local-time RTC
+# as UTC, and apt rejected every Release file (#148, DEC-PHASE13-032).
+systemd-timesyncd
 
 # Desktop environment
 xfce4

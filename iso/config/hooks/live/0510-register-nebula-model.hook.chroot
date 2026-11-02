@@ -106,6 +106,9 @@ echo "${LOG_PREFIX} tag   : $MODEL_TAG"
 export OLLAMA_MODELS="$MODELS_DIR"
 export OLLAMA_HOST="127.0.0.1:11434"
 export HOME="${HOME:-/root}"
+# DEC-PHASE13-036: the build chroot has a network; the temporary server must
+# not use it for anything but this import.
+export OLLAMA_NO_CLOUD=1
 
 # --- Start a throwaway server ----------------------------------------------
 # `ollama create` is a client command; it needs a server on OLLAMA_HOST.

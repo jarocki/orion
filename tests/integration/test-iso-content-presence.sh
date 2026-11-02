@@ -3479,6 +3479,194 @@ section "37. Release promises: README tools + rc5-rc9 deck fixes, in the image (
 assert_release_promises
 
 # ===========================================================================
+# 38. Clock authority in the image (DEC-PHASE13-032, #148): systemd-timesyncd is
+#     INSTALLED (the clock can be corrected) but NOT enabled at boot (the image
+#     makes no outbound connection on its own); timedated + zoneinfo present so
+#     the wizard's timedatectl calls can work.
+# ===========================================================================
+section "38. Clock: timesyncd installed but opt-in, timedated + zoneinfo present (DEC-PHASE13-032)"
+
+DPKG_STATUS_38="$SQF/var/lib/dpkg/status"
+if grep -q "^Package: systemd-timesyncd$" "$DPKG_STATUS_38" 2>/dev/null; then
+    pass "systemd-timesyncd installed in the squashfs"
+else
+    fail "systemd-timesyncd installed in the squashfs" \
+         "orionx.list.chroot must list systemd-timesyncd (#148)"
+fi
+if [[ -f "$SQF/usr/lib/systemd/system/systemd-timesyncd.service" ]]; then
+    pass "systemd-timesyncd.service unit file present"
+else
+    fail "systemd-timesyncd.service unit file present"
+fi
+if [[ -e "$SQF/etc/systemd/system/sysinit.target.wants/systemd-timesyncd.service" ]]; then
+    fail "systemd-timesyncd is NOT enabled at boot" \
+         "sysinit.target.wants/systemd-timesyncd.service exists: the image would sync a clock over the internet on its own (0620 hook must disable it)"
+else
+    pass "systemd-timesyncd is NOT enabled at boot (opt-in: wizard yes or timedatectl set-ntp true)"
+fi
+if [[ -L "$SQF/etc/systemd/system/systemd-timesyncd.service" && "$(readlink "$SQF/etc/systemd/system/systemd-timesyncd.service")" == "/dev/null" ]]; then
+    fail "systemd-timesyncd is not masked" "masked: timedatectl set-ntp true could never start it"
+else
+    pass "systemd-timesyncd is not masked (timedatectl set-ntp true can start it)"
+fi
+if [[ -f "$SQF/usr/lib/systemd/system/systemd-timedated.service" ]]; then
+    pass "systemd-timedated present (timedatectl set-timezone / set-local-rtc / set-ntp)"
+else
+    fail "systemd-timedated present"
+fi
+if [[ -f "$SQF/usr/share/zoneinfo/America/Denver" && -f "$SQF/usr/share/zoneinfo/UTC" ]]; then
+    pass "zoneinfo database present (the wizard validates timezones against it)"
+else
+    fail "zoneinfo database present"
+fi
+if grep -qE '^(UTC|LOCAL)$' "$SQF/etc/adjtime" 2>/dev/null && grep -q '^UTC$' "$SQF/etc/adjtime"; then
+    pass "/etc/adjtime ships UTC (the wizard's --rtc-local answer switches it)"
+elif [[ ! -f "$SQF/etc/adjtime" ]]; then
+    pass "/etc/adjtime absent in the image (UTC by default; the wizard's --rtc-local answer writes it)"
+else
+    fail "/etc/adjtime ships UTC" "$(cat "$SQF/etc/adjtime")"
+fi
+
+# ===========================================================================
+# 39. Zeek is a managed sensor (DEC-PHASE13-033, #150): the template unit, the
+#     Orion-X policy and the prune script ship; the stock 'local' policy is
+#     not what the unit loads; the template is not enabled (Tier 0 is passive).
+# ===========================================================================
+section "39. Zeek managed sensor: unit + policy + prune shipped, not autostarted (DEC-PHASE13-033)"
+
+if [[ -f "$SQF/lib/systemd/system/orionx-zeek@.service" || -f "$SQF/usr/lib/systemd/system/orionx-zeek@.service" ]]; then
+    pass "39a: orionx-zeek@.service installed by the 0615 hook"
+else
+    fail "39a: orionx-zeek@.service installed" "0615 UNIT_FILES must carry it"
+fi
+_ZU="$SQF/lib/systemd/system/orionx-zeek@.service"; [[ -f "$_ZU" ]] || _ZU="$SQF/usr/lib/systemd/system/orionx-zeek@.service"
+if [[ -f "$_ZU" ]] && grep -qE '^ExecStart=/opt/zeek/bin/zeek -C -i %I /usr/share/orionx/zeek/orionx.zeek$' "$_ZU"; then
+    pass "39b: the unit runs the Orion-X policy, not the stock 'local'"
+else
+    fail "39b: unit ExecStart" "must load /usr/share/orionx/zeek/orionx.zeek"
+fi
+if [[ -f "$SQF/usr/share/orionx/zeek/orionx.zeek" ]]; then
+    pass "39c: /usr/share/orionx/zeek/orionx.zeek shipped"
+else
+    fail "39c: orionx.zeek shipped"
+fi
+if [[ -x "$SQF/opt/orionx/scripts/awareness/orionx-zeek-prune" ]]; then
+    pass "39d: orionx-zeek-prune staged and executable (the rotation postprocessor)"
+else
+    fail "39d: orionx-zeek-prune staged" "the archive would grow unbounded in RAM"
+fi
+if ls "$SQF"/etc/systemd/system/*.wants/orionx-zeek@* >/dev/null 2>&1; then
+    fail "39e: no orionx-zeek@ instance is enabled at boot" "Tier 0 is passive; postured starts instances at Tier 1"
+else
+    pass "39e: no orionx-zeek@ instance is enabled at boot (postured starts them at Tier 1)"
+fi
+if [[ -x "$SQF/opt/zeek/bin/zeek" ]]; then
+    pass "39f: /opt/zeek/bin/zeek present (the unit's ConditionPathExists)"
+else
+    fail "39f: /opt/zeek/bin/zeek present" "build-time Zeek install soft-failed; the unit would be a no-op"
+fi
+if grep -q 'ZEEK_UNIT_TEMPLATE = "orionx-zeek@{iface}.service"' "$SQF/opt/orionx/scripts/awareness/orionx-postured" 2>/dev/null; then
+    pass "39g: shipped orionx-postured knows the template (starts/stops instances)"
+else
+    fail "39g: shipped orionx-postured knows the template"
+fi
+
+# ===========================================================================
+# 40. Desktop launchers are trusted per session (DEC-PHASE13-034, #149): the
+#     autostart entry, the script and its PATH symlink ship; the skel launchers
+#     carry +x (necessary; the gvfs checksum is set at login, not at build).
+# ===========================================================================
+section "40. Desktop launcher trust: autostart + script shipped, skel launchers +x (DEC-PHASE13-034)"
+
+if [[ -f "$SQF/etc/xdg/autostart/orionx-trust-launchers.desktop" ]]; then
+    pass "40a: /etc/xdg/autostart/orionx-trust-launchers.desktop present"
+else
+    fail "40a: autostart entry present" "launchers would ask 'untrusted application launcher' on first double-click"
+fi
+if [[ -x "$SQF/opt/orionx/scripts/orionx-trust-launchers.sh" ]]; then
+    pass "40b: orionx-trust-launchers.sh staged and executable"
+else
+    fail "40b: orionx-trust-launchers.sh staged"
+fi
+if [[ -L "$SQF/usr/bin/orionx-trust-launchers" ]]; then
+    pass "40c: /usr/bin/orionx-trust-launchers symlink (0700 SCRIPT_MAP)"
+else
+    fail "40c: /usr/bin/orionx-trust-launchers symlink"
+fi
+_40_bad=0
+for _l in "$SQF"/etc/skel/Desktop/*.desktop; do
+    [[ -f "$_l" ]] || continue
+    [[ -x "$_l" ]] || { _40_bad=$((_40_bad + 1)); echo "        not executable: ${_l#"$SQF"}"; }
+done
+if [[ $_40_bad -eq 0 ]]; then
+    pass "40d: every /etc/skel/Desktop launcher carries +x"
+else
+    fail "40d: every /etc/skel/Desktop launcher carries +x" "$_40_bad without +x"
+fi
+if [[ -x "$SQF/usr/bin/gio" ]]; then
+    pass "40e: gio present (libglib2.0-bin) for the attribute write"
+else
+    fail "40e: gio present" "the script warns and the dialog returns"
+fi
+
+# ===========================================================================
+# 41. Optional Bluetooth installer (DEC-PHASE13-035, #151): installer shipped,
+#     deb cache baked, and bluez NOT installed (fewer radios on by default).
+# ===========================================================================
+section "41. Bluetooth: installer + on-ISO deb cache shipped, bluez absent by default (DEC-PHASE13-035)"
+
+if [[ -f "$SQF/opt/orionx/optional/install-bluetooth.sh" && -x "$SQF/opt/orionx/optional/install-bluetooth.sh" ]]; then
+    pass "41a: /opt/orionx/optional/install-bluetooth.sh present and executable"
+else
+    fail "41a: install-bluetooth.sh present and executable"
+fi
+_41_cache="$SQF/opt/orionx/optional/cache/bluetooth"
+_41_n="$(find "$_41_cache" -maxdepth 1 -name '*.deb' 2>/dev/null | wc -l | tr -d ' ')"
+if [[ "$_41_n" -ge 15 ]]; then
+    pass "41b: deb cache holds $_41_n packages (measured 20-21 against v3.1.2)"
+else
+    fail "41b: deb cache holds the Bluetooth packages" "$_41_n debs in $_41_cache (0500 soft-failed? the installer will need the network)"
+fi
+for _p in bluez blueman pulseaudio-module-bluetooth; do
+    if ls "$_41_cache"/"${_p}"_*.deb >/dev/null 2>&1; then
+        pass "41c: cache carries $_p"
+    else
+        fail "41c: cache carries $_p"
+    fi
+done
+_41_bytes="$(du -sk "$_41_cache" 2>/dev/null | cut -f1)"
+if [[ -n "$_41_bytes" && "$_41_bytes" -lt 20480 ]]; then
+    pass "41d: cache is under 20 MB (${_41_bytes} KB; Recommends were kept out)"
+else
+    fail "41d: cache is under 20 MB" "${_41_bytes:-?} KB — blueman's Recommends (75 MB) crept in?"
+fi
+if ls "$_41_cache"/lock "$_41_cache"/partial >/dev/null 2>&1; then
+    fail "41e: no apt lock/partial left in the cache"
+else
+    pass "41e: no apt lock/partial left in the cache"
+fi
+if grep -q "^Package: bluez$" "$SQF/var/lib/dpkg/status" 2>/dev/null || grep -q "^Package: blueman$" "$SQF/var/lib/dpkg/status" 2>/dev/null; then
+    fail "41f: bluez/blueman NOT installed on the image" "Bluetooth userspace is optional by design (fewer radios on)"
+else
+    pass "41f: bluez/blueman NOT installed on the image (optional by design)"
+fi
+if [[ -x "$SQF/usr/sbin/rfkill" ]]; then
+    pass "41g: rfkill present (the installer unblocks the radio with it)"
+else
+    fail "41g: rfkill present"
+fi
+if python3 - "$SQF/opt/orionx/osint/links.json" <<'PY' 2>/dev/null
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert any(i["id"] == "bluetooth" for i in d["installable"])
+PY
+then
+    pass "41h: shipped links.json offers the Bluetooth installer (Orion Tools Install button)"
+else
+    fail "41h: shipped links.json offers the Bluetooth installer"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

@@ -70,6 +70,16 @@ for unit in apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-
     echo "  Masked: $unit"
 done
 
+# 2c. Network time is opt-in (DEC-PHASE13-032, #148). systemd-timesyncd is
+#     installed so the clock CAN be corrected (its postinst enables it), but
+#     the same "nothing phones out unprompted" rule as apt-daily applies:
+#     disabled, never masked, because `timedatectl set-ntp true` (the wizard's
+#     yes, or the operator later) must be able to enable and start it.
+if systemctl list-unit-files systemd-timesyncd.service >/dev/null 2>&1; then
+    systemctl disable systemd-timesyncd.service 2>/dev/null || true
+    echo "  Not started at boot: systemd-timesyncd.service (operator opts in: sudo timedatectl set-ntp true)"
+fi
+
 # 3. Kernel sysctl hardening
 cat > /etc/sysctl.d/60-orionx-hardening.conf << 'EOF'
 # Orion-X kernel hardening

@@ -108,6 +108,9 @@ declare -A SCRIPT_MAP=(
     ["orionx-tune"]="/opt/orionx/scripts/awareness/orionx-tune"
     # DEC-PHASE12-028: bounded on-demand PCAP capture control surface.
     ["orionx-capture"]="/opt/orionx/scripts/awareness/orionx-capture"
+    # DEC-PHASE13-034 (#149): marks the Desktop launchers trusted for XFCE 4.20;
+    # autostarted per session, on PATH so `orionx-trust-launchers --check` works.
+    ["orionx-trust-launchers"]="/opt/orionx/scripts/orionx-trust-launchers.sh"
     # DEC-PHASE12-027: forensic log correlation + its intel refresh. The
     # refresh is a script on PATH, not a timer, deliberately — when the deck
     # reaches out to the network is a Shields Up decision that stays with the

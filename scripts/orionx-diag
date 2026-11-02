@@ -433,7 +433,7 @@ run_packages_checks() {
 # ---------------------------------------------------------------------------
 # The optional installers the image ships (single list for checks 4i and 10a;
 # shell P3-2: it named 6 of the 10). Keep in step with /opt/orionx/optional/.
-ORIONX_OPTIONAL_INSTALLERS=(clamav duckdb element floss geoip ghidra gomuks piper-voice trid zeek)
+ORIONX_OPTIONAL_INSTALLERS=(bluetooth clamav duckdb element floss geoip ghidra gomuks piper-voice trid zeek)
 
 run_files_checks() {
     local cat="files"

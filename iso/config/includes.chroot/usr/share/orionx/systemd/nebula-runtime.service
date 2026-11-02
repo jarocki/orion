@@ -44,6 +44,13 @@ Type=simple
 Environment=OLLAMA_HOST=127.0.0.1:11434
 # Model storage location — must match where stage_nebula_model() staged the GGUF.
 Environment=OLLAMA_MODELS=/opt/orionx/nebula/models
+# DEC-PHASE13-036: ollama's cloud features (remote inference, web search,
+# sign-in) are off. Measured 2026-11-01: without it 0.30.7 fetched its cloud
+# model cache from ollama.com at startup and retried the model-recommendations
+# fetch every ~5 min on failure. IPAddressDeny already blocks that egress; the
+# flag removes the cloud-cache attempt (the recommendations fetch has no knob
+# and stays blocked). Honoured by 0.30.7 and 0.40.x alike.
+Environment=OLLAMA_NO_CLOUD=1
 ExecStart=/usr/local/bin/ollama serve
 # Ensure log directory exists before starting.
 # LogsDirectory= makes systemd create /var/log/orionx BEFORE it opens the

@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition — Cyberdeck for the Good Guys
 
-**Source version:** v3.1.2 (release pipeline patch on v3.1.1: CI builds and gates the ISO from the tag, the owner signs; same shipped software as v3.1.1 — Debian security floors for PHP2Shell, Node2Shell/Brotli, kernel CVE-2026-98432, firefox-esr and Zeek 9.0.1, plus the HP Pavilion fixes for brightness, panel widgets, spoken alerts and Cockpit → Attack Map; includes v3.0.1 through v3.1.1). **Latest ISO:** [v3.1.2](https://github.com/jarocki/orion/releases/tag/v3.1.2) — CI-built and gated from the tag, signed by the owner (2026-10-31), not yet booted on hardware; previous: [v3.1.0](https://github.com/jarocki/orion/releases/tag/v3.1.0) (booted on an HP Pavilion 2026-10-26) and [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0).
+**Source version:** v3.1.3 (deck patch release from the 2026-10-31 HP Pavilion boot: the first-boot wizard owns the clock, Zeek runs at Tier 1, Desktop launchers are trusted at login, an optional Bluetooth installer, build identity from the owning repository, the Ollama pin evaluated and kept, and the QEMU boot flake root-caused; includes v3.0.1 through v3.1.2). **Latest ISO:** [v3.1.2](https://github.com/jarocki/orion/releases/tag/v3.1.2) — CI-built and gated from the tag, signed by the owner (2026-10-31), not yet booted on hardware; previous: [v3.1.0](https://github.com/jarocki/orion/releases/tag/v3.1.0) (booted on an HP Pavilion 2026-10-26) and [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0).
 **Base:** Debian 13 "trixie" live (kernel 6.12, Python 3.13, XFCE 4.20) | **Runtime:** Qwen2.5-3B-Instruct (Apache-2.0)
 **Previous line:** v2.1.0-bullseye-rain (final Debian 11 build, kept as a known-good fallback)
 
@@ -134,6 +134,7 @@ Tools too large or freshness-sensitive for the base ISO live under
 | `install-geoip.sh` | DB-IP Lite country + ASN labels for the attack map |
 | `install-duckdb.sh` | DuckDB accelerator for `orionx-logquery` |
 | `install-piper-voice.sh` | Piper natural voice for R.A.I.N. narration |
+| `install-bluetooth.sh` | Bluetooth support (bluez + blueman) for a mouse, keyboard or headset; no reboot, works offline from a cache on the ISO |
 
 All installers share `orionx-installer-common.sh`: root check, network check,
 apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
