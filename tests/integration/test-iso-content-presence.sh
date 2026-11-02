@@ -3572,6 +3572,44 @@ else
 fi
 
 # ===========================================================================
+# 40. Desktop launchers are trusted per session (DEC-PHASE13-034, #149): the
+#     autostart entry, the script and its PATH symlink ship; the skel launchers
+#     carry +x (necessary; the gvfs checksum is set at login, not at build).
+# ===========================================================================
+section "40. Desktop launcher trust: autostart + script shipped, skel launchers +x (DEC-PHASE13-034)"
+
+if [[ -f "$SQF/etc/xdg/autostart/orionx-trust-launchers.desktop" ]]; then
+    pass "40a: /etc/xdg/autostart/orionx-trust-launchers.desktop present"
+else
+    fail "40a: autostart entry present" "launchers would ask 'untrusted application launcher' on first double-click"
+fi
+if [[ -x "$SQF/opt/orionx/scripts/orionx-trust-launchers.sh" ]]; then
+    pass "40b: orionx-trust-launchers.sh staged and executable"
+else
+    fail "40b: orionx-trust-launchers.sh staged"
+fi
+if [[ -L "$SQF/usr/bin/orionx-trust-launchers" ]]; then
+    pass "40c: /usr/bin/orionx-trust-launchers symlink (0700 SCRIPT_MAP)"
+else
+    fail "40c: /usr/bin/orionx-trust-launchers symlink"
+fi
+_40_bad=0
+for _l in "$SQF"/etc/skel/Desktop/*.desktop; do
+    [[ -f "$_l" ]] || continue
+    [[ -x "$_l" ]] || { _40_bad=$((_40_bad + 1)); echo "        not executable: ${_l#"$SQF"}"; }
+done
+if [[ $_40_bad -eq 0 ]]; then
+    pass "40d: every /etc/skel/Desktop launcher carries +x"
+else
+    fail "40d: every /etc/skel/Desktop launcher carries +x" "$_40_bad without +x"
+fi
+if [[ -x "$SQF/usr/bin/gio" ]]; then
+    pass "40e: gio present (libglib2.0-bin) for the attribute write"
+else
+    fail "40e: gio present" "the script warns and the dialog returns"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

@@ -382,7 +382,7 @@ For an **unencrypted** persistence volume, skip the `cryptsetup` lines (`sudo mk
 
 ## 4. The Desktop
 
-After login you land on the XFCE desktop with the Phoenix wallpaper and a top panel with live status widgets. Open the Orion Cockpit from its desktop icon, from the gauge icon next to the **Orion-X** menu button in the panel, or from Applications → **Orion** → **Orion Cockpit**.
+After login you land on the XFCE desktop with the Phoenix wallpaper and a top panel with live status widgets. Open the Orion Cockpit from its desktop icon, from the gauge icon next to the **Orion-X** menu button in the panel, or from Applications → **Orion** → **Orion Cockpit**. The desktop icons open on the first double-click: XFCE 4.20 only runs a launcher it has marked trusted, and a small step at every login marks the shipped ones (`orionx-trust-launchers --check` reports their state). A launcher you add yourself asks once, as XFCE intends.
 
 ![Orion-X desktop](images/desktop_screenshot.png)
 
