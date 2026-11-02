@@ -98,5 +98,31 @@ grep -q 'trusted.gpg.d/zeek.gpg' "$HOOK" && ! grep -qE '> /etc/apt/trusted.gpg.d
     && pass "no key is written to trusted.gpg.d (only removed, for old images)" || fail "trusted.gpg.d" "still written"
 grep -A6 '^if install_zeek; then' "$HOOK" | grep -q 'zeek_rollback' && pass "the soft-fail path calls zeek_rollback" || fail "soft-fail path" "no rollback"
 
+section "Ollama pin: version, URL, SHA-256 from the release, review-by date (#153, DEC-PHASE13-036)"
+OV="$(sed -n 's/^OLLAMA_VERSION="\([^"]*\)"$/\1/p' "$HOOK" | head -1)"
+OS="$(sed -n 's/^OLLAMA_TGZ_SHA256="\([^"]*\)"$/\1/p' "$HOOK" | head -1)"
+OU="$(sed -n 's/^OLLAMA_TGZ_URL="\([^"]*\)"$/\1/p' "$HOOK" | head -1)"
+OR="$(sed -n 's/^OLLAMA_PIN_REVIEW_BY="\([^"]*\)"$/\1/p' "$HOOK" | head -1)"
+[[ "$OV" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && pass "OLLAMA_VERSION is an exact release ($OV)" || fail "OLLAMA_VERSION" "'$OV'"
+[[ "$OS" =~ ^[0-9a-f]{64}$ ]] && pass "OLLAMA_TGZ_SHA256 is a real 64-hex pin, not the TBD sentinel" || fail "OLLAMA_TGZ_SHA256" "'$OS'"
+[[ "$OU" == 'https://github.com/ollama/ollama/releases/download/v${OLLAMA_VERSION}/ollama-linux-amd64.tar.zst' ]] \
+    && pass "URL is the official release asset for exactly OLLAMA_VERSION" || fail "OLLAMA_TGZ_URL" "'$OU'"
+grep -qE 'sha256sum -c -' "$HOOK" && pass "the download is verified against the pin before extraction" || fail "sha256 verify"
+grep -qE "^# Cross-verified .* against https://github.com/ollama/ollama/releases/download/v${OV//./\\.}/sha256sum.txt" "$HOOK" \
+    && pass "the pin cites the release's own sha256sum.txt for THIS version" || fail "sha256sum.txt citation" "comment missing or names another version"
+if [[ "$OR" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    pass "OLLAMA_PIN_REVIEW_BY is a date ($OR)"
+    today="$(date -u +%Y-%m-%d)"
+    [[ "$today" < "$OR" || "$today" == "$OR" ]] && pass "the Ollama pin's review date has not passed (re-evaluate #153 by $OR)" \
+        || fail "Ollama pin review overdue" "OLLAMA_PIN_REVIEW_BY=$OR < today $today: re-run the #153 evaluation (DEC-PHASE13-036) and move the date or the pin"
+else
+    fail "OLLAMA_PIN_REVIEW_BY present" "'$OR'"
+fi
+grep -q '@decision DEC-PHASE13-036' "$HOOK" && pass "the pin carries its decision" || fail "DEC-PHASE13-036 annotation"
+grep -qE '^export OLLAMA_NO_CLOUD=1' "$REPO_ROOT/iso/config/hooks/live/0510-register-nebula-model.hook.chroot" \
+    && pass "0510's temporary server runs with OLLAMA_NO_CLOUD=1" || fail "0510 OLLAMA_NO_CLOUD"
+grep -qE '^Environment=OLLAMA_NO_CLOUD=1$' "$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/nebula-runtime.service" \
+    && pass "nebula-runtime.service runs ollama with OLLAMA_NO_CLOUD=1" || fail "nebula-runtime OLLAMA_NO_CLOUD"
+
 echo; echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

@@ -119,6 +119,8 @@ if [[ -f "$RUNTIME_SVC" ]]; then
         "OLLAMA_HOST=127\.0\.0\.1" "$RUNTIME_SVC"
     contains_in_file "OLLAMA_MODELS points to nebula models dir" \
         "OLLAMA_MODELS=/opt/orionx/nebula/models" "$RUNTIME_SVC"
+    contains_in_file "Ollama cloud features off (DEC-PHASE13-036)" \
+        "OLLAMA_NO_CLOUD=1" "$RUNTIME_SVC"
     contains_in_file "DEC-PHASE11-033 reference in file (socket activation removed)" \
         "DEC-PHASE11-033" "$RUNTIME_SVC"
 fi
