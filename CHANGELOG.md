@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [v3.1.3] — 2026-11-01 (deck patch release)
+
+The fixes from the 2026-10-31 HP Pavilion boot of the v3.1.1 stack, plus the
+QEMU boot-flake root cause, shipped on CI and QEMU evidence alone: the next
+hardware boot is planned for v3.2.0. Six issues (#148 #149 #150 #151 #152
+#153) and the #141 fix (DEC-PHASE13-030) landed as a stacked series of PRs
+(#156 #157 #158 #159 #161 #162 #164). Clock, timezone and hardware-clock
+convention become first-boot wizard answers and network time stays opt-in;
+Zeek finally runs, per live interface, at Tier 1; the Desktop launchers are
+trusted at every login; Bluetooth is an offline-capable optional installer;
+build identity follows the repository that owns the build script; and the
+Ollama pin was evaluated against 0.40.13 and kept, with a review date the
+test suite enforces. The release itself follows DEC-PHASE13-029: CI builds
+and gates the ISO from the tag, the owner signs (release-process §10).
 
 ### Added
 

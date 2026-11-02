@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition User Guide
 
-Source version: **<!--orionx:release-->v3.1.2<!--/orionx:release-->** — Debian 13 "trixie", Python 3.13, Linux 6.12. On the deck, the rendered guide shows the exact build from `/etc/orionx-version`. The latest published ISO is v3.1.2 (CI-built and gated from the tag, signed by the owner); v3.1.0 is the latest one also booted on hardware.
+Source version: **<!--orionx:release-->v3.1.3<!--/orionx:release-->** — Debian 13 "trixie", Python 3.13, Linux 6.12. On the deck, the rendered guide shows the exact build from `/etc/orionx-version`. The latest published ISO is v3.1.2 (CI-built and gated from the tag, signed by the owner); v3.1.0 is the latest one also booted on hardware.
 
 ## Table of Contents
 
@@ -2122,4 +2122,4 @@ Ctrl+E                         # Export packet dissections
 
 ---
 
-This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.1.2<!--/orionx:release--> source (Debian 13 "trixie"); the v3.1.2 ISO was built and gated by CI from the tag and signed by the owner, and v3.1.0 is the latest ISO that also passed a hardware boot (CHANGELOG, *ISO identity*). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.
+This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.1.3<!--/orionx:release--> source (Debian 13 "trixie"); the v3.1.3 ISO is built and gated by CI from the tag and signed by the owner, and v3.1.0 is the latest ISO that also passed a hardware boot (CHANGELOG, *ISO identity*). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.
