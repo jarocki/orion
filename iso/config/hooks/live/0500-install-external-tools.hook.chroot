@@ -167,6 +167,45 @@ else
     zeek_rollback
 fi
 
+# ---------------------------------------------------------------------------
+# Bluetooth deb cache (DEC-PHASE13-035, #151) — SOFT-FAIL like zeek.
+#
+# The image ships no Bluetooth userspace (fewer radios on by default). The
+# optional installer /opt/orionx/optional/install-bluetooth.sh prefers an
+# on-ISO cache of the debs so a mouse works at a desk with no network, and
+# falls back to apt over the network when the cache is missing. The package
+# list is read from the installer (bluetooth_pin), so it has exactly one home.
+# Downloaded by this build's own apt run: the debs match the libraries this
+# image carries, which a later online install cannot promise. ~7 MB measured
+# with --no-install-recommends against the v3.1.2 package set (blueman's
+# Recommends would be 75 MB of multimedia; they are not wanted).
+# ---------------------------------------------------------------------------
+BLUETOOTH_INSTALLER="${BLUETOOTH_INSTALLER:-/opt/orionx/optional/install-bluetooth.sh}"
+bluetooth_pin() { sed -n "s/^$1=\"\\(.*\\)\"\$/\\1/p" "$BLUETOOTH_INSTALLER" | head -1; }
+cache_bluetooth_debs() {
+    local pkgs cache
+    pkgs="$(bluetooth_pin BLUETOOTH_PACKAGES)"
+    cache="${BLUETOOTH_CACHE_DIR:-/opt/orionx/optional/cache/bluetooth}"
+    [[ -n "$pkgs" ]] || { echo "[bluetooth-cache] BLUETOOTH_PACKAGES not readable from $BLUETOOTH_INSTALLER" >&2; return 1; }
+    mkdir -p "$cache/partial"
+    # --download-only with a private archives dir: apt resolves against THIS
+    # chroot's installed set, so the cache holds exactly what the deck lacks.
+    # shellcheck disable=SC2086
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --download-only \
+        -o Dir::Cache::archives="$cache" $pkgs || return 1
+    rm -rf "$cache/partial" "$cache/lock"
+    chmod 0755 "$cache"; chmod 0644 "$cache"/*.deb 2>/dev/null || true
+    local n; n="$(find "$cache" -maxdepth 1 -name '*.deb' | wc -l | tr -d ' ')"
+    [[ "$n" -gt 0 ]] || { echo "[bluetooth-cache] no debs landed in $cache" >&2; return 1; }
+    echo "[bluetooth-cache] $n debs cached in $cache ($(du -sh "$cache" | cut -f1)) for: $pkgs"
+}
+if cache_bluetooth_debs; then
+    echo "[bluetooth-cache] install-bluetooth.sh will work offline from the cache (DEC-PHASE13-035)"
+else
+    echo "SOFT-FAIL: Bluetooth deb cache NOT filled — install-bluetooth.sh will need the network (DEC-PHASE13-035)." >&2
+    rm -rf "${BLUETOOTH_CACHE_DIR:-/opt/orionx/optional/cache/bluetooth}"
+fi
+
 # Autopsy (requires Java, complex install — placeholder)
 echo "NOTE: Autopsy requires manual installation. See docs/INSTALL_AUTOPSY.md"
 

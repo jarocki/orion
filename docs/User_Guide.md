@@ -1631,6 +1631,7 @@ as post-boot installers under `/opt/orionx/optional/`:
 | `install-geoip.sh` | DB-IP Lite country + ASN labels for the attack map | ~70 MB |
 | `install-duckdb.sh` | DuckDB accelerator for `orionx-logquery` | ~30 MB |
 | `install-piper-voice.sh` | Piper natural voice for R.A.I.N. narration (en_US-lessac-medium, SHA-256-pinned; installer synthesises audio to prove it works) | ~63 MB model, >150 MB installed with onnxruntime |
+| `install-bluetooth.sh` | Bluetooth support (bluez + blueman): turns the radio on, starts `bluetooth.service`, opens Blueman for pairing. No reboot. Installs from a cache baked into the ISO when there is no network; `--check` reports, `--dry-run` plans. Off again: `sudo rfkill block bluetooth` | ~7 MB |
 
 ### Usage
 

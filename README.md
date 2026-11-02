@@ -134,6 +134,7 @@ Tools too large or freshness-sensitive for the base ISO live under
 | `install-geoip.sh` | DB-IP Lite country + ASN labels for the attack map |
 | `install-duckdb.sh` | DuckDB accelerator for `orionx-logquery` |
 | `install-piper-voice.sh` | Piper natural voice for R.A.I.N. narration |
+| `install-bluetooth.sh` | Bluetooth support (bluez + blueman) for a mouse, keyboard or headset; no reboot, works offline from a cache on the ISO |
 
 All installers share `orionx-installer-common.sh`: root check, network check,
 apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
