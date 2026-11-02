@@ -3610,6 +3610,63 @@ else
 fi
 
 # ===========================================================================
+# 41. Optional Bluetooth installer (DEC-PHASE13-035, #151): installer shipped,
+#     deb cache baked, and bluez NOT installed (fewer radios on by default).
+# ===========================================================================
+section "41. Bluetooth: installer + on-ISO deb cache shipped, bluez absent by default (DEC-PHASE13-035)"
+
+if [[ -f "$SQF/opt/orionx/optional/install-bluetooth.sh" && -x "$SQF/opt/orionx/optional/install-bluetooth.sh" ]]; then
+    pass "41a: /opt/orionx/optional/install-bluetooth.sh present and executable"
+else
+    fail "41a: install-bluetooth.sh present and executable"
+fi
+_41_cache="$SQF/opt/orionx/optional/cache/bluetooth"
+_41_n="$(find "$_41_cache" -maxdepth 1 -name '*.deb' 2>/dev/null | wc -l | tr -d ' ')"
+if [[ "$_41_n" -ge 15 ]]; then
+    pass "41b: deb cache holds $_41_n packages (measured 20-21 against v3.1.2)"
+else
+    fail "41b: deb cache holds the Bluetooth packages" "$_41_n debs in $_41_cache (0500 soft-failed? the installer will need the network)"
+fi
+for _p in bluez blueman pulseaudio-module-bluetooth; do
+    if ls "$_41_cache"/"${_p}"_*.deb >/dev/null 2>&1; then
+        pass "41c: cache carries $_p"
+    else
+        fail "41c: cache carries $_p"
+    fi
+done
+_41_bytes="$(du -sk "$_41_cache" 2>/dev/null | cut -f1)"
+if [[ -n "$_41_bytes" && "$_41_bytes" -lt 20480 ]]; then
+    pass "41d: cache is under 20 MB (${_41_bytes} KB; Recommends were kept out)"
+else
+    fail "41d: cache is under 20 MB" "${_41_bytes:-?} KB — blueman's Recommends (75 MB) crept in?"
+fi
+if ls "$_41_cache"/lock "$_41_cache"/partial >/dev/null 2>&1; then
+    fail "41e: no apt lock/partial left in the cache"
+else
+    pass "41e: no apt lock/partial left in the cache"
+fi
+if grep -q "^Package: bluez$" "$SQF/var/lib/dpkg/status" 2>/dev/null || grep -q "^Package: blueman$" "$SQF/var/lib/dpkg/status" 2>/dev/null; then
+    fail "41f: bluez/blueman NOT installed on the image" "Bluetooth userspace is optional by design (fewer radios on)"
+else
+    pass "41f: bluez/blueman NOT installed on the image (optional by design)"
+fi
+if [[ -x "$SQF/usr/sbin/rfkill" ]]; then
+    pass "41g: rfkill present (the installer unblocks the radio with it)"
+else
+    fail "41g: rfkill present"
+fi
+if python3 - "$SQF/opt/orionx/osint/links.json" <<'PY' 2>/dev/null
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert any(i["id"] == "bluetooth" for i in d["installable"])
+PY
+then
+    pass "41h: shipped links.json offers the Bluetooth installer (Orion Tools Install button)"
+else
+    fail "41h: shipped links.json offers the Bluetooth installer"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

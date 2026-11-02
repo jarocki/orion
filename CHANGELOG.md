@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Optional Bluetooth support installer (#151, DEC-PHASE13-035).**
+  `install-bluetooth.sh` installs bluez, blueman and the PulseAudio
+  Bluetooth module with `--no-install-recommends` (20 to 21 debs, ~7 MB
+  measured against the v3.1.2 package set; blueman's Recommends would be
+  75 MB of multimedia), unmasks and starts `bluetooth.service`, unblocks the
+  radio, and opens Blueman for pairing. No reboot: the kernel modules and
+  firmware were always on the image. The 0500 hook now caches those debs on
+  the ISO at build time (soft-fail, package list read from the installer),
+  so the installer works offline and from the same package set the image
+  was built from; it falls back to the network when the cache is absent or
+  rejected. `--check` is a verdict, `--dry-run` prints the plan (cache or
+  network), a re-run re-asserts the service and radio without apt. Listed
+  in the Orion Tools catalogue (Install button), README and User Guide §15.
+  The banner says plainly that this turns a radio on and how to turn it off.
+
 ### Fixed
 
 - **Desktop launchers no longer ask "untrusted application launcher" on the
