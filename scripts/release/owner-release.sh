@@ -41,6 +41,7 @@
 #   --from STEP    resume at STEP (merge|ff-main|tag|ci|download|stage|release|verify|publish)
 #   --dry-run      print each step's commands; run nothing that changes state
 #   --key FPR      signing key fingerprint (default: the release key)
+#   ORIONX_REPO_ROOT=<dir>  run against that checkout (e.g. from a worktree copy)
 #
 # Runs from the repository root on the Mac. Needs: gh (authenticated), git,
 # shasum, gpg, xorriso, unsquashfs, python3, dpkg (for signed staging), and
@@ -72,8 +73,12 @@ done
 [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?$ ]] || { echo "tag must look like v3.1.3: $TAG" >&2; exit 2; }
 case " $STEPS " in *" $FROM "*) ;; *) echo "--from must be one of: $STEPS" >&2; exit 2 ;; esac
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# ORIONX_REPO_ROOT lets the script run from a worktree copy against the main
+# checkout (the release PR carrying this script is itself the first thing it
+# merges). Default: the repository this file lives in.
+ROOT="${ORIONX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 cd "$ROOT"
+[[ -f scripts/release/stage-split-release.sh ]] || { echo "ERROR: not a repository root with scripts/release/: $ROOT" >&2; exit 1; }
 mkdir -p tmp
 LOG="tmp/owner-release-${TAG}.log"
 exec > >(tee -a "$LOG") 2>&1
