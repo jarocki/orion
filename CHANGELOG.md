@@ -11,6 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Desktop launchers no longer ask "untrusted application launcher" on the
+  first double-click (#149, DEC-PHASE13-034).** xfdesktop 4.20 hands the
+  launch to Thunar, which runs a `.desktop` file silently only when the gvfs
+  attribute `metadata::xfce-exe-checksum` equals the file's SHA-256
+  (libxfce4util `xfce_g_file_is_trusted`). That attribute lives in the
+  user's `~/.local/share/gvfs-metadata`, which does not exist until
+  live-config creates the account at boot, so the image cannot pre-seed it.
+  New `orionx-trust-launchers.sh`, run by an XDG autostart entry at every
+  XFCE session start, sets it with `gio set` for every `*.desktop` regular
+  file on the Desktop (symlinks and other files untouched), keeps `+x`, and
+  writes only when the stored value differs. `orionx-trust-launchers --check`
+  reports the state (exit 1 if anything is untrusted). Tests: desktop-wiring
+  suite against a stub `gio` with a backing store (attribute equals the
+  hash, idempotent, content change re-detected, dry-run, no gio, missing
+  dir); content-presence §40. Manual verification stays on the v3.2.0
+  Pavilion boot (no headless xfdesktop).
+
 - **Zeek now runs on the deck (#150, DEC-PHASE13-033, implementing
   DEC-PHASE13-004).** `zeek-core` shipped on every image and nothing ever
   started it: no unit and no `/var/log/zeek`, so every Zeek-fed surface was
