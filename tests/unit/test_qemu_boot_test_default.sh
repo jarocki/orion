@@ -142,6 +142,25 @@ if [[ ${#ERRORS[@]} -gt 0 ]]; then
         echo "  ${e}"
     done
 fi
+# T-OVMF (DEC-PHASE13-037): the 4M firmware pair ships on Ubuntu 26.04 and
+# Debian 13; the 2M names stay first so hosts with both keep their choice.
+for p in "/usr/share/OVMF/OVMF_CODE.fd" "/usr/share/OVMF/OVMF_CODE_4M.fd"; do
+    if grep -qF "\"$p\"" "${QEMU_SCRIPT}"; then pass "T-OVMF: code search list has $p"; else fail "T-OVMF: code search list lacks $p"; fi
+done
+for p in "/usr/share/OVMF/OVMF_VARS.fd" "/usr/share/OVMF/OVMF_VARS_4M.fd"; do
+    if grep -qF "\"$p\"" "${QEMU_SCRIPT}"; then pass "T-OVMF: vars search list has $p"; else fail "T-OVMF: vars search list lacks $p"; fi
+done
+if awk '/^OVMF_SEARCH_PATHS=\(/{p=1} p&&/OVMF\/OVMF_CODE.fd"/&&!c{c=NR} p&&/OVMF\/OVMF_CODE_4M.fd"/&&!m{m=NR} /^\)/{if(p){p=0}} END{exit !(c && m && c<m)}' "${QEMU_SCRIPT}"; then
+    pass "T-OVMF: 2M code image is searched before the 4M image"
+else
+    fail "T-OVMF: 2M code image must precede the 4M image in the search order"
+fi
+if grep -qE '^\s+runs-on: ubuntu-24\.04$' "${REPO_ROOT}/.github/workflows/qemu-test.yml"; then
+    pass "T-OVMF: the QEMU gate runs on a pinned runner image (ubuntu-24.04, DEC-PHASE13-037)"
+else
+    fail "T-OVMF: qemu-test.yml must pin runs-on: ubuntu-24.04 (ubuntu-latest silently changed OS/QEMU/OVMF on 2026-11-02)"
+fi
+
 echo "======================================="
 
 if [[ ${FAIL} -gt 0 ]]; then

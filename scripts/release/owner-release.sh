@@ -1,0 +1,334 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# owner-release.sh — the owner's end of a release, as one script with checks,
+# retries and waits (release-process §1, §4, §10; DEC-PHASE13-029).
+#
+# @decision DEC-PHASE13-038
+# @title The owner's release steps are a script with error checking, retries
+#   and waits, not a list of commands to paste
+# @status accepted
+# @rationale v3.1.3 was tagged on the wrong commit because seven stacked PRs
+#   were merged nine seconds apart, before GitHub retargeted them, and the
+#   fast-forward and tag followed from a pasted list without a check between
+#   steps (2026-11-02). Every step here verifies its effect before the next
+#   runs, every network call retries, and every wait polls with a delay. The
+#   script is idempotent per step and can resume (--from STEP). It never holds
+#   the passphrase: `stage-split-release.sh` asks gpg, which asks you.
+#
+# Steps, in order (each checks its preconditions and its outcome):
+#   merge     wait for the PR's checks, merge it, wait until GitHub says MERGED
+#   ff-main   main := origin/develop by fast-forward only; push
+#   tag       annotated tag on main == origin/develop; refuses to move an
+#             existing tag unless --retag; push
+#   ci        wait for the tag's release.yml run; it must end green (its last
+#             step is the hand-off to you, by design)
+#   download  the run's artifact; verify the ISO against its sidecar
+#   stage     stage-split-release.sh on the CI ISO (checkout must be at the tag)
+#   release   draft GitHub Release with notes + sums + signatures; upload the
+#             parts one by one, each verified by size through the API, retried
+#   verify    asset count and sizes; fresh download of SHA256SUMS(.asc); gpg
+#   publish   flip the draft (only with --publish)
+#
+# Usage:
+#   bash scripts/release/owner-release.sh --tag v3.1.3 [--pr 166] [--retag]
+#        [--publish] [--from STEP] [--dry-run] [--key FPR]
+#
+#   --tag TAG      the release tag (required)
+#   --pr N         PR to merge into develop first (omit when develop is ready)
+#   --retag        allow deleting an existing tag that points elsewhere
+#   --publish      flip the draft to published at the end (default: leave draft)
+#   --from STEP    resume at STEP (merge|ff-main|tag|ci|download|stage|release|verify|publish)
+#   --dry-run      print each step's commands; run nothing that changes state
+#   --key FPR      signing key fingerprint (default: the release key)
+#
+# Runs from the repository root on the Mac. Needs: gh (authenticated), git,
+# shasum, gpg, xorriso, unsquashfs, python3, dpkg (for signed staging), and
+# caffeinate (optional; keeps the Mac awake during uploads).
+
+set -euo pipefail
+
+TAG=""; PR=""; RETAG=0; PUBLISH=0; FROM="merge"; DRY=0
+KEY="4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF"
+REPO="jarocki/orion"
+STEPS="merge ff-main tag ci download stage release verify publish"
+
+usage() { sed -n '/^# Usage:/,/^# caffeinate/p' "$0" | sed 's/^# \{0,1\}//'; }
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --tag) TAG="${2:?--tag needs a value}"; shift 2 ;;
+        --pr) PR="${2:?--pr needs a number}"; shift 2 ;;
+        --retag) RETAG=1; shift ;;
+        --publish) PUBLISH=1; shift ;;
+        --from) FROM="${2:?--from needs a step}"; shift 2 ;;
+        --dry-run) DRY=1; shift ;;
+        --key) KEY="${2:?--key needs a fingerprint}"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+[[ -n "$TAG" ]] || { echo "--tag is required" >&2; usage >&2; exit 2; }
+[[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?$ ]] || { echo "tag must look like v3.1.3: $TAG" >&2; exit 2; }
+case " $STEPS " in *" $FROM "*) ;; *) echo "--from must be one of: $STEPS" >&2; exit 2 ;; esac
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+mkdir -p tmp
+LOG="tmp/owner-release-${TAG}.log"
+exec > >(tee -a "$LOG") 2>&1
+
+ts() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
+say() { printf '[%s] %s\n' "$(ts)" "$*"; }
+die() { printf '[%s] ERROR: %s\n' "$(ts)" "$*" >&2; printf '[%s] stopped; resume with: bash %s --tag %s --from %s\n' "$(ts)" "$0" "$TAG" "${CURRENT_STEP:-$FROM}" >&2; exit 1; }
+run() {  # run <description> <cmd...>: prints, honours --dry-run, fails loudly
+    local what="$1"; shift
+    say "$what"
+    say "  \$ $*"
+    if [[ $DRY -eq 1 ]]; then return 0; fi
+    "$@" || die "$what failed (exit $?)"
+}
+retry() {  # retry <tries> <delay-seconds> <cmd...>  (for network calls)
+    local tries="$1" delay="$2" n=1; shift 2
+    until "$@"; do
+        if [[ $n -ge $tries ]]; then return 1; fi
+        say "  retry $n/$tries in ${delay}s: $*"
+        sleep "$delay"; n=$((n + 1))
+    done
+}
+step_due() {  # true once we have reached --from in the step order
+    local s; local reached=0
+    for s in $STEPS; do
+        [[ "$s" == "$FROM" ]] && reached=1
+        [[ "$s" == "$1" ]] && { [[ $reached -eq 1 ]]; return; }
+    done
+    return 1
+}
+need() { command -v "$1" >/dev/null 2>&1 || die "missing tool: $1 ($2)"; }
+
+# ---------------------------------------------------------------------------
+say "=== owner-release ${TAG} (from: ${FROM}; dry-run: ${DRY}; publish: ${PUBLISH}) — log: ${LOG}"
+need gh "brew install gh"; need git git; need shasum coreutils; need gpg "brew install gnupg"
+need xorriso "brew install xorriso"; need unsquashfs "brew install squashfs"; need python3 python3; need dpkg "brew install dpkg"
+command -v caffeinate >/dev/null 2>&1 && CAFF=caffeinate || CAFF=""
+[[ $DRY -eq 1 ]] || gh auth status >/dev/null 2>&1 || die "gh is not authenticated (gh auth login)"
+[[ -z "$(git status --porcelain)" ]] || die "working tree is not clean; commit or stash first"
+
+CI_DIR="tmp/release-${TAG}-ci"; R="tmp/release-${TAG}"
+ISO="${CI_DIR}/output/orionx-phoenix-edition-${TAG}.iso"
+
+# --- merge ------------------------------------------------------------------
+CURRENT_STEP=merge
+if step_due merge && [[ -n "$PR" ]]; then
+    say "--- merge PR #${PR} into develop"
+    if [[ $DRY -eq 1 ]]; then
+        say "  would check: base of #${PR} is develop (a stacked PR merges into its OWN base); checks green; then merge and wait for MERGED"
+        base="develop"; state="OPEN"
+    else
+        base="$(gh pr view "$PR" --json baseRefName --jq .baseRefName)" || die "cannot read PR #${PR}"
+        [[ "$base" == "develop" ]] || die "PR #${PR} targets '${base}', not develop — a stacked PR merges into its own base; wait until GitHub retargets it, or merge the stack as one PR"
+        state="$(gh pr view "$PR" --json state --jq .state)"
+    fi
+    if [[ "$state" == "MERGED" ]]; then
+        say "PR #${PR} already merged"
+    else
+        say "waiting for the checks on #${PR} (lint, e2e, QEMU; the QEMU gate takes ~35 min)"
+        if [[ $DRY -eq 0 ]]; then
+            retry 5 60 gh pr checks "$PR" --watch --fail-fast || die "a check on #${PR} failed or could not be read; fix it before releasing"
+        fi
+        run "merge #${PR}" gh pr merge "$PR" --merge
+        if [[ $DRY -eq 0 ]]; then
+            n=0; until [[ "$(gh pr view "$PR" --json state --jq .state 2>/dev/null)" == "MERGED" ]]; do
+                n=$((n + 1)); [[ $n -le 20 ]] || die "PR #${PR} not MERGED after 5 min"
+                sleep 15
+            done
+            say "PR #${PR} MERGED"
+        fi
+    fi
+elif step_due merge; then
+    say "--- merge: no --pr given; develop is taken as ready"
+fi
+
+# --- ff-main ----------------------------------------------------------------
+CURRENT_STEP=ff-main
+if step_due ff-main; then
+    say "--- ff-main: main := origin/develop (fast-forward only)"
+    run "fetch" git fetch --prune origin
+    run "checkout main" git checkout -q main
+    run "pull main" git pull -q --ff-only origin main
+    run "fast-forward main to origin/develop" git merge -q --ff-only origin/develop
+    if [[ $DRY -eq 0 ]]; then
+        [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/develop)" ]] || die "main is not at origin/develop after the fast-forward"
+        grep -q "^## \[${TAG}\]" CHANGELOG.md || die "CHANGELOG.md has no '## [${TAG}]' section at this commit — the release prep is not merged; the tag run would refuse to build (DEC-PHASE12-114)"
+        grep -q "\"version\": \"${TAG#v}\"" manifest.json || die "manifest.json is not at ${TAG#v}; the release prep is not merged"
+    fi
+    run "push main" git push -q origin main
+    say "main = $(git rev-parse --short HEAD) $(git log -1 --format=%s | cut -c1-70)"
+fi
+
+# --- tag --------------------------------------------------------------------
+CURRENT_STEP=tag
+if step_due tag; then
+    say "--- tag ${TAG} on main"
+    git fetch -q origin --tags || true
+    head="$(git rev-parse HEAD)"
+    if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
+        at="$(git rev-parse "${TAG}^{commit}")"
+        if [[ "$at" == "$head" ]]; then
+            say "tag ${TAG} already points at HEAD"
+        elif [[ $RETAG -eq 1 ]]; then
+            say "tag ${TAG} points at ${at:0:7}, not HEAD ${head:0:7}; --retag given: deleting it (nothing was published from it — verify that yourself: gh release view ${TAG})"
+            if [[ $DRY -eq 0 ]] && gh release view "$TAG" >/dev/null 2>&1; then die "a GitHub Release ${TAG} exists; refusing to move the tag under it. Delete the release first if that is really what you want (release-process §6)."; fi
+            run "delete remote tag" git push -q origin ":refs/tags/${TAG}"
+            run "delete local tag" git tag -d "$TAG"
+        else
+            die "tag ${TAG} already exists at ${at:0:7} (HEAD is ${head:0:7}). Re-run with --retag to move it, or release the next patch version."
+        fi
+    fi
+    if ! git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
+        run "create annotated tag" git tag -a "$TAG" -m "Orion-X Phoenix Edition ${TAG}"
+    fi
+    run "push tag" git push -q origin "$TAG"
+    [[ $DRY -eq 1 ]] || git ls-remote --tags origin "refs/tags/${TAG}" | grep -q . || die "tag ${TAG} is not on origin after the push"
+fi
+
+# --- ci ---------------------------------------------------------------------
+CURRENT_STEP=ci
+RUN_ID=""
+find_tag_run() { gh run list --workflow release.yml --limit 10 --json databaseId,headBranch,event --jq ".[] | select(.headBranch==\"${TAG}\" and .event==\"push\") | .databaseId" | head -1; }
+if step_due ci; then
+    say "--- ci: wait for the ${TAG} tag run (build ~18 min + gates; it ends at the hand-off step by design)"
+    if [[ $DRY -eq 0 ]]; then
+        n=0; until RUN_ID="$(find_tag_run)" && [[ -n "$RUN_ID" ]]; do
+            n=$((n + 1)); [[ $n -le 20 ]] || die "no release.yml run for ${TAG} appeared within 10 min"
+            sleep 30
+        done
+        say "tag run: ${RUN_ID}  https://github.com/${REPO}/actions/runs/${RUN_ID}"
+        # gh run watch can die on an API hiccup; loop on the run's state, not on watch's exit.
+        while :; do
+            gh run watch "$RUN_ID" --exit-status >/dev/null 2>&1 && break
+            st="$(gh run view "$RUN_ID" --json status,conclusion --jq '"\(.status) \(.conclusion // "")"' 2>/dev/null || echo "unknown")"
+            case "$st" in
+                "completed success") break ;;
+                "completed "*) die "tag run ${RUN_ID} ended '${st}'. Read it: gh run view ${RUN_ID} --log-failed" ;;
+                *) say "  watch interrupted (${st}); retrying in 30s"; sleep 30 ;;
+            esac
+        done
+        say "tag run ${RUN_ID} green (built, gated, handed off)"
+    else
+        say "  \$ gh run list --workflow release.yml ...; gh run watch <id> --exit-status"
+    fi
+fi
+
+# --- download ---------------------------------------------------------------
+CURRENT_STEP=download
+if step_due download; then
+    say "--- download: the CI-built ISO and its sidecar"
+    [[ -n "$RUN_ID" ]] || RUN_ID="$(find_tag_run || true)"
+    [[ -n "$RUN_ID" || $DRY -eq 1 ]] || die "cannot find the ${TAG} tag run to download from"
+    if [[ ! -f "$ISO" ]]; then
+        rm -rf "$CI_DIR"
+        run "download artifact release-artifacts-${RUN_ID}" retry 3 30 gh run download "$RUN_ID" -n "release-artifacts-${RUN_ID}" -D "$CI_DIR"
+    else
+        say "ISO already present: ${ISO}"
+    fi
+    if [[ $DRY -eq 0 ]]; then
+        [[ -f "$ISO" ]] || die "ISO not found at ${ISO} after download"
+        (cd "${CI_DIR}/output" && shasum -a 256 -c "orionx-phoenix-edition-${TAG}.iso.sha256") || die "ISO does not match its sidecar"
+        say "ISO verified: $(shasum -a 256 "$ISO" | cut -c1-16)…  $(stat -f %z "$ISO" 2>/dev/null || stat -c %s "$ISO") bytes"
+    fi
+fi
+
+# --- stage ------------------------------------------------------------------
+CURRENT_STEP=stage
+if step_due stage; then
+    say "--- stage: split, checksum, sign (gpg will ask for the passphrase)"
+    if [[ $DRY -eq 0 ]]; then
+        [[ "$(git describe --tags --exact-match 2>/dev/null || true)" == "$TAG" ]] || die "checkout is not at ${TAG} (staging reads CHANGELOG.md from the checkout): git checkout ${TAG}"
+        if [[ -f "$R/SHA256SUMS.asc" && -f "$R/RELEASE-NOTES.md" ]]; then
+            say "staging already present in ${R}; re-verifying the signature only"
+        else
+            rm -rf "$R"
+            run "stage-split-release" bash scripts/release/stage-split-release.sh "$ISO" "$TAG" --out "$R" --key "$KEY"
+        fi
+        for f in SHA256SUMS SHA256SUMS.asc SHA512SUMS SHA512SUMS.asc REASSEMBLE.txt RELEASE-NOTES.md; do
+            [[ -s "$R/$f" ]] || die "staging produced no ${f}"
+        done
+        gpg --verify "$R/SHA256SUMS.asc" "$R/SHA256SUMS" >/dev/null 2>&1 || die "SHA256SUMS.asc does not verify"
+        say "staged: $(find "$R" -name '*.iso.part-*' | wc -l | tr -d ' ') parts + 6 files in ${R}"
+    else
+        say "  \$ bash scripts/release/stage-split-release.sh ${ISO} ${TAG} --out ${R} --key ${KEY}"
+    fi
+fi
+
+# --- release ----------------------------------------------------------------
+CURRENT_STEP=release
+asset_size() { gh api "repos/${REPO}/releases/tags/${TAG}" --jq ".assets[] | select(.name==\"$1\") | .size" 2>/dev/null | head -1; }
+asset_id()   { gh api "repos/${REPO}/releases/tags/${TAG}" --jq ".assets[] | select(.name==\"$1\") | .id" 2>/dev/null | head -1; }
+local_size() { stat -f %z "$1" 2>/dev/null || stat -c %s "$1"; }
+if step_due release; then
+    say "--- release: draft + uploads (one file per command, verified by size, retried)"
+    if [[ $DRY -eq 0 ]]; then
+        if gh release view "$TAG" >/dev/null 2>&1; then
+            say "release ${TAG} exists; reusing it"
+        else
+            run "create DRAFT release" gh release create "$TAG" --draft --title "Orion-X Phoenix Edition ${TAG}" --notes-file "$R/RELEASE-NOTES.md" \
+                "$R/SHA256SUMS" "$R/SHA256SUMS.asc" "$R/SHA512SUMS" "$R/SHA512SUMS.asc" "$R/REASSEMBLE.txt"
+            sleep 10
+        fi
+        for p in "$R"/orionx-phoenix-edition-"${TAG}".iso.part-* "$R/SHA256SUMS" "$R/SHA256SUMS.asc" "$R/SHA512SUMS" "$R/SHA512SUMS.asc" "$R/REASSEMBLE.txt"; do
+            name="$(basename "$p")"; want="$(local_size "$p")"
+            tries=0
+            while :; do
+                have="$(asset_size "$name")"
+                if [[ "$have" == "$want" ]]; then say "  ok  ${name} (${want} bytes)"; break; fi
+                tries=$((tries + 1)); [[ $tries -le 4 ]] || die "upload of ${name} failed 4 times (size on GitHub: ${have:-none}, local: ${want}). See release-process §10.1 for the hidden 'starter' asset."
+                if [[ -n "$have" ]]; then
+                    id="$(asset_id "$name")"; say "  ${name}: size ${have} != ${want}; deleting asset ${id} and re-uploading"
+                    gh api -X DELETE "repos/${REPO}/releases/assets/${id}" >/dev/null 2>&1 || true
+                    sleep 5
+                fi
+                say "  upload ${name} (try ${tries})"
+                ${CAFF:+$CAFF -i} gh release upload "$TAG" --clobber "$p" >/dev/null 2>&1 || say "  upload command returned non-zero; verifying by size anyway"
+                sleep 5
+            done
+        done
+    else
+        say "  \$ gh release create ${TAG} --draft ...; for p in ${R}/*.iso.part-*; do gh release upload ${TAG} --clobber \"\$p\"; done"
+    fi
+fi
+
+# --- verify -----------------------------------------------------------------
+CURRENT_STEP=verify
+if step_due verify && [[ $DRY -eq 0 ]]; then
+    say "--- verify: asset set, sizes, fresh signature check"
+    expected=$(( $(find "$R" -name '*.iso.part-*' | wc -l | tr -d ' ') + 5 ))
+    count="$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq '.assets | length')"
+    [[ "$count" == "$expected" ]] || die "release has ${count} assets, expected ${expected}"
+    bad=0
+    while IFS=$'\t' read -r name size state; do
+        [[ "$state" == "uploaded" ]] || { say "  ${name}: state ${state}"; bad=1; }
+        [[ -f "$R/$name" ]] && [[ "$(local_size "$R/$name")" == "$size" ]] || { say "  ${name}: size mismatch or no local file"; bad=1; }
+    done < <(gh api "repos/${REPO}/releases/tags/${TAG}" --jq '.assets[] | [.name, .size, .state] | @tsv')
+    [[ $bad -eq 0 ]] || die "asset verification failed"
+    V="tmp/release-${TAG}-verify"; rm -rf "$V"; mkdir -p "$V"
+    retry 3 20 gh release download "$TAG" -D "$V" -p 'SHA256SUMS' -p 'SHA256SUMS.asc' >/dev/null 2>&1 || die "could not download SHA256SUMS(.asc) for verification"
+    gpg --verify "$V/SHA256SUMS.asc" "$V/SHA256SUMS" >/dev/null 2>&1 || die "downloaded SHA256SUMS.asc does not verify"
+    cmp -s "$V/SHA256SUMS" "$R/SHA256SUMS" || die "downloaded SHA256SUMS differs from the staged one"
+    say "verified: ${count} assets uploaded, sizes match, signature good"
+elif step_due verify; then
+    say "--- verify: (dry-run) asset count/sizes via the API, fresh SHA256SUMS(.asc) + gpg --verify"
+fi
+
+# --- publish ----------------------------------------------------------------
+CURRENT_STEP=publish
+if step_due publish; then
+    if [[ $PUBLISH -eq 1 ]]; then
+        run "flip DRAFT -> published" gh release edit "$TAG" --draft=false
+        [[ $DRY -eq 1 ]] || [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == "false" ]] || die "release is still a draft"
+        say "PUBLISHED: https://github.com/${REPO}/releases/tag/${TAG}"
+    else
+        say "--- publish: left as DRAFT (re-run with --from publish --publish to flip): https://github.com/${REPO}/releases/tag/${TAG}"
+    fi
+fi
+say "=== done (${TAG}); log: ${LOG}"

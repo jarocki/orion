@@ -24,6 +24,18 @@ and gates the ISO from the tag, the owner signs (release-process §10).
 
 ### Added
 
+- **`scripts/release/owner-release.sh` (DEC-PHASE13-038):** the owner's end of a
+  release as one script with checks, retries and waits: merge the PR only after
+  its checks pass and only if its base is develop; fast-forward main; refuse to
+  tag a commit whose CHANGELOG lacks the tag's section; wait for the tag run;
+  download and verify the ISO; stage and sign; draft release with every part
+  uploaded one by one, size-verified through the API and retried; verify the
+  asset set and the signature on a fresh download; publish only with
+  `--publish`; `--from <step>` resumes; `--dry-run` prints the plan. Born from
+  the 2026-11-02 mishap in which seven stacked PRs merged into their own bases
+  and the tag landed on the wrong commit. `test_owner_release.sh` runs it
+  against stub tools.
+
 - **Optional Bluetooth support installer (#151, DEC-PHASE13-035).**
   `install-bluetooth.sh` installs bluez, blueman and the PulseAudio
   Bluetooth module with `--no-install-recommends` (20 to 21 debs, ~7 MB
@@ -68,6 +80,15 @@ and gates the ISO from the tag, the owner signs (release-process §10).
   envconfig; `IPAddressDeny=any` blocks it on the deck).
 
 ### Fixed
+
+- **QEMU gate: pinned runner image and 4M OVMF paths (DEC-PHASE13-037).** On
+  2026-11-02 GitHub moved `ubuntu-latest` from 24.04 to 26.04 between two runs;
+  26.04 ships OVMF only as `OVMF_CODE_4M.fd`/`OVMF_VARS_4M.fd`, the harness
+  found no firmware, UEFI SKIPped and the gate failed (run 41408913990) on a
+  change unrelated to the image. The harness now searches the 4M pair after
+  the 2M pair (Debian 13 ships both), and `qemu-test.yml` runs on
+  `ubuntu-24.04` so the boot-time evidence (#141) keeps one baseline; bumps
+  are deliberate.
 
 - **Desktop launchers no longer ask "untrusted application launcher" on the
   first double-click (#149, DEC-PHASE13-034).** xfdesktop 4.20 hands the

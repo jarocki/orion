@@ -113,14 +113,22 @@ BOOT_SUCCESS_MARKERS=(
 # pairs it with edk2-i386-vars.fd (the vars blob is architecture-neutral; there
 # is no edk2-x86_64-vars.fd in the formula).
 # =========================================================================
+# DEC-PHASE13-037: Ubuntu 26.04 (ubuntu-latest since 2026-11-02) ships OVMF
+# only as the 4M images (ovmf-generic: OVMF_CODE_4M.fd / OVMF_VARS_4M.fd);
+# the 2M OVMF_CODE.fd is gone, and the UEFI half of the gate SKIPped (exit 2,
+# run 41408913990). The 4M pair is searched after the 2M pair so a host that
+# has both keeps its previous choice; the code and vars lists stay in the same
+# order so a 4M code image is paired with the 4M vars template.
 OVMF_SEARCH_PATHS=(
     "/usr/share/OVMF/OVMF_CODE.fd"
+    "/usr/share/OVMF/OVMF_CODE_4M.fd"
     "/usr/share/edk2/ovmf/OVMF_CODE.fd"
     "/opt/homebrew/share/qemu/edk2-x86_64-code.fd"
     "/usr/local/share/qemu/edk2-x86_64-code.fd"
 )
 OVMF_VARS_SEARCH_PATHS=(
     "/usr/share/OVMF/OVMF_VARS.fd"
+    "/usr/share/OVMF/OVMF_VARS_4M.fd"
     "/usr/share/edk2/ovmf/OVMF_VARS.fd"
     "/opt/homebrew/share/qemu/edk2-i386-vars.fd"
     "/usr/local/share/qemu/edk2-i386-vars.fd"
