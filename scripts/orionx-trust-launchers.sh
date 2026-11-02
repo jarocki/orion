@@ -29,9 +29,9 @@
 #   same SHA-256, and only writes when the stored value differs, so a second
 #   run is a handful of reads. It also keeps the executable bit, because
 #   Thunar's classification looks at that too and the skel copy is the only
-#   thing that set it. Scope: *.desktop regular files in the Desktop
-#   directory, never symlinks (a symlink's target is not the operator's
-#   file to trust) and never anything else on the Desktop.
+#   thing that set it. Scope: regular, non-symlink Desktop launchers whose
+#   basename and contents match the root-owned /etc/skel/Desktop reference.
+#   Added or modified launchers are never made executable or auto-trusted.
 #
 #   Why not trust the whole directory or patch Thunar's setting: Thunar has
 #   no "trust everything" switch in 4.20, and a desktop that silently runs
@@ -50,25 +50,29 @@
 # Environment (tests):
 #   ORIONX_DESKTOP_DIR   Desktop directory (default: $XDG_DESKTOP_DIR or ~/Desktop)
 #   ORIONX_GIO_BIN       gio binary (default: gio on PATH)
+#   ORIONX_LAUNCHER_REFERENCE_DIR  Test-only shipped reference directory
 
 set -euo pipefail
 
 ATTR="metadata::xfce-exe-checksum"
 DESKTOP_DIR="${ORIONX_DESKTOP_DIR:-${XDG_DESKTOP_DIR:-$HOME/Desktop}}"
 GIO_BIN="${ORIONX_GIO_BIN:-gio}"
+# The image hooks generate these root-owned files before live-config copies
+# them into the user's home. Never derive the trust authority from that home.
+REFERENCE_DIR="${ORIONX_LAUNCHER_REFERENCE_DIR:-/etc/skel/Desktop}"
 MODE="apply"   # apply | check | dry-run
 
 usage() {
     cat <<EOF
 Usage: $(basename "$0") [--desktop-dir DIR] [--check] [--dry-run]
 
-Marks every *.desktop launcher in the Desktop directory trusted for XFCE 4.20
-(gvfs attribute $ATTR = SHA-256 of the file) and keeps it executable,
+Marks only unchanged shipped Desktop launchers trusted for XFCE 4.20
+(gvfs attribute $ATTR = SHA-256 of the shipped reference) and keeps them executable,
 so xfdesktop/Thunar open it without the "untrusted application launcher"
 dialog. Idempotent: only differing attributes are written.
 
   --desktop-dir DIR   Directory to process (default: $DESKTOP_DIR)
-  --check             Report only; exit 1 if any launcher is untrusted
+  --check             Report shipped launchers; exit 1 if untrusted or not executable
   --dry-run           Say what would be written; write nothing
   -h, --help          This text
 EOF
@@ -110,12 +114,34 @@ if ! command -v "$GIO_BIN" >/dev/null 2>&1; then
     exit 0
 fi
 
-total=0; trusted=0; marked=0; untrusted=0; failed=0; made_exec=0
+if [[ ! -d "$REFERENCE_DIR" || -L "$REFERENCE_DIR" ]]; then
+    log "WARNING: shipped launcher reference unavailable at $REFERENCE_DIR; nothing will be trusted"
+    [[ "$MODE" == "check" ]] && exit 2
+    exit 0
+fi
+
+total=0; trusted=0; marked=0; untrusted=0; failed=0; made_exec=0; skipped=0; rejected=0
 shopt -s nullglob
 for f in "$DESKTOP_DIR"/*.desktop; do
     [[ -f "$f" && ! -L "$f" ]] || continue
     total=$((total + 1))
-    want="$(sha256_of "$f")"
+    reference="$REFERENCE_DIR/${f##*/}"
+    if [[ ! -e "$reference" && ! -L "$reference" ]]; then
+        skipped=$((skipped + 1))
+        log "SKIPPED: $f (not a shipped launcher)"
+        continue
+    fi
+    # Compare before any chmod or metadata access. Always write the reference
+    # hash, not a fresh hash of mutable Desktop bytes: a concurrent edit must
+    # still invalidate trust rather than being blessed by a second read.
+    if [[ ! -f "$reference" || -L "$reference" ]] ||
+       ! want="$(sha256_of "$reference")" ||
+       ! actual="$(sha256_of "$f")" || [[ "$actual" != "$want" ]]; then
+        untrusted=$((untrusted + 1))
+        rejected=$((rejected + 1))
+        log "UNTRUSTED: $f (missing/unsafe reference or modified shipped content; left unchanged)"
+        continue
+    fi
     have="$(stored_checksum "$f" || true)"
     if [[ ! -x "$f" ]]; then
         case "$MODE" in
@@ -130,14 +156,14 @@ for f in "$DESKTOP_DIR"/*.desktop; do
             check)   ;;
         esac
     fi
-    if [[ "$have" == "$want" ]]; then
+    if [[ "$have" == "$want" && -x "$f" ]]; then
         trusted=$((trusted + 1))
         continue
     fi
     case "$MODE" in
         check)
             untrusted=$((untrusted + 1))
-            log "UNTRUSTED: $f (stored: ${have:-none})"
+            log "UNTRUSTED: $f (stored: ${have:-none}; executable: $(if [[ -x "$f" ]]; then echo yes; else echo no; fi))"
             ;;
         dry-run)
             untrusted=$((untrusted + 1))
@@ -157,15 +183,15 @@ shopt -u nullglob
 
 case "$MODE" in
     check)
-        log "$DESKTOP_DIR: $total launcher(s), $trusted trusted, $untrusted untrusted"
+        log "$DESKTOP_DIR: $total launcher(s), $trusted trusted, $untrusted untrusted, $skipped non-shipped skipped"
         # The only non-zero exit on purpose: --check is a verdict.
         [[ $untrusted -eq 0 ]] || exit 1
         ;;
     dry-run)
-        log "$DESKTOP_DIR: $total launcher(s), $trusted already trusted, $untrusted would be marked (dry-run)"
+        log "$DESKTOP_DIR: $total launcher(s), $trusted already trusted, $((untrusted - rejected)) need trust/permission repair, $rejected unsafe/modified left unchanged, $skipped non-shipped skipped (dry-run)"
         ;;
     apply)
-        log "$DESKTOP_DIR: $total launcher(s), $trusted already trusted, $marked marked, $made_exec made executable, $failed failed"
+        log "$DESKTOP_DIR: $total launcher(s), $trusted already trusted, $marked marked, $made_exec made executable, $failed failed, $untrusted unsafe/modified, $skipped non-shipped skipped"
         ;;
 esac
 exit 0
