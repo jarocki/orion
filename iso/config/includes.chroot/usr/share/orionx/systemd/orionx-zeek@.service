@@ -1,0 +1,127 @@
+# Orion-X Zeek protocol analysis, one instance per interface
+#
+# @decision DEC-PHASE13-033
+# @title orionx-zeek@.service runs Zeek on each live interface at Tier 1,
+#   started and stopped by orionx-postured beside Suricata (implements
+#   DEC-PHASE13-004)
+# @status accepted
+# @rationale zeek-core shipped on every image since trixie-dev4 and nothing ever
+#   ran it: no unit, no log directory, so /var/log/zeek never existed and every
+#   Zeek-fed surface (orionx-postured's ingest, orionx-logquery's Zeek source,
+#   the R.A.I.N. consumers) was empty on the deck (#150, Pavilion 2026-10-31).
+#   DEC-PHASE13-004 (owner, 2026-10-18) fixed the shape: templated on the
+#   interface like orionx-capture@, started by the Tier-1 plan alongside
+#   Suricata, because Tier 1 promises IDS coverage and ingest-only leaves half
+#   of it silent. This unit is that decision implemented.
+#
+#   WHO STARTS IT. orionx-postured's tier_plan() carries `zeek` (True at
+#   Tier 1/2 when at least one interface is measured live) and plan_actions()
+#   emits `systemctl start orionx-zeek@<iface>` for every interface in the
+#   same measured capture set Suricata gets (DEC-PHASE12-038), and a stop for
+#   every interface that leaves it or when the tier drops to 0. One authority
+#   for "which interfaces carry packets"; the posture daemon, not this unit,
+#   decides. Deliberately NOT in 0615's AUTOSTART_UNITS: a template cannot be
+#   enabled without an instance, and Tier 0 is passive — it starts nothing.
+#
+#   WHERE THE LOGS GO. LogsDirectory=zeek/%i gives each instance
+#   /var/log/zeek/<iface>/ (0755, root), the working directory Zeek writes
+#   conn.log, notice.log, weird.log and the rest into. orionx-postured's
+#   ZEEK_LOG_DIRS discovery includes /var/log/zeek/<iface>/ so ingest attaches
+#   within one reassert cycle of the first log appearing. Rotation is hourly
+#   into ./archive and the archive is bounded by orionx-zeek-prune (64 MiB,
+#   24 h per instance): the live overlay is RAM, and an unbounded log on a
+#   RAM-only deck is a slow self-inflicted denial of service.
+#
+#   WHAT ZEEK LOADS. Not `local` (the stock site policy): that loads
+#   frameworks/files/detect-MHR (DNS queries to Team Cymru for every file
+#   hash) and notice/extend-email/hostnames (reverse DNS for every notice).
+#   A passive sensor that phones out per observation is not passive, and the
+#   deck promises no unprompted outbound traffic. /usr/share/orionx/zeek/
+#   orionx.zeek is the curated subset (DEC-PHASE13-033) and the single place
+#   that list is decided. RestrictAddressFamilies has no AF_INET/AF_INET6, so
+#   even a future @load cannot make this unit connect anywhere.
+#
+#   PRIVILEGE. Exactly CAP_NET_RAW, the capture socket, like orionx-capture@.
+#   Promiscuous mode goes through PACKET_MR_PROMISC on that socket and needs
+#   no CAP_NET_ADMIN. ProtectSystem=strict leaves only the instance log
+#   directory writable. No SystemCallFilter and no MemoryDenyWriteExecute:
+#   neither is verified against Zeek 9's runtime, and a seccomp kill here
+#   would be the exact silent non-detection this unit exists to end. Add them
+#   when a QEMU boot at Tier 1 has proven them harmless.
+#
+#   RESTART. Restart=on-failure with a start-limit, unlike Suricata's drop-in
+#   (Restart=no, DEC-PHASE12-034) where postured owns bounded recovery. Zeek
+#   has no restart storm history on this deck and postured's drift check does
+#   not cover it yet; systemd's own bound (5 starts in 10 min) is the honest
+#   minimum. ConditionPathExists on the binary makes a start on an image whose
+#   build-time Zeek install soft-failed a clean no-op that postured already
+#   reports ("Zeek is NOT installed", DEC-PHASE12-028).
+#
+#   -C: ignore bad checksums. NIC offload hands the kernel frames whose
+#   checksums are computed later; without -C Zeek discards them as corrupt
+#   and conn.log stays empty on a perfectly live link.
+
+[Unit]
+Description=Orion-X Zeek protocol analysis on %I
+Documentation=https://docs.zeek.org/
+After=network.target sys-subsystem-net-devices-%i.device orionx-event-broker.service
+ConditionPathExists=/sys/class/net/%i
+ConditionPathExists=/opt/zeek/bin/zeek
+# Started and stopped by orionx-postured (tier plan); never autostarted.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/var/log/zeek/%i
+LogsDirectory=zeek/%i
+LogsDirectoryMode=0755
+ExecStart=/opt/zeek/bin/zeek -C -i %I /usr/share/orionx/zeek/orionx.zeek
+Restart=on-failure
+RestartSec=30s
+TimeoutStopSec=20
+KillSignal=SIGTERM
+UMask=0022
+
+User=root
+Group=root
+SupplementaryGroups=
+
+# --- privilege: the capture socket and nothing else -------------------------
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+SystemCallArchitectures=native
+
+# --- filesystem: writable only where this instance's logs go ----------------
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+
+# --- network: listen on the wire, open no connection ------------------------
+RestrictAddressFamilies=AF_PACKET AF_NETLINK AF_UNIX
+
+# --- resources: a 2 GB deck must keep running with Suricata beside this -----
+MemoryMax=512M
+TasksMax=64
+CPUQuota=100%
+Nice=10
+
+StandardOutput=journal
+StandardError=journal
+
+# No [Install] section: a template cannot be `systemctl enable`d without an
+# instance, and Tier 0 starts nothing. Staged by 0615 (UNIT_FILES), absent
+# from AUTOSTART_UNITS, started per interface by orionx-postured at Tier 1.

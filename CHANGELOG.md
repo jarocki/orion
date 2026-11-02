@@ -11,6 +11,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Zeek now runs on the deck (#150, DEC-PHASE13-033, implementing
+  DEC-PHASE13-004).** `zeek-core` shipped on every image and nothing ever
+  started it: no unit and no `/var/log/zeek`, so every Zeek-fed surface was
+  empty. New `orionx-zeek@.service`, a template on the interface like
+  `orionx-capture@`: `orionx-postured`'s Tier-1 plan starts one instance per
+  measured live interface (the same set Suricata captures on) after Suricata
+  and stops them before it on the way down; an interface change touches only
+  the instance that changed. Each instance writes `/var/log/zeek/<iface>/`
+  (`LogsDirectory=zeek/%i`), which the ingest now discovers. Zeek loads the
+  curated `/usr/share/orionx/zeek/orionx.zeek`, not the stock `local`:
+  `detect-MHR` (DNS to Team Cymru per file hash), `extend-email/hostnames`
+  (reverse DNS per notice) and `ssh/geo-data` are left out, and the unit has
+  no AF_INET so the omission is enforced. Logs rotate hourly into
+  `./archive`, pruned by `orionx-zeek-prune` to 64 MiB and 24 h per instance
+  (the overlay is RAM). Exactly `CAP_NET_RAW`, `ProtectSystem=strict`,
+  `MemoryMax=512M`, bounded restarts; `ConditionPathExists` on the binary
+  keeps a soft-failed build a clean no-op that postured already reports.
+  Not in `AUTOSTART_UNITS`: Tier 0 is passive. Status file gains
+  `zeek_capture` (desired vs active). Tests: daemon plan/actions, Zeek
+  suite (unit, policy, prune on a fixture), unit-hook arrays,
+  content-presence §39, runtime-verify `zeek_unit_staged`; `systemd-analyze
+  verify` clean on trixie. Not verified: a Tier-1 boot with traffic (needs
+  the Pavilion; v3.2.0 boot test) and the Zeek policy under `zeek` itself.
+
 - **Clock and timezone wrong at boot; apt refused every Release file (#148,
   DEC-PHASE13-032).** On a laptop whose hardware clock keeps local time
   (Windows dual-boot) the live system read it as UTC, so real UTC was hours
