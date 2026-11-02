@@ -26,6 +26,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in the Orion Tools catalogue (Install button), README and User Guide §15.
   The banner says plainly that this turns a radio on and how to turn it off.
 
+### Security
+
+- **Ollama pin evaluated and kept at 0.30.7 for v3.1.3; the upgrade is a
+  store-layout migration tracked for v3.2.0 as #163 (#153, DEC-PHASE13-036).**
+  Evaluated v0.40.13 (2026-10-28) in an amd64 trixie container against the
+  shipped Qwen store. Eight 2026 advisories (CVE-2026-103663 critical
+  `/api/pull` traversal fixed in 0.35.0, CVE-2026-108836 pull-name SSRF fixed
+  in 0.34.2, CVE-2026-85180, CVE-2026-65315, CVE-2026-15685, CVE-2026-5757,
+  CVE-2026-86289, and CVE-2026-102697 in the CLI agent mode the deck never
+  runs); none is reachable from the network on this deck (127.0.0.1 bind,
+  `IPAddressDeny=any`, AppArmor, read-only `/usr`), and the pull-path ones
+  need egress the unit cannot make. 0.40.13 serves the shipped store offline
+  (tags, show, chat, generate), but its `ollama create` writes `manifests-v2/`
+  and no `manifests/`, so the build's store consolidation refuses: the
+  upgrade needs store.py and the 0510 hook to learn the new layout and an
+  AppArmor grant for `metadata/` and `manifests-v2/` under the model store.
+  Footprint is unchanged (both versions disable mmap on CPU; resident size
+  with the model loaded 2.19 GB in both; the sse42 backend loads in both).
+  Shipped now: the 0.30.7 pin cross-verified against the release's
+  `sha256sum.txt`, `OLLAMA_PIN_REVIEW_BY=2027-01-31` enforced by the hook
+  suite (the build's tests fail once the date passes), and
+  `OLLAMA_NO_CLOUD=1` on `nebula-runtime.service` and the build's temporary
+  server (honoured by 0.30.7 and 0.40.x). Measured: the shipped 0.30.7
+  contacted ollama.com at startup for its cloud model cache and retried the
+  model-recommendations fetch every ~5 minutes on failure; with the flag the
+  cloud cache is gone and only the recommendations fetch remains (no knob in
+  envconfig; `IPAddressDeny=any` blocks it on the deck).
+
 ### Fixed
 
 - **Desktop launchers no longer ask "untrusted application launcher" on the
