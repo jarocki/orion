@@ -730,8 +730,20 @@ grep -q '@decision DEC-PHASE13-033\|DEC-PHASE13-033' "$PD" && pass "postured cit
 # prune, exercised on a fixture
 ZW="$(mktemp -d "${TMPDIR:-$REPO_ROOT/tmp}/zeekprune.XXXXXX")"
 mkdir -p "$ZW/eth0/archive"
-for i in 1 2 3 4 5; do head -c 1000 /dev/zero > "$ZW/eth0/archive/conn-2026-11-01-0$i-00-00.log"; touch -t "2026110100$((i*10))" "$ZW/eth0/archive/conn-2026-11-01-0$i-00-00.log"; done
-head -c 1000 /dev/zero > "$ZW/eth0/archive/weird-old.log"; touch -t 202601010000 "$ZW/eth0/archive/weird-old.log"
+# mtimes RELATIVE to now (python os.utime: portable, and a fixture stamped with
+# absolute dates aged past the 24 h cap the day after it was written — CI run
+# 41374029808 pruned all six files by age and the byte-cap assertions failed).
+for i in 1 2 3 4 5; do head -c 1000 /dev/zero > "$ZW/eth0/archive/conn-2026-11-01-0$i-00-00.log"; done
+head -c 1000 /dev/zero > "$ZW/eth0/archive/weird-old.log"
+python3 - "$ZW/eth0/archive" <<'PY'
+import os, sys, time
+d, now = sys.argv[1], time.time()
+for i in range(1, 6):   # conn-…-01 oldest (5 h ago) … conn-…-05 newest (1 h ago)
+    t = now - (6 - i) * 3600
+    os.utime(os.path.join(d, f"conn-2026-11-01-0{i}-00-00.log"), (t, t))
+t = now - 400 * 86400   # well past the 24 h age cap
+os.utime(os.path.join(d, "weird-old.log"), (t, t))
+PY
 ln -s conn-2026-11-01-05-00-00.log "$ZW/eth0/archive/link.log"
 PRUNE_OUT="$(ORIONX_ZEEK_ARCHIVE_MAX_BYTES=2500 python3 "$ZPRUNE" "$ZW/eth0/archive/conn-2026-11-01-05-00-00.log" conn 26-11-01_04.00.00 26-11-01_05.00.00 0 ascii 2>&1)"; PRUNE_RC=$?
 [[ $PRUNE_RC -eq 0 ]] && pass "prune exits 0" || fail "prune exit" "rc=$PRUNE_RC: $PRUNE_OUT"
