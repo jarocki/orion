@@ -38,6 +38,7 @@ bash "$S" --tag v9.9.9 --wat >/dev/null 2>&1; [[ $? -eq 2 ]] && pass "unknown op
 echo "[dry-run against stubs]"
 mkdir -p "$WORK/bin" "$WORK/repo/scripts/release" "$WORK/repo/tmp"
 cp "$S" "$WORK/repo/scripts/release/owner-release.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$WORK/repo/scripts/release/stage-split-release.sh"   # the root check looks for it
 for t in gh git shasum gpg xorriso unsquashfs python3 dpkg caffeinate; do
     printf '#!/usr/bin/env bash\necho "%s $*" >> "${STUB_CALLS:?}"\n[ "%s" = git ] && [ "$1" = status ] && exit 0\n[ "%s" = git ] && [ "$1" = rev-parse ] && { echo deadbeef; exit 0; }\nexit 0\n' "$t" "$t" "$t" > "$WORK/bin/$t"
 done
