@@ -69,6 +69,12 @@ and gates the ISO from the tag, the owner signs (release-process §10).
 
 ### Fixed
 
+- **Recovery review corrections (#166, #161, #162).** Automatic Desktop
+  trust now requires an unchanged copy of a shipped `/etc/skel/Desktop`
+  launcher; added or modified launchers are left untouched. The trust check
+  also requires execute permission. Bluetooth installed-state checks cover
+  every package in the installer's package set, including headset support.
+
 - **Desktop launchers no longer ask "untrusted application launcher" on the
   first double-click (#149, DEC-PHASE13-034).** xfdesktop 4.20 hands the
   launch to Thunar, which runs a `.desktop` file silently only when the gvfs

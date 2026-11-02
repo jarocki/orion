@@ -98,7 +98,7 @@ pkg_installed() {
 
 bluetooth_installed() {
     local p
-    for p in bluez blueman; do
+    for p in $BLUETOOTH_PACKAGES; do
         pkg_installed "$p" || return 1
     done
     command -v blueman-manager >/dev/null 2>&1
@@ -179,7 +179,7 @@ if bluetooth_installed; then
     fi
     orionx_log_info "--force given; reinstalling over the existing install."
 elif [[ $CHECK_ONLY -eq 1 ]]; then
-    orionx_log_info "Bluetooth support is NOT installed (no bluez + blueman)."
+    orionx_log_info "Bluetooth support is NOT installed completely (requires $BLUETOOTH_PACKAGES and blueman-manager)."
     orionx_log_info "  Install with: sudo $0"
     exit 1
 fi
@@ -244,7 +244,7 @@ if [[ -z "$installed_from" ]]; then
 fi
 
 if ! bluetooth_installed; then
-    orionx_log_error "apt finished but bluez/blueman are not both installed and runnable. Nothing else was changed."
+    orionx_log_error "apt finished but the required packages ($BLUETOOTH_PACKAGES) or blueman-manager are missing. Service and radio were not enabled."
     exit 1
 fi
 

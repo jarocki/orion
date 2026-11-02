@@ -76,6 +76,16 @@ out="$(run "bluez blueman pulseaudio-module-bluetooth" --check)"; rc=$?
 [[ $rc -eq 0 ]] && pass "--check exits 0 when installed" || fail "--check present rc" "rc=$rc $out"
 out="$(run "bluez" --check)"; rc=$?
 [[ $rc -eq 1 ]] && pass "bluez without blueman is NOT reported as installed" || fail "partial install detected" "rc=$rc"
+# Every missing member of the authoritative package set must take the install path.
+for partial in "bluez blueman" "bluez pulseaudio-module-bluetooth" "blueman pulseaudio-module-bluetooth"; do
+    : > "$WORK/calls"
+    out="$(run "$partial" --check)"; rc=$?
+    [[ $rc -eq 1 ]] && pass "partial set is incomplete: $partial" || fail "partial set falsely complete" "$partial: rc=$rc $out"
+    out="$(run "$partial" --dry-run)"; rc=$?
+    [[ $rc -eq 0 ]] && echo "$out" | grep -q 'apt-get install' &&
+        ! echo "$out" | grep -q 'already installed' && [[ ! -s "$WORK/calls" ]] &&
+        pass "partial set plans installation without side effects: $partial" || fail "partial set skipped installation" "$out"
+done
 out="$(run "" --wat)"; rc=$?
 [[ $rc -eq 2 ]] && pass "unknown argument is refused (exit 2)" || fail "unknown arg" "rc=$rc"
 out="$(run "" --help)"; rc=$?
