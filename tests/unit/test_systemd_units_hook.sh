@@ -257,6 +257,8 @@ EXPECTED_UNITS=(
     "orionx-postured.service"
     "nebula-mcp.service"
     "orionx-capture@.service"
+    # DEC-PHASE13-033 (#150): Zeek per interface, started by postured at Tier 1; a template, never autostarted
+    "orionx-zeek@.service"
     "orionx-apparmor-load.service"
     "orionx-mesh-beacon.service"
     "orionx-perf-measure.service"

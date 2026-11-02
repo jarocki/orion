@@ -175,11 +175,31 @@ assert_apparmor_enforcing() {
 # ---------------------------------------------------------------------------
 emit "ORIONX_VERIFY_BEGIN"
 
+# ---------------------------------------------------------------------------
+# Assertion: zeek_unit_staged (DEC-PHASE13-033, #150)
+#
+# The QEMU deck boots at Tier 0, where no Zeek instance runs, so this proves
+# the install path rather than the sensor: the template is loadable by
+# systemd (0615 installed it) and the policy and prune script it names exist.
+# A Tier-1 boot with traffic is the Pavilion's job (v3.2.0 boot test).
+# ---------------------------------------------------------------------------
+assert_zeek_unit_staged() {
+    local verdict="FAIL"
+    if systemctl cat 'orionx-zeek@.service' >/dev/null 2>&1 \
+       && [[ -f /usr/share/orionx/zeek/orionx.zeek ]] \
+       && [[ -x /opt/orionx/scripts/awareness/orionx-zeek-prune ]]; then
+        verdict="PASS"
+    fi
+    emit "ORIONX_VERIFY: zeek_unit_staged=${verdict}"
+    [[ "${verdict}" == "PASS" ]] || mark_fail
+}
+
 assert_mesh_iface_up
 assert_mesh_beacon_active
 assert_mesh_discover_enabled
 assert_matrix_synapse_state
 assert_apparmor_enforcing
+assert_zeek_unit_staged
 
 emit "ORIONX_VERIFY_END: overall=${OVERALL}"
 

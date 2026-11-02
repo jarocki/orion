@@ -687,6 +687,66 @@ if command -v shellcheck >/dev/null 2>&1; then
 fi
 if bash -n "$INSTALLER"; then pass "installer parses (bash -n)"; else fail "installer bash -n"; fi
 
+section "Managed sensor: orionx-zeek@.service + orionx.zeek policy + archive prune (#150, DEC-PHASE13-033)"
+ZUNIT="$CHROOT/usr/share/orionx/systemd/orionx-zeek@.service"
+ZPOLICY="$CHROOT/usr/share/orionx/zeek/orionx.zeek"
+ZPRUNE="$REPO_ROOT/scripts/awareness/orionx-zeek-prune"
+HOOK615="$REPO_ROOT/iso/config/hooks/live/0615-install-systemd-units.hook.chroot"
+if [[ -f "$ZUNIT" ]]; then pass "orionx-zeek@.service staged"; else fail "orionx-zeek@.service staged" "missing $ZUNIT"; fi
+if [[ -f "$ZPOLICY" ]]; then pass "orionx.zeek site policy staged"; else fail "orionx.zeek staged" "missing $ZPOLICY"; fi
+if [[ -x "$ZPRUNE" ]]; then pass "orionx-zeek-prune staged and executable"; else fail "orionx-zeek-prune executable" "missing or not +x"; fi
+grep -q '@decision DEC-PHASE13-033' "$ZUNIT" && pass "unit carries DEC-PHASE13-033" || fail "unit decision annotation"
+grep -qE '^ExecStart=/opt/zeek/bin/zeek -C -i %I /usr/share/orionx/zeek/orionx.zeek$' "$ZUNIT" \
+    && pass "unit runs zeek -C -i %I with the Orion-X policy (not the stock 'local')" || fail "unit ExecStart" "$(grep '^ExecStart' "$ZUNIT")"
+grep -vE '^\s*#' "$ZUNIT" | grep -qE '(^| )local( |$)' && fail "unit loads the stock 'local' policy (phones out: detect-MHR, reverse DNS)" || pass "unit never loads the stock 'local' policy"
+grep -qE '^LogsDirectory=zeek/%i$' "$ZUNIT" && pass "each instance gets /var/log/zeek/<iface>/ (LogsDirectory=zeek/%i)" || fail "unit LogsDirectory"
+grep -qE '^WorkingDirectory=/var/log/zeek/%i$' "$ZUNIT" && pass "Zeek writes its logs in the instance directory" || fail "unit WorkingDirectory"
+grep -qE '^ConditionPathExists=/opt/zeek/bin/zeek$' "$ZUNIT" && pass "a start without the binary is a clean no-op (soft-fail build)" || fail "unit ConditionPathExists binary"
+grep -qE '^ConditionPathExists=/sys/class/net/%i$' "$ZUNIT" && pass "a start on a missing interface is a clean no-op" || fail "unit ConditionPathExists iface"
+grep -qE '^AmbientCapabilities=CAP_NET_RAW$' "$ZUNIT" && grep -qE '^CapabilityBoundingSet=CAP_NET_RAW$' "$ZUNIT" \
+    && pass "exactly CAP_NET_RAW, like orionx-capture@" || fail "unit capabilities"
+grep -vE '^\s*#' "$ZUNIT" | grep -q 'CAP_NET_ADMIN' && fail "unit over-privileged" "CAP_NET_ADMIN" || pass "no CAP_NET_ADMIN"
+grep -qE '^RestrictAddressFamilies=AF_PACKET AF_NETLINK AF_UNIX$' "$ZUNIT" && pass "no AF_INET/AF_INET6: the sensor cannot connect anywhere" || fail "unit address families"
+grep -qE '^ProtectSystem=strict$' "$ZUNIT" && pass "ProtectSystem=strict" || fail "unit ProtectSystem"
+grep -qE '^MemoryMax=[0-9]+M$' "$ZUNIT" && pass "memory ceiling set for the 2 GB deck" || fail "unit MemoryMax"
+grep -qE '^StartLimitBurst=[0-9]+$' "$ZUNIT" && grep -qE '^Restart=on-failure$' "$ZUNIT" && pass "restart is bounded by a start limit" || fail "unit restart bound"
+grep -qE '^\[Install\]' "$ZUNIT" && fail "template has an [Install] section" || pass "no [Install] section (started per interface by postured, never enabled)"
+# policy
+for bad in 'frameworks/files/detect-MHR' 'extend-email/hostnames' 'protocols/ssh/geo-data'; do
+    if grep -vE '^\s*#' "$ZPOLICY" | grep -q "$bad"; then fail "policy loads $bad (phones out / needs a DB the image lacks)"; else pass "policy does not load $bad"; fi
+done
+for good in 'protocols/conn/known-services' 'protocols/http/detect-sql-injection' 'protocols/ssh/detect-bruteforcing' 'frameworks/files/hash-all-files' 'misc/capture-loss'; do
+    grep -qE "^@load(-sigs)? $good" "$ZPOLICY" && pass "policy loads $good" || fail "policy loads $good"
+done
+grep -qE '^redef Log::default_rotation_interval = 1hr;' "$ZPOLICY" && pass "hourly rotation (standalone zeek never rotates by default)" || fail "policy rotation interval"
+grep -qE '^redef Log::default_rotation_dir = "archive";' "$ZPOLICY" && pass "rotated logs go to ./archive" || fail "policy rotation dir"
+grep -qE '^redef Log::default_rotation_postprocessor_cmd = "/opt/orionx/scripts/awareness/orionx-zeek-prune";' "$ZPOLICY" && pass "the prune runs after every rotation" || fail "policy postprocessor"
+grep -qE '^redef LogAscii::use_json = F;' "$ZPOLICY" && pass "TSV logs (zeek-cut, logquery, postured all read #fields)" || fail "policy TSV"
+# hook + postured wiring
+grep -qF '"orionx-zeek@.service"' "$HOOK615" && pass "0615 installs the template" || fail "0615 UNIT_FILES lacks orionx-zeek@.service"
+awk '/^AUTOSTART_UNITS=\(/{p=1} p{print} /^\)/{if(p) p=0}' "$HOOK615" | grep -q 'orionx-zeek@' && fail "template in AUTOSTART_UNITS (cannot enable a bare template; Tier 0 starts nothing)" || pass "template is NOT in AUTOSTART_UNITS"
+grep -q 'ZEEK_UNIT_TEMPLATE = "orionx-zeek@{iface}.service"' "$PD" && pass "postured names the same template" || fail "postured template name"
+grep -q '@decision DEC-PHASE13-033\|DEC-PHASE13-033' "$PD" && pass "postured cites DEC-PHASE13-033" || fail "postured decision cite"
+# prune, exercised on a fixture
+ZW="$(mktemp -d "${TMPDIR:-$REPO_ROOT/tmp}/zeekprune.XXXXXX")"
+mkdir -p "$ZW/eth0/archive"
+for i in 1 2 3 4 5; do head -c 1000 /dev/zero > "$ZW/eth0/archive/conn-2026-11-01-0$i-00-00.log"; touch -t "2026110100$((i*10))" "$ZW/eth0/archive/conn-2026-11-01-0$i-00-00.log"; done
+head -c 1000 /dev/zero > "$ZW/eth0/archive/weird-old.log"; touch -t 202601010000 "$ZW/eth0/archive/weird-old.log"
+ln -s conn-2026-11-01-05-00-00.log "$ZW/eth0/archive/link.log"
+PRUNE_OUT="$(ORIONX_ZEEK_ARCHIVE_MAX_BYTES=2500 python3 "$ZPRUNE" "$ZW/eth0/archive/conn-2026-11-01-05-00-00.log" conn 26-11-01_04.00.00 26-11-01_05.00.00 0 ascii 2>&1)"; PRUNE_RC=$?
+[[ $PRUNE_RC -eq 0 ]] && pass "prune exits 0" || fail "prune exit" "rc=$PRUNE_RC: $PRUNE_OUT"
+[[ ! -e "$ZW/eth0/archive/weird-old.log" ]] && pass "a file past the age cap is removed" || fail "age cap" "$PRUNE_OUT"
+[[ ! -e "$ZW/eth0/archive/conn-2026-11-01-01-00-00.log" && ! -e "$ZW/eth0/archive/conn-2026-11-01-02-00-00.log" && ! -e "$ZW/eth0/archive/conn-2026-11-01-03-00-00.log" ]] \
+    && pass "oldest files go first until the byte cap holds" || fail "byte cap oldest-first" "$(ls "$ZW/eth0/archive")"
+[[ -e "$ZW/eth0/archive/conn-2026-11-01-04-00-00.log" && -e "$ZW/eth0/archive/conn-2026-11-01-05-00-00.log" ]] && pass "newest files survive (2000 bytes <= 2500)" || fail "newest survive" "$(ls "$ZW/eth0/archive")"
+[[ -L "$ZW/eth0/archive/link.log" ]] && pass "symlinks are never touched" || fail "symlink removed"
+echo "$PRUNE_OUT" | grep -q 'removed 4 file' && pass "prune reports what it removed and why on stderr" || fail "prune report" "$PRUNE_OUT"
+touch "$ZW/eth0/conn.log"
+REFUSE_OUT="$(python3 "$ZPRUNE" "$ZW/eth0/conn.log" 2>&1)"; REFUSE_RC=$?
+[[ $REFUSE_RC -eq 0 && -e "$ZW/eth0/conn.log" ]] && echo "$REFUSE_OUT" | grep -q "refusing" && pass "a path outside an 'archive' dir is refused, nothing deleted, exit 0" || fail "prune refusal" "rc=$REFUSE_RC $REFUSE_OUT"
+python3 "$ZPRUNE" >/dev/null 2>&1; [[ $? -eq 2 ]] && pass "no arguments -> usage, exit 2" || fail "prune usage exit"
+rm -rf "$ZW"
+
 section "export: the operator gets a 0600 copy; the ring stays root's (#109, DEC-PHASE13-021)"
 EXR="$WORK/export"; mkdir -p "$EXR/cap/eth0" "$EXR/state" "$EXR/out"
 printf 'old' > "$EXR/cap/eth0/eth0_00001_20261025100000.pcapng"

@@ -3528,6 +3528,50 @@ else
 fi
 
 # ===========================================================================
+# 39. Zeek is a managed sensor (DEC-PHASE13-033, #150): the template unit, the
+#     Orion-X policy and the prune script ship; the stock 'local' policy is
+#     not what the unit loads; the template is not enabled (Tier 0 is passive).
+# ===========================================================================
+section "39. Zeek managed sensor: unit + policy + prune shipped, not autostarted (DEC-PHASE13-033)"
+
+if [[ -f "$SQF/lib/systemd/system/orionx-zeek@.service" || -f "$SQF/usr/lib/systemd/system/orionx-zeek@.service" ]]; then
+    pass "39a: orionx-zeek@.service installed by the 0615 hook"
+else
+    fail "39a: orionx-zeek@.service installed" "0615 UNIT_FILES must carry it"
+fi
+_ZU="$SQF/lib/systemd/system/orionx-zeek@.service"; [[ -f "$_ZU" ]] || _ZU="$SQF/usr/lib/systemd/system/orionx-zeek@.service"
+if [[ -f "$_ZU" ]] && grep -qE '^ExecStart=/opt/zeek/bin/zeek -C -i %I /usr/share/orionx/zeek/orionx.zeek$' "$_ZU"; then
+    pass "39b: the unit runs the Orion-X policy, not the stock 'local'"
+else
+    fail "39b: unit ExecStart" "must load /usr/share/orionx/zeek/orionx.zeek"
+fi
+if [[ -f "$SQF/usr/share/orionx/zeek/orionx.zeek" ]]; then
+    pass "39c: /usr/share/orionx/zeek/orionx.zeek shipped"
+else
+    fail "39c: orionx.zeek shipped"
+fi
+if [[ -x "$SQF/opt/orionx/scripts/awareness/orionx-zeek-prune" ]]; then
+    pass "39d: orionx-zeek-prune staged and executable (the rotation postprocessor)"
+else
+    fail "39d: orionx-zeek-prune staged" "the archive would grow unbounded in RAM"
+fi
+if ls "$SQF"/etc/systemd/system/*.wants/orionx-zeek@* >/dev/null 2>&1; then
+    fail "39e: no orionx-zeek@ instance is enabled at boot" "Tier 0 is passive; postured starts instances at Tier 1"
+else
+    pass "39e: no orionx-zeek@ instance is enabled at boot (postured starts them at Tier 1)"
+fi
+if [[ -x "$SQF/opt/zeek/bin/zeek" ]]; then
+    pass "39f: /opt/zeek/bin/zeek present (the unit's ConditionPathExists)"
+else
+    fail "39f: /opt/zeek/bin/zeek present" "build-time Zeek install soft-failed; the unit would be a no-op"
+fi
+if grep -q 'ZEEK_UNIT_TEMPLATE = "orionx-zeek@{iface}.service"' "$SQF/opt/orionx/scripts/awareness/orionx-postured" 2>/dev/null; then
+    pass "39g: shipped orionx-postured knows the template (starts/stops instances)"
+else
+    fail "39g: shipped orionx-postured knows the template"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

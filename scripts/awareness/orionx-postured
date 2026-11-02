@@ -187,6 +187,51 @@ ZEEK_NOTICE_LOG = "notice.log"
 ZEEK_WEIRD_LOG = "weird.log"
 ZEEK_CONN_LOG = "conn.log"
 
+# --- Zeek as a managed sensor (DEC-PHASE13-033, implements DEC-PHASE13-004) --
+# orionx-zeek@<iface>.service runs Zeek on one interface with
+# LogsDirectory=zeek/<iface>, so each instance writes /var/log/zeek/<iface>/.
+# The tier plan starts one instance per measured live interface at Tier 1/2
+# (the same set Suricata captures on, DEC-PHASE12-038) and stops them at
+# Tier 0. Log discovery expands ZEEK_INSTANCE_ROOT's subdirectories so the
+# ingest attaches to an instance directory without naming interfaces here.
+ZEEK_UNIT_TEMPLATE = "orionx-zeek@{iface}.service"
+ZEEK_INSTANCE_ROOT = Path("/var/log/zeek")
+ZEEK_ARCHIVE_DIR = "archive"
+
+
+def zeek_unit(iface: str) -> str:
+    """Unit name for the Zeek instance on `iface`."""
+    return ZEEK_UNIT_TEMPLATE.format(iface=iface)
+
+
+def zeek_units(ifaces) -> tuple[str, ...]:
+    return tuple(zeek_unit(i) for i in sorted(set(ifaces or ())))
+
+
+def expand_zeek_log_dirs(dirs=None, instance_root: Path = ZEEK_INSTANCE_ROOT):
+    """ZEEK_LOG_DIRS plus every instance directory under the instance root.
+
+    Instance directories (/var/log/zeek/<iface>/) are inserted right before
+    the root entry itself, sorted, so a zeekctl `current` or a hand-run
+    directory listed earlier still wins, and the bare root (where nothing
+    writes any more) stays last. `archive` is a rotation target, never a
+    live log directory, and is skipped. Pure apart from one listdir.
+    """
+    dirs = tuple(Path(d) for d in (ZEEK_LOG_DIRS if dirs is None else dirs))
+    root = Path(instance_root)
+    out: list[Path] = []
+    for d in dirs:
+        if d == root:
+            try:
+                subs = sorted(p for p in root.iterdir()
+                              if p.is_dir() and p.name != ZEEK_ARCHIVE_DIR)
+            except OSError:
+                subs = []
+            out.extend(sub for sub in subs if sub not in out and sub not in dirs)
+        if d not in out:
+            out.append(d)
+    return tuple(out)
+
 # weird.log is aggregated, not forwarded: N of the same weird type inside the
 # window is one event. Chosen so a genuinely broken/attacked protocol surfaces
 # within a minute while ordinary internet noise never reaches the bus.
@@ -810,7 +855,7 @@ def assess_zeek_logs(dirs=ZEEK_LOG_DIRS, logs=(ZEEK_NOTICE_LOG,
     considered: list[str] = []
     unreadable: list[str] = []
     empty: list[str] = []
-    for d in dirs:
+    for d in expand_zeek_log_dirs(dirs):
         d = Path(d)
         considered.append(str(d))
         if not d.is_dir():
@@ -889,13 +934,16 @@ def zeek_state_message(zeek: dict) -> tuple[str, str]:
     if zeek["log_state"] == "empty":
         return ("notice",
                 f"Zeek is installed ({zeek['binary']}) but {zeek['log_dir']} "
-                "holds no logs yet, so there is nothing to ingest. Give it "
-                "traffic with: sudo zeek -i <iface>  (or capture first with "
-                "sudo orionx-capture start <iface>, then zeek -r the pcap).")
+                "holds no logs yet, so there is nothing to ingest. At "
+                "threat-posture Tier 1 this daemon starts orionx-zeek@<iface> "
+                "on every live interface (DEC-PHASE13-033); at Tier 0 give it "
+                "traffic by hand: sudo zeek -i <iface>, or zeek -r a pcap from "
+                "sudo orionx-capture start <iface>.")
     return ("notice",
             f"Zeek is installed ({zeek['binary']}) but no log directory was "
-            f"found. Searched: {', '.join(zeek['considered'])}. Nothing to "
-            "ingest until Zeek writes somewhere this daemon looks.")
+            f"found. Searched: {', '.join(zeek['considered'])}. At Tier 1 "
+            "orionx-zeek@<iface> writes /var/log/zeek/<iface>/ "
+            "(DEC-PHASE13-033); at Tier 0 nothing runs Zeek until you do.")
 
 
 # --- Zeek log formats: TSV (default) and JSON (LogAscii::use_json) ---------
@@ -1237,8 +1285,13 @@ def tier_plan(tier: str, rules_usable: bool, live_ifaces=None) -> dict:
     and flow records still have value. What must never happen is starting it
     quietly — hence warn_no_rules, which the caller is required to announce.
 
-    zeek_ingest is True at EVERY tier, including Tier 0, and is stated here
-    rather than left implicit so `--print-plan` answers the question honestly
+    zeek (DEC-PHASE13-033, implementing DEC-PHASE13-004) is True at Tier 1/2
+    whenever Suricata would start: one orionx-zeek@<iface> instance per
+    interface in `capture_ifaces`, the same measured set, so Tier 1 delivers
+    the protocol-analysis half of the IDS coverage it promises and Tier 0
+    runs nothing. zeek_ingest is a different thing (reading logs) and is
+    True at EVERY tier, including Tier 0, stated here rather than left
+    implicit so `--print-plan` answers the question honestly
     (DEC-PHASE12-028). Reading a log file Zeek has already written costs
     nothing, opens nothing and sends nothing — the same reasoning that puts
     orionx-scanwatch at Tier 0. A Tier 0 deck with Zeek running would
@@ -1275,6 +1328,8 @@ def tier_plan(tier: str, rules_usable: bool, live_ifaces=None) -> dict:
         "label": TIER_LABEL[tier],
         "gate_file": ids,
         "suricata": ids and capture_ok,
+        # DEC-PHASE13-033: Zeek runs where Suricata runs, on the same set.
+        "zeek": ids and capture_ok,
         "eve_ingest": ids,
         "zeek_ingest": True,
         "nebula_context": ids,
@@ -1298,9 +1353,9 @@ def plan_actions(prev: dict | None, new: dict) -> list[tuple]:
     stopped before the gate is removed, so the gate never disappears from
     under a running service.
     """
-    prev = prev or {"gate_file": False, "suricata": False, "eve_ingest": False,
-                    "zeek_ingest": False, "deception": False,
-                    "warn_no_rules": False, "tier": None,
+    prev = prev or {"gate_file": False, "suricata": False, "zeek": False,
+                    "eve_ingest": False, "zeek_ingest": False,
+                    "deception": False, "warn_no_rules": False, "tier": None,
                     "capture_ifaces": ()}
     up: list[tuple] = []
     down: list[tuple] = []
@@ -1336,6 +1391,15 @@ def plan_actions(prev: dict | None, new: dict) -> list[tuple]:
         # no window in which the unit is enabled with no process and the
         # reassert loop sees it as crashed and spends a recovery attempt.
         up.append(("service", "restart", SURICATA_UNIT))
+    # DEC-PHASE13-033: one Zeek instance per live interface, started after
+    # Suricata and stopped before it. The per-interface diff means an
+    # interface that leaves the live set loses its instance and a new one
+    # gains one, with no restart of the instances that did not change — each
+    # is its own process on its own socket, so there is nothing to reconfigure.
+    prev_zeek = set(prev.get("capture_ifaces") or ()) if prev.get("zeek") else set()
+    new_zeek = set(new_ifaces) if new.get("zeek") else set()
+    for iface in sorted(new_zeek - prev_zeek):
+        up.append(("service", "start", zeek_unit(iface)))
     if new["eve_ingest"] and not prev.get("eve_ingest"):
         up.append(("eve", "start"))
     if new["deception"] and not prev.get("deception"):
@@ -1345,6 +1409,8 @@ def plan_actions(prev: dict | None, new: dict) -> list[tuple]:
         down.append(("deception", "disarm"))
     if prev.get("eve_ingest") and not new["eve_ingest"]:
         down.append(("eve", "stop"))
+    for iface in sorted(prev_zeek - new_zeek):
+        down.append(("service", "stop", zeek_unit(iface)))
     if prev.get("suricata") and not new["suricata"]:
         down.append(("service", "stop", SURICATA_UNIT))
     if prev.get("gate_file") and not new["gate_file"]:
@@ -2897,7 +2963,11 @@ class PostureDaemon:
             elif kind == "capture":
                 self.write_capture_config(action[2], now)
             elif kind == "service":
-                if action[1] in ("start", "restart"):
+                # The preflight and the capture verifier are Suricata's
+                # (DEC-PHASE12-038). A Zeek instance (DEC-PHASE13-033) has no
+                # config to test: its unit's ConditionPathExists makes a start
+                # without the binary a clean no-op that _sync_zeek reports.
+                if action[2] == SURICATA_UNIT and action[1] in ("start", "restart"):
                     # Check before Do: a config the engine will reject is
                     # worth one clear message, not three silent exit-1s and
                     # an exhausted attempt budget.
@@ -2977,6 +3047,14 @@ class PostureDaemon:
             # rather than given status files of their own, so the Cockpit has
             # one runtime-truth authority to read instead of three.
             "zeek": self.zeek.status(),
+            # DEC-PHASE13-033: the managed sensor instances, desired vs active,
+            # beside the ingest status above (one authority, two facts).
+            "zeek_capture": {
+                "desired": list(self.state.get("capture_ifaces") or ())
+                if self.state.get("zeek") else [],
+                "active": [i for i in (self.state.get("capture_ifaces") or ())
+                           if self.state.get("zeek") and service_active(zeek_unit(i))],
+            },
             "zeek_published": self.zeek_published,
             "zeek_suppressed": self.zeek_suppressed,
             "capture": capture_status(),

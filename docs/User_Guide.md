@@ -1089,7 +1089,7 @@ For analyzing network captures:
    pcap-analyzer.py /path/to/capture.pcap
    ```
 
-4. Using Zeek for protocol analysis (`zeek` and `zeek-cut` are on the image, installed under `/opt/zeek`). Zeek writes one log per protocol (`conn.log`, `dns.log`, `http.log`, …) into the current directory:
+4. Using Zeek for protocol analysis (`zeek` and `zeek-cut` are on the image, installed under `/opt/zeek`). Zeek writes one log per protocol (`conn.log`, `dns.log`, `http.log`, …) into the current directory: At threat-posture Tier 1 and above the deck runs Zeek itself: `orionx-postured` starts `orionx-zeek@<iface>` on every interface that carries traffic and its logs land in `/var/log/zeek/<iface>/` (rotated hourly into `archive/`, kept under 64 MB and 24 h per interface); at Tier 0 nothing runs Zeek until you do.
    ```bash
    mkdir zeek-out && cd zeek-out
    zeek -r /path/to/capture.pcap
@@ -1145,7 +1145,7 @@ For analyzing log files:
   ```bash
   sudo suricata -r /path/to/capture.pcap -l /path/to/output_dir
   ```
-  Alerts land in `/var/log/suricata/` (`fast.log`, `eve.json`) and the journal. At threat-posture Tier 1 and above, `orionx-postured` tails `eve.json` and publishes each alert to the event bus (with its MITRE ATT&CK technique where one is mapped), so R.A.I.N. sounds it and the Cockpit shows it.
+  Alerts land in `/var/log/suricata/` (`fast.log`, `eve.json`) and the journal. At threat-posture Tier 1 and above, `orionx-postured` tails `eve.json` and publishes each alert to the event bus (with its MITRE ATT&CK technique where one is mapped), so R.A.I.N. sounds it and the Cockpit shows it. Tier 1 also starts Zeek (`orionx-zeek@<iface>`, one instance per live interface, logs in `/var/log/zeek/<iface>/`) and ingests its `notice.log`, `weird.log` and `conn.log`; the Zeek sensor never makes an outbound connection of its own.
 - **yara** — pattern matching against files, disk images and memory dumps. **No rules ship on the image**: `/opt/orionx/yara/` holds only a README and a lock file until you fetch rulesets (network). Scanning takes a rules *file* first, then the target:
   ```bash
   sudo orionx-freshen-yara                         # network: git-clones four rulesets into /opt/orionx/yara/rules-*/
