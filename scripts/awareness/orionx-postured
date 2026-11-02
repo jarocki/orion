@@ -173,7 +173,7 @@ ZEEK_BIN_CANDIDATES = (
     Path("/usr/local/zeek/bin/zeek"),
     Path("/usr/bin/zeek"),
 )
-# Searched in order; the first directory holding a readable Zeek log wins.
+# All readable sources are ingested; these are not mutually exclusive sensors.
 # /opt/zeek/logs/current is zeekctl's live directory; /var/log/zeek/current is
 # the convention an operator running `zeek -i` by hand is told to use by
 # install-zeek.sh; /var/lib/orionx/zeek is where Orion-X's own offline runs go.
@@ -193,7 +193,7 @@ ZEEK_CONN_LOG = "conn.log"
 # The tier plan starts one instance per measured live interface at Tier 1/2
 # (the same set Suricata captures on, DEC-PHASE12-038) and stops them at
 # Tier 0. Log discovery expands ZEEK_INSTANCE_ROOT's subdirectories so the
-# ingest attaches to an instance directory without naming interfaces here.
+# ingest attaches to every instance directory without naming interfaces here.
 ZEEK_UNIT_TEMPLATE = "orionx-zeek@{iface}.service"
 ZEEK_INSTANCE_ROOT = Path("/var/log/zeek")
 ZEEK_ARCHIVE_DIR = "archive"
@@ -212,8 +212,8 @@ def expand_zeek_log_dirs(dirs=None, instance_root: Path = ZEEK_INSTANCE_ROOT):
     """ZEEK_LOG_DIRS plus every instance directory under the instance root.
 
     Instance directories (/var/log/zeek/<iface>/) are inserted right before
-    the root entry itself, sorted, so a zeekctl `current` or a hand-run
-    directory listed earlier still wins, and the bare root (where nothing
+    the root entry itself, sorted, with legacy zeekctl `current` and hand-run
+    directories retained as additional sources. The bare root (where nothing
     writes any more) stays last. `archive` is a rotation target, never a
     live log directory, and is skipped. Pure apart from one listdir.
     """
@@ -839,7 +839,7 @@ def find_zeek_binary(candidates=ZEEK_BIN_CANDIDATES,
 def assess_zeek_logs(dirs=ZEEK_LOG_DIRS, logs=(ZEEK_NOTICE_LOG,
                                                ZEEK_WEIRD_LOG,
                                                ZEEK_CONN_LOG)) -> dict:
-    """Which Zeek log directory to read, and why not, when there is none.
+    """All distinct Zeek log directories to read, and why not when none exist.
 
     The three failure states are kept DISTINCT because they call for three
     different things from the operator, and collapsing them into "no Zeek
@@ -855,6 +855,8 @@ def assess_zeek_logs(dirs=ZEEK_LOG_DIRS, logs=(ZEEK_NOTICE_LOG,
     considered: list[str] = []
     unreadable: list[str] = []
     empty: list[str] = []
+    sources: list[dict] = []
+    seen: set[Path] = set()
     for d in expand_zeek_log_dirs(dirs):
         d = Path(d)
         considered.append(str(d))
@@ -867,8 +869,15 @@ def assess_zeek_logs(dirs=ZEEK_LOG_DIRS, logs=(ZEEK_NOTICE_LOG,
         if not present:
             empty.append(str(d))
             continue
-        return {"state": "ok", "dir": str(d), "logs": present,
-                "considered": considered, "unreadable": unreadable}
+        # `current` may alias an instance; never attach twice to the same source.
+        resolved = d.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            sources.append({"dir": str(d), "logs": present})
+    if sources:
+        return {"state": "ok", "dir": sources[0]["dir"],
+                "logs": sorted({name for source in sources for name in source["logs"]}),
+                "sources": sources, "considered": considered, "unreadable": unreadable}
     if unreadable:
         return {"state": "unreadable", "dir": unreadable[0], "logs": [],
                 "considered": considered, "unreadable": unreadable}
@@ -895,7 +904,12 @@ def detect_zeek(bin_candidates=ZEEK_BIN_CANDIDATES,
         "installed": binary is not None,
         "binary": str(binary or ""),
         "log_state": logs["state"],
+        # Keep the singular field for existing status consumers.
         "log_dir": logs["dir"],
+        "log_dirs": [source["dir"] for source in logs.get("sources", [])],
+        "log_files": [str(Path(source["dir"]) / name)
+                      for source in logs.get("sources", []) for name in source["logs"]],
+        "unreadable": logs["unreadable"],
         "logs": logs["logs"],
         "considered": logs["considered"],
         "usable": logs["state"] == "ok",
@@ -914,7 +928,8 @@ def zeek_state_message(zeek: dict) -> tuple[str, str]:
     if zeek["usable"]:
         return ("notice",
                 f"Zeek ingest ACTIVE — reading {', '.join(zeek['logs'])} from "
-                f"{zeek['log_dir']}. Notices reach the R.A.I.N. bus with ATT&CK "
+                f"{', '.join(zeek.get('log_dirs') or [zeek['log_dir']])}. "
+                "Notices reach the R.A.I.N. bus with ATT&CK "
                 "context; scans already reported by the firewall or Suricata "
                 "are not repeated.")
     if zeek["log_state"] == "unreadable":
@@ -2216,10 +2231,9 @@ class ZeekIngest:
     which owns the bus voice and the de-duplication ledger. It can be started
     and stopped, and the daemon is what decides when.
 
-    It owns exactly one piece of state the daemon does not: which Zeek log
-    directory is currently being read, and the tailers attached to it. When
-    Zeek appears, moves, or goes away, `sync()` reattaches — so a deck that
-    gains Zeek at 03:00 is ingesting it at 03:00 without a restart.
+    It owns the set of Zeek log sources and their tailers. `sync()` reconciles
+    individual files when instances or logs appear or disappear, retaining
+    unchanged tailers and offsets. One stale source cannot hide a live sensor.
     """
 
     def __init__(self, on_notice=None, on_weird=None, on_conn=None,
@@ -2235,12 +2249,13 @@ class ZeekIngest:
         self.use_path = use_path
         self.state = detect_zeek(bin_candidates, log_dirs, use_path)
         self.active_dir: str = ""
+        self.active_dirs: list[str] = []
         self.running = False
         self.conn_records = 0
         self.notices_read = 0
         self.weird_read = 0
         self.watch_started = 0.0
-        self._tailers: list[LogTailer] = []
+        self._tailers: dict[str, LogTailer] = {}
         # Per-log TSV column names, refreshed on every (re)open.
         self._fields: dict[str, list[str] | None] = {}
 
@@ -2254,14 +2269,15 @@ class ZeekIngest:
     def state_fingerprint(self) -> tuple:
         """What must change before the operator is told again."""
         return (self.state["installed"], self.state["log_state"],
-                self.state["log_dir"])
+                tuple(self.state["log_files"]), tuple(self.state["unreadable"]))
 
     # --- tailing ---
     def _prime_fields(self, path) -> None:
-        self._fields[Path(path).name] = zeek_fields_from_file(path)
+        self._fields[str(path)] = zeek_fields_from_file(path)
 
-    def _handle(self, name: str, line: str) -> None:
-        rec = zeek_record(line, self._fields.get(name))
+    def _handle(self, path: str, line: str) -> None:
+        name = Path(path).name
+        rec = zeek_record(line, self._fields.get(str(path)))
         if rec is None:
             return
         if name == ZEEK_NOTICE_LOG:
@@ -2294,42 +2310,47 @@ class ZeekIngest:
             if self.running:
                 self.stop()
             return False
-        if self.running and self.active_dir == self.state["log_dir"]:
-            return True
-        if self.running:
-            self.stop()
-        self.start()
+        self._reconcile()
         return self.running
+
+    def _reconcile(self) -> None:
+        desired = set(self.state["log_files"])
+        for path in list(self._tailers):
+            if path not in desired:
+                self._tailers.pop(path).stop()
+                self._fields.pop(path, None)
+        for filename in self.state["log_files"]:
+            if filename in self._tailers:
+                continue
+            path = Path(filename)
+            self._prime_fields(path)
+            tailer = LogTailer(
+                path, poll=self.poll,
+                on_line=lambda line, p=filename: self._handle(p, line),
+                on_open=self._prime_fields,
+            )
+            tailer.start()
+            self._tailers[filename] = tailer
+        if self._tailers and not self.running:
+            self.watch_started = time.time()
+        self.running = bool(self._tailers)
+        self.active_dirs = list(self.state["log_dirs"]) if self.running else []
+        self.active_dir = self.active_dirs[0] if self.active_dirs else ""
 
     def start(self) -> bool:
         if self.running or not self.state["usable"]:
             return False
-        log_dir = Path(self.state["log_dir"])
-        for name in (ZEEK_NOTICE_LOG, ZEEK_WEIRD_LOG, ZEEK_CONN_LOG):
-            path = log_dir / name
-            if not path.is_file():
-                continue
-            self._prime_fields(path)
-            tailer = LogTailer(
-                path, poll=self.poll,
-                on_line=lambda line, n=name: self._handle(n, line),
-                on_open=self._prime_fields,
-            )
-            tailer.start()
-            self._tailers.append(tailer)
-        if not self._tailers:
-            return False
-        self.active_dir = str(log_dir)
-        self.watch_started = time.time()
-        self.running = True
-        return True
+        self._reconcile()
+        return self.running
 
     def stop(self) -> None:
-        for tailer in self._tailers:
+        for tailer in self._tailers.values():
             tailer.stop()
-        self._tailers = []
+        self._tailers = {}
+        self._fields = {}
         self.running = False
         self.active_dir = ""
+        self.active_dirs = []
         self.watch_started = 0.0
 
     def status(self) -> dict:
@@ -2338,6 +2359,8 @@ class ZeekIngest:
             "binary": self.state["binary"],
             "log_state": self.state["log_state"],
             "log_dir": self.active_dir or self.state["log_dir"],
+            "log_dirs": self.active_dirs or self.state["log_dirs"],
+            "unreadable": self.state["unreadable"],
             "ingesting": self.running,
             "notices": self.notices_read,
             "weird": self.weird_read,
@@ -2932,7 +2955,7 @@ class PostureDaemon:
             self._zeek_blind_announced = True
             # Self-diagnosis: a sensor reporting on itself, not a detection.
             self.emit("warning", "health",
-                      f"Zeek has been reading {self.zeek.active_dir} for "
+                      f"Zeek has been reading {', '.join(self.zeek.active_dirs)} for "
                       f"{ZEEK_LIVENESS_SECONDS / 60:.0f} minutes and conn.log "
                       "has produced ZERO connection records. That is not a "
                       "quiet network, it is a sensor that is probably not "

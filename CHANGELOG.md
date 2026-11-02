@@ -86,6 +86,15 @@ and gates the ISO from the tag, the owner signs (release-process §10).
   dir); content-presence §40. Manual verification stays on the v3.2.0
   Pavilion boot (no headless xfdesktop).
 
+- **Ingest every Zeek instance (follow-up to #159).** Discovery no longer
+  selects just the first populated directory: notices, weird events and
+  connection records from all discovered instances are tailed. Retained logs
+  from a departed interface cannot hide another sensor. Newly appearing
+  directories and log files are attached without resetting existing tailers;
+  TSV headers are isolated by full path, including after rotation. Status
+  reports all source directories while retaining the legacy `log_dir` field.
+  Covered with local fixtures; live Tier-1 traffic remains unverified.
+
 - **Zeek now runs on the deck (#150, DEC-PHASE13-033, implementing
   DEC-PHASE13-004).** `zeek-core` shipped on every image and nothing ever
   started it: no unit and no `/var/log/zeek`, so every Zeek-fed surface was
