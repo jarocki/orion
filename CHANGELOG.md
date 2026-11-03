@@ -88,7 +88,12 @@ and gates the ISO from the tag, the owner signs (release-process §10).
   change unrelated to the image. The harness now searches the 4M pair after
   the 2M pair (Debian 13 ships both), and `qemu-test.yml` runs on
   `ubuntu-24.04` so the boot-time evidence (#141) keeps one baseline; bumps
-  are deliberate.
+  are deliberate. The first v3.1.3 tag run (41575829468) then failed the same
+  way in `release.yml`, still on `ubuntu-latest`: xorriso's squashfs
+  extraction inside the gate container exited 5 on an ISO the pinned QEMU
+  workflow had just passed (427/0). `release.yml` is pinned to the same
+  image, and the content-presence test now shows xorriso's stderr instead of
+  a bare exit code.
 
 - **Recovery review corrections (#166, #161, #162).** Automatic Desktop
   trust now requires an unchanged copy of a shipped `/etc/skel/Desktop`

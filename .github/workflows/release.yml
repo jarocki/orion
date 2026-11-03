@@ -38,7 +38,13 @@ on:
 jobs:
   release:
     name: Build, sign, and draft release
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest (DEC-PHASE13-037): the label moved to 26.04 on
+    # 2026-11-02 and the first v3.1.3 tag run on it (41575829468) failed in
+    # the content-presence gate below — xorriso's squashfs extraction inside
+    # the debian:trixie-slim container exited 5 after 2 s, on an ISO that the
+    # identical gate had just passed on the 24.04-pinned QEMU workflow (427/0).
+    # The release gate and the QEMU gate must run on the same baseline.
+    runs-on: ubuntu-24.04
     # ISO build + staging + signing + upload. Mirrors qemu-test.yml's budget.
     timeout-minutes: 60
 
