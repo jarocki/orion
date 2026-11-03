@@ -28,6 +28,7 @@ grep -q "has no '## \[\${TAG}\]' section" "$S" && pass "refuses to tag when the 
 grep -q 'refusing to move the tag under it' "$S" && pass "never moves a tag that has a GitHub Release" || fail "release-under-tag guard"
 grep -qE 'mapfile|\$\{[a-z_]+,,\}|declare -A' "$S" && fail "bash-4-only construct (the Mac runs bash 3.2)" || pass "bash 3.2 compatible (no mapfile / \${var,,} / declare -A)"
 grep -q 'git status --porcelain --untracked-files=no' "$S" && pass "clean-tree guard ignores untracked files (the owner's notes blocked the first v3.1.3 run)" || fail "untracked guard"
+grep -q 'headSha==\\"\${sha}\\"' "$S" && grep -q 'git rev-list -n 1 "\$TAG"' "$S" && pass "ci step selects the run by the tag's commit, not by branch name (a re-tag leaves the old run named after the tag)" || fail "ci run selection by headSha"
 for flag in '--pr $PR' '--retag' '--publish' 'ORIONX_REPO_ROOT=$ORIONX_REPO_ROOT'; do
     grep -qF -- "$flag" "$S" && grep -q 'resume_cmd' "$S" && pass "resume hint carries: $flag" || fail "resume hint lacks" "$flag"
 done

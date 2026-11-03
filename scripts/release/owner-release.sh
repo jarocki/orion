@@ -213,12 +213,28 @@ fi
 # --- ci ---------------------------------------------------------------------
 CURRENT_STEP=ci
 RUN_ID=""
-find_tag_run() { gh run list --workflow release.yml --limit 10 --json databaseId,headBranch,event --jq ".[] | select(.headBranch==\"${TAG}\" and .event==\"push\") | .databaseId" | head -1; }
+# The run must be for THIS tag object's commit, not merely for a run whose
+# branch is named after the tag: after a --retag the previous tag's run still
+# carries headBranch==TAG, and two seconds after the push the new run does
+# not exist yet. Matching on the branch alone picked the old, failed run
+# (the second v3.1.3 attempt, 05:07Z).
+find_tag_run() {  # prints the run id for the local tag's commit, or nothing
+    local sha
+    sha="$(git rev-list -n 1 "$TAG" 2>/dev/null)" || return 1
+    gh run list --workflow release.yml --limit 10 --json databaseId,headBranch,headSha,event \
+        --jq ".[] | select(.headBranch==\"${TAG}\" and .headSha==\"${sha}\" and .event==\"push\") | .databaseId" | head -1
+}
 if step_due ci; then
     say "--- ci: wait for the ${TAG} tag run (build ~18 min + gates; it ends at the hand-off step by design)"
     if [[ $DRY -eq 0 ]]; then
+        TAG_SHA="$(git rev-list -n 1 "$TAG" 2>/dev/null)" || die "tag ${TAG} is not present locally; run the tag step first"
+        REMOTE_TAG_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}^{}" | cut -f1)"
+        [[ -n "$REMOTE_TAG_SHA" ]] || REMOTE_TAG_SHA="$(git ls-remote --tags origin "refs/tags/${TAG}" | cut -f1)"
+        [[ "$REMOTE_TAG_SHA" == "$TAG_SHA" ]] || die "origin's ${TAG} (${REMOTE_TAG_SHA:-none}) is not the local tag's commit (${TAG_SHA}); push or re-tag first"
+        say "looking for the release.yml push run of ${TAG} at ${TAG_SHA}"
         n=0; until RUN_ID="$(find_tag_run)" && [[ -n "$RUN_ID" ]]; do
-            n=$((n + 1)); [[ $n -le 20 ]] || die "no release.yml run for ${TAG} appeared within 10 min"
+            n=$((n + 1)); [[ $n -le 20 ]] || die "no release.yml run for ${TAG} at ${TAG_SHA} appeared within 10 min"
+            say "  no run for ${TAG_SHA} yet (${n}/20); checking again in 30s"
             sleep 30
         done
         say "tag run: ${RUN_ID}  https://github.com/${REPO}/actions/runs/${RUN_ID}"
