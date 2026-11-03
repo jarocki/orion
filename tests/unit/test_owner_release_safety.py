@@ -35,7 +35,7 @@ scenario = os.environ.get("SCENARIO", "normal")
 if name == "sleep":
     sys.exit(0)
 if name == "git":
-    if args == ["status", "--porcelain"]:
+    if args == ["status", "--porcelain", "--untracked-files=no"]:
         sys.exit(0)
     if args[:1] == ["ls-remote"]:
         count_file = root / "tag-read-count"
@@ -50,7 +50,7 @@ if name == "git":
                 print("c" * 40 + "\trefs/tags/" + tag)
                 print(sha + "\trefs/tags/" + tag + "^{}")
         sys.exit(0)
-    if args[:1] == ["rev-parse"]:
+    if args[:1] == ["rev-parse"] or args == ["rev-list", "-n", "1", tag]:
         changed = (scenario == "retag-during-wait"
                    and int((root / "tag-read-count").read_text()) > 1)
         print("a" * 40 if scenario == "stale-local" or changed else sha)
@@ -129,8 +129,9 @@ class OwnerReleaseSafetyTests(unittest.TestCase):
         self.ci = self.repo / f"tmp/release-{TAG}-ci"
         self.stage = self.repo / f"tmp/release-{TAG}"
 
-    def run_helper(self, step="download", scenario="normal", dry=False):
+    def run_helper(self, step="download", scenario="normal", dry=False, extra=()):
         args = ["bash", str(self.script), "--tag", TAG, "--from", step]
+        args.extend(extra)
         if dry:
             args.append("--dry-run")
         return subprocess.run(args, cwd=self.repo, env=dict(self.env, SCENARIO=scenario),
@@ -276,6 +277,19 @@ class OwnerReleaseSafetyTests(unittest.TestCase):
         result = self.run_helper("publish")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("left as DRAFT", result.stdout)
+        self.assertIn(["git", "status", "--porcelain", "--untracked-files=no"], self.calls())
+        self.assert_no_publication()
+
+    def test_resume_hint_preserves_owner_flags(self):
+        # Missing tag stops before any release step. --publish only exercises
+        # the hint formatter; publication remains forbidden by the gh stub.
+        result = self.run_helper(scenario="missing-tag", extra=(
+            "--pr", "42", "--retag", "--publish", "--key", "TEST_FINGERPRINT"))
+        self.assertNotEqual(result.returncode, 0)
+        hint = next(line for line in result.stdout.splitlines() if "resume with" in line)
+        for expected in ("--pr 42", "--retag", "--publish", "--key TEST_FINGERPRINT",
+                         f"ORIONX_REPO_ROOT={self.repo}"):
+            self.assertIn(expected, hint)
         self.assert_no_publication()
 
     def test_lightweight_tag_matching_provenance_can_resume(self):

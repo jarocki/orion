@@ -31,6 +31,11 @@ grep -q 'targets .* not develop' "$S" && pass "refuses to merge a PR whose base 
 grep -q "has no '## \[\${TAG}\]' section" "$S" && pass "refuses to tag when the CHANGELOG section is missing (DEC-PHASE12-114 would fail the tag run)" || fail "changelog check"
 grep -q 'refusing to move the tag under it' "$S" && pass "never moves a tag that has a GitHub Release" || fail "release-under-tag guard"
 grep -qE 'mapfile|\$\{[a-z_]+,,\}|declare -A' "$S" && fail "bash-4-only construct (the Mac runs bash 3.2)" || pass "bash 3.2 compatible (no mapfile / \${var,,} / declare -A)"
+grep -q 'git status --porcelain --untracked-files=no' "$S" && pass "clean-tree guard ignores untracked files (the owner's notes blocked the first v3.1.3 run)" || fail "untracked guard"
+grep -q 'headSha==\\"\${sha}\\"' "$S" && grep -q 'git rev-list -n 1 "\$TAG"' "$S" && pass "ci step selects the run by the tag's commit, not by branch name (a re-tag leaves the old run named after the tag)" || fail "ci run selection by headSha"
+for flag in '--pr $PR' '--retag' '--publish' 'ORIONX_REPO_ROOT=$ORIONX_REPO_ROOT'; do
+    grep -qF -- "$flag" "$S" && grep -q 'resume_cmd' "$S" && pass "resume hint carries: $flag" || fail "resume hint lacks" "$flag"
+done
 
 echo "[arguments]"
 bash "$S" --help >/dev/null 2>&1 && pass "--help exits 0" || fail "--help"
@@ -62,7 +67,7 @@ else
 fi
 mkdir -p "$WORK/repo/tmp/release-v9.9.9-ci/output"
 printf 'keep recovery data\n' > "$WORK/repo/tmp/release-v9.9.9-ci/output/recovery.log"
-out="$(cd "$WORK/repo" && STUB_CALLS="$WORK/calls" PATH="$WORK/bin:/usr/bin:/bin" bash scripts/release/owner-release.sh --tag v9.9.9 --pr 42 --dry-run 2>&1)"; rc=$?
+out="$(cd "$WORK/repo" && ORIONX_REPO_ROOT="$WORK/repo" STUB_CALLS="$WORK/calls" PATH="$WORK/bin:/usr/bin:/bin" bash scripts/release/owner-release.sh --tag v9.9.9 --pr 42 --dry-run 2>&1)"; rc=$?
 [[ $rc -eq 0 ]] && pass "--dry-run completes (exit 0)" || fail "--dry-run rc" "rc=$rc $(echo "$out" | tail -3)"
 for step in "merge PR #42" "ff-main" "tag v9.9.9" "ci: wait" "download" "stage" "release" "verify" "publish"; do
     echo "$out" | grep -q -- "$step" && pass "dry-run plans: $step" || fail "dry-run plan lacks: $step"
@@ -71,7 +76,7 @@ if grep -qE '^gh (pr merge|release|run download|api -X DELETE)' "$WORK/calls"; t
 if grep -qE '^git (fetch|pull|push|tag -a|tag -d|merge|checkout)' "$WORK/calls"; then fail "dry-run ran a state-changing git command" "$(grep -E '^git' "$WORK/calls" | head -3)"; else pass "dry-run runs no state-changing git command (including fetch)"; fi
 [[ "$(cat "$WORK/repo/tmp/release-v9.9.9-ci/output/recovery.log" 2>/dev/null)" == 'keep recovery data' ]] && pass "dry-run preserves partial artifact recovery data" || fail "dry-run deleted recovery data"
 echo "$out" | grep -q 'left as DRAFT' && pass "without --publish the release stays a draft" || fail "draft default" "$out"
-out2="$(cd "$WORK/repo" && STUB_CALLS="$WORK/calls" PATH="$WORK/bin:/usr/bin:/bin" bash scripts/release/owner-release.sh --tag v9.9.9 --dry-run --from stage 2>&1)"
+out2="$(cd "$WORK/repo" && ORIONX_REPO_ROOT="$WORK/repo" STUB_CALLS="$WORK/calls" PATH="$WORK/bin:/usr/bin:/bin" bash scripts/release/owner-release.sh --tag v9.9.9 --dry-run --from stage 2>&1)"
 echo "$out2" | grep -q -- "--- stage" && ! echo "$out2" | grep -q -- "--- ff-main" && pass "--from stage skips the earlier steps" || fail "--from gating" "$out2"
 ls "$WORK/repo/tmp"/owner-release-v9.9.9.log >/dev/null 2>&1 && pass "every run is logged to tmp/owner-release-<tag>.log" || fail "log file"
 

@@ -160,6 +160,16 @@ if grep -qE '^\s+runs-on: ubuntu-24\.04$' "${REPO_ROOT}/.github/workflows/qemu-t
 else
     fail "T-OVMF: qemu-test.yml must pin runs-on: ubuntu-24.04 (ubuntu-latest silently changed OS/QEMU/OVMF on 2026-11-02)"
 fi
+if grep -qE '^\s+runs-on: ubuntu-24\.04$' "${REPO_ROOT}/.github/workflows/release.yml"; then
+    pass "T-OVMF: the release gate runs on the same pinned image as the QEMU gate (run 41575829468 failed on 26.04, DEC-PHASE13-037)"
+else
+    fail "T-OVMF: release.yml must pin runs-on: ubuntu-24.04 — its content-presence gate failed on ubuntu-latest=26.04 (tag run 41575829468)"
+fi
+if grep -qE 'runs-on: ubuntu-latest' "${REPO_ROOT}/.github/workflows/qemu-test.yml" "${REPO_ROOT}/.github/workflows/release.yml"; then
+    fail "T-OVMF: no ISO-gating workflow may float on ubuntu-latest"
+else
+    pass "T-OVMF: neither ISO-gating workflow floats on ubuntu-latest"
+fi
 
 echo "======================================="
 
