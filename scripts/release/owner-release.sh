@@ -39,7 +39,7 @@
 #   --retag        allow deleting an existing tag that points elsewhere
 #   --publish      flip the draft to published at the end (default: leave draft)
 #   --from STEP    resume at STEP (merge|ff-main|tag|ci|download|stage|release|verify|publish)
-#   --dry-run      print each step's commands; run nothing that changes state
+#   --dry-run      plan only; no git/artifact/release changes (append log only)
 #   --key FPR      signing key fingerprint (default: the release key)
 #   ORIONX_REPO_ROOT=<dir>  run against that checkout (e.g. from a worktree copy)
 #
@@ -175,7 +175,7 @@ fi
 CURRENT_STEP=tag
 if step_due tag; then
     say "--- tag ${TAG} on main"
-    git fetch -q origin --tags || true
+    run "fetch tags" git fetch -q origin --tags
     head="$(git rev-parse HEAD)"
     if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null 2>&1; then
         at="$(git rev-parse "${TAG}^{commit}")"
@@ -200,7 +200,45 @@ fi
 # --- ci ---------------------------------------------------------------------
 CURRENT_STEP=ci
 RUN_ID=""
-find_tag_run() { gh run list --workflow release.yml --limit 10 --json databaseId,headBranch,event --jq ".[] | select(.headBranch==\"${TAG}\" and .event==\"push\") | .databaseId" | head -1; }
+TAG_SHA=""
+# Resolve the remote tag without moving local refs, including annotated tags.
+# Resumes must not silently use a stale local tag after someone retags origin.
+resolve_tag_commit() {
+    local refs remote local_sha
+    refs="$(git ls-remote --tags origin "refs/tags/${TAG}" "refs/tags/${TAG}^{}")" || die "cannot read remote tag ${TAG}"
+    remote="$(printf '%s\n' "$refs" | awk '$2 ~ /\^\{\}$/ { peeled=$1 } $2 !~ /\^\{\}$/ { plain=$1 } END { print (peeled != "" ? peeled : plain) }')"
+    [[ "$remote" =~ ^[0-9a-f]{40}$ ]] || die "remote tag ${TAG} has no valid commit identity"
+    local_sha="$(git rev-parse --verify "refs/tags/${TAG}^{commit}")" || die "cannot resolve local tag ${TAG}"
+    [[ "$local_sha" == "$remote" ]] || die "local tag ${TAG} differs from origin; refresh and inspect it before resuming"
+    TAG_SHA="$remote"
+}
+assert_tag_unchanged() {
+    local expected="$TAG_SHA"
+    resolve_tag_commit
+    [[ "$TAG_SHA" == "$expected" ]] || die "tag ${TAG} changed during this release; stop and inspect before resuming"
+}
+find_tag_run() {
+    gh run list --workflow release.yml --commit "$TAG_SHA" --limit 10 --json databaseId,headBranch,event,headSha \
+        --jq ".[] | select(.headBranch==\"${TAG}\" and .event==\"push\" and .headSha==\"${TAG_SHA}\") | .databaseId" | head -1
+}
+verify_run() {
+    local identity
+    [[ "$RUN_ID" =~ ^[0-9]+$ ]] || die "invalid release run ID"
+    identity="$(gh run view "$RUN_ID" --json headSha,headBranch,event,status,conclusion --jq '[.headSha,.headBranch,.event,.status,.conclusion] | join(" ")')" || die "cannot verify release run ${RUN_ID}"
+    [[ "$identity" == "$TAG_SHA $TAG push completed success" ]] || die "release run ${RUN_ID} is not a successful push of ${TAG} at ${TAG_SHA}"
+}
+# A marker binds a locally managed cache to the selected run, commit and ISO.
+# Old tag-only caches are deliberately not adopted or deleted automatically.
+check_source() {
+    local dir="$1" source sha run hash extra
+    [[ -d "$dir" && ! -L "$dir" ]] || die "unsafe cache directory ${dir}"
+    [[ -f "$dir/.owner-release-source" && ! -L "$dir/.owner-release-source" ]] || die "unproven cache in ${dir}; preserve/move it aside and resume from download"
+    source="$(cat "$dir/.owner-release-source")"
+    read -r sha run hash extra <<< "$source"
+    [[ "$sha" == "$TAG_SHA" && "$run" == "$RUN_ID" && "$hash" =~ ^[0-9a-f]{64}$ && -z "$extra" && "$source" == "$sha $run $hash" ]] || die "stale or invalid cache provenance in ${dir}; preserve/move it aside and resume from download"
+    SOURCE_HASH="$hash"
+}
+if [[ $DRY -eq 0 ]]; then resolve_tag_commit; fi
 if step_due ci; then
     say "--- ci: wait for the ${TAG} tag run (build ~18 min + gates; it ends at the hand-off step by design)"
     if [[ $DRY -eq 0 ]]; then
@@ -219,6 +257,7 @@ if step_due ci; then
                 *) say "  watch interrupted (${st}); retrying in 30s"; sleep 30 ;;
             esac
         done
+        verify_run
         say "tag run ${RUN_ID} green (built, gated, handed off)"
     else
         say "  \$ gh run list --workflow release.yml ...; gh run watch <id> --exit-status"
@@ -229,20 +268,42 @@ fi
 CURRENT_STEP=download
 if step_due download; then
     say "--- download: the CI-built ISO and its sidecar"
-    [[ -n "$RUN_ID" ]] || RUN_ID="$(find_tag_run || true)"
-    [[ -n "$RUN_ID" || $DRY -eq 1 ]] || die "cannot find the ${TAG} tag run to download from"
-    if [[ ! -f "$ISO" ]]; then
-        rm -rf "$CI_DIR"
-        run "download artifact release-artifacts-${RUN_ID}" retry 3 30 gh run download "$RUN_ID" -n "release-artifacts-${RUN_ID}" -D "$CI_DIR"
-    else
-        say "ISO already present: ${ISO}"
-    fi
     if [[ $DRY -eq 0 ]]; then
+        [[ -n "$RUN_ID" ]] || RUN_ID="$(find_tag_run)"
+        [[ -n "$RUN_ID" ]] || die "cannot find the ${TAG} tag run to download from"
+        verify_run
+        if [[ -e "$CI_DIR" || -L "$CI_DIR" ]]; then
+            check_source "$CI_DIR"
+            [[ -f "$ISO" ]] || die "incomplete cache in ${CI_DIR}; preserve/move it aside before downloading"
+            [[ "$(shasum -a 256 "$ISO" | awk '{print $1}')" == "$SOURCE_HASH" ]] || die "cached ISO differs from its recorded source hash"
+            say "ISO already present with matching provenance: ${ISO}"
+        else
+            run "download artifact release-artifacts-${RUN_ID}" retry 3 30 gh run download "$RUN_ID" -n "release-artifacts-${RUN_ID}" -D "$CI_DIR"
+        fi
         [[ -f "$ISO" ]] || die "ISO not found at ${ISO} after download"
         (cd "${CI_DIR}/output" && shasum -a 256 -c "orionx-phoenix-edition-${TAG}.iso.sha256") || die "ISO does not match its sidecar"
-        say "ISO verified: $(shasum -a 256 "$ISO" | cut -c1-16)…  $(stat -f %z "$ISO" 2>/dev/null || stat -c %s "$ISO") bytes"
+        SOURCE_HASH="$(shasum -a 256 "$ISO" | awk '{print $1}')"
+        [[ "$SOURCE_HASH" =~ ^[0-9a-f]{64}$ ]] || die "cannot hash downloaded ISO"
+        printf '%s %s %s\n' "$TAG_SHA" "$RUN_ID" "$SOURCE_HASH" > "$CI_DIR/.owner-release-source"
+        say "ISO verified: ${SOURCE_HASH:0:16}…  $(stat -f %z "$ISO" 2>/dev/null || stat -c %s "$ISO") bytes"
+    else
+        say "  would download the successful run for the current tag commit; existing artifacts are preserved"
     fi
 fi
+
+# Every resumed signing/upload/verification/publication checks the same source.
+if [[ $DRY -eq 0 ]]; then
+    assert_tag_unchanged
+    [[ -n "$RUN_ID" ]] || RUN_ID="$(find_tag_run)"
+    verify_run
+    check_source "$CI_DIR"
+fi
+check_staged_source() {
+    local iso_hash="$SOURCE_HASH"
+    check_source "$R"
+    [[ "$SOURCE_HASH" == "$iso_hash" ]] || die "staging and downloaded ISO have different provenance"
+    [[ "$(awk -v name="orionx-phoenix-edition-${TAG}.iso" '$2 == name {print $1}' "$R/SHA256SUMS")" == "$SOURCE_HASH" ]] || die "staged checksum does not match the recorded source ISO"
+}
 
 # --- stage ------------------------------------------------------------------
 CURRENT_STEP=stage
@@ -250,11 +311,13 @@ if step_due stage; then
     say "--- stage: split, checksum, sign (gpg will ask for the passphrase)"
     if [[ $DRY -eq 0 ]]; then
         [[ "$(git describe --tags --exact-match 2>/dev/null || true)" == "$TAG" ]] || die "checkout is not at ${TAG} (staging reads CHANGELOG.md from the checkout): git checkout ${TAG}"
-        if [[ -f "$R/SHA256SUMS.asc" && -f "$R/RELEASE-NOTES.md" ]]; then
-            say "staging already present in ${R}; re-verifying the signature only"
+        [[ "$(shasum -a 256 "$ISO" | awk '{print $1}')" == "$SOURCE_HASH" ]] || die "ISO changed since download"
+        if [[ -e "$R" || -L "$R" ]]; then
+            check_staged_source
+            say "staging already present in ${R}; re-verifying its source and signature"
         else
-            rm -rf "$R"
             run "stage-split-release" bash scripts/release/stage-split-release.sh "$ISO" "$TAG" --out "$R" --key "$KEY"
+            cp "$CI_DIR/.owner-release-source" "$R/.owner-release-source"
         fi
         for f in SHA256SUMS SHA256SUMS.asc SHA512SUMS SHA512SUMS.asc REASSEMBLE.txt RELEASE-NOTES.md; do
             [[ -s "$R/$f" ]] || die "staging produced no ${f}"
@@ -264,6 +327,11 @@ if step_due stage; then
     else
         say "  \$ bash scripts/release/stage-split-release.sh ${ISO} ${TAG} --out ${R} --key ${KEY}"
     fi
+fi
+
+if [[ $DRY -eq 0 ]]; then
+    assert_tag_unchanged
+    check_staged_source
 fi
 
 # --- release ----------------------------------------------------------------
@@ -329,6 +397,7 @@ fi
 CURRENT_STEP=publish
 if step_due publish; then
     if [[ $PUBLISH -eq 1 ]]; then
+        [[ $DRY -eq 1 ]] || assert_tag_unchanged
         run "flip DRAFT -> published" gh release edit "$TAG" --draft=false
         [[ $DRY -eq 1 ]] || [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" == "false" ]] || die "release is still a draft"
         say "PUBLISHED: https://github.com/${REPO}/releases/tag/${TAG}"

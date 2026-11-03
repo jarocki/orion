@@ -81,6 +81,11 @@ and gates the ISO from the tag, the owner signs (release-process §10).
 
 ### Fixed
 
+- **Owner release safety (#168 review).** Abort test fixture setup when temporary
+  allocation fails. Select release runs by the current tag commit, bind downloaded
+  and staged caches to that run and ISO hash, and reject unproven caches without
+  deleting them. Dry-run no longer fetches tags or removes partial artifacts.
+
 - **QEMU gate: pinned runner image and 4M OVMF paths (DEC-PHASE13-037).** On
   2026-11-02 GitHub moved `ubuntu-latest` from 24.04 to 26.04 between two runs;
   26.04 ships OVMF only as `OVMF_CODE_4M.fd`/`OVMF_VARS_4M.fd`, the harness

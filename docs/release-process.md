@@ -452,6 +452,7 @@ the DEC.
 ## 10. Manual publish from the macOS build host
 
 **One script does all of this now:** `bash scripts/release/owner-release.sh --tag <tag> [--pr <n>] [--retag] [--publish]`
+
 (DEC-PHASE13-038). It merges the PR only after its checks pass and only if its base is
 develop, fast-forwards main, refuses to tag a commit whose CHANGELOG lacks the tag's
 section, waits for the tag run, downloads and verifies the ISO, runs the staging script
@@ -459,6 +460,15 @@ below, creates the draft and uploads each part with a size check and retries, ve
 the asset set and signature, and flips the draft only with `--publish`. Every step
 checks its outcome, every network call retries, and `--from <step>` resumes. The
 commands below are what it runs, kept here as the reference.
+
+The helper binds the successful tag-push run to the tag's current commit,
+checking that the local and remote tag agree. Its downloaded ISO and staging
+directories carry a `.owner-release-source` marker with the commit, run ID and
+ISO SHA-256. Resumes reject missing or mismatched provenance instead of adopting
+an older tag's artifacts. Keep both directories for resumes, including publication.
+If a legacy, stale or partial directory is rejected, preserve it elsewhere and
+resume from `download`; do not manufacture a marker to adopt an existing ISO.
+`--dry-run` preserves Git refs and artifacts; only its diagnostic log is appended.
 
 Used for `v2.1.0-bullseye-rain` (6.62 GB, 4 parts) and `v2.2.0-beta`
 (3.09 GB, 7 parts). Use it when the ISO that passed the gates was built on the
