@@ -85,7 +85,16 @@ exec > >(tee -a "$LOG") 2>&1
 
 ts() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 say() { printf '[%s] %s\n' "$(ts)" "$*"; }
-die() { printf '[%s] ERROR: %s\n' "$(ts)" "$*" >&2; printf '[%s] stopped; resume with: bash %s --tag %s --from %s\n' "$(ts)" "$0" "$TAG" "${CURRENT_STEP:-$FROM}" >&2; exit 1; }
+resume_cmd() {  # the exact invocation that continues this run: same flags, same root
+    local c="bash $0 --tag $TAG --from ${CURRENT_STEP:-$FROM}"
+    [[ -n "$PR" ]] && c="$c --pr $PR"
+    [[ $RETAG -eq 1 ]] && c="$c --retag"
+    [[ $PUBLISH -eq 1 ]] && c="$c --publish"
+    [[ "$KEY" == "4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF" ]] || c="$c --key $KEY"
+    [[ -n "${ORIONX_REPO_ROOT:-}" ]] && c="ORIONX_REPO_ROOT=$ORIONX_REPO_ROOT $c"
+    printf '%s' "$c"
+}
+die() { printf '[%s] ERROR: %s\n' "$(ts)" "$*" >&2; printf '[%s] stopped; resume with (one line): %s\n' "$(ts)" "$(resume_cmd)" >&2; exit 1; }
 run() {  # run <description> <cmd...>: prints, honours --dry-run, fails loudly
     local what="$1"; shift
     say "$what"
@@ -117,7 +126,11 @@ need gh "brew install gh"; need git git; need shasum coreutils; need gpg "brew i
 need xorriso "brew install xorriso"; need unsquashfs "brew install squashfs"; need python3 python3; need dpkg "brew install dpkg"
 command -v caffeinate >/dev/null 2>&1 && CAFF=caffeinate || CAFF=""
 [[ $DRY -eq 1 ]] || gh auth status >/dev/null 2>&1 || die "gh is not authenticated (gh auth login)"
-[[ -z "$(git status --porcelain)" ]] || die "working tree is not clean; commit or stash first"
+# Tracked changes block (they would ride along into main); untracked files are
+# the owner's notes and scratch and are ignored.
+DIRTY="$(git status --porcelain --untracked-files=no)"
+[[ -z "$DIRTY" ]] || die "working tree has uncommitted tracked changes; commit or stash first:
+$DIRTY"
 
 CI_DIR="tmp/release-${TAG}-ci"; R="tmp/release-${TAG}"
 ISO="${CI_DIR}/output/orionx-phoenix-edition-${TAG}.iso"

@@ -27,6 +27,10 @@ grep -q 'targets .* not develop' "$S" && pass "refuses to merge a PR whose base 
 grep -q "has no '## \[\${TAG}\]' section" "$S" && pass "refuses to tag when the CHANGELOG section is missing (DEC-PHASE12-114 would fail the tag run)" || fail "changelog check"
 grep -q 'refusing to move the tag under it' "$S" && pass "never moves a tag that has a GitHub Release" || fail "release-under-tag guard"
 grep -qE 'mapfile|\$\{[a-z_]+,,\}|declare -A' "$S" && fail "bash-4-only construct (the Mac runs bash 3.2)" || pass "bash 3.2 compatible (no mapfile / \${var,,} / declare -A)"
+grep -q 'git status --porcelain --untracked-files=no' "$S" && pass "clean-tree guard ignores untracked files (the owner's notes blocked the first v3.1.3 run)" || fail "untracked guard"
+for flag in '--pr $PR' '--retag' '--publish' 'ORIONX_REPO_ROOT=$ORIONX_REPO_ROOT'; do
+    grep -qF -- "$flag" "$S" && grep -q 'resume_cmd' "$S" && pass "resume hint carries: $flag" || fail "resume hint lacks" "$flag"
+done
 
 echo "[arguments]"
 bash "$S" --help >/dev/null 2>&1 && pass "--help exits 0" || fail "--help"
