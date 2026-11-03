@@ -95,6 +95,9 @@ resume_cmd() {  # the exact invocation that continues this run: same flags, same
     printf '%s' "$c"
 }
 die() { printf '[%s] ERROR: %s\n' "$(ts)" "$*" >&2; printf '[%s] stopped; resume with (one line): %s\n' "$(ts)" "$(resume_cmd)" >&2; exit 1; }
+# set -e must never end the run without a word in the log (it did once: a
+# failed `have="$(...)"` assignment exited between two say lines).
+trap 'die "unexpected failure (exit $?) at line ${LINENO}: ${BASH_COMMAND}"' ERR
 run() {  # run <description> <cmd...>: prints, honours --dry-run, fails loudly
     local what="$1"; shift
     say "$what"
@@ -297,8 +300,14 @@ fi
 
 # --- release ----------------------------------------------------------------
 CURRENT_STEP=release
-asset_size() { gh api "repos/${REPO}/releases/tags/${TAG}" --jq ".assets[] | select(.name==\"$1\") | .size" 2>/dev/null | head -1; }
-asset_id()   { gh api "repos/${REPO}/releases/tags/${TAG}" --jq ".assets[] | select(.name==\"$1\") | .id" 2>/dev/null | head -1; }
+# A DRAFT release is not reachable through the REST get-release-by-tag path
+# (404 until published); `gh release view <tag>` resolves drafts. The first v3.1.3
+# upload attempt died silently on that 404 under set -e. Every lookup here
+# therefore goes through gh release view, and every $(...) assignment is
+# guarded so a failed lookup is a retry, never an exit.
+release_assets() { gh release view "$TAG" --json assets --jq "$1" 2>/dev/null || true; }
+asset_size()     { release_assets ".assets[] | select(.name==\"$1\") | .size"   | head -1; }
+asset_api_url()  { release_assets ".assets[] | select(.name==\"$1\") | .apiUrl" | head -1; }
 local_size() { stat -f %z "$1" 2>/dev/null || stat -c %s "$1"; }
 if step_due release; then
     say "--- release: draft + uploads (one file per command, verified by size, retried)"
@@ -318,8 +327,8 @@ if step_due release; then
                 if [[ "$have" == "$want" ]]; then say "  ok  ${name} (${want} bytes)"; break; fi
                 tries=$((tries + 1)); [[ $tries -le 4 ]] || die "upload of ${name} failed 4 times (size on GitHub: ${have:-none}, local: ${want}). See release-process §10.1 for the hidden 'starter' asset."
                 if [[ -n "$have" ]]; then
-                    id="$(asset_id "$name")"; say "  ${name}: size ${have} != ${want}; deleting asset ${id} and re-uploading"
-                    gh api -X DELETE "repos/${REPO}/releases/assets/${id}" >/dev/null 2>&1 || true
+                    url="$(asset_api_url "$name")"; say "  ${name}: size ${have} != ${want}; deleting ${url##*/} and re-uploading"
+                    [[ -z "$url" ]] || gh api -X DELETE "$url" >/dev/null 2>&1 || true
                     sleep 5
                 fi
                 say "  upload ${name} (try ${tries})"
@@ -337,13 +346,13 @@ CURRENT_STEP=verify
 if step_due verify && [[ $DRY -eq 0 ]]; then
     say "--- verify: asset set, sizes, fresh signature check"
     expected=$(( $(find "$R" -name '*.iso.part-*' | wc -l | tr -d ' ') + 5 ))
-    count="$(gh api "repos/${REPO}/releases/tags/${TAG}" --jq '.assets | length')"
-    [[ "$count" == "$expected" ]] || die "release has ${count} assets, expected ${expected}"
+    count="$(release_assets '.assets | length')"
+    [[ "$count" == "$expected" ]] || die "release has ${count:-no readable} assets, expected ${expected}"
     bad=0
     while IFS=$'\t' read -r name size state; do
         [[ "$state" == "uploaded" ]] || { say "  ${name}: state ${state}"; bad=1; }
         [[ -f "$R/$name" ]] && [[ "$(local_size "$R/$name")" == "$size" ]] || { say "  ${name}: size mismatch or no local file"; bad=1; }
-    done < <(gh api "repos/${REPO}/releases/tags/${TAG}" --jq '.assets[] | [.name, .size, .state] | @tsv')
+    done < <(release_assets '.assets[] | [.name, .size, .state] | @tsv')
     [[ $bad -eq 0 ]] || die "asset verification failed"
     V="tmp/release-${TAG}-verify"; rm -rf "$V"; mkdir -p "$V"
     retry 3 20 gh release download "$TAG" -D "$V" -p 'SHA256SUMS' -p 'SHA256SUMS.asc' >/dev/null 2>&1 || die "could not download SHA256SUMS(.asc) for verification"
