@@ -138,13 +138,15 @@ WORK="$(mktemp -d)"
 echo "  Working directory: $WORK"
 
 echo "  Extracting /live/filesystem.squashfs from ISO..."
-xorriso -osirrox on -indev "$ISO_PATH" \
+# xorriso's stderr is kept and shown on failure. The v3.1.3 tag run
+# (41575829468) died here with a bare "exit code 5" because it was discarded;
+# the cause (runner image, DEC-PHASE13-037) had to be inferred from other runs.
+if ! xorriso -osirrox on -indev "$ISO_PATH" \
     -extract /live/filesystem.squashfs "$WORK/squashfs.img" \
     -extract /live/vmlinuz "$WORK/vmlinuz" \
-    2>/dev/null
-
-if [[ ! -f "$WORK/squashfs.img" ]]; then
-    echo "${RED}FATAL${NC}: squashfs extraction failed — $WORK/squashfs.img not created"
+    2>"$WORK/xorriso.err" || [[ ! -f "$WORK/squashfs.img" ]]; then
+    echo "${RED}FATAL${NC}: squashfs extraction failed — xorriso said:"
+    grep -v '^xorriso : UPDATE' "$WORK/xorriso.err" | tail -20 | sed 's/^/    /'
     exit 1
 fi
 echo "  squashfs.img extracted: $(du -sh "$WORK/squashfs.img" | cut -f1)"
