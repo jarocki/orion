@@ -23,9 +23,21 @@ on:
   pull_request:
     branches: [develop, 'release/**']
 
+# @decision DEC-PHASE13-037
+# @title The QEMU gate runs on a pinned runner image (ubuntu-24.04), not
+#   ubuntu-latest
+# @status accepted
+# @rationale On 2026-11-02 GitHub moved ubuntu-latest from 24.04 to 26.04
+#   between two runs of this workflow (same provisioner version). 26.04 packages
+#   OVMF differently (no 2M OVMF_CODE.fd), UEFI SKIPped and the gate failed
+#   (run 41408913990) on a change that had nothing to do with the image. The
+#   harness now knows the 4M paths too, but the boot-time evidence this gate
+#   produces (#141, DEC-PHASE13-030) is only comparable on one QEMU/TCG
+#   baseline; a label that silently changes the OS, QEMU and firmware under it
+#   is not a baseline. Bump deliberately, with a run that shows the timings.
 jobs:
   qemu-boot:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Bumped from 30 → 60 minutes: TCG-mode boot under --timeout 900
     # for both BIOS and UEFI may consume up to ~30 min total in worst case
     # (no KVM on standard ubuntu-latest), plus ~10-15 min ISO build.

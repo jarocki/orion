@@ -451,6 +451,15 @@ the DEC.
 
 ## 10. Manual publish from the macOS build host
 
+**One script does all of this now:** `bash scripts/release/owner-release.sh --tag <tag> [--pr <n>] [--retag] [--publish]`
+(DEC-PHASE13-038). It merges the PR only after its checks pass and only if its base is
+develop, fast-forwards main, refuses to tag a commit whose CHANGELOG lacks the tag's
+section, waits for the tag run, downloads and verifies the ISO, runs the staging script
+below, creates the draft and uploads each part with a size check and retries, verifies
+the asset set and signature, and flips the draft only with `--publish`. Every step
+checks its outcome, every network call retries, and `--from <step>` resumes. The
+commands below are what it runs, kept here as the reference.
+
 Used for `v2.1.0-bullseye-rain` (6.62 GB, 4 parts) and `v2.2.0-beta`
 (3.09 GB, 7 parts). Use it when the ISO that passed the gates was built on the
 build host, or when CI cannot build or upload. It publishes the same asset

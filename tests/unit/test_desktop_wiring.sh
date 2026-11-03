@@ -418,7 +418,7 @@ section "Desktop launchers trusted for XFCE 4.20 (DEC-PHASE13-034, #149)"
 TL="$REPO_ROOT/scripts/orionx-trust-launchers.sh"
 TL_AUTOSTART="$REPO_ROOT/iso/config/includes.chroot/etc/xdg/autostart/orionx-trust-launchers.desktop"
 TL_HOOK="$REPO_ROOT/iso/config/hooks/live/0700-orionx-setup.hook.chroot"
-TLS="$SCRATCH/trust"; mkdir -p "$TLS/bin" "$TLS/Desktop"
+TLS="$SCRATCH/trust"; mkdir -p "$TLS/bin" "$TLS/Desktop" "$TLS/reference"
 if [[ -x "$TL" ]]; then pass "orionx-trust-launchers.sh present + executable"; else fail "orionx-trust-launchers.sh present+exec" "missing/not +x"; fi
 grep -q '@decision DEC-PHASE13-034' "$TL" && pass "script carries DEC-PHASE13-034" || fail "script decision annotation"
 if [[ -f "$TL_AUTOSTART" ]]; then pass "autostart entry staged"; else fail "autostart entry staged" "missing $TL_AUTOSTART"; fi
@@ -439,10 +439,11 @@ STUB
 chmod +x "$TLS/bin/gio"
 printf '[Desktop Entry]\nType=Application\nName=A\nExec=true\n' > "$TLS/Desktop/a.desktop"; chmod 755 "$TLS/Desktop/a.desktop"
 printf '[Desktop Entry]\nType=Application\nName=B\nExec=true\n' > "$TLS/Desktop/b.desktop"; chmod 644 "$TLS/Desktop/b.desktop"
+cp "$TLS/Desktop/"*.desktop "$TLS/reference/"
 echo "notes" > "$TLS/Desktop/notes.txt"
 ln -s a.desktop "$TLS/Desktop/link.desktop"
 tl_sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
-tl_run() { STUB_DB="$TLS/db" PATH="$TLS/bin:$PATH" bash "$TL" --desktop-dir "$TLS/Desktop" "$@"; }
+tl_run() { ORIONX_LAUNCHER_REFERENCE_DIR="$TLS/reference" STUB_DB="$TLS/db" PATH="$TLS/bin:$PATH" bash "$TL" --desktop-dir "$TLS/Desktop" "$@"; }
 tl_run --check >/dev/null 2>&1; [[ $? -eq 1 ]] && pass "--check on untrusted launchers exits 1" || fail "--check exit on untrusted"
 [[ ! -f "$TLS/db" || ! -s "$TLS/db" ]] && pass "--check writes nothing" || fail "--check wrote attributes" "$(cat "$TLS/db")"
 TL_OUT="$(tl_run 2>&1)"; TL_RC=$?
@@ -462,8 +463,93 @@ echo "$TL_OUT2" | grep -q '2 already trusted, 0 marked' && pass "second run repo
 tl_run --check >/dev/null 2>&1 && pass "--check after apply exits 0" || fail "--check after apply"
 printf '[Desktop Entry]\nType=Application\nName=A2\nExec=true\n' > "$TLS/Desktop/a.desktop"
 tl_run --check >/dev/null 2>&1; [[ $? -eq 1 ]] && pass "a changed launcher is untrusted again (content hash, not a flag)" || fail "content change not detected"
-TL_DRY="$(tl_run --dry-run 2>&1)"; : > "$TLS/db.calls"
-echo "$TL_DRY" | grep -q 'would set' && ! grep -q '^set' "$TLS/db.calls" && pass "--dry-run says what it would write and writes nothing" || fail "--dry-run" "$TL_DRY"
+: > "$TLS/db.calls"
+TL_DRY="$(tl_run --dry-run 2>&1)"
+echo "$TL_DRY" | grep -q '0 need trust/permission repair, 1 unsafe/modified left unchanged' &&
+    echo "$TL_DRY" | grep -q 'modified shipped content' && ! grep -q '^set' "$TLS/db.calls" && pass "--dry-run refuses modified shipped content without writes" || fail "--dry-run" "$TL_DRY"
+
+# Added and edited launchers must not be silently approved on the next login.
+chmod 644 "$TLS/Desktop/a.desktop"
+printf '[Desktop Entry]\nType=Application\nName=Downloaded\nExec=false\n' > "$TLS/Desktop/download.desktop"
+chmod 644 "$TLS/Desktop/download.desktop"
+BEFORE_DB="$(cat "$TLS/db")"
+BEFORE_EDIT="$(tl_sha "$TLS/Desktop/a.desktop")"
+for mode in apply check dry-run; do
+    : > "$TLS/db.calls"
+    case "$mode" in apply) tl_run >/dev/null ;; *) tl_run "--$mode" >/dev/null ;; esac
+    [[ ! -x "$TLS/Desktop/a.desktop" && ! -x "$TLS/Desktop/download.desktop" ]] &&
+        [[ "$(tl_sha "$TLS/Desktop/a.desktop")" == "$BEFORE_EDIT" && "$(cat "$TLS/db")" == "$BEFORE_DB" ]] &&
+        ! grep -q '^set' "$TLS/db.calls" && pass "$mode preserves added/modified launchers and metadata" || fail "$mode changed unsafe launcher"
+done
+# A user-approved added launcher is also left alone; no trust revocation.
+echo "$TLS/Desktop/download.desktop|metadata::xfce-exe-checksum|$(tl_sha "$TLS/Desktop/download.desktop")" >> "$TLS/db"
+BEFORE_DB="$(cat "$TLS/db")"
+tl_run >/dev/null
+[[ "$(cat "$TLS/db")" == "$BEFORE_DB" ]] && pass "existing operator approval is preserved" || fail "operator approval changed"
+
+# Correct metadata alone is insufficient. Check and dry-run remain read-only.
+cp "$TLS/reference/a.desktop" "$TLS/Desktop/a.desktop"; chmod 755 "$TLS/Desktop/a.desktop"
+mv "$TLS/Desktop/a.desktop" "$TLS/a-away"
+mv "$TLS/Desktop/download.desktop" "$TLS/download-away"
+chmod 644 "$TLS/Desktop/b.desktop"
+: > "$TLS/db.calls"
+tl_run --check >/dev/null; rc=$?
+[[ $rc -eq 1 && ! -x "$TLS/Desktop/b.desktop" ]] && ! grep -q '^set' "$TLS/db.calls" && pass "checksum without +x fails --check without repair" || fail "non-executable verdict"
+tl_run --dry-run >/dev/null
+[[ ! -x "$TLS/Desktop/b.desktop" ]] && ! grep -q '^set' "$TLS/db.calls" && pass "dry-run does not repair execute permission" || fail "dry-run repaired +x"
+tl_run >/dev/null
+[[ -x "$TLS/Desktop/b.desktop" ]] && tl_run --check >/dev/null && pass "apply repairs legitimate shipped executable permission" || fail "legitimate +x repair"
+
+mv "$TLS/a-away" "$TLS/Desktop/a.desktop"
+mv "$TLS/download-away" "$TLS/Desktop/download.desktop"
+
+# Reference failures and aliases never become an authority for trust.
+cp "$TLS/reference/a.desktop" "$TLS/Desktop/alias.desktop"
+ln -s a.desktop "$TLS/reference/alias.desktop"
+chmod 644 "$TLS/Desktop/alias.desktop"
+: > "$TLS/db.calls"
+tl_run >/dev/null
+[[ ! -x "$TLS/Desktop/alias.desktop" ]] && ! grep -q '^set' "$TLS/db.calls" && pass "symlink reference is rejected before writes" || fail "symlink reference trusted"
+rm "$TLS/reference/alias.desktop" "$TLS/Desktop/alias.desktop"
+mv "$TLS/reference" "$TLS/reference-away"
+: > "$TLS/db.calls"
+tl_run >/dev/null; rc=$?
+tl_run --check >/dev/null; check_rc=$?
+[[ $rc -eq 0 && $check_rc -eq 2 && ! -s "$TLS/db.calls" ]] && pass "missing reference fails closed (check 2, apply 0)" || fail "missing reference contract"
+ln -s reference-away "$TLS/reference"
+tl_run >/dev/null
+[[ ! -s "$TLS/db.calls" ]] && pass "symlink reference directory fails closed" || fail "reference directory symlink"
+rm "$TLS/reference"; mv "$TLS/reference-away" "$TLS/reference"
+
+# Explicit hashing failure must not abort the autostart or trust the candidate.
+cat > "$TLS/bin/sha256sum" <<'HASHFAIL'
+#!/usr/bin/env bash
+exit 1
+HASHFAIL
+chmod +x "$TLS/bin/sha256sum"
+: > "$TLS/db.calls"
+tl_run >/dev/null; rc=$?
+tl_run --check >/dev/null; check_rc=$?
+[[ $rc -eq 0 && $check_rc -eq 1 && ! -s "$TLS/db.calls" ]] && pass "hash failure fails closed without breaking session" || fail "hash failure contract"
+rm "$TLS/bin/sha256sum"
+
+# Simulate a content edit after comparison, when gio reads metadata. Only the
+# canonical reference checksum may be written, never the new candidate hash.
+cp "$TLS/bin/gio" "$TLS/bin/gio-normal"
+cat > "$TLS/bin/gio" <<'RACE'
+#!/usr/bin/env bash
+if [[ "$1" == info && "$4" == */a.desktop ]]; then
+    printf '[Desktop Entry]\nType=Application\nExec=false\n' > "$4"
+    exit 0
+fi
+exec "$(dirname "$0")/gio-normal" "$@"
+RACE
+chmod +x "$TLS/bin/gio"
+tl_run >/dev/null
+want="$(tl_sha "$TLS/reference/a.desktop")"; actual="$(tl_sha "$TLS/Desktop/a.desktop")"
+last="$(grep -F "$TLS/Desktop/a.desktop|metadata::xfce-exe-checksum|" "$TLS/db" | tail -1 | cut -d'|' -f3-)"
+[[ "$last" == "$want" && "$last" != "$actual" ]] && pass "concurrent edit never receives its own trusted checksum" || fail "mutable bytes became trust authority"
+mv "$TLS/bin/gio-normal" "$TLS/bin/gio"
 ORIONX_GIO_BIN=/nonexistent/gio bash "$TL" --desktop-dir "$TLS/Desktop" >/dev/null 2>&1 && pass "no gio: warns, exits 0 (never breaks the session)" || fail "no gio apply exit"
 ORIONX_GIO_BIN=/nonexistent/gio bash "$TL" --desktop-dir "$TLS/Desktop" --check >/dev/null 2>&1; [[ $? -eq 2 ]] && pass "no gio: --check exits 2 (cannot verify)" || fail "no gio check exit"
 bash "$TL" --desktop-dir "$TLS/nope" >/dev/null 2>&1 && pass "missing Desktop directory: exits 0" || fail "missing dir exit"
