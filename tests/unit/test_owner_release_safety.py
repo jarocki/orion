@@ -61,17 +61,32 @@ if name == "git":
         print(tag)
         sys.exit(0)
 if name == "gh":
-    if (scenario in ("draft-assets", "draft-assets-failure")
-            and args[:5] == ["release", "view", tag, "--json", "assets"]
-            and len(args) == 7 and args[5] == "--jq"):
-        if scenario == "draft-assets-failure":
-            print("simulated draft lookup failure", file=sys.stderr)
-            sys.exit(74)
-        if args[6].endswith("| .size"):
-            print("123\n456")
+    if scenario in ("published-restage", "unknown-restage", "draft-restage"):
+        if args == ["release", "view", tag]:
             sys.exit(0)
-        if args[6].endswith("| .apiUrl"):
-            print("https://api.github.com/repos/fixture/repo/releases/assets/123")
+        if args == ["release", "view", tag, "--json", "isDraft", "--jq", ".isDraft"]:
+            if scenario == "unknown-restage":
+                sys.exit(74)
+            print("true" if scenario == "draft-restage" else "false")
+            sys.exit(0)
+        if args[:2] == ["api", "repos/jarocki/orion/releases?per_page=100"]:
+            print("42")
+            sys.exit(0)
+        if args[:3] == ["api", "--paginate", "repos/jarocki/orion/releases/42/assets?per_page=100"]:
+            # No actual assets, but recording this call proves draft-only
+            # cleanup was reached. All mutation commands remain forbidden.
+            sys.exit(0)
+    if scenario in ("draft-assets", "draft-assets-failure", "draft-id-failure"):
+        if args[:2] == ["api", "repos/fixture/repo/releases?per_page=100"]:
+            if scenario == "draft-id-failure":
+                sys.exit(74)
+            print("42")
+            sys.exit(0)
+        if args[:3] == ["api", "--paginate", "repos/fixture/repo/releases/42/assets?per_page=100"]:
+            if scenario == "draft-assets-failure":
+                print("simulated draft lookup failure", file=sys.stderr)
+                sys.exit(74)
+            print("123 starter 987\n456 uploaded 988")
             sys.exit(0)
     if args[:2] == ["auth", "status"]:
         sys.exit(0)
@@ -156,41 +171,42 @@ class OwnerReleaseSafetyTests(unittest.TestCase):
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
     def run_asset_lookup_harness(self, scenario):
-        # Extract only the exact one-line definitions, never the upload flow.
+        # Extract just the asset lookup definitions, never the upload flow.
         # All external calls remain routed through the deny-by-default gh stub.
-        lines = self.script.read_text().splitlines()
-        definitions = []
-        for name in ("release_assets", "asset_size", "asset_api_url"):
-            matches = [line for line in lines if line.startswith(name + "()")]
-            self.assertEqual(len(matches), 1)
-            self.assertTrue(matches[0].endswith("}"))
-            definitions.append(matches[0])
+        source = self.script.read_text()
+        definitions = source[source.index('RELEASE_ID=""'):source.index('local_size()')]
         harness = self.root / "lookup-harness.sh"
-        harness.write_text("set -euo pipefail\nTAG=v9.9.9\n" + "\n".join(definitions) + "\n"
-                           'size="$(asset_size sample.iso)"\n'
-                           'url="$(asset_api_url sample.iso)"\n'
-                           'printf "size=<%s>\\nurl=<%s>\\nlookup survived\\n" "$size" "$url"\n')
+        harness.write_text("set -euo pipefail\nTAG=v9.9.9\nREPO=fixture/repo\n" + definitions + "\n"
+                           'state="$(asset_state sample.iso)"\n'
+                           'printf "state=<%s>\\nlookup survived\\n" "$state"\n')
         return subprocess.run(["bash", str(harness)], cwd=self.repo,
                               env=dict(self.env, SCENARIO=scenario), capture_output=True,
                               text=True, timeout=20, check=False)
 
-    def test_draft_asset_lookups_use_release_view(self):
+    def test_draft_asset_lookups_include_starter_assets_by_release_id(self):
         result = self.run_asset_lookup_harness("draft-assets")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("size=<123>", result.stdout)
-        self.assertIn("url=<https://api.github.com/repos/fixture/repo/releases/assets/123>", result.stdout)
+        self.assertIn("state=<123 starter 987>", result.stdout)
         calls = self.calls()
         self.assertEqual(len(calls), 2)
-        for call in calls:
-            self.assertEqual(call[:6], ["gh", "release", "view", TAG, "--json", "assets"])
-            self.assertIn('select(.name=="sample.iso")', call[-1])
+        self.assertEqual(calls[0][:3], ["gh", "api", "repos/fixture/repo/releases?per_page=100"])
+        self.assertIn('select(.tag_name=="v9.9.9")', calls[0][-1])
+        self.assertEqual(calls[1][:4], ["gh", "api", "--paginate",
+                                      "repos/fixture/repo/releases/42/assets?per_page=100"])
+        self.assertIn('select(.name=="sample.iso")', calls[1][-1])
 
     def test_failed_draft_lookup_is_empty_success_under_errexit(self):
         result = self.run_asset_lookup_harness("draft-assets-failure")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(result.stdout, "size=<>\nurl=<>\nlookup survived\n")
+        self.assertEqual(result.stdout, "state=<>\nlookup survived\n")
         self.assertEqual(result.stderr, "")
         self.assertEqual(len(self.calls()), 2)
+
+    def test_failed_release_id_lookup_is_empty_success_under_errexit(self):
+        result = self.run_asset_lookup_harness("draft-id-failure")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "state=<>\nlookup survived\n")
+        self.assertEqual(len(self.calls()), 1)
 
     def test_unexpected_command_failure_reports_error_and_resume(self):
         result = self.run_helper(scenario="status-failure", extra=("--pr", "42", "--retag"))
@@ -341,14 +357,90 @@ class OwnerReleaseSafetyTests(unittest.TestCase):
         self.assertIn(["git", "status", "--porcelain", "--untracked-files=no"], self.calls())
         self.assert_no_publication()
 
+    def test_restage_preserves_unproven_staging(self):
+        self.seed_cache()
+        self.seed_stage(marker=False)
+        result = self.run_helper("stage", extra=("--restage", "--part-size", "32m"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unproven cache", result.stdout)
+        self.assertTrue((self.stage / "SHA256SUMS").exists())
+        self.assertNotIn("MOCK_STAGE_REACHED", result.stdout + result.stderr)
+        self.assert_no_publication()
+
+    def test_restage_preserves_stale_staging(self):
+        self.seed_cache()
+        self.seed_stage(sha=OLD_SHA)
+        result = self.run_helper("stage", extra=("--restage",))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("stale or invalid cache provenance", result.stdout)
+        self.assertTrue((self.stage / "SHA256SUMS").exists())
+        self.assert_no_publication()
+
+    def test_restage_preserves_symlink_staging(self):
+        self.seed_cache()
+        self.seed_stage()
+        preserved = self.root / "preserved-stage"
+        self.stage.rename(preserved)
+        self.stage.symlink_to(preserved, target_is_directory=True)
+        result = self.run_helper("stage", extra=("--restage",))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsafe cache directory", result.stdout)
+        self.assertTrue(self.stage.is_symlink())
+        self.assertTrue((preserved / "SHA256SUMS").exists())
+        self.assert_no_publication()
+
+    def test_restage_replaces_verified_staging_and_copies_provenance(self):
+        self.seed_cache()
+        self.seed_stage()
+        (self.stage / "old-part").write_text("old split")
+        stage_script = self.repo / "scripts/release/stage-split-release.sh"
+        # Mock staging writes only inside this fixture, then the helper checks
+        # all six outputs and the new source marker without executing signing.
+        stage_script.write_text(
+            '#!/usr/bin/env bash\nset -eu\n'
+            '[ "$3" = --out ] && [ "$7" = --part-size ] && [ "$8" = 32m ]\n'
+            'mkdir -p "$4"\n'
+            f'printf "%s  %s\\n" {ISO_HASH} {ISO_NAME} > "$4/SHA256SUMS"\n'
+            'for f in SHA256SUMS.asc SHA512SUMS SHA512SUMS.asc REASSEMBLE.txt RELEASE-NOTES.md; '
+            'do echo fixture > "$4/$f"; done\n')
+        result = self.run_helper("stage", extra=("--restage", "--part-size", "32m"))
+        # Later release creation is denied by the gh stub, so stop after proving
+        # the mock stage succeeded and the correct source marker was installed.
+        self.assertIn("staged:", result.stdout)
+        self.assertFalse((self.stage / "old-part").exists())
+        self.assertEqual((self.stage / ".owner-release-source").read_text(),
+                         f"{SHA} 202 {ISO_HASH}\n")
+
+    def test_restage_never_deletes_published_or_unconfirmed_release_assets(self):
+        self.seed_cache()
+        self.seed_stage()
+        for scenario in ("published-restage", "unknown-restage"):
+            with self.subTest(scenario=scenario):
+                result = self.run_helper("release", scenario, extra=("--restage",))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("refuses to delete assets", result.stdout)
+                self.assertFalse(any(c[:3] == ["gh", "api", "--paginate"] for c in self.calls()))
+                self.assertFalse(any(c[0] == "gh" and ("DELETE" in c or "upload" in c)
+                                     for c in self.calls()))
+
+    def test_confirmed_draft_restaging_reaches_asset_enumeration(self):
+        self.seed_cache()
+        self.seed_stage()
+        result = self.run_helper("release", "draft-restage", extra=("--restage",))
+        self.assertIn("removing every asset already on the draft", result.stdout)
+        self.assertTrue(any(c[:4] == ["gh", "api", "--paginate",
+                                     "repos/jarocki/orion/releases/42/assets?per_page=100"]
+                            for c in self.calls()))
+
     def test_resume_hint_preserves_owner_flags(self):
         # Missing tag stops before any release step. --publish only exercises
         # the hint formatter; publication remains forbidden by the gh stub.
         result = self.run_helper(scenario="missing-tag", extra=(
-            "--pr", "42", "--retag", "--publish", "--key", "TEST_FINGERPRINT"))
+            "--pr", "42", "--retag", "--publish", "--key", "TEST_FINGERPRINT",
+            "--part-size", "32m"))
         self.assertNotEqual(result.returncode, 0)
         hint = next(line for line in result.stdout.splitlines() if "resume with" in line)
-        for expected in ("--pr 42", "--retag", "--publish", "--key TEST_FINGERPRINT",
+        for expected in ("--pr 42", "--retag", "--publish", "--key TEST_FINGERPRINT", "--part-size 32m",
                          f"ORIONX_REPO_ROOT={self.repo}"):
             self.assertIn(expected, hint)
         self.assert_no_publication()
@@ -365,7 +457,10 @@ class OwnerReleaseSafetyTests(unittest.TestCase):
         self.ci.mkdir(parents=True)
         sentinel = self.ci / "recovery.log"
         sentinel.write_bytes(b"valuable partial download\n")
-        result = self.run_helper("tag", dry=True)
+        self.seed_stage(marker=False)
+        staged_before = (self.stage / "SHA256SUMS").read_bytes()
+        result = self.run_helper("tag", dry=True, extra=("--restage", "--part-size", "32m"))
+        self.assertEqual((self.stage / "SHA256SUMS").read_bytes(), staged_before)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(sentinel.read_bytes(), b"valuable partial download\n")
         self.assertFalse(any(c[0] == "git" and c[1] in ("fetch", "push", "tag", "checkout") for c in self.calls()))
