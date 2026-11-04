@@ -381,7 +381,7 @@ CURRENT_STEP=verify
 if step_due verify && [[ $DRY -eq 0 ]]; then
     say "--- verify: asset set, sizes, fresh signature check"
     expected=$(( $(find "$R" -name '*.iso.part-*' | wc -l | tr -d ' ') + 5 ))
-    count="$(rest_assets '.id' | wc -l | tr -d ' ')"
+    count="$(rest_assets '.[].id' | wc -l | tr -d ' ')"   # '.id' on the array yields nothing (the first v3.1.3 verify read 0 of 21)
     [[ "$count" == "$expected" ]] || die "release has ${count} assets (starters included), expected ${expected}"
     bad=0
     while IFS=$'\t' read -r name size state; do
