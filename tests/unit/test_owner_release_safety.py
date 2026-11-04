@@ -36,6 +36,8 @@ if name == "sleep":
     sys.exit(0)
 if name == "git":
     if args == ["status", "--porcelain", "--untracked-files=no"]:
+        if scenario == "status-failure":
+            sys.exit(73)
         sys.exit(0)
     if args[:1] == ["ls-remote"]:
         count_file = root / "tag-read-count"
@@ -59,6 +61,18 @@ if name == "git":
         print(tag)
         sys.exit(0)
 if name == "gh":
+    if (scenario in ("draft-assets", "draft-assets-failure")
+            and args[:5] == ["release", "view", tag, "--json", "assets"]
+            and len(args) == 7 and args[5] == "--jq"):
+        if scenario == "draft-assets-failure":
+            print("simulated draft lookup failure", file=sys.stderr)
+            sys.exit(74)
+        if args[6].endswith("| .size"):
+            print("123\n456")
+            sys.exit(0)
+        if args[6].endswith("| .apiUrl"):
+            print("https://api.github.com/repos/fixture/repo/releases/assets/123")
+            sys.exit(0)
     if args[:2] == ["auth", "status"]:
         sys.exit(0)
     if args[:2] == ["run", "list"]:
@@ -140,6 +154,53 @@ class OwnerReleaseSafetyTests(unittest.TestCase):
     def calls(self):
         path = self.root / "calls.jsonl"
         return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+    def run_asset_lookup_harness(self, scenario):
+        # Extract only the exact one-line definitions, never the upload flow.
+        # All external calls remain routed through the deny-by-default gh stub.
+        lines = self.script.read_text().splitlines()
+        definitions = []
+        for name in ("release_assets", "asset_size", "asset_api_url"):
+            matches = [line for line in lines if line.startswith(name + "()")]
+            self.assertEqual(len(matches), 1)
+            self.assertTrue(matches[0].endswith("}"))
+            definitions.append(matches[0])
+        harness = self.root / "lookup-harness.sh"
+        harness.write_text("set -euo pipefail\nTAG=v9.9.9\n" + "\n".join(definitions) + "\n"
+                           'size="$(asset_size sample.iso)"\n'
+                           'url="$(asset_api_url sample.iso)"\n'
+                           'printf "size=<%s>\\nurl=<%s>\\nlookup survived\\n" "$size" "$url"\n')
+        return subprocess.run(["bash", str(harness)], cwd=self.repo,
+                              env=dict(self.env, SCENARIO=scenario), capture_output=True,
+                              text=True, timeout=20, check=False)
+
+    def test_draft_asset_lookups_use_release_view(self):
+        result = self.run_asset_lookup_harness("draft-assets")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("size=<123>", result.stdout)
+        self.assertIn("url=<https://api.github.com/repos/fixture/repo/releases/assets/123>", result.stdout)
+        calls = self.calls()
+        self.assertEqual(len(calls), 2)
+        for call in calls:
+            self.assertEqual(call[:6], ["gh", "release", "view", TAG, "--json", "assets"])
+            self.assertIn('select(.name=="sample.iso")', call[-1])
+
+    def test_failed_draft_lookup_is_empty_success_under_errexit(self):
+        result = self.run_asset_lookup_harness("draft-assets-failure")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout, "size=<>\nurl=<>\nlookup survived\n")
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(len(self.calls()), 2)
+
+    def test_unexpected_command_failure_reports_error_and_resume(self):
+        result = self.run_helper(scenario="status-failure", extra=("--pr", "42", "--retag"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unexpected failure (exit 73) at line", result.stdout)
+        self.assertIn("git status --porcelain --untracked-files=no", result.stdout)
+        self.assertIn("resume with (one line):", result.stdout)
+        self.assertIn("--pr 42 --retag", result.stdout)
+        self.assertIn(f"ORIONX_REPO_ROOT={self.repo}", result.stdout)
+        self.assert_no_publication()
 
     def seed_cache(self, sha=SHA, run="202", hash_value=ISO_HASH, marker=True):
         output = self.ci / "output"
