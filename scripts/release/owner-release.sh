@@ -41,6 +41,14 @@
 #   --from STEP    resume at STEP (merge|ff-main|tag|ci|download|stage|release|verify|publish)
 #   --dry-run      print each step's commands; run nothing that changes state
 #   --key FPR      signing key fingerprint (default: the release key)
+#   --part-size S  split size for the ISO parts, split(1) syntax (default 64m).
+#                  Size the parts so one upload takes ~1–2 min at today's
+#                  throughput: uploads.github.com resets streams that run
+#                  ~5 min (release-process §10.1). v3.1.3 at ~0.9 MB/s: 190m
+#                  parts took 3–5 min and the third one never got through.
+#   --restage      discard the staged tree and every asset already on the
+#                  draft, then stage, sign and upload again (use with a new
+#                  --part-size; the sums and REASSEMBLE.txt change with it)
 #   ORIONX_REPO_ROOT=<dir>  run against that checkout (e.g. from a worktree copy)
 #
 # Runs from the repository root on the Mac. Needs: gh (authenticated), git,
@@ -49,7 +57,7 @@
 
 set -euo pipefail
 
-TAG=""; PR=""; RETAG=0; PUBLISH=0; FROM="merge"; DRY=0
+TAG=""; PR=""; RETAG=0; PUBLISH=0; FROM="merge"; DRY=0; PART_SIZE="64m"; RESTAGE=0
 KEY="4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF"
 REPO="jarocki/orion"
 STEPS="merge ff-main tag ci download stage release verify publish"
@@ -65,6 +73,8 @@ while [[ $# -gt 0 ]]; do
         --from) FROM="${2:?--from needs a step}"; shift 2 ;;
         --dry-run) DRY=1; shift ;;
         --key) KEY="${2:?--key needs a fingerprint}"; shift 2 ;;
+        --part-size) PART_SIZE="${2:?--part-size needs a size like 64m}"; shift 2 ;;
+        --restage) RESTAGE=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -91,6 +101,7 @@ resume_cmd() {  # the exact invocation that continues this run: same flags, same
     [[ $RETAG -eq 1 ]] && c="$c --retag"
     [[ $PUBLISH -eq 1 ]] && c="$c --publish"
     [[ "$KEY" == "4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF" ]] || c="$c --key $KEY"
+    [[ "$PART_SIZE" == "64m" ]] || c="$c --part-size $PART_SIZE"
     [[ -n "${ORIONX_REPO_ROOT:-}" ]] && c="ORIONX_REPO_ROOT=$ORIONX_REPO_ROOT $c"
     printf '%s' "$c"
 }
@@ -282,11 +293,12 @@ if step_due stage; then
     say "--- stage: split, checksum, sign (gpg will ask for the passphrase)"
     if [[ $DRY -eq 0 ]]; then
         [[ "$(git describe --tags --exact-match 2>/dev/null || true)" == "$TAG" ]] || die "checkout is not at ${TAG} (staging reads CHANGELOG.md from the checkout): git checkout ${TAG}"
-        if [[ -f "$R/SHA256SUMS.asc" && -f "$R/RELEASE-NOTES.md" ]]; then
-            say "staging already present in ${R}; re-verifying the signature only"
+        if [[ $RESTAGE -eq 0 && -f "$R/SHA256SUMS.asc" && -f "$R/RELEASE-NOTES.md" ]]; then
+            say "staging already present in ${R}; re-verifying the signature only (use --restage to split again)"
         else
+            [[ $RESTAGE -eq 0 ]] || say "--restage: discarding ${R}"
             rm -rf "$R"
-            run "stage-split-release" bash scripts/release/stage-split-release.sh "$ISO" "$TAG" --out "$R" --key "$KEY"
+            run "stage-split-release (${PART_SIZE} parts)" bash scripts/release/stage-split-release.sh "$ISO" "$TAG" --out "$R" --key "$KEY" --part-size "$PART_SIZE"
         fi
         for f in SHA256SUMS SHA256SUMS.asc SHA512SUMS SHA512SUMS.asc REASSEMBLE.txt RELEASE-NOTES.md; do
             [[ -s "$R/$f" ]] || die "staging produced no ${f}"
@@ -294,50 +306,73 @@ if step_due stage; then
         gpg --verify "$R/SHA256SUMS.asc" "$R/SHA256SUMS" >/dev/null 2>&1 || die "SHA256SUMS.asc does not verify"
         say "staged: $(find "$R" -name '*.iso.part-*' | wc -l | tr -d ' ') parts + 6 files in ${R}"
     else
-        say "  \$ bash scripts/release/stage-split-release.sh ${ISO} ${TAG} --out ${R} --key ${KEY}"
+        say "  \$ bash scripts/release/stage-split-release.sh ${ISO} ${TAG} --out ${R} --key ${KEY} --part-size ${PART_SIZE}"
     fi
 fi
 
 # --- release ----------------------------------------------------------------
 CURRENT_STEP=release
 # A DRAFT release is not reachable through the REST get-release-by-tag path
-# (404 until published); `gh release view <tag>` resolves drafts. The first v3.1.3
-# upload attempt died silently on that 404 under set -e. Every lookup here
-# therefore goes through gh release view, and every $(...) assignment is
-# guarded so a failed lookup is a retry, never an exit.
-release_assets() { gh release view "$TAG" --json assets --jq "$1" 2>/dev/null || true; }
-asset_size()     { release_assets ".assets[] | select(.name==\"$1\") | .size"   | head -1; }
-asset_api_url()  { release_assets ".assets[] | select(.name==\"$1\") | .apiUrl" | head -1; }
-local_size() { stat -f %z "$1" 2>/dev/null || stat -c %s "$1"; }
+# (404 until published); the first v3.1.3 upload attempt died silently on
+# that 404 under set -e. The draft's numeric id comes from the releases list
+# (which includes drafts), and the assets are read from the REST assets
+# endpoint of that id, because it is the only view that shows the hidden
+# `starter` asset a reset upload leaves behind (release-process §10.1);
+# `gh release view` hides it and then every retry of that name fails.
+# Every $(...) assignment is guarded so a failed lookup is a retry, never an
+# exit.
+RELEASE_ID=""
+release_id() {
+    [[ -n "$RELEASE_ID" ]] || RELEASE_ID="$(gh api "repos/${REPO}/releases?per_page=100" --jq ".[] | select(.tag_name==\"${TAG}\") | .id" 2>/dev/null | head -1 || true)"
+    printf '%s' "$RELEASE_ID"
+}
+rest_assets() {  # <jq>: every asset of the draft, starters included
+    local id; id="$(release_id)"
+    [[ -n "$id" ]] || return 0
+    gh api --paginate "repos/${REPO}/releases/${id}/assets?per_page=100" --jq "$1" 2>/dev/null || true
+}
+asset_state()  { rest_assets ".[] | select(.name==\"$1\") | \"\(.size) \(.state) \(.id)\"" | head -1; }
+local_size()   { stat -f %z "$1" 2>/dev/null || stat -c %s "$1"; }
+delete_asset() {  # <id> <why>
+    say "  deleting asset $1 ($2)"
+    retry 3 10 gh api -X DELETE "repos/${REPO}/releases/assets/$1" >/dev/null 2>&1 || say "  delete of asset $1 returned non-zero; continuing"
+    sleep 3
+}
 if step_due release; then
-    say "--- release: draft + uploads (one file per command, verified by size, retried)"
+    say "--- release: draft + uploads (one file per command, verified by size and state, retried)"
     if [[ $DRY -eq 0 ]]; then
         if gh release view "$TAG" >/dev/null 2>&1; then
-            say "release ${TAG} exists; reusing it"
+            say "release ${TAG} exists (id $(release_id)); reusing it"
+            if [[ $RESTAGE -eq 1 ]]; then
+                say "--restage: removing every asset already on the draft (the sums and parts changed)"
+                while read -r aid aname; do [[ -n "$aid" ]] && delete_asset "$aid" "$aname, restage"; done < <(rest_assets '.[] | "\(.id) \(.name)"')
+            fi
         else
-            run "create DRAFT release" gh release create "$TAG" --draft --title "Orion-X Phoenix Edition ${TAG}" --notes-file "$R/RELEASE-NOTES.md" \
-                "$R/SHA256SUMS" "$R/SHA256SUMS.asc" "$R/SHA512SUMS" "$R/SHA512SUMS.asc" "$R/REASSEMBLE.txt"
+            run "create DRAFT release" gh release create "$TAG" --draft --title "Orion-X Phoenix Edition ${TAG}" --notes-file "$R/RELEASE-NOTES.md"
             sleep 10
         fi
-        for p in "$R"/orionx-phoenix-edition-"${TAG}".iso.part-* "$R/SHA256SUMS" "$R/SHA256SUMS.asc" "$R/SHA512SUMS" "$R/SHA512SUMS.asc" "$R/REASSEMBLE.txt"; do
+        # Small, signed files first, so a reader of the draft can verify parts as they land.
+        UPLOAD_ERR="tmp/owner-release-${TAG}-upload.err"; : > "$UPLOAD_ERR"
+        for p in "$R/SHA256SUMS" "$R/SHA256SUMS.asc" "$R/SHA512SUMS" "$R/SHA512SUMS.asc" "$R/REASSEMBLE.txt" "$R"/orionx-phoenix-edition-"${TAG}".iso.part-*; do
             name="$(basename "$p")"; want="$(local_size "$p")"
             tries=0
             while :; do
-                have="$(asset_size "$name")"
-                if [[ "$have" == "$want" ]]; then say "  ok  ${name} (${want} bytes)"; break; fi
-                tries=$((tries + 1)); [[ $tries -le 4 ]] || die "upload of ${name} failed 4 times (size on GitHub: ${have:-none}, local: ${want}). See release-process §10.1 for the hidden 'starter' asset."
-                if [[ -n "$have" ]]; then
-                    url="$(asset_api_url "$name")"; say "  ${name}: size ${have} != ${want}; deleting ${url##*/} and re-uploading"
-                    [[ -z "$url" ]] || gh api -X DELETE "$url" >/dev/null 2>&1 || true
-                    sleep 5
+                read -r have state aid <<< "$(asset_state "$name")" || true
+                if [[ "${have:-}" == "$want" && "${state:-}" == "uploaded" ]]; then say "  ok  ${name} (${want} bytes)"; break; fi
+                tries=$((tries + 1)); [[ $tries -le 4 ]] || die "upload of ${name} failed 4 times (on GitHub: ${have:-none} ${state:-}; local: ${want}). Last error: $(tail -1 "$UPLOAD_ERR" 2>/dev/null)"
+                if [[ -n "${aid:-}" ]]; then delete_asset "$aid" "${name}: ${have} bytes, state ${state}; must be ${want} uploaded"; fi
+                say "  upload ${name} (try ${tries}, $((want / 1048576)) MiB)"
+                t0=$(date +%s)
+                if ${CAFF:+$CAFF -i} gh release upload "$TAG" --clobber "$p" >/dev/null 2>"$UPLOAD_ERR"; then
+                    say "  uploaded in $(( $(date +%s) - t0 ))s; confirming through the API"
+                else
+                    say "  upload returned non-zero after $(( $(date +%s) - t0 ))s: $(tail -1 "$UPLOAD_ERR" | cut -c1-160)"
                 fi
-                say "  upload ${name} (try ${tries})"
-                ${CAFF:+$CAFF -i} gh release upload "$TAG" --clobber "$p" >/dev/null 2>&1 || say "  upload command returned non-zero; verifying by size anyway"
                 sleep 5
             done
         done
     else
-        say "  \$ gh release create ${TAG} --draft ...; for p in ${R}/*.iso.part-*; do gh release upload ${TAG} --clobber \"\$p\"; done"
+        say "  \$ gh release create ${TAG} --draft ...; for p in ${R}/*; do gh release upload ${TAG} --clobber \"\$p\"; done   # ${PART_SIZE} parts"
     fi
 fi
 
@@ -346,13 +381,13 @@ CURRENT_STEP=verify
 if step_due verify && [[ $DRY -eq 0 ]]; then
     say "--- verify: asset set, sizes, fresh signature check"
     expected=$(( $(find "$R" -name '*.iso.part-*' | wc -l | tr -d ' ') + 5 ))
-    count="$(release_assets '.assets | length')"
-    [[ "$count" == "$expected" ]] || die "release has ${count:-no readable} assets, expected ${expected}"
+    count="$(rest_assets '.id' | wc -l | tr -d ' ')"
+    [[ "$count" == "$expected" ]] || die "release has ${count} assets (starters included), expected ${expected}"
     bad=0
     while IFS=$'\t' read -r name size state; do
         [[ "$state" == "uploaded" ]] || { say "  ${name}: state ${state}"; bad=1; }
         [[ -f "$R/$name" ]] && [[ "$(local_size "$R/$name")" == "$size" ]] || { say "  ${name}: size mismatch or no local file"; bad=1; }
-    done < <(release_assets '.assets[] | [.name, .size, .state] | @tsv')
+    done < <(rest_assets '.[] | [.name, .size, .state] | @tsv')
     [[ $bad -eq 0 ]] || die "asset verification failed"
     V="tmp/release-${TAG}-verify"; rm -rf "$V"; mkdir -p "$V"
     retry 3 20 gh release download "$TAG" -D "$V" -p 'SHA256SUMS' -p 'SHA256SUMS.asc' >/dev/null 2>&1 || die "could not download SHA256SUMS(.asc) for verification"

@@ -29,6 +29,9 @@ grep -q 'refusing to move the tag under it' "$S" && pass "never moves a tag that
 grep -qE 'mapfile|\$\{[a-z_]+,,\}|declare -A' "$S" && fail "bash-4-only construct (the Mac runs bash 3.2)" || pass "bash 3.2 compatible (no mapfile / \${var,,} / declare -A)"
 grep -q 'git status --porcelain --untracked-files=no' "$S" && pass "clean-tree guard ignores untracked files (the owner's notes blocked the first v3.1.3 run)" || fail "untracked guard"
 grep -q 'releases/tags/' "$S" && fail "REST releases/tags/<tag> lookup present (404 for a DRAFT release; the first v3.1.3 upload died on it)" || pass "no releases/tags/<tag> REST lookup; drafts are read via gh release view"
+grep -q 'releases/${id}/assets' "$S" && grep -q 'starter' "$S" && pass "assets are read from the REST assets endpoint of the draft's id (shows the hidden starter asset)" || fail "REST assets endpoint"
+grep -q -- '--part-size "$PART_SIZE"' "$S" && grep -q -- '--restage) RESTAGE=1' "$S" && pass "--part-size / --restage: re-split when uploads reset (v3.1.3: 190m parts took 3–5 min at ~0.9 MB/s)" || fail "part-size/restage"
+grep -q '2>"$UPLOAD_ERR"' "$S" && pass "upload stderr is kept and reported, not discarded" || fail "upload stderr"
 grep -q "trap 'die .*' ERR" "$S" && pass "ERR trap: set -e can never end the run silently" || fail "ERR trap missing"
 grep -q 'headSha==\\"\${sha}\\"' "$S" && grep -q 'git rev-list -n 1 "\$TAG"' "$S" && pass "ci step selects the run by the tag's commit, not by branch name (a re-tag leaves the old run named after the tag)" || fail "ci run selection by headSha"
 for flag in '--pr $PR' '--retag' '--publish' 'ORIONX_REPO_ROOT=$ORIONX_REPO_ROOT'; do
