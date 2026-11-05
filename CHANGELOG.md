@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Owner release safety (#168 review).** Abort test fixture setup when temporary
+  allocation fails. Select release runs by the current tag commit, bind downloaded
+  and staged caches to that run and ISO hash, and reject unproven caches without
+  deleting them. Dry-run no longer fetches tags or removes partial artifacts.
+
+---
+
 ## [v3.1.3] — 2026-11-01 (deck patch release)
 
 The fixes from the 2026-10-31 HP Pavilion boot of the v3.1.1 stack, plus the
@@ -80,11 +91,6 @@ and gates the ISO from the tag, the owner signs (release-process §10).
   envconfig; `IPAddressDeny=any` blocks it on the deck).
 
 ### Fixed
-
-- **Owner release safety (#168 review).** Abort test fixture setup when temporary
-  allocation fails. Select release runs by the current tag commit, bind downloaded
-  and staged caches to that run and ISO hash, and reject unproven caches without
-  deleting them. Dry-run no longer fetches tags or removes partial artifacts.
 
 - **QEMU gate: pinned runner image and 4M OVMF paths (DEC-PHASE13-037).** On
   2026-11-02 GitHub moved `ubuntu-latest` from 24.04 to 26.04 between two runs;
