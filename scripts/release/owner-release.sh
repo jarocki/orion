@@ -55,7 +55,7 @@
 # shasum, gpg, xorriso, unsquashfs, python3, dpkg (for signed staging), and
 # caffeinate (optional; keeps the Mac awake during uploads).
 
-set -euo pipefail
+set -Eeuo pipefail   # -E: the ERR trap below also fires inside functions and $(...)
 
 TAG=""; PR=""; RETAG=0; PUBLISH=0; FROM="merge"; DRY=0; PART_SIZE="64m"; RESTAGE=0
 KEY="4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF"
@@ -102,12 +102,27 @@ resume_cmd() {  # the exact invocation that continues this run: same flags, same
     [[ $PUBLISH -eq 1 ]] && c="$c --publish"
     [[ "$KEY" == "4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF" ]] || c="$c --key $KEY"
     [[ "$PART_SIZE" == "64m" ]] || c="$c --part-size $PART_SIZE"
+    # --restage only until staging has run: carried past it, every resume would
+    # split again and clear the draft's assets. Dropped before it, a resume
+    # would reuse the staging the owner asked to replace.
+    case "${CURRENT_STEP:-$FROM}" in merge|ff-main|tag|ci|download|stage) [[ $RESTAGE -eq 0 ]] || c="$c --restage" ;; esac
     [[ -n "${ORIONX_REPO_ROOT:-}" ]] && c="ORIONX_REPO_ROOT=$ORIONX_REPO_ROOT $c"
     printf '%s' "$c"
 }
-die() { printf '[%s] ERROR: %s\n' "$(ts)" "$*" >&2; printf '[%s] stopped; resume with (one line): %s\n' "$(ts)" "$(resume_cmd)" >&2; exit 1; }
+die() {
+    # Inside $(...) or ( ... ) only the subshell ends here; the enclosing
+    # command then fails and its own `|| die`, or the ERR trap at top level,
+    # reports. A message from the subshell would be a false "stopped" line
+    # while the run goes on (the ci poll retries a failed `gh run list`).
+    [[ ${BASH_SUBSHELL:-0} -eq 0 ]] || exit 1
+    printf '[%s] ERROR: %s\n' "$(ts)" "$*" >&2
+    printf '[%s] stopped; resume with (one line): %s\n' "$(ts)" "$(resume_cmd)" >&2
+    exit 1
+}
 # set -e must never end the run without a word in the log (it did once: a
-# failed `have="$(...)"` assignment exited between two say lines).
+# failed `have="$(...)"` assignment exited between two say lines; and without
+# -E a `cat` of an unreadable marker inside check_source ended the run with
+# nothing but cat's own message).
 trap 'die "unexpected failure (exit $?) at line ${LINENO}: ${BASH_COMMAND}"' ERR
 run() {  # run <description> <cmd...>: prints, honours --dry-run, fails loudly
     local what="$1"; shift
@@ -264,13 +279,14 @@ verify_run() {
 }
 # A marker binds a locally managed cache to the selected run, commit and ISO.
 # Old tag-only caches are deliberately not adopted or deleted automatically.
-check_source() {
-    local dir="$1" source sha run hash extra
-    [[ -d "$dir" && ! -L "$dir" ]] || die "unsafe cache directory ${dir}"
-    [[ -f "$dir/.owner-release-source" && ! -L "$dir/.owner-release-source" ]] || die "unproven cache in ${dir}; preserve/move it aside and resume from download"
-    source="$(cat "$dir/.owner-release-source")"
+check_source() {  # check_source <dir> <what it holds> <step that creates it>
+    local dir="$1" what="$2" from="$3" source sha run hash extra
+    [[ -e "$dir" || -L "$dir" ]] || die "no ${what} cache at ${dir}; every later step needs it present: resume with --from ${from}"
+    [[ -d "$dir" && ! -L "$dir" ]] || die "unsafe cache directory ${dir} (a symlink, or not a directory); move it aside and resume with --from ${from}"
+    [[ -f "$dir/.owner-release-source" && ! -L "$dir/.owner-release-source" ]] || die "unproven cache in ${dir} (no .owner-release-source marker; releases before v3.1.4 wrote none); move it aside and resume with --from ${from}"
+    source="$(cat "$dir/.owner-release-source")" || die "cannot read ${dir}/.owner-release-source"
     read -r sha run hash extra <<< "$source"
-    [[ "$sha" == "$TAG_SHA" && "$run" == "$RUN_ID" && "$hash" =~ ^[0-9a-f]{64}$ && -z "$extra" && "$source" == "$sha $run $hash" ]] || die "stale or invalid cache provenance in ${dir}; preserve/move it aside and resume from download"
+    [[ "$sha" == "$TAG_SHA" && "$run" == "$RUN_ID" && "$hash" =~ ^[0-9a-f]{64}$ && -z "$extra" && "$source" == "$sha $run $hash" ]] || die "stale or invalid cache provenance in ${dir} (want '${TAG_SHA} ${RUN_ID} <iso sha256>', have '${source}'); move it aside and resume with --from ${from}"
     SOURCE_HASH="$hash"
 }
 if [[ $DRY -eq 0 ]]; then resolve_tag_commit; fi
@@ -306,11 +322,11 @@ CURRENT_STEP=download
 if step_due download; then
     say "--- download: the CI-built ISO and its sidecar"
     if [[ $DRY -eq 0 ]]; then
-        [[ -n "$RUN_ID" ]] || RUN_ID="$(find_tag_run)"
+        [[ -n "$RUN_ID" ]] || RUN_ID="$(find_tag_run || true)"
         [[ -n "$RUN_ID" ]] || die "cannot find the ${TAG} tag run to download from"
         verify_run
         if [[ -e "$CI_DIR" || -L "$CI_DIR" ]]; then
-            check_source "$CI_DIR"
+            check_source "$CI_DIR" "downloaded ISO" download
             [[ -f "$ISO" ]] || die "incomplete cache in ${CI_DIR}; preserve/move it aside before downloading"
             [[ "$(shasum -a 256 "$ISO" | awk '{print $1}')" == "$SOURCE_HASH" ]] || die "cached ISO differs from its recorded source hash"
             say "ISO already present with matching provenance: ${ISO}"
@@ -331,13 +347,14 @@ fi
 # Every resumed signing/upload/verification/publication checks the same source.
 if [[ $DRY -eq 0 ]]; then
     assert_tag_unchanged
-    [[ -n "$RUN_ID" ]] || RUN_ID="$(find_tag_run)"
+    [[ -n "$RUN_ID" ]] || RUN_ID="$(find_tag_run || true)"
+    [[ -n "$RUN_ID" ]] || die "no successful release.yml run for ${TAG} at ${TAG_SHA:0:7} is visible; resume with --from ci"
     verify_run
-    check_source "$CI_DIR"
+    check_source "$CI_DIR" "downloaded ISO" download
 fi
 check_staged_source() {
     local iso_hash="$SOURCE_HASH"
-    check_source "$R"
+    check_source "$R" staging stage
     [[ "$SOURCE_HASH" == "$iso_hash" ]] || die "staging and downloaded ISO have different provenance"
     [[ "$(awk -v name="orionx-phoenix-edition-${TAG}.iso" '$2 == name {print $1}' "$R/SHA256SUMS")" == "$SOURCE_HASH" ]] || die "staged checksum does not match the recorded source ISO"
 }
@@ -396,7 +413,7 @@ release_id() {
     printf '%s' "$RELEASE_ID"
 }
 rest_assets() {  # <jq>: every asset of the draft, starters included
-    local id; id="$(release_id)"
+    local id; release_id >/dev/null; id="$RELEASE_ID"   # not $(release_id): a subshell cannot fill the cache, so every call would re-fetch
     [[ -n "$id" ]] || return 0
     gh api --paginate "repos/${REPO}/releases/${id}/assets?per_page=100" --jq "$1" 2>/dev/null || true
 }
@@ -452,13 +469,18 @@ CURRENT_STEP=verify
 if step_due verify && [[ $DRY -eq 0 ]]; then
     say "--- verify: asset set, sizes, fresh signature check"
     expected=$(( $(find "$R" -name '*.iso.part-*' | wc -l | tr -d ' ') + 5 ))
-    count="$(rest_assets '.[].id' | wc -l | tr -d ' ')"   # '.id' on the array yields nothing (the first v3.1.3 verify read 0 of 21)
+    release_id >/dev/null
+    [[ -n "$RELEASE_ID" ]] || die "no release for ${TAG} is visible through the API (draft or published); check gh auth status, then resume with --from release"
+    API_ERR="tmp/owner-release-${TAG}-api.err"
+    assets="$(gh api --paginate "repos/${REPO}/releases/${RELEASE_ID}/assets?per_page=100" --jq '.[] | [.name, .size, .state] | @tsv' 2>"$API_ERR")" \
+        || die "the GitHub API failed listing the assets of release ${RELEASE_ID} (not a count mismatch): $(tail -1 "$API_ERR" 2>/dev/null)"
+    count="$(printf '%s\n' "$assets" | grep -c . || true)"   # one line per asset; '.id' on the array yielded nothing (the first v3.1.3 verify read 0 of 21)
     [[ "$count" == "$expected" ]] || die "release has ${count} assets (starters included), expected ${expected}"
     bad=0
     while IFS=$'\t' read -r name size state; do
         [[ "$state" == "uploaded" ]] || { say "  ${name}: state ${state}"; bad=1; }
         [[ -f "$R/$name" ]] && [[ "$(local_size "$R/$name")" == "$size" ]] || { say "  ${name}: size mismatch or no local file"; bad=1; }
-    done < <(rest_assets '.[] | [.name, .size, .state] | @tsv')
+    done < <(printf '%s\n' "$assets")
     [[ $bad -eq 0 ]] || die "asset verification failed"
     V="tmp/release-${TAG}-verify"; rm -rf "$V"; mkdir -p "$V"
     retry 3 20 gh release download "$TAG" -D "$V" -p 'SHA256SUMS' -p 'SHA256SUMS.asc' >/dev/null 2>&1 || die "could not download SHA256SUMS(.asc) for verification"

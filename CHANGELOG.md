@@ -55,6 +55,16 @@ owner signs (DEC-PHASE13-029).
   the resume paths against stub `gh`/`git`. Caches from before this release
   (v3.1.3's `tmp/release-v3.1.3-ci`, `tmp/release-v3.1.3`) carry no marker
   and are rejected, by design; move them aside before resuming a release.
+  A review of the merged script before this release fixed what the fixtures
+  did not reach: `set -E`, so the ERR trap also covers failures inside
+  functions and `$(...)` (a `cat` of an unreadable marker had ended the run
+  with no `ERROR:` line and no resume hint), a `die` inside a subshell stays
+  quiet so a retried `gh run list` cannot print a false "stopped" line, a
+  missing cache directory is reported as missing with the step to resume
+  from rather than as "unsafe", the verify step tells an API failure from a
+  wrong asset count, the release id is cached once instead of re-fetched on
+  every asset check, and the resume hint carries `--restage` until staging
+  has run.
 
 ### Changed
 

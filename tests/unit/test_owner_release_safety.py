@@ -218,6 +218,38 @@ class OwnerReleaseSafetyTests(unittest.TestCase):
         self.assertIn(f"ORIONX_REPO_ROOT={self.repo}", result.stdout)
         self.assert_no_publication()
 
+    def test_failure_inside_a_function_reports_error_and_resume(self):
+        # Without `set -E` the ERR trap does not reach function bodies: a
+        # failed $(cat marker) inside check_source ended the run with only
+        # cat's message (review of #169, 2026-11-05).
+        if os.geteuid() == 0:
+            self.skipTest("root ignores file modes")
+        self.seed_cache()
+        marker = self.ci / ".owner-release-source"
+        marker.chmod(0)
+        self.addCleanup(marker.chmod, 0o644)
+        result = self.run_helper("download")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ERROR: cannot read", result.stdout)
+        self.assertEqual(result.stdout.count("stopped; resume with (one line):"), 1, result.stdout)
+        self.assert_no_publication()
+
+    def test_missing_download_cache_names_the_step_to_resume_from(self):
+        # An absent directory is a missing download, not an "unsafe" one.
+        result = self.run_helper("stage")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no downloaded ISO cache at", result.stdout)
+        self.assertIn("resume with --from download", result.stdout)
+        self.assertNotIn("unsafe cache directory", result.stdout)
+        self.assert_no_publication()
+
+    def test_resume_hint_carries_restage_until_staging_has_run(self):
+        result = self.run_helper("stage", extra=("--restage",))
+        self.assertNotEqual(result.returncode, 0)
+        hint = [l for l in result.stdout.splitlines() if "resume with (one line):" in l][-1]
+        self.assertIn("--from download", hint)
+        self.assertIn("--restage", hint)
+
     def seed_cache(self, sha=SHA, run="202", hash_value=ISO_HASH, marker=True):
         output = self.ci / "output"
         output.mkdir(parents=True)

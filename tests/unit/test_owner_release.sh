@@ -47,6 +47,8 @@ if command -v jq >/dev/null 2>&1; then  # every jq program fed to rest_assets mu
 fi
 grep -q '2>"$UPLOAD_ERR"' "$S" && pass "upload stderr is kept and reported, not discarded" || fail "upload stderr"
 grep -q "trap 'die .*' ERR" "$S" && pass "ERR trap: set -e can never end the run silently" || fail "ERR trap missing"
+grep -q '^set -Eeuo pipefail' "$S" && pass "set -E: the ERR trap also reaches function bodies and \$(...)" || fail "set -E missing (a failed command inside a function exits silently without it)"
+grep -q 'BASH_SUBSHELL' "$S" && pass "die inside a subshell stays quiet (no false 'stopped' line from a retried \$(...))" || fail "die subshell guard"
 grep -q 'headSha==\\"\${sha}\\"' "$S" && grep -q 'git rev-list -n 1 "\$TAG"' "$S" && pass "ci step selects the run by the tag's commit, not by branch name (a re-tag leaves the old run named after the tag)" || fail "ci run selection by headSha"
 for flag in '--pr $PR' '--retag' '--publish' 'ORIONX_REPO_ROOT=$ORIONX_REPO_ROOT'; do
     grep -qF -- "$flag" "$S" && grep -q 'resume_cmd' "$S" && pass "resume hint carries: $flag" || fail "resume hint lacks" "$flag"
