@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition — Cyberdeck for the Good Guys
 
-**Source version:** v3.1.3 (deck patch release from the 2026-10-31 HP Pavilion boot: the first-boot wizard owns the clock, Zeek runs at Tier 1, Desktop launchers are trusted at login, an optional Bluetooth installer, build identity from the owning repository, the Ollama pin evaluated and kept, and the QEMU boot flake root-caused; includes v3.0.1 through v3.1.2). **Latest ISO:** [v3.1.2](https://github.com/jarocki/orion/releases/tag/v3.1.2) — CI-built and gated from the tag, signed by the owner (2026-10-31), not yet booted on hardware; previous: [v3.1.0](https://github.com/jarocki/orion/releases/tag/v3.1.0) (booted on an HP Pavilion 2026-10-26) and [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0).
+**Source version:** v3.1.4 (release tooling patch on v3.1.3: `owner-release.sh` selects the tag run by its commit, sees the draft's hidden starter assets, skips parts already uploaded, sizes parts for the day's throughput and binds its caches to the tag commit, run and ISO hash; the image content is unchanged; includes v3.0.1 through v3.1.3). **Latest ISO:** [v3.1.3](https://github.com/jarocki/orion/releases/tag/v3.1.3) — CI-built and gated from the tag, signed by the owner (2026-11-05), not yet booted on hardware; previous: [v3.1.2](https://github.com/jarocki/orion/releases/tag/v3.1.2) (2026-10-31, also not booted on hardware), [v3.1.0](https://github.com/jarocki/orion/releases/tag/v3.1.0) (booted on an HP Pavilion 2026-10-26) and [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0).
 **Base:** Debian 13 "trixie" live (kernel 6.12, Python 3.13, XFCE 4.20) | **Runtime:** Qwen2.5-3B-Instruct (Apache-2.0)
 **Previous line:** v2.1.0-bullseye-rain (final Debian 11 build, kept as a known-good fallback)
 
@@ -182,19 +182,19 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 
 ### 1. Get the ISO
 
-**Latest ISO, v3.1.2 (3.15 GB):** GitHub caps release assets
+**Latest ISO, v3.1.3 (3.16 GB):** GitHub caps release assets
 at 2 GB per file, and every Debian 13 build so far has been about 3.1 GB, so
-the ISO is published as signed `.part-*` files (190 MiB each, sixteen for v3.1.2) plus `SHA256SUMS`/`SHA512SUMS`
+the ISO is published as signed `.part-*` files (190 MiB each, sixteen for v3.1.3) plus `SHA256SUMS`/`SHA512SUMS`
 and `REASSEMBLE.txt` on the
-[release page](https://github.com/jarocki/orion/releases/tag/v3.1.2).
+[release page](https://github.com/jarocki/orion/releases/tag/v3.1.3).
 Download all of them into one directory, then:
 
 ```bash
-cat orionx-phoenix-edition-v3.1.2.iso.part-* > orionx-phoenix-edition-v3.1.2.iso
+cat orionx-phoenix-edition-v3.1.3.iso.part-* > orionx-phoenix-edition-v3.1.3.iso
 shasum -a 256 -c SHA256SUMS      # Linux: sha256sum -c SHA256SUMS
 ```
 
-The v3.1.2 ISO hashes to `2718be02e596ddd5a5750252af5accc22865552b583dc0a0bd3a79c170b14d5c` (3,151,036,416 bytes).
+The v3.1.3 ISO hashes to `4ee2a9a706395ae8f6a01ddce39f8a2c8c006005d911e4f1fd4ca5ee12095897` (3,161,604,096 bytes).
 
 **Verify the signature before you boot it.** Every release is signed with:
 

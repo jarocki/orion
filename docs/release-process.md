@@ -451,7 +451,7 @@ the DEC.
 
 ## 10. Manual publish from the macOS build host
 
-**One script does all of this now:** `bash scripts/release/owner-release.sh --tag <tag> [--pr <n>] [--retag] [--publish]`
+**One script does all of this now:** `bash scripts/release/owner-release.sh --tag <tag> [--pr <n>] [--retag] [--part-size 64m] [--restage] [--publish]`
 (DEC-PHASE13-038). It merges the PR only after its checks pass and only if its base is
 develop, fast-forwards main, refuses to tag a commit whose CHANGELOG lacks the tag's
 section, waits for the tag run, downloads and verifies the ISO, runs the staging script
@@ -459,6 +459,21 @@ below, creates the draft and uploads each part with a size check and retries, ve
 the asset set and signature, and flips the draft only with `--publish`. Every step
 checks its outcome, every network call retries, and `--from <step>` resumes. The
 commands below are what it runs, kept here as the reference.
+
+The helper binds the successful tag-push run to the tag's current commit,
+checking that the local and remote tag agree. Its downloaded ISO and staging
+directories carry a `.owner-release-source` marker with the commit, run ID and
+ISO SHA-256. Resumes reject missing or mismatched provenance instead of adopting
+an older tag's artifacts. Keep both directories for resumes, including publication.
+If a legacy, stale or partial directory is rejected, preserve it elsewhere and
+resume from `download`; do not manufacture a marker to adopt an existing ISO.
+`--restage` replaces existing staging only after validating its provenance and
+checksum against the downloaded ISO. Unproven, stale or symlink staging remains
+untouched even with that flag; preserve it elsewhere before resuming. Remote asset
+cleanup also requires an explicit `isDraft=true` result; published releases and
+failed/unknown draft lookups stop before any asset deletion.
+`--dry-run` preserves Git refs and artifacts, including with `--restage`; only its
+diagnostic log is appended.
 
 Used for `v2.1.0-bullseye-rain` (6.62 GB, 4 parts) and `v2.2.0-beta`
 (3.09 GB, 7 parts). Use it when the ISO that passed the gates was built on the
@@ -519,6 +534,12 @@ Never publish a bare `.part-*` set without `SHA256SUMS`, its `.asc` and
   other hosts showed a healthy 1.5–3 MB/s. Pieces of ~190 MiB (≈70 s) went
   through on the first or second try. Split finer than the 2 GB cap requires
   when uploads keep dying; `cat part-*` reassembly is unchanged.
+  **2026-11-03 (v3.1.3):** at ~0.9 MB/s the same 190 MiB parts took 3–5 min
+  each; the third one was reset four times and left a `starter` asset. The
+  part size is a throughput decision, not a constant: aim for ~1–2 min per
+  part at the day's measured speed. `owner-release.sh` defaults to `64m`
+  (≈48 parts for a 3.0 GB ISO) and takes `--part-size`; `--restage` re-splits,
+  re-signs and clears every asset (starters included) off the draft first.
 - **Failed uploads leave a hidden `starter` asset** that blocks every retry of
   the same file name with `400 Bad Request` / `500 Error saving asset`. It is
   NOT shown by `gh release view`; list and delete it with the REST API:
