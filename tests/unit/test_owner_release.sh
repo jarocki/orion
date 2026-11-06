@@ -46,7 +46,7 @@ if command -v jq >/dev/null 2>&1; then  # every jq program fed to rest_assets mu
     [[ $jqbad -eq 0 ]] && pass "every rest_assets jq program works on the assets array" || fail "rest_assets jq programs"
 fi
 grep -q '2>"$UPLOAD_ERR"' "$S" && pass "upload stderr is kept and reported, not discarded" || fail "upload stderr"
-grep -q "trap 'die .*' ERR" "$S" && pass "ERR trap: set -e can never end the run silently" || fail "ERR trap missing"
+grep -q "trap '.*die \"unexpected failure (exit \$rc).*' ERR" "$S" && pass "ERR trap: set -e can never end the run silently, reporting the command's own exit code" || fail "ERR trap missing"
 grep -q '^set -Eeuo pipefail' "$S" && pass "set -E: the ERR trap also reaches function bodies and \$(...)" || fail "set -E missing (a failed command inside a function exits silently without it)"
 grep -q 'BASH_SUBSHELL' "$S" && pass "die inside a subshell stays quiet (no false 'stopped' line from a retried \$(...))" || fail "die subshell guard"
 grep -q 'headSha==\\"\${sha}\\"' "$S" && grep -q 'git rev-list -n 1 "\$TAG"' "$S" && pass "ci step selects the run by the tag's commit, not by branch name (a re-tag leaves the old run named after the tag)" || fail "ci run selection by headSha"

@@ -123,7 +123,13 @@ die() {
 # failed `have="$(...)"` assignment exited between two say lines; and without
 # -E a `cat` of an unreadable marker inside check_source ended the run with
 # nothing but cat's own message).
-trap 'die "unexpected failure (exit $?) at line ${LINENO}: ${BASH_COMMAND}"' ERR
+# In a subshell (bash 5 runs the trap inside $(...) too; bash 3.2 does not) the
+# trap must leave with the command's own status, so the enclosing assignment
+# fails with it and this same trap, at top level, reports the real exit code.
+# Status, command and line are captured in the trap's FIRST simple command:
+# bash 3.2 lets BASH_COMMAND/LINENO move on to the trap's own commands.
+# shellcheck disable=SC2154  # rc/cmd/line are assigned inside the trap string
+trap 'rc=$? cmd=$BASH_COMMAND line=$LINENO; [[ ${BASH_SUBSHELL:-0} -eq 0 ]] || exit "$rc"; die "unexpected failure (exit $rc) at line ${line}: ${cmd}"' ERR
 run() {  # run <description> <cmd...>: prints, honours --dry-run, fails loudly
     local what="$1"; shift
     say "$what"
