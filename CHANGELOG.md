@@ -21,6 +21,24 @@ ISO (PR #172) are the whole release; the image content is unchanged apart
 from the version literals. CI builds and gates the ISO from the tag, the
 owner signs (DEC-PHASE13-029).
 
+**ISO identity.** SHA-256 `456f29326953eddd4cd573f81ab3c1b02dca7b6722a749aa60a114d9d8a3bbd9`,
+3,161,604,096 bytes (3.16 GB; the same byte count as v3.1.3, a different
+image), built 2026-11-06 by the Release Pipeline (Actions run 42162518380, on
+the pinned `ubuntu-24.04` runner) from `3cd125d`, the tag commit. Baked
+`ISO_VERSION=v3.1.4`. Gates on this image, all in the same CI run: `.sha256`
+sidecar matches; Debian security floors (13 floors, 26 shipped packages at or
+above floor) with the boot kernel (`vmlinuz-6.12.115+deb13.1-amd64`) bound to
+the packaged one; content-presence in release mode
+(`ORIONX_RELEASE_GATE=1 ORIONX_EXPECT_VERSION=v3.1.4`, 428 passed, 0 failed).
+The release workflow has no QEMU step; develop at the same commit passed QEMU
+in run 42162509198 the same hour (three BIOS boots of 161–165 s, one UEFI boot
+of 169 s). Not booted on hardware (planned for v3.2.0). Signed by the owner
+with `4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF` and published 2026-11-06;
+48 parts of 64 MiB plus `SHA256SUMS`, `SHA512SUMS`, their `.asc` signatures
+and `REASSEMBLE.txt` (53 assets, uploaded 05:17–05:44Z with no reset: median
+26 s per part), every asset size verified against the staging directory and
+the signature re-verified on a fresh download by `owner-release.sh verify`.
+
 ### Fixed
 
 - **`owner-release.sh`: what the v3.1.3 publication exposed (DEC-PHASE13-038, PR #171).**
