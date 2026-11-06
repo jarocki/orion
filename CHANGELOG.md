@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v3.1.4] — 2026-11-05 (release tooling patch)
+
+Source-only patch on v3.1.3 carrying what its publication taught the release
+tooling. Publishing v3.1.3 took three runs of `owner-release.sh` over
+2026-11-03 to 2026-11-05, and every stop was a defect in the script, not in
+the release: the run picked by branch name after a re-tag, a draft release
+the REST by-tag path cannot see, uploads reset by uploads.github.com that
+left hidden `starter` assets, and a verify step that counted an array as one
+object. Those fixes (PR #171), the Codex review's fail-closed provenance
+checks on the owner's caches (PR #169) and the docs pointing at the v3.1.3
+ISO (PR #172) are the whole release; the image content is unchanged apart
+from the version literals. CI builds and gates the ISO from the tag, the
+owner signs (DEC-PHASE13-029).
+
+### Fixed
+
+- **`owner-release.sh`: what the v3.1.3 publication exposed (DEC-PHASE13-038, PR #171).**
+  The `ci` step selects the tag run by the tag's commit (`headSha`), not by a
+  branch named after the tag, and asserts origin's tag is the local one; a
+  re-tag had left the previous run carrying `headBranch == v3.1.3`. The
+  `release` and `verify` steps read the DRAFT through its numeric id and the
+  REST assets endpoint: `releases/tags/<tag>` is 404 for a draft, and
+  `gh release view` hides `starter` assets, the remains of an upload the
+  server reset mid-stream, which block every retry of that name. Stale and
+  starter assets are deleted before re-upload, assets already uploaded at the
+  staged size are skipped, upload stderr is kept in
+  `tmp/owner-release-<tag>-upload.err` and each part logs its elapsed time.
+  `--part-size` (default `64m`) sizes the parts for the day's throughput
+  (190 MiB parts took 3 to 5 min at ~1 MB/s on 2026-11-03 and reset four
+  times; 48 to 64 s at 3.4 MB/s the next day) and `--restage` splits again
+  and clears the draft's assets. An ERR trap turns every `set -e` exit into
+  a `die` with the line and the resume command; the clean-tree guard ignores
+  untracked files; the resume hint carries every flag. The `verify` step
+  counted the assets array with `.id` (nothing) and reported "0 assets" after
+  a complete upload; it counts `.[].id`, and `test_owner_release.sh` feeds
+  every jq program the script uses to a sample assets array.
+
+- **`owner-release.sh`: fail closed on stale artifacts (Codex review of #168, PR #169).**
+  The downloaded ISO and the staging directory carry a
+  `.owner-release-source` marker (tag commit, run id, ISO SHA-256); every
+  resumed step re-resolves the remote tag, confirms the run is a successful
+  push of that commit, and rejects a cache without matching provenance
+  instead of adopting or deleting it. `--restage` replaces only staging it
+  has verified, and only on a confirmed draft; `--dry-run` fetches nothing
+  and removes nothing. `test_owner_release_safety.py` (28 tests) exercises
+  the resume paths against stub `gh`/`git`. Caches from before this release
+  (v3.1.3's `tmp/release-v3.1.3-ci`, `tmp/release-v3.1.3`) carry no marker
+  and are rejected, by design; move them aside before resuming a release.
+
+### Changed
+
+- **README and User Guide name the v3.1.3 ISO as the latest (PR #172):**
+  release link, sixteen parts, reassembly command, size and SHA-256 from the
+  staged `SHA256SUMS`; v3.1.2 stays listed as the previous release and v3.1.0
+  as the latest ISO booted on hardware.
+
 ## [v3.1.3] — 2026-11-01 (deck patch release)
 
 The fixes from the 2026-10-31 HP Pavilion boot of the v3.1.1 stack, plus the
@@ -21,6 +77,22 @@ build identity follows the repository that owns the build script; and the
 Ollama pin was evaluated against 0.40.13 and kept, with a review date the
 test suite enforces. The release itself follows DEC-PHASE13-029: CI builds
 and gates the ISO from the tag, the owner signs (release-process §10).
+
+**ISO identity.** SHA-256 `4ee2a9a706395ae8f6a01ddce39f8a2c8c006005d911e4f1fd4ca5ee12095897`,
+3,161,604,096 bytes (3.16 GB), built 2026-11-03 by the Release Pipeline (Actions
+run 41581989893, on the pinned `ubuntu-24.04` runner) from `01a2588`, the tag
+commit. Baked `ISO_VERSION=v3.1.3`. Gates on this image, all in the same CI run:
+`.sha256` sidecar matches; Debian security floors (13 floors, 26 shipped
+packages at or above floor) with the boot kernel
+(`vmlinuz-6.12.115+deb13.1-amd64`) bound to the packaged one; content-presence
+in release mode (`ORIONX_RELEASE_GATE=1 ORIONX_EXPECT_VERSION=v3.1.3`). The
+release workflow has no QEMU step; develop at the same commit passed QEMU BIOS
+and UEFI (run 41581977111) in the same hour. Not booted on hardware (planned
+for v3.2.0). Signed by the owner with `4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF`
+and published 2026-11-05; 16 parts of 190 MiB plus `SHA256SUMS`, `SHA512SUMS`,
+their `.asc` signatures and `REASSEMBLE.txt`, every asset size verified against
+the staging directory and the signature re-verified on a fresh download by
+`owner-release.sh verify`.
 
 ### Added
 
@@ -80,11 +152,6 @@ and gates the ISO from the tag, the owner signs (release-process §10).
   envconfig; `IPAddressDeny=any` blocks it on the deck).
 
 ### Fixed
-
-- **Owner release safety (#168 review).** Abort test fixture setup when temporary
-  allocation fails. Select release runs by the current tag commit, bind downloaded
-  and staged caches to that run and ISO hash, and reject unproven caches without
-  deleting them. Dry-run no longer fetches tags or removes partial artifacts.
 
 - **QEMU gate: pinned runner image and 4M OVMF paths (DEC-PHASE13-037).** On
   2026-11-02 GitHub moved `ubuntu-latest` from 24.04 to 26.04 between two runs;
