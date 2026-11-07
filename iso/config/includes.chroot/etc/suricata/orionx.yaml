@@ -77,3 +77,56 @@ unix-command:
 # DEC-PHASE12-050: operator tuning. This file is DERIVED by orionx-postured
 # from ~/.config/orionx/tuning.json (`orionx-tune`); shipped empty.
 threshold-file: /var/lib/suricata/orionx-threshold.config
+
+# ---------------------------------------------------------------------------
+# DEC-PHASE13-044 — sized for the 2 GB deck (full decision block in
+# iso/config/hooks/live/0530-suricata-rules.hook.chroot, beside DEC-PHASE13-043
+# which bakes the ~3,200-signature ET-Open subset these limits are sized for).
+#
+# Debian's defaults are sensor-sized: flow 128mb, stream 64mb + reassembly
+# 256mb, defrag 32mb, host 32mb, detect profile medium. Each node below is
+# written out IN FULL, not as a one-key patch: the loader prunes a redefined
+# node before applying the new one ("Configuration node 'flow' redefined"),
+# so `flow: {memcap: 32mb}` alone would silently reset hash-size, prealloc and
+# emergency-recovery to compiled defaults. Values other than the memcaps and
+# the profile are Debian's own. Memcaps are hard limits: when one saturates,
+# Suricata drops flows/segments and counts it in stats — visible degradation,
+# unlike an OOM kill. MemoryMax lives in
+# /etc/systemd/system/suricata.service.d/orionx-memory.conf (provisional
+# until RSS is measured on the Lenovo; procedure in the decision block).
+# ---------------------------------------------------------------------------
+detect:
+  profile: low
+  sgh-mpm-context: auto
+  prefilter:
+    default: mpm
+
+flow:
+  memcap: 32mb
+  hash-size: 65536
+  prealloc: 10000
+  emergency-recovery: 30
+
+stream:
+  memcap: 32mb
+  checksum-validation: yes
+  inline: auto
+  reassembly:
+    memcap: 64mb
+    depth: 1mb
+    toserver-chunk-size: 2560
+    toclient-chunk-size: 2560
+    randomize-chunk-size: yes
+
+defrag:
+  memcap: 16mb
+  hash-size: 65536
+  trackers: 65535
+  max-frags: 65535
+  prealloc: yes
+  timeout: 60
+
+host:
+  hash-size: 4096
+  prealloc: 1000
+  memcap: 16mb
