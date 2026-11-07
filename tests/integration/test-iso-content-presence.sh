@@ -2308,7 +2308,8 @@ fi
 #   (f) W11-6b landed (DEC-PHASE13-043, #125): /var/lib/suricata/rules/suricata.rules
 #       IS present, non-empty, carries ≥1,000 live signatures, and sits beside
 #       orionx-rules.provenance.txt + LICENSE-ET-Open.txt. Until v3.1.5 (f) was
-#       the inverse "Layer B sentinel"; hook 0530 now bakes the curated subset.
+#       the inverse "Layer B sentinel"; the curated subset is now VENDORED in
+#       includes.chroot and verified by hook 0530 (suricata -T at build time).
 #   The tier wiring lives in orionx-postured (DEC-PHASE12-024), tested elsewhere.
 # ===========================================================================
 section "24. W11-6 Layer A: Suricata IDS — lazy-start + skeleton + freshen script (DEC-PHASE11-008)"
@@ -2385,13 +2386,13 @@ else
          "0700-orionx-setup.hook.chroot SCRIPT_MAP must include orionx-freshen-suricata"
 fi
 
-# 24f. W11-6b (DEC-PHASE13-043, #125): the curated ET-Open subset IS baked.
+# 24f. W11-6b (DEC-PHASE13-043, #125): the curated ET-Open subset ships.
 # This assertion was the Layer B sentinel ("NO .rules files") until v3.1.5;
-# it is inverted now that hook 0530 writes suricata.rules at build time. An
-# image without it is the shipped defect (an IDS with 0 signatures), so the
-# gate fails it. Count floor 1,000: the subset measured 3,233 on 2026-11-06;
-# a thinner file means a category went missing from the feed, which the
-# hook is supposed to refuse — this is the second line of defence.
+# it is inverted now that suricata.rules is vendored in includes.chroot and
+# verified by hook 0530. An image without it is the shipped defect (an IDS
+# with 0 signatures), so the gate fails it. Count floor 1,000: the subset
+# measured 3,233 on 2026-11-06; a thinner file means a category went missing
+# at refresh time, which the refresh script refuses — second line of defence.
 SURICATA_RULES="$SQF/var/lib/suricata/rules/suricata.rules"
 SURICATA_PROV="$SQF/var/lib/suricata/rules/orionx-rules.provenance.txt"
 if [[ -s "$SURICATA_RULES" ]]; then

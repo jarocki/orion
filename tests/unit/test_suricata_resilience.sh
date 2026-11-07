@@ -706,30 +706,26 @@ PY
            bash -c "$SEED suricata -T -c /etc/suricata/orionx.yaml 2>&1; echo RC=\$?" 2>&1)"
     if echo "$OUT2" | grep -q 'RC=0'; then pass "GENERATED two-interface config loads cleanly (suricata -T)"; else fail "generated config loads" "$OUT2"; fi
 
-    # W11-6b (DEC-PHASE13-043): the file hook 0530 produces — stock *-events
-    # rules from the REAL Debian package plus ET-shaped category files — must
-    # load in the real engine with 0 failures under the shipped orionx.yaml
-    # (detect profile low + memcaps, DEC-PHASE13-044). This is what caught
-    # dnp3/modbus-events.rules being unparseable under Debian's config; if
-    # Debian ever disables another app-layer protocol, this goes red before
-    # the deck does. The fixture tarball is tiny; the stock half is real.
-    HOOK0530="$REPO_ROOT/iso/config/hooks/live/0530-suricata-rules.hook.chroot"
-    FX="$TMP/fx"; mkdir -p "$FX/rules"
-    for c in scan attack_response exploit dos shellcode current_events; do
-      printf 'alert tcp any any -> $HOME_NET any (msg:"ET %s fixture"; sid:%d; rev:1;)\n' "$c" "$((2900000 + ${#c}))" > "$FX/rules/emerging-$c.rules"
-    done
-    printf '# fixture license\n' > "$FX/rules/LICENSE"
-    tar -czf "$TMP/fx.tgz" -C "$FX" rules
-    FXSHA="$(shasum -a 256 "$TMP/fx.tgz" | awk '{print $1}')"
+    # W11-6b (DEC-PHASE13-043): the VENDORED suricata.rules (the exact bytes
+    # the ISO ships) must load in the real engine with 0 failures under the
+    # shipped orionx.yaml (detect profile low + memcaps, DEC-PHASE13-044), and
+    # the count the engine reports must equal the provenance's `signatures:`.
+    # This is what caught dnp3/modbus-events.rules being unparseable under
+    # Debian's config; a Debian change that disables another app-layer
+    # protocol, or a refresh that forgot the provenance, goes red here before
+    # it reaches the deck.
+    VRULES="$REPO_ROOT/iso/config/includes.chroot/var/lib/suricata/rules"
+    PSIGS="$(sed -n 's/^signatures: \([0-9]*\)$/\1/p' "$VRULES/orionx-rules.provenance.txt" 2>/dev/null | head -1)"
     OUT6="$(docker run --rm -v "$TOPCFG:/etc/suricata/orionx.yaml:ro" \
             -v "$BASECFG:/var/lib/suricata/orionx-interfaces.yaml:ro" \
-            -v "$HOOK0530:/hook:ro" -v "$TMP/fx.tgz:/fx.tgz:ro" "$IMG" \
-            bash -c "ORIONX_0530_LIB_ONLY=1 source /hook; set +e; mkdir -p /tmp/l; install_rules /fx.tgz $FXSHA /etc/suricata/rules /var/lib/suricata/rules file:///fx 2026-01-01 scan attack_response exploit dos shellcode current_events; echo INSTALL_RC=\$?; suricata -T -v -c /etc/suricata/orionx.yaml -l /tmp/l 2>&1 | grep -E 'rules successfully|rror'; echo RC=\${PIPESTATUS[0]}" 2>&1)"
-    if echo "$OUT6" | grep -q 'INSTALL_RC=0' && echo "$OUT6" | grep -q 'RC=0' \
-       && echo "$OUT6" | grep -qE '[0-9]+ rules successfully loaded, 0 rules failed'; then
-      pass "hook 0530's merge (real stock -events + ET categories) loads with 0 failures under the tuned orionx.yaml: $(echo "$OUT6" | grep -oE '[0-9]+ rules successfully loaded, 0 rules failed')"
+            -v "$VRULES:/var/lib/suricata/rules:ro" "$IMG" \
+            bash -c "mkdir -p /tmp/l; suricata -T -v -c /etc/suricata/orionx.yaml -l /tmp/l 2>&1 | grep -E 'rules successfully|rror'; echo RC=\${PIPESTATUS[0]}" 2>&1)"
+    LOADED6="$(echo "$OUT6" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) rules successfully loaded.*/\1/p' | tail -n1)"
+    if echo "$OUT6" | grep -q 'RC=0' && echo "$OUT6" | grep -qE '[0-9]+ rules successfully loaded, 0 rules failed' \
+       && [[ -n "$PSIGS" && "$LOADED6" == "$PSIGS" ]]; then
+      pass "the VENDORED suricata.rules loads in the real engine under the tuned orionx.yaml: $LOADED6 loaded, 0 failed, == provenance signatures ($PSIGS)"
     else
-      fail "hook 0530 merge loads in the real engine" "$(echo "$OUT6" | tail -8)"
+      fail "vendored suricata.rules loads in the real engine == provenance" "loaded='$LOADED6' provenance='$PSIGS' $(echo "$OUT6" | tail -6)"
     fi
 
     # The bug itself: Debian's stock config on a deck with no eth0 exits 1.
