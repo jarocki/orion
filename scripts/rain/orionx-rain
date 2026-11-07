@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import signal
 import sys
 import time
@@ -267,9 +268,12 @@ def speech_status() -> int:
               "install-piper-voice.sh")
     else:
         print(f"                  piper voice: {voice}")
+    stats = mod.SpeechStats()
     if backend is not None:
         # Presence is not proof (#122): synthesise once, timed, nothing played.
         probe = mod.probe_synthesis(backend)
+        if probe.get("sample"):
+            stats.record_synth(probe["sample"])      # a real render is evidence (#96)
         if probe["ok"]:
             print(f"  synthesis     : {backend} made {probe['audio_seconds']:.1f}s "
                   f"of audio in {probe['seconds']:.1f}s")
@@ -296,7 +300,49 @@ def speech_status() -> int:
     print(f"  bounds        : timeout {mod.SPEECH_TIMEOUT}s, queue "
           f"{mod.SPEECH_QUEUE_MAX}, min gap {mod.SPEECH_MIN_GAP_SECONDS}s, "
           f"max age {mod.SPEECH_MAX_AGE_SECONDS}s")
+    _print_timing(mod, stats, backend)
     return 0
+
+
+def _print_timing(mod, stats, backend) -> None:
+    """The synth-timing block of --speech-status (#96, DEC-PHASE13-050).
+
+    Numbers come from the daemon's own narrations plus every --speech-test and
+    status probe, pooled per engine. The verdict is for the engine the deck
+    would use now, against the two budgets that decide whether a narration is
+    spoken or dropped as stale.
+    """
+    s = mod.summarize_timing(stats.load(), engine=backend)
+    kinds = ", ".join(f"{n} {k}" for k, n in sorted(s["kinds"].items()))
+    print(f"  synth history : {s['count']} samples"
+          + (f" ({kinds})" if kinds else "")
+          + (f", {s['failed']} failed ({s['timeouts']} timed out)" if s["failed"] else "")
+          + f"  [{stats.path}]")
+    for eng, e in s["engines"].items():
+        voice = f"  voice {e['voice']}" if e.get("voice") else ""
+        print(f"  {eng:<14}: last synth {e['last_s']:.2f}s, median {e['median_s']:.2f}s "
+              f"over {e['n']} ok sample{'s' if e['n'] != 1 else ''}{voice}")
+    if s["median_s"] is None:
+        print(f"  verdict       : NO DATA for {s['engine'] or 'the active engine'} -- run "
+              f"`orionx-rain --speech-test --all-engines` (three times for a median)")
+    else:
+        tts = "inside" if s["inside_tts_timeout"] else "OUTSIDE"
+        age = "inside" if s["inside_max_age"] else "OUTSIDE"
+        print(f"  verdict       : {s['verdict']} -- {s['engine']} median {s['median_s']:.2f}s is "
+              f"{tts} TTS_TIMEOUT {mod.TTS_TIMEOUT:.1f}s and {age} "
+              f"SPEECH_MAX_AGE_SECONDS {mod.SPEECH_MAX_AGE_SECONDS:.1f}s "
+              f"(model budget {mod.SPEECH_TIMEOUT:.1f}s + synth = "
+              f"{mod.SPEECH_TIMEOUT + s['median_s']:.2f}s of the "
+              f"{mod.SPEECH_MAX_AGE_SECONDS:.1f}s shelf life)")
+        if s["tight"]:
+            print("                  Consequence: a slow Nebula answer plus this render")
+            print("                  misses the shelf life; the line is dropped as stale.")
+    mx = s["stale_max_age_s"]
+    recent = s["stale_recent"][-3:]
+    ages = ", ".join(f"{r.get('age_s', 0):.1f}s" for r in recent if isinstance(r, dict))
+    print(f"  stale drops   : {s['stale_count']}"
+          + (f" (oldest {mx:.1f}s at dequeue; last: {ages})" if mx is not None else "")
+          + f"  (narrations older than {mod.SPEECH_MAX_AGE_SECONDS:.0f}s are dropped, never spoken)")
 
 
 _DEMO_EVENT = {
@@ -308,12 +354,20 @@ _DEMO_EVENT = {
 }
 
 
-def speech_test() -> int:
-    """Narrate one synthetic port scan end to end, printing every decision."""
+def speech_test(all_engines: bool = False) -> int:
+    """Narrate one synthetic port scan end to end, printing every decision.
+
+    Every synthesis is timed and printed as a fixed SPEECH_TIMING line and
+    recorded in the timing history (#96, DEC-PHASE13-050). With
+    `all_engines`, piper AND espeak-ng are each timed on a one-word line and
+    on the full narration (nothing played), so one run on the deck yields the
+    fixed and per-character cost of both engines.
+    """
     mod = _speech_module()
     if mod is None:
         print("rain_speech unavailable", file=sys.stderr)
         return 1
+    stats = mod.SpeechStats()
     ev = dict(_DEMO_EVENT, ts=time.time())
     print(f"template : {mod.speakable(mod.template_line(ev))}")
     t0 = time.time()
@@ -322,12 +376,33 @@ def speech_test() -> int:
     print(f"source   : {provenance} ({reason}) in {time.time() - t0:.2f}s")
     backend = mod.tts_backend()
     print(f"engine   : {backend or 'NONE'}")
-    ok, why = (mod.speak_with_fallback(text, rain_lib.load_config())
-               if backend else (False, None))
+    ok, why, samples = (mod.speak_measured(text, rain_lib.load_config())
+                        if backend else (False, None, []))
     print(f"played   : {ok}")
     if why:
         print(f"fallback : {why}")
+    for sample in samples:
+        sample = dict(sample, kind="test")
+        print(mod.format_timing(sample, line="full", played="true"))
+        stats.record_synth(sample)
+    print(mod.format_voices(mod.piper_voices_present(), mod.piper_voice()))
+    if all_engines:
+        for engine in ("piper", "espeak-ng"):
+            if not shutil.which(engine):
+                print(f"SPEECH_TIMING engine={engine} voice=- chars=0 synth_s=0.00 "
+                      f"audio_s=- ok=false reason=\"not installed\"")
+                continue
+            for label, line in (("short", mod.PROBE_LINE_SHORT), ("full", text)):
+                probe = mod.probe_synthesis(engine, line=line, kind="test")
+                sample = probe.get("sample") or mod.timing_sample(
+                    engine, probe.get("voice"), len(line), probe["seconds"], None,
+                    False, probe.get("reason"), "test")
+                print(mod.format_timing(sample, line=label, played="false"))
+                if label == "full":            # the short line is a cost probe, not a narration
+                    stats.record_synth(sample)
+    print(f"history  : {stats.path}  (orionx-rain --speech-status summarises it)")
     return 0
+
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -354,16 +429,24 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--speech-test", action="store_true",
-        help="narrate one synthetic port-scan alert end to end and exit",
+        help="narrate one synthetic port-scan alert end to end, print its "
+             "SPEECH_TIMING, and exit",
+    )
+    parser.add_argument(
+        "--all-engines", action="store_true",
+        help="with --speech-test: also time piper AND espeak-ng on a short and "
+             "a full line (synthesis only, nothing played) for #96",
     )
     args = parser.parse_args(argv)
 
+    if args.all_engines and not args.speech_test:
+        parser.error("--all-engines only applies to --speech-test")
     if args.speech:
         return set_speech(args.speech == "on")
     if args.speech_status:
         return speech_status()
     if args.speech_test:
-        return speech_test()
+        return speech_test(all_engines=args.all_engines)
     if args.test:
         # Test button: always audible, honour volume/voice but not enable/min.
         # The Cockpit toasts this exit status, so a silent cue must not report success

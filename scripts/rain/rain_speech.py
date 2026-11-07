@@ -50,9 +50,11 @@ and nothing in this module pretends otherwise. The split is:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -62,6 +64,11 @@ import wave
 from pathlib import Path
 from queue import Empty, Full, Queue
 from typing import Any, Callable
+
+try:
+    import fcntl
+except ImportError:                      # pragma: no cover - not a POSIX host
+    fcntl = None  # type: ignore[assignment]
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rain_lib  # noqa: E402
@@ -85,6 +92,9 @@ NEBULA_NUM_PREDICT = 48         # hard cap on generated tokens
 # ~8s typical. Depth 2 therefore holds at most ~16s of work, which is inside
 # SPEECH_MAX_AGE_SECONDS. A deeper queue could only ever hold items that will
 # be discarded as stale on dequeue — i.e. it would be backlog by construction.
+# The "~1-2s" is a build-host estimate, not a deck measurement; SpeechStats
+# (#96, DEC-PHASE13-050) records what the deck actually takes so the bound
+# can be checked against evidence with `orionx-rain --speech-status`.
 SPEECH_QUEUE_MAX = 2
 
 # At most one spoken line per this many seconds, regardless of severity. A
@@ -617,16 +627,131 @@ def synthesize_piper(line: str, voice: str, wav: str) -> str | None:
     return None
 
 
-def probe_synthesis(backend: str | None = None) -> dict[str, Any]:
-    """Time one real synthesis without playing it (for --speech-status).
+def synthesize_espeak(line: str, wav: str) -> str | None:
+    """Run espeak-ng into `wav`. Returns None on success, else one sentence of why.
+
+    The one espeak-ng render path (probe, --speech-test and the live fallback
+    all use it), so the time it is measured at is the time the deck pays.
+    """
+    try:
+        proc = subprocess.run(
+            ["espeak-ng", "-w", wav, "-s", str(ESPEAK_WPM), "--", line],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            check=False, timeout=TTS_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return f"espeak-ng timed out after {TTS_TIMEOUT:.0f}s"
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"espeak-ng could not be run ({exc})"
+    if proc.returncode != 0:
+        return f"espeak-ng exited {proc.returncode}"
+    if wav_seconds(wav) is None:
+        return "espeak-ng wrote no audio"
+    return None
+
+
+def voice_name(voice: str | None) -> str | None:
+    """'/usr/share/orionx/voices/en_US-lessac-medium.onnx' -> 'en_US-lessac-medium'."""
+    if not voice:
+        return None
+    base = os.path.basename(str(voice))
+    return base[:-5] if base.endswith(".onnx") else base
+
+
+def piper_voices_present() -> list[str]:
+    """Every installed piper voice (an .onnx WITH its .json sidecar), by name.
+
+    Looks in the same places piper_voice() does, plus the directory of an
+    explicitly named voice, so the step-3 choice in #96 (medium vs low) can be
+    made from `--speech-test` output on the deck rather than guessed from the
+    build host. Sorted, de-duplicated; empty when piper has nothing to load.
+    """
+    dirs: list[Path] = []
+    named = os.environ.get("ORIONX_PIPER_VOICE", "")
+    if named:
+        dirs.append(Path(named).parent)
+    for cand in PIPER_VOICE_PATHS[1:]:
+        if cand:
+            dirs.append(Path(cand).parent)
+    found: set[str] = set()
+    for d in dirs:
+        try:
+            for onnx in d.glob("*.onnx"):
+                if onnx.is_file() and (onnx.parent / (onnx.name + ".json")).is_file():
+                    found.add(voice_name(str(onnx)) or onnx.name)
+        except OSError:
+            continue
+    return sorted(found)
+
+
+def timing_sample(engine: str, voice: str | None, chars: int, synth_s: float,
+                  audio_s: float | None, ok: bool, reason: str | None = None,
+                  kind: str = "alert", ts: float | None = None) -> dict[str, Any]:
+    """The one shape a synthesis measurement has, wherever it was taken.
+
+    `kind` says who measured it: "alert" (the daemon, a real narration),
+    "test" (--speech-test), "probe" (--speech-status). All three are the same
+    engine doing the same work on the same hardware, so they pool into one
+    history; the kind is kept so the operator can see the mix.
+    """
+    return {
+        "ts": float(time.time() if ts is None else ts),
+        "kind": kind, "engine": engine, "voice": voice_name(voice),
+        "chars": int(chars), "synth_s": round(float(synth_s), 3),
+        "audio_s": (round(float(audio_s), 3) if audio_s is not None else None),
+        "ok": bool(ok), "reason": reason,
+    }
+
+
+def format_timing(sample: dict[str, Any], **extra: Any) -> str:
+    """One fixed, grep-able line per measurement (paste-able into #96).
+
+    SPEECH_TIMING engine=piper voice=en_US-lessac-medium chars=62 synth_s=1.84 audio_s=4.10 ok=true
+    """
+    parts = [
+        "SPEECH_TIMING",
+        f"engine={sample.get('engine') or '-'}",
+        f"voice={sample.get('voice') or '-'}",
+        f"chars={int(sample.get('chars') or 0)}",
+        f"synth_s={float(sample.get('synth_s') or 0.0):.2f}",
+    ]
+    audio = sample.get("audio_s")
+    parts.append(f"audio_s={float(audio):.2f}" if audio is not None else "audio_s=-")
+    parts.append(f"ok={'true' if sample.get('ok') else 'false'}")
+    for k, v in extra.items():
+        parts.append(f"{k}={v}")
+    if not sample.get("ok") and sample.get("reason"):
+        parts.append(f"reason={json.dumps(str(sample['reason']))}")
+    return " ".join(parts)
+
+
+def format_voices(present: list[str], active: str | None) -> str:
+    """PIPER_VOICES present=en_US-lessac-medium active=en_US-lessac-medium medium=yes low=no"""
+    names = ",".join(present) if present else "-"
+    has = {q: any(n.endswith("-" + q) for n in present) for q in ("medium", "low")}
+    return (f"PIPER_VOICES present={names} active={voice_name(active) or '-'} "
+            f"medium={'yes' if has['medium'] else 'no'} low={'yes' if has['low'] else 'no'}")
+
+
+PROBE_LINE = "Port scan from 192 dot 168 dot 4 dot 77, 900 ports in 11 seconds."
+# A line with (almost) nothing to say. Its synth time is the engine's fixed
+# per-utterance cost (process start, model load); the difference between it
+# and PROBE_LINE is the per-character cost. Those two numbers are what decide
+# between the #96 mitigations (see DEC-PHASE13-050).
+PROBE_LINE_SHORT = "Critical."
+
+
+def probe_synthesis(backend: str | None = None, line: str = PROBE_LINE,
+                    kind: str = "probe") -> dict[str, Any]:
+    """Time one real synthesis without playing it (--speech-status, --speech-test).
 
     Presence of a binary and a model file is not evidence that the deck can
-    speak (#122, RESILIENCE rule 3); a WAV with audio in it is.
+    speak (#122, RESILIENCE rule 3); a WAV with audio in it is. The result
+    carries a `sample` (timing_sample) so the caller can record it.
     """
     backend = backend or tts_backend()
-    line = "Port scan from 192 dot 168 dot 4 dot 77, 900 ports in 11 seconds."
     out: dict[str, Any] = {"backend": backend, "ok": False, "seconds": 0.0,
-                           "audio_seconds": 0.0, "reason": None}
+                           "audio_seconds": 0.0, "reason": None, "voice": None,
+                           "chars": len(line), "sample": None}
     if backend is None:
         out["reason"] = "no text-to-speech engine installed"
         return out
@@ -637,31 +762,25 @@ def probe_synthesis(backend: str | None = None) -> dict[str, Any]:
         out["reason"] = f"cannot create a scratch WAV ({exc.strerror or exc})"
         return out
     try:
-        t0 = time.monotonic()
+        voice = None
         if backend == "piper":
             voice = piper_voice()
             if not voice:
                 out["reason"] = ("piper is installed but no voice model with its "
                                  ".json sidecar was found")
                 return out
-            why = synthesize_piper(line, voice, wav)
-        else:
-            try:
-                proc = subprocess.run(
-                    ["espeak-ng", "-w", wav, "-s", str(ESPEAK_WPM), "--", line],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    check=False, timeout=TTS_TIMEOUT)
-                why = None if proc.returncode == 0 else f"espeak-ng exited {proc.returncode}"
-            except (OSError, subprocess.SubprocessError) as exc:
-                why = f"espeak-ng could not be run ({exc})"
-            if why is None and wav_seconds(wav) is None:
-                why = "espeak-ng wrote no audio"
+            out["voice"] = voice
+        t0 = time.monotonic()
+        why = (synthesize_piper(line, voice, wav) if backend == "piper"
+               else synthesize_espeak(line, wav))
         out["seconds"] = time.monotonic() - t0
-        if why:
-            out["reason"] = why
-            return out
-        out["ok"] = True
-        out["audio_seconds"] = wav_seconds(wav) or 0.0
+        out["ok"] = why is None
+        out["reason"] = why
+        if why is None:
+            out["audio_seconds"] = wav_seconds(wav) or 0.0
+        out["sample"] = timing_sample(
+            backend, voice, len(line), out["seconds"],
+            out["audio_seconds"] if why is None else None, why is None, why, kind)
         return out
     finally:
         try:
@@ -700,19 +819,52 @@ def _speak_espeak(line: str, vol: float) -> bool:
         timeout=playback_timeout(None, line))
 
 
-def speak_with_fallback(text: str, cfg: dict[str, Any] | None = None,
-                        backend: str | None = None) -> tuple[bool, str | None]:
-    """Say one line. Returns (spoken, degradation).
+def _speak_espeak_measured(line: str, vol: float, samples: list[dict[str, Any]]) -> bool:
+    """espeak-ng, rendered to a WAV first so its synth time is measured (#96).
+
+    Render-then-play is the path piper already takes, so this is one playback
+    path (_play_wav, WAV-derived timeout) for both engines rather than two.
+    Without a WAV player, or if the render fails, espeak-ng speaks directly
+    as before — unmeasured, but never silent for want of a number.
+    """
+    if shutil.which("paplay") or shutil.which("aplay"):
+        wav = _scratch_wav()
+        if wav is not None:
+            try:
+                t0 = time.monotonic()
+                why = synthesize_espeak(line, wav)
+                dt = time.monotonic() - t0
+                samples.append(timing_sample(
+                    "espeak-ng", None, len(line), dt,
+                    wav_seconds(wav) if why is None else None, why is None, why))
+                if why is None:
+                    return _play_wav(wav, vol, playback_timeout(wav, line))
+            finally:
+                try:
+                    os.unlink(wav)
+                except OSError:
+                    pass
+    return _speak_espeak(line, vol)
+
+
+def speak_measured(text: str, cfg: dict[str, Any] | None = None,
+                   backend: str | None = None,
+                   ) -> tuple[bool, str | None, list[dict[str, Any]]]:
+    """Say one line. Returns (spoken, degradation, timing_samples).
 
     `spoken` is True only if a player actually ran. `degradation` is None when
     the chosen engine did the work, otherwise one sentence saying what piper
     did wrong so the Narrator can tell the operator once (#122 root cause 1:
     a failing piper used to cost the line silently and never reach espeak-ng).
+    `timing_samples` holds one timing_sample() per engine that was RUN —
+    a piper that timed out AND the espeak-ng that then spoke are both
+    evidence for #96, so both are returned.
     """
     cfg = cfg or rain_lib.default_config()
+    samples: list[dict[str, Any]] = []
     line = speakable(text)
     if not line:
-        return False, None
+        return False, None, samples
     backend = backend or tts_backend()
     vol = max(0.0, min(1.0, float(cfg.get("volume", 0.8))))
 
@@ -727,44 +879,331 @@ def speak_with_fallback(text: str, cfg: dict[str, Any] | None = None,
                 why = f"cannot write a scratch WAV under {SPEECH_SCRATCH}"
             else:
                 try:
+                    t0 = time.monotonic()
                     why = synthesize_piper(line, voice, wav)
+                    dt = time.monotonic() - t0
+                    samples.append(timing_sample(
+                        "piper", voice, len(line), dt,
+                        wav_seconds(wav) if why is None else None, why is None, why))
                     if why is None:
-                        return _play_wav(wav, vol, playback_timeout(wav, line)), None
+                        return _play_wav(wav, vol, playback_timeout(wav, line)), None, samples
                 finally:
                     try:
                         os.unlink(wav)
                     except OSError:
                         pass
         if shutil.which("espeak-ng"):
-            return _speak_espeak(line, vol), why
-        return False, f"{why}; espeak-ng is not installed, so the line was lost"
+            return _speak_espeak_measured(line, vol, samples), why, samples
+        return False, f"{why}; espeak-ng is not installed, so the line was lost", samples
 
     if backend == "espeak-ng":
-        return _speak_espeak(line, vol), None
+        return _speak_espeak_measured(line, vol, samples), None, samples
 
-    return False, None
+    return False, None, samples
+
+
+def speak_with_fallback(text: str, cfg: dict[str, Any] | None = None,
+                        backend: str | None = None) -> tuple[bool, str | None]:
+    """Say one line. Returns (spoken, degradation); see speak_measured()."""
+    spoken, why, _samples = speak_measured(text, cfg, backend)
+    return spoken, why
 
 
 class SpeakResult(int):
     """What speak() returns: truthy when a player ran, like the bool it used to
     be, plus `.why` naming the degradation when piper failed and espeak-ng
-    spoke instead (None otherwise). An int subclass so every existing caller
-    and test double that treats the result as a bool keeps working."""
+    spoke instead (None otherwise) and `.timing`, the timing_sample() list of
+    every engine that ran (#96). An int subclass so every existing caller and
+    test double that treats the result as a bool keeps working."""
     why: str | None
+    timing: list[dict[str, Any]]
 
-    def __new__(cls, spoken: bool, why: str | None = None) -> "SpeakResult":
+    def __new__(cls, spoken: bool, why: str | None = None,
+                timing: list[dict[str, Any]] | None = None) -> "SpeakResult":
         obj = super().__new__(cls, 1 if spoken else 0)
         obj.why = why
+        obj.timing = list(timing or [])
         return obj
 
     def __repr__(self) -> str:
-        return f"SpeakResult({bool(self)}, why={self.why!r})"
+        return f"SpeakResult({bool(self)}, why={self.why!r}, timing={self.timing!r})"
 
 
 def speak(text: str, cfg: dict[str, Any] | None = None,
           backend: str | None = None) -> SpeakResult:
     """Say one line. Truthy only if a TTS process actually ran; see SpeakResult."""
-    return SpeakResult(*speak_with_fallback(text, cfg, backend))
+    return SpeakResult(*speak_measured(text, cfg, backend))
+
+
+# ---------------------------------------------------------------------------
+# Synthesis timing history (#96)
+#
+# @decision DEC-PHASE13-050
+# @title Measure narration synth time on the deck before choosing a latency fix
+# @status proposed
+# @rationale The reference deck (Lenovo, Bay Trail Atom) narrates slowly and
+#   sometimes not at all. Items that take too long are dropped as stale by
+#   design (SPEECH_MAX_AGE_SECONDS, DEC-PHASE12-046 rule 3), so "sometimes
+#   silent" is the designed failure mode when synthesis is too slow -- but
+#   synthesis time was never measured on the hardware we ship for; the "~1-2s"
+#   in the SPEECH_QUEUE_MAX comment is a build-host estimate. This decision
+#   instruments first and defers the mitigation choice to the numbers:
+#   SpeechStats keeps the last SPEECH_HISTORY_MAX synth samples (engine, voice,
+#   chars, wall-clock synth seconds, kind) and every stale drop with the age
+#   that caused it, in ONE per-session file ($XDG_RUNTIME_DIR/orionx/
+#   speech-timing.json -- /run/orionx is 0755 root:root, DEC-PHASE11-022, so
+#   the session daemon cannot write there), read back by
+#   `orionx-rain --speech-status` and fed by the daemon, --speech-test and the
+#   status probe alike. `--speech-test --all-engines` times piper and espeak-ng
+#   on a one-word line and the full probe line, which separates the fixed
+#   per-utterance cost (process start, ONNX model load) from the per-character
+#   cost. The three candidate mitigations from #96, and the deck numbers that
+#   would pick each (all medians over three --all-engines runs):
+#     (a) en_US-lessac-low voice (roughly 4x fewer parameters): piper FULL-line
+#         median > ~6s with the SHORT line well under half of it, i.e. the
+#         per-character (model) cost dominates; espeak-ng under 1s is the
+#         fallback if a low voice is still projected over ~6s. Verdict "TIGHT"
+#         or "OVER BUDGET" with a small short/full ratio points here.
+#     (b) pre-warm / keep the ONNX session resident: SHORT-line median is the
+#         bulk of the FULL-line median (fixed cost dominates), so model load
+#         per spawned `piper` process is what is being paid. Keep medium.
+#     (c) pre-rendered WAV for the fixed template fragments (severity word,
+#         "from", digits): both costs are moderate but FULL-line synth plus
+#         SPEECH_TIMEOUT exceeds SPEECH_MAX_AGE_SECONDS only on long lines --
+#         chars-per-second from the two lines projects a shortened variable
+#         part back inside the budget.
+#   If the piper medium median is already inside ~3s with zero stale drops,
+#   no mitigation is taken and this decision is closed as "measured, within
+#   budget". Status stays "proposed" until the deck numbers are pasted into
+#   #96 and the choice is recorded here as accepted.
+# ---------------------------------------------------------------------------
+
+# Bounded history: enough to take a median that is not one cold start, small
+# enough that the file is a few KB and a read is instant.
+SPEECH_HISTORY_MAX = 20
+STATE_VERSION = 1
+
+
+def speech_state_path() -> Path:
+    """Where the synth-timing history lives. ONE resolution for writer and reader.
+
+    ORIONX_SPEECH_STATE (tests, experiments) > $XDG_RUNTIME_DIR/orionx (the
+    per-session tmpfs the daemon itself lives in) > ~/.cache/orionx (no
+    session manager). Resolved at call time, never at import, so a test that
+    sets the environment before constructing a Narrator is honoured.
+    """
+    override = os.environ.get("ORIONX_SPEECH_STATE", "")
+    if override:
+        return Path(override)
+    run = os.environ.get("XDG_RUNTIME_DIR", "")
+    if run:
+        return Path(run) / "orionx" / "speech-timing.json"
+    try:
+        home = Path.home()
+    except (RuntimeError, KeyError):
+        home = Path(tempfile.gettempdir())
+    return home / ".cache" / "orionx" / "speech-timing.json"
+
+
+def _empty_state() -> dict[str, Any]:
+    return {"version": STATE_VERSION, "updated": 0.0, "synth": [],
+            "stale": {"count": 0, "max_age_s": None, "recent": []}}
+
+
+def _coerce_state(obj: Any) -> dict[str, Any]:
+    """Whatever was on disk, shaped so every reader can index it safely."""
+    state = _empty_state()
+    if not isinstance(obj, dict):
+        return state
+    synth = obj.get("synth")
+    if isinstance(synth, list):
+        state["synth"] = [s for s in synth if isinstance(s, dict)][-SPEECH_HISTORY_MAX:]
+    stale = obj.get("stale")
+    if isinstance(stale, dict):
+        try:
+            state["stale"]["count"] = max(0, int(stale.get("count", 0)))
+        except (TypeError, ValueError):
+            pass
+        mx = stale.get("max_age_s")
+        state["stale"]["max_age_s"] = float(mx) if isinstance(mx, (int, float)) else None
+        recent = stale.get("recent")
+        if isinstance(recent, list):
+            state["stale"]["recent"] = [r for r in recent if isinstance(r, dict)][-SPEECH_HISTORY_MAX:]
+    try:
+        state["updated"] = float(obj.get("updated", 0.0))
+    except (TypeError, ValueError):
+        pass
+    return state
+
+
+class SpeechStats:
+    """The synth-timing history: one file, rewritten in place under flock.
+
+    Never raises: a missing directory, a read-only filesystem or a torn file
+    costs a measurement, never a narration (the same contract as duck_music).
+    In-place rewrite under an exclusive lock (not write-tmp-then-rename) so a
+    concurrent --speech-test and the daemon serialise on one inode and neither
+    overwrites the other's sample with a stale read.
+    """
+
+    def __init__(self, path: Path | str | None = None):
+        self.path = Path(path) if path is not None else speech_state_path()
+
+    @staticmethod
+    def _lock(fd: int, flag: int) -> None:
+        if fcntl is not None:
+            fcntl.flock(fd, flag)
+
+    def load(self) -> dict[str, Any]:
+        try:
+            fd = os.open(str(self.path), os.O_RDONLY)
+        except OSError:
+            return _empty_state()
+        try:
+            self._lock(fd, fcntl.LOCK_SH if fcntl else 0)
+            raw = b""
+            while True:
+                chunk = os.read(fd, 1 << 16)
+                if not chunk:
+                    break
+                raw += chunk
+        except OSError:
+            return _empty_state()
+        finally:
+            os.close(fd)
+        try:
+            return _coerce_state(json.loads(raw.decode("utf-8")))
+        except (ValueError, UnicodeDecodeError):
+            return _empty_state()
+
+    def _update(self, mutate: Callable[[dict[str, Any]], None]) -> bool:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(str(self.path), os.O_RDWR | os.O_CREAT, 0o644)
+        except OSError:
+            return False
+        try:
+            self._lock(fd, fcntl.LOCK_EX if fcntl else 0)
+            raw = b""
+            while True:
+                chunk = os.read(fd, 1 << 16)
+                if not chunk:
+                    break
+                raw += chunk
+            try:
+                state = _coerce_state(json.loads(raw.decode("utf-8"))) if raw else _empty_state()
+            except (ValueError, UnicodeDecodeError):
+                state = _empty_state()
+            mutate(state)
+            state["version"] = STATE_VERSION
+            state["updated"] = time.time()
+            data = json.dumps(state, ensure_ascii=False, indent=1).encode("utf-8")
+            os.lseek(fd, 0, os.SEEK_SET)
+            written = os.write(fd, data)
+            os.ftruncate(fd, written)
+            return True
+        except (OSError, TypeError, ValueError):
+            return False
+        finally:
+            os.close(fd)
+
+    def record_synth(self, sample: dict[str, Any]) -> bool:
+        """Append one timing_sample(); the history keeps the last SPEECH_HISTORY_MAX."""
+        if not isinstance(sample, dict) or not sample.get("engine"):
+            return False
+
+        def mutate(state: dict[str, Any]) -> None:
+            state["synth"] = (state["synth"] + [dict(sample)])[-SPEECH_HISTORY_MAX:]
+        return self._update(mutate)
+
+    def record_stale(self, age_s: float, ts: float | None = None) -> bool:
+        """Count a drop-as-stale and keep the age that caused it."""
+        try:
+            age = float(age_s)
+        except (TypeError, ValueError):
+            return False
+
+        def mutate(state: dict[str, Any]) -> None:
+            st = state["stale"]
+            st["count"] = int(st.get("count", 0)) + 1
+            mx = st.get("max_age_s")
+            st["max_age_s"] = age if mx is None else max(float(mx), age)
+            st["recent"] = (st.get("recent", []) + [
+                {"ts": float(time.time() if ts is None else ts), "age_s": round(age, 3)}
+            ])[-SPEECH_HISTORY_MAX:]
+        return self._update(mutate)
+
+
+def timing_verdict(median_s: float | None) -> dict[str, Any]:
+    """Is a median synth time inside the budgets? Pure; the numbers are the module's.
+
+    inside_tts_timeout  median <= TTS_TIMEOUT (a render that long is killed)
+    inside_max_age      median <= SPEECH_MAX_AGE_SECONDS (dropped as stale)
+    tight               inside both, but a model answer that uses its whole
+                        SPEECH_TIMEOUT plus this render would miss the shelf
+                        life -- the "sometimes silent" zone of #96.
+    verdict             "NO DATA" | "OK" | "TIGHT" | "OVER BUDGET"
+    """
+    if median_s is None:
+        return {"verdict": "NO DATA", "inside_tts_timeout": None,
+                "inside_max_age": None, "tight": None}
+    m = float(median_s)
+    inside_tts = m <= TTS_TIMEOUT
+    inside_age = m <= SPEECH_MAX_AGE_SECONDS
+    tight = inside_tts and inside_age and (SPEECH_TIMEOUT + m) > SPEECH_MAX_AGE_SECONDS
+    verdict = "OK" if (inside_tts and inside_age) else "OVER BUDGET"
+    if tight:
+        verdict = "TIGHT"
+    return {"verdict": verdict, "inside_tts_timeout": inside_tts,
+            "inside_max_age": inside_age, "tight": tight}
+
+
+def summarize_timing(state: dict[str, Any], engine: str | None = None) -> dict[str, Any]:
+    """Reduce the history to what --speech-status prints. Pure.
+
+    The median and verdict are per engine (`engine`, else the engine of the
+    most recent sample): a piper deck's history may also hold espeak-ng
+    probes, and mixing the two would make both numbers meaningless. Failed
+    samples (timeouts, crashes) are counted but excluded from the median; a
+    timeout is already the strongest possible evidence and is reported as such.
+    """
+    samples = [s for s in state.get("synth", []) if isinstance(s, dict)]
+    good = [s for s in samples
+            if s.get("ok") and isinstance(s.get("synth_s"), (int, float)) and s.get("engine")]
+    by_engine: dict[str, list[dict[str, Any]]] = {}
+    for s in good:
+        by_engine.setdefault(str(s["engine"]), []).append(s)
+    if engine is None and samples:
+        engine = str(samples[-1].get("engine") or "") or None
+    mine = by_engine.get(engine or "", [])
+    median = statistics.median([float(s["synth_s"]) for s in mine]) if mine else None
+    kinds: dict[str, int] = {}
+    for s in samples:
+        k = str(s.get("kind") or "alert")
+        kinds[k] = kinds.get(k, 0) + 1
+    failed = [s for s in samples if not s.get("ok")]
+    stale = state.get("stale") or {}
+    out = {
+        "engine": engine,
+        "count": len(samples),
+        "ok_count": len(mine),
+        "failed": len(failed),
+        "timeouts": sum(1 for s in failed if "timed out" in str(s.get("reason") or "")),
+        "kinds": kinds,
+        "last": mine[-1] if mine else None,
+        "median_s": median,
+        "engines": {
+            e: {"n": len(v), "last_s": float(v[-1]["synth_s"]),
+                "median_s": statistics.median([float(s["synth_s"]) for s in v]),
+                "voice": v[-1].get("voice")}
+            for e, v in sorted(by_engine.items())
+        },
+        "stale_count": int(stale.get("count", 0) or 0),
+        "stale_max_age_s": stale.get("max_age_s"),
+        "stale_recent": list(stale.get("recent", []) or []),
+    }
+    out.update(timing_verdict(median))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -801,7 +1240,7 @@ class Narrator:
 
     def __init__(self, transport: Any = _DEFAULT, speaker: Any = _DEFAULT,
                  emitter: Any = _DEFAULT, clock: Any = _DEFAULT,
-                 backend_probe: Any = _DEFAULT,
+                 backend_probe: Any = _DEFAULT, stats: Any = _DEFAULT,
                  maxsize: int = SPEECH_QUEUE_MAX):
         # Collaborators are resolved HERE, not in the signature: a default
         # bound at def-time cannot be monkeypatched, and every claim this
@@ -813,6 +1252,8 @@ class Narrator:
         self.emitter = rain_lib.emit_event if emitter is _DEFAULT else emitter
         self.clock = time.time if clock is _DEFAULT else clock
         self.backend_probe = tts_backend if backend_probe is _DEFAULT else backend_probe
+        # Synth-timing history (#96, DEC-PHASE13-050). None disables recording.
+        self.stats = SpeechStats() if stats is _DEFAULT else stats
         self._q: Queue = Queue(maxsize=maxsize)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -911,6 +1352,14 @@ class Narrator:
         if why:
             self._announce_once("_piper_fallback_announced", "notice",
                                 PIPER_FALLBACK_MESSAGE.format(why=why))
+        # Every engine that ran is a measurement (#96). Best-effort: a failed
+        # write costs a number, never the alert.
+        if self.stats is not None:
+            for sample in getattr(result, "timing", None) or []:
+                try:
+                    self.stats.record_synth(sample)
+                except Exception:                    # noqa: BLE001
+                    pass
         if ok:
             self.spoken += 1
             self._last_spoken = self.clock()
@@ -936,6 +1385,11 @@ class Narrator:
             age = 0.0
         if age > SPEECH_MAX_AGE_SECONDS:
             self.dropped_stale += 1      # narrating the past is worse than silence
+            if self.stats is not None:   # ...and the age that caused it is evidence (#96)
+                try:
+                    self.stats.record_stale(age, now)
+                except Exception:                    # noqa: BLE001
+                    pass
             return "stale"
         if not self._gap_ok(now):
             self.dropped_rate += 1       # drop, never sleep
