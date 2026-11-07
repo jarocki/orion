@@ -44,7 +44,9 @@ for f in "$WEB/index.html" "$WEB/app.js" "$WEB/links.json" "$WEB/recipes.json" \
          "$WEB/cyberchef/PROVENANCE.txt" "$WEB/cyberchef/MANIFEST.sha256" \
          "$WEB/pewpew/index.html" "$WEB/pewpew/map.js" "$WEB/pewpew/pew.mp3" \
          "$WEB/pewpew/PROVENANCE.txt" "$WEB/pewpew/LICENSE.ipew" \
+         "$WEB/network/index.html" "$WEB/network/network.js" \
          "$SRC/osint_server.py" "$SRC/pewpew_feed.py" \
+         "$REPO_ROOT/scripts/awareness/network_picture.py" "$REPO_ROOT/scripts/awareness/zeek_logs.py" \
          "$CH/usr/bin/orionx-osint" \
          "$CH/opt/orionx/optional/install-geoip.sh" "$HOOK"; do
     if [[ -f "$f" ]]; then pass "ships: ${f#"$REPO_ROOT"/}"
@@ -60,7 +62,7 @@ for f in "$SRC/pewpew_feed.py" "$SRC/osint_server.py" "$HOOK" \
 done
 
 section "Launcher page is valid, self-contained HTML"
-if python3 - "$WEB/index.html" "$WEB/pewpew/index.html" <<'PY'
+if python3 - "$WEB/index.html" "$WEB/pewpew/index.html" "$WEB/network/index.html" <<'PY'
 import sys
 from html.parser import HTMLParser
 
@@ -134,7 +136,7 @@ PY
 then pass "launcher and map pages parse clean and reference nothing external"
 else fail "launcher/map HTML validity" "see output above"; fi
 
-for js in "$WEB/app.js" "$WEB/pewpew/map.js"; do
+for js in "$WEB/app.js" "$WEB/pewpew/map.js" "$WEB/network/network.js"; do
     if grep -nE "https?://[a-z]" "$js" | grep -vE "^\s*[0-9]+:\s*\*|creativecommons|db-ip\.com|github\.com/hrbrmstr" >/dev/null; then
         fail "no network URLs in $(basename "$js")" "$(grep -nE 'https?://[a-z]' "$js" | head -2)"
     else
@@ -823,10 +825,29 @@ with open(sys.argv[2], "w", encoding="utf-8") as out:
     out.write("{ this line is not json\n")
 REBASE
 
+# #93: the network picture's Zeek fixtures, rebased onto now the same way, so
+# the served counts can be asserted (the engine filters to the window).
+mkdir -p "$TMP/zeek"
+python3 - "$REPO_ROOT/tests/fixtures/zeek/network_picture" "$TMP/zeek" <<'REBASE'
+import sys, time
+from pathlib import Path
+src, dst = Path(sys.argv[1]), Path(sys.argv[2])
+now = time.time()
+BASE = 1790658600.0          # the fixtures' "now" (tests/fixtures/zeek/network_picture/README.md)
+for log in src.glob("*.log"):
+    out = []
+    for line in log.read_text(encoding="utf-8").splitlines():
+        if line.startswith("#") or not line:
+            out.append(line); continue
+        ts, _, rest = line.partition("\t")
+        out.append("%.6f\t%s" % (now - (BASE - float(ts)), rest))
+    (dst / log.name).write_text("\n".join(out) + "\n", encoding="utf-8")
+REBASE
 E2E_PORT=$(( 8900 + ($$ % 90) ))
 (
   ORIONX_EVENT_LOG="$TMP/live-bus.jsonl" \
   ORIONX_POSTURE_STATUS="$TMP/posture.json" \
+  ORIONX_ZEEK_LOG_DIR="$TMP/zeek" ORIONX_OUI_PATH="$REPO_ROOT/tests/fixtures/oui/oui.txt" \
   ORIONX_PROC_ROUTE="/dev/null" ORIONX_PROC_ROUTE6="/dev/null" \
   python3 "$SRC/osint_server.py" --root "$WEB" --port "$E2E_PORT" \
           --no-browser >"$TMP/srv.log" 2>&1
@@ -907,6 +928,28 @@ check(narrow["counts"]["sources"] == 1,
 status, _, body = get("/api/pewpew.json?window=1")
 check(json.loads(body)["window_seconds"] == 60.0,
       "an absurd window is clamped, not obeyed")
+
+# #93 / DEC-PHASE13-046: the "This network" page and its API over loopback.
+for path, needle in (("/network/", b"This network"), ("/network/network.js", b"api/network.json")):
+    status, ctype, body = get(path)
+    check(status == 200 and needle in body, "%s -> 200, %d bytes" % (path, len(body)))
+status, ctype, body = get("/api/network.json?window=900")
+pic = json.loads(body)
+check(status == 200 and ctype.startswith("application/json") and pic["decision"] == "DEC-PHASE13-046",
+      "/api/network.json is JSON from network_picture (DEC-PHASE13-046)")
+check(pic["label"] == "observed by this deck" and pic["summary"]["headline"].endswith("observed by this deck"),
+      "every served count carries the label (%r)" % pic["summary"]["headline"])
+check(pic["zeek"]["state"] == "ok" and pic["split"]["available"] is True,
+      "the rebased Zeek fixtures are discovered via ORIONX_ZEEK_LOG_DIR and the split is available")
+S = pic["sightings"]
+check(all(S[k]["state"] == "present" for k in ("wpad", "netbios", "llmnr", "mdns", "ldap", "dhcp", "ssdp")),
+      "every sighting class is served present from the fixtures (%s)" % {k: S[k]["state"] for k in S})
+check(pic["degraded"] == [], "nothing degraded with all four logs present")
+raw = body.decode("utf-8")
+for key in ('"lat"', '"lon"', '"latitude"', '"longitude"', '"coordinates"', '"country"'):
+    check(key not in raw, "served picture contains no %s key" % key)
+status, _, body = get("/api/network.json?window=1")
+check(json.loads(body)["window_seconds"] == 60.0, "the picture's window is clamped too")
 sys.exit(0 if ok else 1)
 PY
 then pass "all three pages, both APIs and the vendored assets serve over loopback"
