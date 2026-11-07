@@ -72,6 +72,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pewpew_feed  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "awareness"))
 import deck_vitals  # noqa: E402  (DEC-PHASE12-049: same hostname/IP/vitals as the Cockpit)
+import network_picture  # noqa: E402  (DEC-PHASE13-046: the same picture the Cockpit NETWORK panel draws, #93)
 
 # --- Where things are -------------------------------------------------------
 DEFAULT_ROOT = Path(os.environ.get("ORIONX_OSINT_ROOT", "/opt/orionx/osint"))
@@ -660,6 +661,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     break
         return self.window
 
+    def _network_window(self) -> float:
+        """?window= for /api/network.json, clamped by the engine's own rule so the
+        page and the Cockpit (which uses the engine default) agree on the bounds."""
+        _, _, query = self.path.partition("?")
+        for part in query.split("&"):
+            key, _, value = part.partition("=")
+            if key == "window":
+                return network_picture.clamp_window(value)
+        return network_picture.WINDOW_SECONDS
+
     def do_GET(self):                            # noqa: N802
         if self._refuse_foreign():
             return
@@ -669,6 +680,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if path == "/api/pewpew.json":
             self._json(build_pewpew(self._window()))
+            return
+        if path == "/api/network.json":
+            # #93: the whole passive picture, from the module the Cockpit reads.
+            # The engine clamps the window itself; the page's selector passes it.
+            self._json(network_picture.collect(window=self._network_window()))
             return
 
         # GODSEYE's Node backend does not exist on this deck (DEC-PHASE12-045).
@@ -797,7 +813,8 @@ def forget_server(path: Path | None) -> None:
 def page_url(port: int, page: str) -> str:
     return "http://%s:%d/%s" % (HOST, port, {"cyberchef": "cyberchef/",
                                              "pewpew": "pewpew/",
-                                             "godseye": "godseye/"}.get(page, ""))
+                                             "godseye": "godseye/",
+                                             "network": "network/"}.get(page, ""))
 
 
 # ===========================================================================
@@ -858,6 +875,9 @@ def check_root(root: Path) -> list[tuple[str, bool, str, str]]:
 
     row("pew-pew map", (root / "pewpew" / "index.html").is_file(),
         str(root / "pewpew" / "index.html"), "")
+    # #93: the passive network picture. The page is required; Zeek is not.
+    row("This network page", (root / "network" / "index.html").is_file(),
+        str(root / "network" / "index.html"), "")
 
     # GODSEYE (DEC-PHASE12-045). Required: if the menu offers it, it ships.
     gs = root / "godseye"
@@ -925,7 +945,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="loopback port, walks forward if busy "
                              "(default: %(default)s)")
     parser.add_argument("--page", default="",
-                        choices=("", "cyberchef", "pewpew", "godseye"),
+                        choices=("", "cyberchef", "pewpew", "godseye", "network"),
                         help="open this page instead of the launcher")
     parser.add_argument("--window", type=float,
                         default=pewpew_feed.DEFAULT_WINDOW_SECONDS,

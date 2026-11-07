@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Orion-X · This network</title>
+<!--
+  Orion-X Phoenix Edition — "This network": what this deck has passively observed
+  on the segment it sits on (#93).
+  @decision DEC-PHASE12-043 (served by orionx-osint, loopback only, nothing external)
+  @decision DEC-PHASE13-046 (honesty labels: "observed by this deck", windowed,
+                             no geolocation, degraded rows named)
+
+  Every number on this page comes from /api/network.json, which is
+  scripts/awareness/network_picture.py — the same module the Cockpit's NETWORK
+  panel reads. The page renders the dict; it computes nothing of its own, so
+  the two surfaces cannot disagree. Zero external resources.
+-->
+<style>
+:root{
+  --bg:#07080b; --panel:#11141b; --panel2:#161a23; --line:#232935; --line2:#2f3747;
+  --fg:#e6e8ec; --dim:#9aa0a6; --faint:#6b7280;
+  --phoenix:#ff6a13; --phoenix-soft:#ffb15c; --go:#34ff9e; --warn:#ffb300; --stop:#ff5f56; --cool:#7ab8ff;
+  --mono:"DejaVu Sans Mono","Hack",ui-monospace,monospace;
+  --sans:"DejaVu Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --radius:10px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font-family:var(--sans);font-size:14px;line-height:1.45}
+a{color:var(--cool)}
+.mono{font-family:var(--mono)}
+header{
+  display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+  padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);
+  position:sticky;top:0;z-index:2;
+}
+header h1{margin:0;font-size:.85rem;letter-spacing:.2em;text-transform:uppercase;font-weight:700;white-space:nowrap}
+header h1 .x{color:var(--phoenix)}
+header .spacer{flex:1 1 auto}
+.ctl{
+  background:var(--panel2);color:var(--dim);border:1px solid var(--line2);
+  border-radius:7px;padding:5px 10px;font-size:.76rem;font-family:var(--mono);cursor:pointer;
+}
+.ctl[aria-pressed=true]{color:var(--phoenix);border-color:var(--phoenix)}
+.chip{
+  display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:.72rem;color:var(--dim);
+  background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:4px 10px;
+}
+.chip b{color:var(--fg)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none}
+.dot.go{background:var(--go);box-shadow:0 0 8px rgba(52,255,158,.6)}
+.dot.warn{background:var(--warn);box-shadow:0 0 8px rgba(255,179,0,.5)}
+.dot.stop{background:var(--stop);box-shadow:0 0 8px rgba(255,95,86,.5)}
+.wrap{max-width:1180px;margin:0 auto;padding:0 16px 64px}
+
+.banner{
+  border:1px solid var(--line2);border-left-width:4px;border-radius:var(--radius);
+  background:var(--panel);padding:12px 16px;margin:16px 0;
+}
+.banner.stop{border-left-color:var(--stop)}
+.banner.warn{border-left-color:var(--warn)}
+.banner.info{border-left-color:var(--cool)}
+.banner h3{margin:0 0 6px;font-size:.92rem;letter-spacing:.03em}
+.banner p{margin:0 0 6px;color:var(--dim);font-size:.86rem}
+.banner .remedy{
+  display:block;margin-top:8px;font-family:var(--mono);font-size:.8rem;background:#0a0c10;
+  border:1px solid var(--line);border-radius:6px;padding:8px 10px;color:var(--phoenix-soft);white-space:pre-wrap;
+}
+section{margin:28px 0 0}
+section > h2{margin:0 0 4px;font-size:.8rem;letter-spacing:.2em;text-transform:uppercase;color:var(--phoenix);font-weight:700}
+section > p.lede{margin:0 0 12px;color:var(--dim);font-size:.84rem;max-width:80ch}
+.cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 15px}
+.card h3{margin:0 0 4px;font-size:.78rem;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+.card .big{font-size:2rem;font-weight:700;line-height:1.1;font-family:var(--mono)}
+.card .big.dim{color:var(--faint);font-size:1.2rem}
+.card p{margin:6px 0 0;color:var(--dim);font-size:.8rem}
+.card .label{display:inline-block;margin-top:8px;font-family:var(--mono);font-size:.68rem;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--phoenix-soft);border:1px solid rgba(255,177,92,.4);border-radius:4px;padding:2px 6px}
+.bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--panel2);margin-top:10px;border:1px solid var(--line)}
+.bar .local{background:var(--go)}
+.bar .inet{background:var(--cool)}
+table{width:100%;border-collapse:collapse;font-size:.82rem;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);background:var(--panel2)}
+tr:last-child td{border-bottom:none}
+td.mono,th.mono{font-family:var(--mono)}
+td .faint{color:var(--faint)}
+.state{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;border-radius:4px;padding:2px 6px;border:1px solid currentColor;white-space:nowrap}
+.state.present{color:var(--warn)}
+.state.absent{color:var(--go)}
+.state.unknown{color:var(--faint)}
+tr.degraded td{color:var(--faint)}
+.empty{color:var(--faint);font-style:italic;padding:8px 0;font-size:.86rem}
+footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);color:var(--faint);font-size:.76rem}
+.hidden{display:none}
+@media (max-width:720px){ th:nth-child(n+5),td:nth-child(n+5){display:none} }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Orion&#8209;<span class="x">X</span> &middot; This network</h1>
+  <span class="chip"><span class="dot" id="d-hosts"></span>hosts <b id="v-hosts">&hellip;</b></span>
+  <span class="chip"><span class="dot" id="d-zeek"></span>zeek <b id="v-zeek">&hellip;</b></span>
+  <span class="chip"><span class="dot" id="d-oui"></span>oui <b id="v-oui">&hellip;</b></span>
+  <span class="spacer"></span>
+  <label class="chip" for="window">window
+    <select class="ctl" id="window" aria-label="Look-back window">
+      <option value="300">5 min</option>
+      <option value="900" selected>15 min</option>
+      <option value="3600">1 hour</option>
+      <option value="21600">6 hours</option>
+    </select>
+  </label>
+  <button class="ctl" id="pause" type="button" aria-pressed="false">pause</button>
+  <a class="ctl" href="../" style="text-decoration:none">&larr; surface</a>
+</header>
+
+<div class="wrap">
+  <div class="banner info">
+    <h3>What this page is</h3>
+    <p>A <b>passive</b> picture: the kernel's neighbour table, the vendor registry
+    for hardware addresses, and &mdash; when Zeek is running &mdash; its conn, dns,
+    dhcp and ssdp logs over the window you pick. Nothing here transmits a frame.
+    Every count is <b>observed by this deck</b>, on the segment it is plugged
+    into, inside that window. It is a sample of what spoke while we listened,
+    not an inventory. Addresses are classified local or internet by RFC&nbsp;1918
+    membership only; there is no geolocation on this page or in its data.</p>
+  </div>
+  <div id="banners"></div>
+
+  <section id="sec-headline">
+    <h2>Headline</h2>
+    <p class="lede" id="headline-lede"></p>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <section id="sec-sightings">
+    <h2>Protocol sightings</h2>
+    <p class="lede">What kinds of chatter were heard. <b>Present</b> means at
+    least one record in the window; <b>absent</b> means the log that would show
+    it was read and held none; <b>unknown</b> means that log is not available
+    on this deck, and the row says which. IoT is a heuristic from vendor
+    prefixes and mDNS service names, never an identification.</p>
+    <div id="sightings"></div>
+  </section>
+
+  <section id="sec-arp">
+    <h2>Neighbour table (ARP / NDP)</h2>
+    <p class="lede">Hardware addresses this deck has exchanged frames with,
+    from <span class="mono">ip neigh</span>. Vendor is a registry lookup of the
+    24-bit prefix (ieee-data); a randomised address has no vendor and is marked
+    so. These entries age by the kernel's rules, not by the window above.</p>
+    <div id="arp"></div>
+  </section>
+
+  <!-- Reserved for #94: gateway identity (SSDP/IGD, operator-initiated) and
+       posture-gated outbound probes. Hidden until the API returns entries;
+       nothing on this page pretends those exist yet. -->
+  <section id="sec-active" class="hidden">
+    <h2>Operator-initiated</h2>
+    <p class="lede">Active checks. Each is started by you, each says what it
+    sent, and each is gated by the threat posture.</p>
+    <div id="active"></div>
+  </section>
+
+  <footer id="foot"></footer>
+</div>
+<script src="network.js"></script>
+</body>
+</html>
