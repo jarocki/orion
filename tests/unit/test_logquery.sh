@@ -69,8 +69,16 @@ EOF
   done
 } > "$WORK/evidence/kern.log"
 
+# Bus lines with real-shaped detail (#127): the first is the pre-detail shape
+# and must still parse; the next three copy what the producers publish —
+# scanwatch build_detail(), postured _alert_detail() for suricata and zeek.
+# 203.0.113.60 appears ONLY inside Zeek detail: if flattening breaks, it
+# vanishes from every per-source report.
 cat > "$WORK/evidence/events.jsonl" <<'EOF'
 {"ts": 1790000000, "iso": "2026-09-22T03:21:00+0000", "severity": "warning", "source": "firewall", "category": "scan", "message": "port scan from 198.51.100.7 — 30 ports in 12s"}
+{"ts": 1790000030, "iso": "2026-09-22T03:21:30+0000", "severity": "warning", "source": "firewall", "category": "scan", "message": "port scan from 198.51.100.7 — 30 ports in 12s (tcp), most recent dport 4029", "id": "a1b2c3d4e5f60718", "detail": {"src_ip": "198.51.100.7", "distinct_ports": 30, "window_seconds": 12.0, "protocols": "tcp", "latest_dport": 4029, "ports_seen": [4000, 4001, 4002], "detector": "orionx-scanwatch", "evidence": "nftables drop log", "triggering_rule": "log prefix \"[ORIONX-DROP] \" drop  (inet orionx_firewall/input)", "scan_kind": "port scan"}, "auth": "0f0f"}
+{"ts": 1790000060, "iso": "2026-09-22T03:22:00+0000", "severity": "critical", "source": "suricata", "category": "ids", "message": "ET SCAN Nmap Scripting Engine User-Agent Detected (Nmap Scripting Engine) [T1046 Network Service Discovery] — 198.51.100.7:40123 → 10.0.0.1:80 (tcp) sid:2009582", "id": "b2c3d4e5f6071829", "detail": {"engine": "suricata", "src_ip": "198.51.100.7", "dest_ip": "10.0.0.1", "proto": "tcp", "sid": 2009582, "signature": "ET SCAN Nmap Scripting Engine User-Agent Detected (Nmap Scripting Engine)", "classtype": "Web Application Attack", "src_port": 40123, "dest_port": 80, "technique": "T1046 Network Service Discovery"}, "auth": "0f0f"}
+{"ts": 1790000120, "iso": "2026-09-22T03:23:00+0000", "severity": "notice", "source": "zeek", "category": "ids", "message": "Zeek Scan::Port_Scan [T1046 Network Service Discovery]: 203.0.113.60 → 10.0.0.1 — 203.0.113.60 scanned at least 15 unique ports of host 10.0.0.1 in 0m3s", "id": "c3d4e5f607182930", "detail": {"engine": "zeek", "src_ip": "203.0.113.60", "dest_ip": "10.0.0.1", "proto": "tcp", "note": "Scan::Port_Scan", "msg": "203.0.113.60 scanned at least 15 unique ports of host 10.0.0.1 in 0m3s", "technique": "T1046 Network Service Discovery"}, "auth": "0f0f"}
 EOF
 
 section "Structure"
@@ -424,6 +432,190 @@ ERR="$(python3 "$LQ" --path "$WORK/evidence/access.log" --focus 'not-an-ioc!' --
 if echo "$ERR" | grep -q 'unrecognized --focus token'; then
     pass "an unparseable focus token warns rather than silently matching all"
 else fail "unparseable focus token warns" "$ERR"; fi
+
+section "Bus detail is flattened onto the record (#127, DEC-PHASE13-039)"
+# The root cause: a bus event became {ts, reason, path=message} with ip=None,
+# so IDS/Zeek/scan events fed nothing but `summary` counts. The parser must
+# lift detail onto the canonical fields, follow the broker's sidecar for
+# oversized detail — and refuse a sidecar reference that points anywhere else.
+if grep -q '@decision DEC-PHASE13-039' "$LQ_DIR/logquery_sources.py"; then
+    pass "the flattening carries its decision annotation (DEC-PHASE13-039)"
+else fail "DEC-PHASE13-039 annotation present" "missing in logquery_sources.py"; fi
+mkdir -p "$WORK/details" "$WORK/elsewhere"
+if python3 - "$LQ_DIR" "$WORK" <<'PY'
+import json, sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+work = Path(sys.argv[2])
+import logquery_sources as S
+import logquery_intel as I
+import logquery_engine as E
+
+ok = True
+def check(cond, label):
+    global ok
+    print(("  ok   " if cond else "  BAD  ") + label)
+    ok = ok and bool(cond)
+
+lines = (work / "evidence/events.jsonl").read_text().splitlines()
+stats = S.new_parse_stats()
+plain, scan, suri, zeek = (S.parse_json_line(l, stats) for l in lines)
+
+# --- the producers' shapes, field by field -------------------------------
+check(plain["ip"] is None and plain["reason"] == "scan" and plain["tier"] == 2,
+      "a pre-detail bus line still parses (reason from category, tier from severity)")
+check(scan["ip"] == "198.51.100.7" and scan["port"] == 4029 and scan["proto"] == "tcp",
+      f"scanwatch: ip<-src_ip, port<-latest_dport, proto<-protocols ({scan['ip']}:{scan['port']}/{scan['proto']})")
+check(scan["detector"] == "orionx-scanwatch" and scan["signature"] is None,
+      "scanwatch: detector<-detector, no signature invented")
+check(suri["ip"] == "198.51.100.7" and suri["port"] == 80 and suri["sid"] == 2009582,
+      f"suricata: ip, port<-dest_port, sid ({suri['ip']}:{suri['port']} sid {suri['sid']})")
+check(suri["signature"].startswith("ET SCAN Nmap") and suri["detector"] == "suricata",
+      "suricata: signature and detector<-engine")
+check(suri["technique"] == "T1046 Network Service Discovery", "suricata: technique carried")
+check(zeek["ip"] == "203.0.113.60" and zeek["signature"] == "Scan::Port_Scan"
+      and zeek["detector"] == "zeek",
+      "zeek: ip, signature<-note, detector<-engine")
+check(suri["tier"] == 3 and zeek["tier"] == 1 and scan["tier"] == 2,
+      f"severity -> tier uses the bus rank (critical 3, warning 2, notice 1): {suri['tier']}/{scan['tier']}/{zeek['tier']}")
+check(all(r["tool"] is None for r in (scan, suri, zeek)),
+      "tool is carried only when a producer sets detail.tool (#128) — None here")
+check(stats["bus_events"] == 4 and stats["detail_flattened"] == 3,
+      f"the flattening is counted: {stats['detail_flattened']} of {stats['bus_events']} bus events")
+for field in ("signature", "sid", "technique", "detector", "tool"):
+    check(field in S.RECORD_FIELDS and field in E.TABLE_COLUMNS,
+          f"'{field}' is a record field and a table column")
+check(E.TABLE_COLUMNS.count("tool") == 1, "exactly one `tool` column (record, not enrichment twice)")
+
+# --- detail.tool wins over the User-Agent fingerprint, UA fills the gap ---
+intel = I.load_intel()
+producer = S.parse_json_line(json.dumps({"severity": "warning", "message": "m",
+    "category": "scan", "detail": {"src_ip": "10.0.0.1", "tool": "masscan"}}))
+producer["userAgent"] = "Nmap Scripting Engine"
+I.enrich_record(producer, intel)
+check(producer["tool"] == "masscan", f"a producer-set tool is kept over the UA regex ({producer['tool']})")
+ua_only = {"ip": "10.0.0.2", "userAgent": "Nmap Scripting Engine", "path": "/", "tool": None}
+I.enrich_record(ua_only, intel)
+check(ua_only["tool"] == "nmap", f"with no producer tool the UA fingerprint still fills it ({ua_only['tool']})")
+
+# --- top level beats detail ----------------------------------------------
+top = S.parse_json_line(json.dumps({"severity": "warning", "message": "m", "category": "ids",
+    "ip": "1.1.1.1", "detail": {"src_ip": "2.2.2.2"}}))
+check(top["ip"] == "1.1.1.1", "a top-level ip is not overridden by detail")
+
+# --- sidecars: followed inside DETAIL_DIR, refused anywhere else ----------
+S.DETAIL_DIR = work / "details"
+full_sig = "ET SCAN " + "x" * 600
+(work / "details/deadbeefcafe0001.json").write_text(json.dumps(
+    {"src_ip": "198.51.100.9", "signature": full_sig, "sid": 1}))
+def line(ref, event_id="deadbeefcafe0001"):
+    return json.dumps({"severity": "critical", "message": "m", "category": "ids",
+        "id": event_id, "detail": {"src_ip": "198.51.100.9", "sid": 1,
+        "signature": full_sig[:511] + "…", "_full": ref}})
+st = S.new_parse_stats()
+good = S.parse_json_line(line(str(work / "details/deadbeefcafe0001.json")), st)
+check(good["signature"] == full_sig and st["sidecar_read"] == 1,
+      "a _full sidecar in DETAIL_DIR named for the event id completes the truncated detail")
+
+(work / "elsewhere/deadbeefcafe0001.json").write_text(json.dumps({"signature": "PLANTED"}))
+st = S.new_parse_stats()
+bad = S.parse_json_line(line(str(work / "elsewhere/deadbeefcafe0001.json")), st)
+check(bad["signature"].endswith("…") and st["sidecar_unreadable"] == 1
+      and "refused" in st["sidecar_notes"][0],
+      "a _full path outside DETAIL_DIR is refused; the truncated inline detail stays")
+(work / "details/otherid000000000.json").write_text(json.dumps({"signature": "PLANTED"}))
+st = S.new_parse_stats()
+wrong = S.parse_json_line(line(str(work / "details/otherid000000000.json")), st)
+check(wrong["signature"] != "PLANTED" and st["sidecar_unreadable"] == 1,
+      "a sidecar named for a different event id is refused")
+st = S.new_parse_stats()
+gone = S.parse_json_line(line(str(work / "details/nope.json")), st)
+check(gone["ip"] == "198.51.100.9" and st["sidecar_unreadable"] == 1,
+      "a missing sidecar is counted and the inline fields are still used")
+st = S.new_parse_stats()
+S.parse_json_line(line(str(work / "details/deadbeefcafe0001.json"), event_id=None), st)
+check(st["sidecar_unreadable"] == 1, "an event with no id cannot claim a sidecar")
+recs, notes = S.read_local(str(work / "evidence/events.jsonl"))
+check(not any("sidecar" in n for n in notes), "no sidecar note when nothing was unreadable")
+sys.exit(0 if ok else 1)
+PY
+then pass "detail flattening, precedence and sidecar assertions"; else fail "detail flattening assertions" "see above"; fi
+
+# End to end: the reports now see what the detectors saw.
+OUT="$(python3 "$LQ" --path "$WORK/evidence/events.jsonl" --report ids --format csv 2>/dev/null)"
+if echo "$OUT" | grep -q '^ET SCAN Nmap.*,2009582,T1046 Network Service Discovery,suricata,1,1,1,3,'; then
+    pass "--report ids: the Suricata signature row carries sid, technique, detector, sources, ports, tier"
+else fail "--report ids Suricata row" "$OUT"; fi
+if echo "$OUT" | grep -q '^Scan::Port_Scan,,T1046 Network Service Discovery,zeek,1,1,0,1,'; then
+    pass "--report ids: the Zeek notice is a signature row too"
+else fail "--report ids Zeek row" "$OUT"; fi
+if ! echo "$OUT" | grep -q 'orionx-scanwatch'; then pass "--report ids excludes scanwatch (not an IDS)"
+else fail "--report ids excludes scanwatch" "$OUT"; fi
+OUT="$(python3 "$LQ" --path "$WORK/evidence/events.jsonl" --report scans --format csv 2>/dev/null)"
+if echo "$OUT" | grep -q '^198.51.100.7,2,2,suricata,ET SCAN Nmap.*,T1046 Network Service Discovery,2,80,4029,tcp,3,'; then
+    pass "--report scans: per-source row joins scanwatch + Suricata (2 detectors, ports 80..4029)"
+else fail "--report scans 198.51.100.7 row" "$OUT"; fi
+if echo "$OUT" | grep -q '^203.0.113.60,1,1,zeek,Scan::Port_Scan,'; then
+    pass "--report scans: the Zeek-only scanner is a row (visible only through detail)"
+else fail "--report scans Zeek-only row" "$OUT"; fi
+OUT="$(python3 "$LQ" --path "$WORK/evidence" --report sources --format csv 2>/dev/null)"
+if echo "$OUT" | grep -q '^203.0.113.60,'; then
+    pass "--report sources now counts a source that exists only in bus detail"
+else fail "--report sources sees detail-only source" "$OUT"; fi
+OUT="$(python3 "$LQ" --path "$WORK/evidence" --focus 203.0.113.60 --report requests --format csv 2>/dev/null)"
+if [[ "$(echo "$OUT" | grep -c 'Zeek Scan::Port_Scan')" -eq 1 ]]; then
+    pass "--focus <ip> --report requests reaches a Zeek event by its flattened address"
+else fail "--focus on a detail-only address" "$OUT"; fi
+OUT="$(python3 "$LQ" --path "$WORK/evidence/events.jsonl" --report threats --format csv 2>/dev/null)"
+if echo "$OUT" | grep -q 'ids,198.51.100.7'; then
+    pass "--report threats (tier-gated) lists the critical Suricata alert via severity->tier"
+else fail "--report threats sees the IDS alert" "$OUT"; fi
+OUT="$(python3 "$LQ" --path "$WORK/evidence" --report targeted --format json 2>/dev/null)"
+if echo "$OUT" | python3 -c "
+import json,sys; d=json.load(sys.stdin); r={x['ip']:x for x in d['rows']}
+sys.exit(0 if r['198.51.100.7']['hits'] >= 6 and r['198.51.100.7']['verdict']=='targeted' and '203.0.113.60' in r else 1)"; then
+    pass "targeted correlation folds bus events into the per-source verdict"
+else fail "targeted folds bus events" "$OUT"; fi
+LIST="$(python3 "$LQ" --list-reports 2>&1)"
+if echo "$LIST" | grep -q '^  ids ' && echo "$LIST" | grep -q '^  scans '; then
+    pass "--list-reports offers ids and scans"
+else fail "--list-reports offers ids and scans" "$LIST"; fi
+GUIDE="$(python3 "$LQ" --guide 2>&1)"
+if echo "$GUIDE" | grep -q -- '--report ids' && echo "$GUIDE" | grep -q -- '--report scans' \
+   && echo "$GUIDE" | grep -qi 'sidecar\|/run/orionx/details'; then
+    pass "--guide names the ids/scans reports and the sidecar follow"
+else fail "--guide names ids/scans and sidecars"; fi
+
+# Through the CLI with a real sidecar: the report shows the FULL signature.
+cat > "$WORK/sidecar_cli.py" <<'PY'
+import json, runpy, sys
+from pathlib import Path
+lq_dir, work = sys.argv[1], Path(sys.argv[2])
+sys.path.insert(0, lq_dir)
+import logquery_sources as S
+S.DETAIL_DIR = work / "details"
+full_sig = "ET EXPLOIT " + "y" * 700
+(work / "details/0011223344556677.json").write_text(json.dumps({"signature": full_sig, "src_ip": "198.51.100.77", "sid": 42}))
+ev = work / "sidecar_events.jsonl"
+ev.write_text(json.dumps({"severity": "critical", "message": "m", "category": "ids", "id": "0011223344556677",
+    "detail": {"src_ip": "198.51.100.77", "sid": 42, "signature": full_sig[:511] + "…",
+               "_full": str(work / "details/0011223344556677.json")}}) + "\n")
+sys.argv = ["orionx-logquery", "-v", "--path", str(ev), "--report", "ids", "--format", "csv"]
+try:
+    runpy.run_path(lq_dir + "/orionx-logquery", run_name="__main__")
+except SystemExit:
+    pass
+PY
+OUT="$(python3 "$WORK/sidecar_cli.py" "$LQ_DIR" "$WORK" 2>"$WORK/sidecar.err")"
+# A literal, not y\{700\}: BSD grep's RE_DUP_MAX is 255 and a larger bound is
+# an invalid pattern that fails quietly.
+FULL_ROW="ET EXPLOIT $(printf 'y%.0s' $(seq 1 700)),42,"
+if echo "$OUT" | grep -qF "$FULL_ROW"; then
+    pass "end to end: the ids report shows the full signature recovered from the sidecar"
+else fail "ids report shows the sidecar's full signature" "$(echo "$OUT" | cut -c1-120)"; fi
+if grep -q '1 completed from a sidecar' "$WORK/sidecar.err"; then
+    pass "-v says the detail was completed from a sidecar"
+else fail "-v narrates the sidecar read" "$(grep flatten "$WORK/sidecar.err")"; fi
 
 section "Graceful degradation when an optional dependency is missing"
 # The default engine is stdlib, so a report must never depend on an install.
@@ -898,13 +1090,14 @@ else
 fi
 _missing=""
 for want in 'acquire from local' 'file\(s\) to read' '\[1/3\]' 'load intel' \
+            'flatten bus detail — 3 of 4 bus event' \
             'enrich [0-9,]+ record' 'correlate [0-9,]+ record'; do
     grep -qE "^\[ *[0-9]+\.[0-9]s\] .*$want" "$WORK/loud.err" || _missing+=" '$want'"
 done
 if [[ -z "$_missing" ]]; then
-    pass "-v narrates acquisition per file, intel, enrichment and correlation, timed"
+    pass "-v narrates acquisition per file, detail flattening, intel, enrichment and correlation, timed"
 else
-    fail "-v narrates acquisition per file, intel, enrichment and correlation, timed" \
+    fail "-v narrates acquisition per file, detail flattening, intel, enrichment and correlation, timed" \
          "missing:$_missing"
 fi
 python3 "$LQ" -v --path "$WORK/evidence" --report summary --format csv \
