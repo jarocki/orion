@@ -84,7 +84,7 @@ declare -A SCRIPT_MAP=(
     ["orionx-freshen-yara"]="/opt/orionx/scripts/orionx-freshen-yara.sh"
     # W11-6 Layer A: Suricata IDS freshen script (DEC-PHASE11-008).
     # Operators run `sudo orionx-freshen-suricata` post-boot to replace the
-    # baked ET-Open subset (hook 0530, DEC-PHASE13-043) with the FULL feed
+    # vendored ET-Open subset (DEC-PHASE13-043, verified by hook 0530) with the FULL feed
     # from emergingthreats.net (BSD). Single PATH entry; no .desktop launcher
     # needed (root-only maintenance command).
     ["orionx-freshen-suricata"]="/opt/orionx/scripts/orionx-freshen-suricata.sh"

@@ -81,7 +81,8 @@ threshold-file: /var/lib/suricata/orionx-threshold.config
 # ---------------------------------------------------------------------------
 # DEC-PHASE13-044 — sized for the 2 GB deck (full decision block in
 # iso/config/hooks/live/0530-suricata-rules.hook.chroot, beside DEC-PHASE13-043
-# which bakes the ~3,200-signature ET-Open subset these limits are sized for).
+# which covers the vendored ~3,200-signature ET-Open subset these limits are
+# sized for).
 #
 # Debian's defaults are sensor-sized: flow 128mb, stream 64mb + reassembly
 # 256mb, defrag 32mb, host 32mb, detect profile medium. Each node below is

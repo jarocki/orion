@@ -1,12 +1,13 @@
 #!/bin/bash
 # shellcheck shell=bash
-# 0530-suricata-rules.hook.chroot — bake a curated, SHA-256-pinned ET-Open
-# subset into /var/lib/suricata/rules/suricata.rules at ISO-build time
-# (W11-6b, issue #125), so Suricata starts with signatures on a 2 GB deck.
+# 0530-suricata-rules.hook.chroot — verify the VENDORED curated ET-Open subset
+# at /var/lib/suricata/rules and prove it loads in the image's own engine
+# (W11-6b, issue #125). No network: the rules are committed files.
 #
 # @decision DEC-PHASE13-043
-# @title Suricata ships a curated, SHA-256-pinned ET-Open subset baked at
-#   build time; the fetch is fail-closed and the full feed stays an opt-in
+# @title Suricata ships a curated ET-Open subset VENDORED into the tree and
+#   refreshed by a reviewed commit, because the upstream URL is a rolling
+#   daily object; the build verifies the vendored files fail-closed
 # @status accepted
 # @rationale Reported from the v3.1.0 ISO on the HP Pavilion and the Lenovo
 #   (Bay Trail, 2 GB): "Suricata is still failing to start because there are
@@ -15,7 +16,7 @@
 #   Debian's suricata.yaml names exactly one rule file,
 #   /var/lib/suricata/rules/suricata.rules, and nothing on the image created
 #   it. The package list has `suricata` only, no hook fetched rules, and the
-#   22 stock /etc/suricata/rules/*-events.rules were never in `rule-files:`.
+#   stock /etc/suricata/rules/*-events.rules were never in `rule-files:`.
 #   So every Tier 1/2 deck ran an engine with 0 signatures and
 #   orionx-postured published the critical IDS COVERAGE GAP on a loop — read
 #   by the operator as "failing to start". The documented remedy,
@@ -23,11 +24,12 @@
 #   the Lenovo.
 #
 #   Measured on 2026-11-06 against the Suricata 7.0 ET-Open tarball
-#   (emerging.rules.tar.gz, 5,679,153 bytes, SHA-256 c794e36a…b10e689):
+#   (emerging.rules.tar.gz, 5,679,153 bytes, SHA-256 c794e36a…b10e689,
+#   server Last-Modified "Fri, 06 Nov 2026 21:47:10 GMT"):
 #     59 files, 55 MB extracted, 52,854 signatures across 50 .rules files.
 #     emerging-malware.rules alone:            19,392 sigs / 17.8 MB
 #     emerging-web_specific_apps.rules:         6,097 sigs /  5.8 MB
-#     The six categories baked here:
+#     The six categories vendored here:
 #       scan 286 · attack_response 688 · exploit 1,713 · dos 59 ·
 #       shellcode 57 · current_events 62  =  2,865 sigs / 2,620,855 bytes
 #   plus Debian's stock *-events.rules (protocol-anomaly detection, which
@@ -38,45 +40,57 @@
 #   protocols disabled, and the engine then refuses the signatures outright
 #   ("protocol dnp3 cannot be used in a signature") — found by running the
 #   merged file through `suricata -T` in a trixie container, not guessed.
-#   Merged result as measured there: 3,233 signatures, 2,707,122 bytes
-#   (19 stock files + 6 ET categories; `suricata -T -v` under this image's
-#   orionx.yaml: "3233 rules successfully loaded, 0 rules failed", exit 0).
-#   The subset is ~6 % of the feed by signature count and ~5.7 % by bytes.
-#   It covers what a deck sitting on a hostile segment is for — scans,
-#   exploit attempts, shellcode, DoS, attacker-side responses, in-the-wild
-#   campaigns — and skips the two heavy categories whose value is highest on
-#   an egress tap full of client traffic, which this deck is not.
+#   Merged result: 3,233 signatures, 2,707,122 bytes (19 stock files + 6 ET
+#   categories); `suricata -T -v` under this image's orionx.yaml:
+#   "3233 rules successfully loaded, 0 rules failed", exit 0. That is ~6 % of
+#   the feed by signature count and ~5.7 % by bytes, and covers what a deck
+#   sitting on a hostile segment is for — scans, exploit attempts, shellcode,
+#   DoS, attacker-side responses, in-the-wild campaigns — while skipping the
+#   two heavy categories whose value is highest on an egress tap full of
+#   client traffic, which this deck is not.
 #
-#   Policy, in the order the hook applies it:
-#     1. The tarball is pinned by SHA-256 (ET_OPEN_SHA256). ET-Open is
-#        republished daily at the same URL, so an unpinned fetch would bake
-#        whatever that day's feed was and make two builds of one tag differ
-#        (the 0520 lesson, DEC-PHASE12-118). To move the pin: download, hash,
-#        edit the constant, rebuild, and read the new provenance numbers.
-#     2. Fetch failure or hash mismatch FAILS THE BUILD (exit 1), like the
-#        0500 ollama/pip rule (DEC-PHASE10-007, DEC-PHASE12-116): an image
-#        whose IDS has no signatures is exactly the shipped defect, so a
-#        green build must not be able to produce one. Nothing is written to
-#        the rules directory before the hash is verified.
-#     3. Category selection is a fixed list, and a category missing from the
-#        tarball is a hard failure, not a quiet shrink: the feed changing
-#        shape must be noticed, not absorbed.
-#     4. The curated file is suricata.rules — the one name Debian's config
-#        loads (DEC-PHASE12-039 found this the hard way). rule-files: is
-#        still left to Debian's suricata.yaml (DEC-PHASE12-038).
-#     5. The result is checked by the engine itself: `suricata -T -v` must
-#        exit 0 AND report a non-zero "rules successfully loaded" count.
-#        Rules the engine rejects are listed, so a feed that starts using a
-#        keyword 7.0.10 lacks fails here and not on the deck.
-#     6. Provenance (pin, URL, date, categories, counts, bytes, license) is
-#        written beside the rules as orionx-rules.provenance.txt, and the
-#        ET-Open LICENSE text is copied beside it: the ET rules (sids
-#        2000000-2799999) are BSD-licensed and require the notice to travel
-#        with redistributions; sids below 3465 are GPLv2 (the old Snort
-#        community set). Licensing was the open question the MASTER_PLAN
-#        deferred to W11-6b; the feed's own LICENSE file answers it.
-#   The full feed remains available post-boot via orionx-freshen-suricata,
-#   which replaces this subset in place; it now says what that costs.
+#   WHY VENDORED, NOT FETCHED AT BUILD TIME. The first revision of this hook
+#   downloaded the tarball during `lb build` pinned by SHA-256 and failed the
+#   build on mismatch. That pin was a time bomb: rules.emergingthreats.net
+#   serves ONE rolling object per Suricata version (the directory listing has
+#   no dated archives; the object we hashed carried Last-Modified "Fri, 06 Nov
+#   2026 21:47:10 GMT" and is replaced daily), so a fail-closed pin would have
+#   killed every ISO build from the next republish onward, and an unpinned
+#   fetch would have made two builds of one tag differ. The point of a pin is
+#   reproducibility from the tag; the only way to have that against a rolling
+#   source is to vendor the OUTPUT. So, following the go-roast precedent
+#   (DEC-PHASE12-002: a vendored static binary + a provenance file), the
+#   three files ship IN THE TREE:
+#     iso/config/includes.chroot/var/lib/suricata/rules/suricata.rules
+#     iso/config/includes.chroot/var/lib/suricata/rules/orionx-rules.provenance.txt
+#     iso/config/includes.chroot/var/lib/suricata/rules/LICENSE-ET-Open.txt
+#   and `make suricata-rules-refresh` (scripts/suricata-rules-refresh.sh)
+#   re-derives them from a fresh tarball — recording its SHA-256, size and
+#   Last-Modified, proving the result loads in a trixie suricata — for the
+#   maintainer to review and commit. 2.7 MB in-repo is accepted (the roast
+#   binary is 9.6 MB). A refresh is therefore a diff someone read.
+#
+#   Policy this hook enforces, fail-closed (an image whose IDS has no
+#   signatures is exactly the shipped defect, so a green build must not be
+#   able to produce one — the DEC-PHASE10-007 / DEC-PHASE12-116 rule):
+#     1. suricata.rules, the provenance and the license copy must all be
+#        present and non-empty, or the build stops naming the refresh command.
+#     2. The provenance's `signatures:` line must equal a fresh count of the
+#        shipped file: a refresh that forgot the provenance, or a hand edit,
+#        is caught here and in tests/unit/test_suricata_rules_hook.sh.
+#     3. The engine itself must accept the file: `suricata -T -v -c
+#        /etc/suricata/orionx.yaml` must exit 0 AND report a non-zero
+#        "rules successfully loaded" count. Rules it rejects are listed.
+#     4. The build date and the engine's count are appended to the
+#        provenance, so the deck can read what was proven about its rules.
+#   rule-files: is still left to Debian's suricata.yaml (DEC-PHASE12-038);
+#   the file is suricata.rules because that is the one name it loads
+#   (DEC-PHASE12-039). The ET rules (sids 2000000-2799999) are BSD-licensed
+#   and require the notice to travel with redistributions; sids below 3465
+#   are GPLv2 (the old Snort community set); the feed's LICENSE answers the
+#   licensing question MASTER_PLAN deferred to W11-6b. The full feed remains
+#   available post-boot via orionx-freshen-suricata, which replaces this
+#   subset in place and now says what that costs.
 #
 # @decision DEC-PHASE13-044
 # @title Suricata runs `detect: profile: low` with deck-sized memcaps and a
@@ -90,7 +104,7 @@
 #   oversized. /etc/suricata/orionx.yaml now redefines the detect, flow,
 #   stream, defrag and host nodes:
 #     detect.profile low (fewer, smaller signature groups: the trade is
-#       detect-engine memory for a little per-packet CPU, right for 2,865
+#       detect-engine memory for a little per-packet CPU, right for ~3,200
 #       signatures on an Atom), flow 32 MB, stream 32 MB + reassembly 64 MB,
 #       defrag 16 MB, host 16 MB  =  160 MB of hard memcaps.
 #   Each node is written out in full, not as a one-key patch, because the
@@ -123,36 +137,17 @@
 #   the dead unit and announces it (DEC-PHASE12-038), so the failure is loud.
 set -euo pipefail
 
-# --- Pins and paths -----------------------------------------------------------
-# Suricata 7.0 feed: the ISO's suricata is 7.0.10 (trixie). The 6.0 feed the
-# freshen script used to name is the previous major and is not what the deck runs.
-ET_OPEN_URL="${ET_OPEN_URL:-https://rules.emergingthreats.net/open/suricata-7.0/emerging.rules.tar.gz}"
-# shellcheck disable=SC2034  # read by the unit test via sed, and by main()
-ET_OPEN_SHA256="c794e36a5f4d7279fc2100b3dd0122dc1f787385e67935e3bc80c0935b10e689"  # pinned 2026-11-06
-ET_OPEN_PINNED_ON="2026-11-06"
-# One emerging-<name>.rules per entry, in this order. A missing one is fatal.
-ET_OPEN_CATEGORIES="scan attack_response exploit dos shellcode current_events"
-# Named in the provenance so the exclusion is a recorded choice, not an omission.
-ET_OPEN_EXCLUDED_NOTE="malware (19,392 sigs / 17.8 MB) and web_specific_apps (6,097 sigs / 5.8 MB) excluded by size; every other category excluded as out of scope for a segment sensor"
-# Stock files the engine rejects under Debian's config (app-layer detection for
-# these protocols is off: "protocol dnp3 cannot be used in a signature").
-STOCK_EXCLUDED_FILES="dnp3-events.rules modbus-events.rules"
-
 RULES_DIR="${RULES_DIR:-/var/lib/suricata/rules}"
-STOCK_RULES_DIR="${STOCK_RULES_DIR:-/etc/suricata/rules}"
 SURICATA_CONFIG="${SURICATA_CONFIG:-/etc/suricata/orionx.yaml}"
-TARGET_RULES="suricata.rules"                      # the one name Debian's rule-files: loads
+TARGET_RULES="suricata.rules"
 PROVENANCE_FILE="orionx-rules.provenance.txt"
 LICENSE_COPY="LICENSE-ET-Open.txt"
 LOG_PREFIX="[0530-suricata-rules]"
+REFRESH_HINT="run 'make suricata-rules-refresh' in the repo and commit the result (DEC-PHASE13-043)"
 
-# Rule actions Suricata accepts at the start of a signature line (same regex as
-# orionx-freshen-suricata's count_signatures, so the two tools count alike).
+# Same regex as scripts/suricata-rules-refresh.sh and orionx-freshen-suricata
+# (a unit test asserts the three are identical), so the tools count alike.
 RULE_ACTION_RE='^[[:space:]]*(alert|drop|pass|reject|rejectsrc|rejectdst|rejectboth)[[:space:]]'
-
-# --- Library (sourceable: ORIONX_0530_LIB_ONLY=1 stops after the definitions,
-# so tests/unit/test_suricata_rules_hook.sh can drive the curation against a
-# fixture tarball with no network, no root and no suricata) -----------------------
 
 # count_signatures <file>: live signature lines; commented-out rules do not count.
 # `grep -c` prints the count AND exits 1 when it is zero, so the status is dropped.
@@ -163,196 +158,54 @@ count_signatures() {
     echo "${n:-0}"
 }
 
-# verify_sha256 <file> <expected>: 0 on match, 1 (with both hashes named) otherwise.
-verify_sha256() {
-    local file="$1" want="$2" got
-    got="$(sha256sum "$file" | awk '{print $1}')"
-    if [[ "$got" != "$want" ]]; then
-        echo "$LOG_PREFIX SHA-256 MISMATCH for $file" >&2
-        echo "$LOG_PREFIX   expected $want" >&2
-        echo "$LOG_PREFIX   got      $got" >&2
-        return 1
-    fi
-    echo "$LOG_PREFIX sha256 verified: $got"
-}
+fatal() { echo "$LOG_PREFIX FATAL: $*" >&2; exit 1; }
 
-# curate_rules <extracted_rules_dir> <stock_rules_dir> <out_file> <categories...>
-# Writes the merged file: Debian's stock *-events.rules first (sorted), then
-# emerging-<category>.rules in the order given. Prints "<signatures> <stock_file_count>".
-# A category whose file is absent is a hard failure (return 1) and out_file is
-# not produced: a feed that changed shape must be noticed, not absorbed.
-curate_rules() {
-    local src="$1" stock="$2" out="$3"; shift 3
-    local tmp cat f n_stock=0
-    for cat in "$@"; do
-        if [[ ! -f "$src/emerging-$cat.rules" ]]; then
-            echo "$LOG_PREFIX FATAL: category '$cat' not in the tarball (no $src/emerging-$cat.rules)" >&2
-            echo "$LOG_PREFIX        ET-Open changed shape; fix ET_OPEN_CATEGORIES or the pin, do not ship a thinner set quietly." >&2
-            return 1
-        fi
-    done
-    tmp="$(mktemp "$(dirname "$out")/.orionx-curate.XXXXXX")"
-    {
-        printf '# Generated at ISO build time by 0530-suricata-rules.hook.chroot (DEC-PHASE13-043, #125).\n'
-        printf '# Curated ET-Open subset for Suricata 7 + Debian stock protocol-event rules.\n'
-        printf '# Provenance, pin and license: %s beside this file. Do not hand-edit;\n' "$PROVENANCE_FILE"
-        printf '# `sudo orionx-freshen-suricata` replaces this file with the FULL ET-Open feed.\n'
-    } > "$tmp"
-    # Stock protocol-anomaly rules (decoder, stream, app-layer events), minus
-    # the ones Debian's config makes unparseable.
-    while IFS= read -r f; do
-        [[ -n "$f" ]] || continue
-        case " $STOCK_EXCLUDED_FILES " in
-            *" $(basename "$f") "*) continue ;;
-        esac
-        printf '\n# --- stock %s ---\n' "$(basename "$f")" >> "$tmp"
-        cat "$f" >> "$tmp"
-        n_stock=$((n_stock + 1))
-    done < <(find "$stock" -maxdepth 1 -type f -name '*-events.rules' 2>/dev/null | sort)
-    for cat in "$@"; do
-        printf '\n# --- ET-Open emerging-%s.rules ---\n' "$cat" >> "$tmp"
-        cat "$src/emerging-$cat.rules" >> "$tmp"
-    done
-    chmod 0644 "$tmp"
-    mv "$tmp" "$out"
-    printf '%s %s\n' "$(count_signatures "$out")" "$n_stock"
-}
+echo "$LOG_PREFIX === Verifying the vendored ET-Open subset (DEC-PHASE13-043) ==="
 
-# write_provenance <out_file> <sha> <url> <pinned_on> <categories> <signatures> <bytes> <stock_count> <tarball_bytes>
-write_provenance() {
-    local out="$1" sha="$2" url="$3" pinned="$4" cats="$5" sigs="$6" bytes="$7" n_stock="$8" tbytes="$9"
-    cat > "$out" <<EOF
-# Orion-X Suricata ruleset provenance — DEC-PHASE13-043 (W11-6b, issue #125)
-# Written at ISO build time by iso/config/hooks/live/0530-suricata-rules.hook.chroot.
-target: $RULES_DIR/$TARGET_RULES
-source-feed: Emerging Threats Open (ET-Open) for Suricata 7.0
-source-url: $url
-source-sha256: $sha
-source-tarball-bytes: $tbytes
-pinned-on: $pinned
-baked-on: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-categories-included: $cats
-categories-excluded: $ET_OPEN_EXCLUDED_NOTE
-stock-files-included: $n_stock ($STOCK_RULES_DIR/*-events.rules, Debian suricata package)
-stock-files-excluded: $STOCK_EXCLUDED_FILES (app-layer detection for dnp3/modbus is disabled in Debian's suricata.yaml; the engine rejects their signatures)
-signatures: $sigs
-bytes: $bytes
-license: ET-Open rules (sids 2000000-2799999) are BSD-licensed, Copyright (c) 2003-2026 Emerging Threats; sids 1-3464 and 100000000-100000908 are GPLv2. Full text: $RULES_DIR/$LICENSE_COPY
-refresh: sudo orionx-freshen-suricata  (network; REPLACES this subset with the full feed, ~52,000 signatures — measured to exhaust a 2 GB deck)
-EOF
-    chmod 0644 "$out"
-}
+# 1. Everything the deck will read must be there.
+command -v suricata >/dev/null 2>&1 || fatal "suricata is not installed in the chroot; the package list is broken."
+[[ -r "$SURICATA_CONFIG" ]] || fatal "$SURICATA_CONFIG missing — includes.chroot not staged before hooks?"
+[[ -s "$RULES_DIR/$TARGET_RULES" ]]   || fatal "$RULES_DIR/$TARGET_RULES missing or empty; the IDS would run with 0 signatures (#125). $REFRESH_HINT"
+[[ -s "$RULES_DIR/$PROVENANCE_FILE" ]] || fatal "$RULES_DIR/$PROVENANCE_FILE missing; $REFRESH_HINT"
+[[ -s "$RULES_DIR/$LICENSE_COPY" ]]    || fatal "$RULES_DIR/$LICENSE_COPY missing; the BSD notice must ship with the rules. $REFRESH_HINT"
 
-# install_rules <tarball> <expected_sha> <stock_dir> <rules_dir> <url> <pinned_on> <categories...>
-# Verify, extract to a scratch dir, curate into <rules_dir>/suricata.rules,
-# write provenance + license copy. Nothing lands in <rules_dir> unless the
-# hash matched. Prints "<signatures> <bytes> <stock_count>".
-install_rules() {
-    local tarball="$1" sha="$2" stock="$3" rules_dir="$4" url="$5" pinned="$6"; shift 6
-    local scratch result sigs n_stock bytes tbytes
-    verify_sha256 "$tarball" "$sha" || return 1
-    scratch="$(mktemp -d)"
-    # shellcheck disable=SC2064  # expand now: scratch is fixed for this call
-    trap "rm -rf '$scratch'" RETURN
-    if ! tar -xzf "$tarball" -C "$scratch" --strip-components=1; then
-        echo "$LOG_PREFIX FATAL: could not extract $tarball" >&2
-        return 1
-    fi
-    mkdir -p "$rules_dir"
-    chmod 0755 "$rules_dir"
-    result="$(curate_rules "$scratch" "$stock" "$rules_dir/$TARGET_RULES" "$@")" || return 1
-    sigs="${result% *}"; n_stock="${result#* }"
-    if [[ "$sigs" -eq 0 ]]; then
-        echo "$LOG_PREFIX FATAL: curated file has 0 signatures" >&2
-        rm -f "$rules_dir/$TARGET_RULES"
-        return 1
-    fi
-    bytes="$(wc -c < "$rules_dir/$TARGET_RULES" | tr -d ' ')"
-    tbytes="$(wc -c < "$tarball" | tr -d ' ')"
-    if [[ -f "$scratch/LICENSE" ]]; then
-        cp "$scratch/LICENSE" "$rules_dir/$LICENSE_COPY"
-        chmod 0644 "$rules_dir/$LICENSE_COPY"
-    else
-        echo "$LOG_PREFIX FATAL: tarball carries no LICENSE file; the BSD notice must ship with the rules" >&2
-        rm -f "$rules_dir/$TARGET_RULES"
-        return 1
-    fi
-    write_provenance "$rules_dir/$PROVENANCE_FILE" "$sha" "$url" "$pinned" "$*" \
-        "$sigs" "$bytes" "$n_stock" "$tbytes"
-    printf '%s %s %s\n' "$sigs" "$bytes" "$n_stock"
-}
+# 2. The provenance must describe the file beside it.
+WANT="$(sed -n 's/^signatures: \([0-9][0-9]*\)$/\1/p' "$RULES_DIR/$PROVENANCE_FILE" | head -n1)"
+GOT="$(count_signatures "$RULES_DIR/$TARGET_RULES")"
+[[ -n "$WANT" ]] || fatal "provenance has no 'signatures:' line; $REFRESH_HINT"
+[[ "$GOT" -gt 0 ]] || fatal "$RULES_DIR/$TARGET_RULES has 0 live signatures; $REFRESH_HINT"
+[[ "$GOT" -eq "$WANT" ]] || fatal "provenance says $WANT signatures but $TARGET_RULES has $GOT — refresh forgot the provenance, or the file was edited. $REFRESH_HINT"
+BYTES="$(wc -c < "$RULES_DIR/$TARGET_RULES" | tr -d ' ')"
+echo "$LOG_PREFIX vendored: $GOT signatures, $BYTES bytes (provenance agrees)"
 
-# suricata_loaded_count <config>: the engine's own "N rules successfully loaded"
-# (empty if not printed). Exit status is the caller's second question: -T exits
-# 1 both for a rejected config and for a valid config with no rule file, so the
-# count is the fact that matters (test_suricata_resilience.sh measured this).
-suricata_loaded_count() {
-    local cfg="$1" logdir out rc=0
-    logdir="$(mktemp -d)"
-    # `|| rc=$?`, not `; rc=$?`: under set -e an assignment from a failing
-    # command substitution aborts the function, and the caller's fail-closed
-    # cleanup (remove the rejected rules) would never run. Found by the unit
-    # test's engine-rejects scenario (T17), not by reading.
-    out="$(suricata -T -v -c "$cfg" -l "$logdir" 2>&1)" || rc=$?
-    rm -rf "$logdir"
-    printf '%s\n' "$out" > "${SURICATA_T_LOG:-/dev/null}" 2>/dev/null || true
-    LOADED="$(printf '%s\n' "$out" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) rules successfully loaded.*/\1/p' | tail -n1)"
-    FAILED="$(printf '%s\n' "$out" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) rules failed.*/\1/p' | tail -n1)"
-    SURICATA_T_RC="$rc"
-    SURICATA_T_OUT="$out"
-    return 0
-}
-
-if [[ "${ORIONX_0530_LIB_ONLY:-}" == "1" ]]; then
-    # shellcheck disable=SC2317  # reachable when sourced
-    return 0 2>/dev/null || exit 0
-fi
-
-# --- Main ---------------------------------------------------------------------------
-echo "$LOG_PREFIX === Baking the curated ET-Open subset (DEC-PHASE13-043) ==="
-
-if ! command -v suricata >/dev/null 2>&1; then
-    echo "$LOG_PREFIX FATAL: suricata is not installed in the chroot; the package list is broken." >&2
-    exit 1
-fi
-if [[ ! -r "$SURICATA_CONFIG" ]]; then
-    echo "$LOG_PREFIX FATAL: $SURICATA_CONFIG missing — includes.chroot not staged before hooks?" >&2
-    exit 1
-fi
-
-TARBALL="$(mktemp /tmp/emerging.rules.XXXXXX.tar.gz)"
-trap 'rm -f "$TARBALL"' EXIT
-echo "$LOG_PREFIX fetching $ET_OPEN_URL"
-if ! wget -q --tries=3 --timeout=60 -O "$TARBALL" "$ET_OPEN_URL"; then
-    echo "$LOG_PREFIX FATAL: fetch failed — the build host needs rules.emergingthreats.net (DEC-PHASE13-043 fail-closed)." >&2
-    exit 1
-fi
-
-# shellcheck disable=SC2086  # the category list is a deliberate word list
-if ! RESULT="$(install_rules "$TARBALL" "$ET_OPEN_SHA256" "$STOCK_RULES_DIR" "$RULES_DIR" \
-                "$ET_OPEN_URL" "$ET_OPEN_PINNED_ON" $ET_OPEN_CATEGORIES)"; then
-    echo "$LOG_PREFIX FATAL: rules not installed; refusing to produce an image whose IDS has no signatures." >&2
-    exit 1
-fi
-read -r SIGS BYTES N_STOCK <<< "$RESULT"
-echo "$LOG_PREFIX curated: $SIGS signatures, $BYTES bytes, $N_STOCK stock -events files -> $RULES_DIR/$TARGET_RULES"
-
-# --- Check: ask the engine, not the byte count ------------------------------------
+# 3. Ask the engine, not the byte count.
 echo "$LOG_PREFIX suricata -T against $SURICATA_CONFIG ..."
-LOADED=""; FAILED=""; SURICATA_T_RC=0; SURICATA_T_OUT=""
-suricata_loaded_count "$SURICATA_CONFIG"
-if [[ "$SURICATA_T_RC" -ne 0 || -z "$LOADED" || "$LOADED" -eq 0 ]]; then
-    echo "$LOG_PREFIX FATAL: suricata -T rc=$SURICATA_T_RC, loaded='${LOADED:-none}'. Engine output (tail):" >&2
-    printf '%s\n' "$SURICATA_T_OUT" | tail -40 | sed 's/^/    /' >&2
-    rm -f "$RULES_DIR/$TARGET_RULES" "$RULES_DIR/$PROVENANCE_FILE" "$RULES_DIR/$LICENSE_COPY"
-    exit 1
+LOGDIR="$(mktemp -d)"
+trap 'rm -rf "$LOGDIR"' EXIT
+T_RC=0
+# `|| T_RC=$?`, not `; T_RC=$?`: under set -e an assignment from a failing
+# command substitution would abort the script before the diagnosis prints.
+T_OUT="$(suricata -T -v -c "$SURICATA_CONFIG" -l "$LOGDIR" 2>&1)" || T_RC=$?
+LOADED="$(printf '%s\n' "$T_OUT" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) rules successfully loaded.*/\1/p' | tail -n1)"
+FAILED="$(printf '%s\n' "$T_OUT" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) rules failed.*/\1/p' | tail -n1)"
+if [[ "$T_RC" -ne 0 || -z "$LOADED" || "$LOADED" -eq 0 ]]; then
+    echo "$LOG_PREFIX FATAL: suricata -T rc=$T_RC, loaded='${LOADED:-none}'. Engine output (tail):" >&2
+    printf '%s\n' "$T_OUT" | tail -40 | sed 's/^/    /' >&2
+    fatal "the engine does not accept the vendored rules; refusing to produce an image whose IDS is blind. $REFRESH_HINT"
 fi
 if [[ -n "$FAILED" && "$FAILED" -gt 0 ]]; then
     echo "$LOG_PREFIX WARNING: the engine rejected $FAILED rule(s) (loaded $LOADED). Rejected lines:" >&2
-    printf '%s\n' "$SURICATA_T_OUT" | grep -iE 'error|rejected|failed' | head -20 | sed 's/^/    /' >&2
+    printf '%s\n' "$T_OUT" | grep -iE 'error|rejected|failed' | head -20 | sed 's/^/    /' >&2
 fi
+[[ "$LOADED" -eq "$GOT" ]] || echo "$LOG_PREFIX NOTE: engine loaded $LOADED of $GOT counted signatures" >&2
 echo "$LOG_PREFIX engine confirms $LOADED rules loaded"
-printf 'engine-loaded: %s\n' "$LOADED" >> "$RULES_DIR/$PROVENANCE_FILE"
+
+# 4. Record what was proven, on the image.
+{
+    printf 'baked-on: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'engine-loaded: %s\n' "$LOADED"
+} >> "$RULES_DIR/$PROVENANCE_FILE"
+chmod 0644 "$RULES_DIR/$TARGET_RULES" "$RULES_DIR/$PROVENANCE_FILE" "$RULES_DIR/$LICENSE_COPY"
 echo "$LOG_PREFIX provenance: $RULES_DIR/$PROVENANCE_FILE"
 sed 's/^/    /' "$RULES_DIR/$PROVENANCE_FILE"
 echo "$LOG_PREFIX === done ==="
