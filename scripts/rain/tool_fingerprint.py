@@ -145,10 +145,12 @@ MIN_PORTS_FOR_ORDER = 8
 def port_order(ports_in_time_order: list | None) -> str | None:
     """'sequential' | 'random' | None, from the ports as they were observed.
 
-    Sequential means the probes walked the port space in ascending steps of
-    one (allowing an occasional retransmit or gap). Random means consecutive
-    probes were almost never neighbours — what nmap's default shuffle and
-    masscan's randomisation both look like. Anything in between is None.
+    Sequential means the probes walked the port space in steps of one, up or
+    down (allowing an occasional retransmit or gap). Random means consecutive
+    probes were almost never neighbours AND the walk changed direction about
+    as often as a shuffle does — what nmap's default shuffle and masscan's
+    randomisation both look like. A monotonic list with gaps (a sorted
+    `ports_seen`, say) is neither, and yields None rather than a claim.
     """
     if not ports_in_time_order or len(ports_in_time_order) < MIN_PORTS_FOR_ORDER:
         return None
@@ -159,11 +161,12 @@ def port_order(ports_in_time_order: list | None) -> str | None:
     pairs = list(zip(ports, ports[1:]))
     if not pairs:
         return None
-    steps = sum(1 for a, b in pairs if 0 < b - a <= 2)
-    frac = steps / len(pairs)
-    if frac >= 0.8:
+    n = len(pairs)
+    steps = sum(1 for a, b in pairs if 0 < abs(b - a) <= 2) / n
+    ascents = sum(1 for a, b in pairs if b > a) / n
+    if steps >= 0.8:
         return "sequential"
-    if frac <= 0.2:
+    if steps <= 0.2 and 0.3 <= ascents <= 0.7:
         return "random"
     return None
 
