@@ -1135,17 +1135,17 @@ For analyzing log files:
 
 ### Detection and Classification Tools
 
-- **suricata** — network intrusion detection system. **A curated ET-Open ruleset is baked into the image** at `/var/lib/suricata/rules/suricata.rules`: about 3,200 signatures — the ET-Open `scan`, `attack_response`, `exploit`, `dos`, `shellcode` and `current_events` categories plus Debian's protocol-event rules — chosen so Suricata fits a 2 GB deck. The pin, fetch date, category list, signature count and licence (BSD) are recorded in `/var/lib/suricata/rules/orionx-rules.provenance.txt`. The service is installed but held back until the enable file exists; threat-posture Tier 1 creates it for you, or by hand:
+- **suricata** — network intrusion detection system. **A curated ET-Open ruleset ships on the image** at `/var/lib/suricata/rules/suricata.rules`: about 3,200 signatures — the ET-Open `scan`, `attack_response`, `exploit`, `dos`, `shellcode` and `current_events` categories plus Debian's protocol-event rules — chosen so Suricata fits a 2 GB deck. The set is vendored into the Orion-X source tree and refreshed by a reviewed commit (upstream publishes one rolling daily tarball), so a given release always carries the same rules; the upstream tarball's SHA-256 and date, the category list, signature count, the count the engine loaded at build time and the licence (BSD) are recorded in `/var/lib/suricata/rules/orionx-rules.provenance.txt`. The service is installed but held back until the enable file exists; threat-posture Tier 1 creates it for you, or by hand:
   ```bash
   sudo touch /var/lib/suricata/orionx-enabled      # allow the service to start
   sudo systemctl start suricata                    # live monitoring; alerts: sudo journalctl -u suricata -f
-  sudo journalctl -u suricata -b | grep 'rules successfully loaded'   # confirm the baked set loaded
+  sudo journalctl -u suricata -b | grep 'rules successfully loaded'   # confirm the shipped set loaded
   ```
   The **full** ET-Open feed (~52,000 signatures, including the large `malware` and `web_specific_apps` sets) is an opt-in that needs network access and several hundred MB more RAM — it exhausted a 2 GB deck, which is why it is not the default:
   ```bash
-  sudo orionx-freshen-suricata                     # network: REPLACES the baked subset with the full feed
+  sudo orionx-freshen-suricata                     # network: REPLACES the shipped subset with the full feed
   ```
-  Or run it once over a capture file instead of live traffic (the baked rules apply):
+  Or run it once over a capture file instead of live traffic (the shipped rules apply):
   ```bash
   sudo suricata -r /path/to/capture.pcap -l /path/to/output_dir
   ```
@@ -2012,7 +2012,7 @@ mmls disk.img                  # List partitions
 fls -o 2048 disk.img           # List files in filesystem
 tshark -r capture.pcap         # Analyze network capture
 pcap-analyzer.py capture.pcap  # Orion-X PCAP triage
-suricata -r capture.pcap -l out/   # IDS over a capture with the baked ET-Open subset (§10)
+suricata -r capture.pcap -l out/   # IDS over a capture with the shipped ET-Open subset (§10)
 yara -r /opt/orionx/yara/rules-yara-rules/index.yar DIR   # YARA scan (after orionx-freshen-yara)
 /opt/orionx/venv/re/bin/capa sample.exe   # Capability analysis
 roast extract -f access.log -o table      # OAST domain extraction
@@ -2025,7 +2025,7 @@ run-lynis.sh                   # Run Lynis host security audit
 artifact-analyzer.py           # Automated artifact analysis
 storyboard-gen.py              # Create event timeline
 download-samples.sh --samples-dir DIR   # Fetch public sample data (network)
-sudo orionx-freshen-suricata   # Replace the baked Suricata subset with the FULL ET-Open feed (network; needs RAM)
+sudo orionx-freshen-suricata   # Replace the shipped Suricata subset with the FULL ET-Open feed (network; needs RAM)
 sudo orionx-freshen-yara       # Fetch YARA rulesets (network)
 sudo orionx-diag [--json]      # Self-check of this image
 
@@ -2058,7 +2058,7 @@ Important file locations within Orion-X:
 /opt/orionx/theme/             # Theme assets (wallpapers, etc.)
 /opt/orionx/data/samples/      # Sample data originals (pcaps/ memory/ logs/ firmware/)
 /opt/orionx/yara/              # YARA README + lockfile; rules-*/ after orionx-freshen-yara
-/var/lib/suricata/rules/       # Suricata rules: baked ET-Open subset + orionx-rules.provenance.txt (full feed after orionx-freshen-suricata)
+/var/lib/suricata/rules/       # Suricata rules: shipped ET-Open subset + orionx-rules.provenance.txt (full feed after orionx-freshen-suricata)
 /opt/orionx/nucleotide/        # nucleotide lookup table + Snort rules
 /opt/orionx/venv/re/           # Python venv for RE tools (capa)
 /opt/orionx/optional/          # Optional post-boot installers
