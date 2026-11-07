@@ -694,7 +694,7 @@ The Orion Cockpit (`orionx-cockpit`; also the desktop icon, the panel's gauge ic
 
 - **EVENT STREAM** — newest first, coloured by severity, fading with age. Warning and critical events flash the whole deck — the visual twin of the R.A.I.N. tone.
 - **THREAT PRESSURE** gauge — severity-weighted with a 60 s half-life: **CALM** below 25, **ELEVATED** below 60, **HOSTILE** at 60 and above.
-- **NETWORK** — rx/tx sparkline.
+- **NETWORK** — rx/tx sparkline, plus the passive network picture's two headline lines: how many hosts this deck has observed (neighbour table, plus Zeek `conn.log` when Zeek is running) and the local/internet split of what it heard. The same lines, from the same module, head the Workbench's **This network** page (below).
 - **SYSTEMS** LEDs — Nebula, Firewall, Mesh, R.A.I.N.
 - **DECK** band (under the stream) — this machine: hostname, every interface's address, the default gateway, uptime, and CPU / memory / disk bars with the numbers written on them.
 - The status strip above the tabs (on every tab, not just LIVE) shows hostname and primary address, the posture badge (current threat-posture tier) and the clock.
@@ -710,6 +710,14 @@ Keys: **F11** toggles fullscreen on any tab. The other keys act on the **LIVE** 
 ### Orion Workbench (analyst toolbox)
 
 Applications → **Orion** → **Orion Workbench** (or `orionx-osint`; it used to be called the Investigation Surface) serves a launcher page on 127.0.0.1 (port 8787, walking forward if busy) that groups the deck's own tools with two vendored web tools: **CyberChef 11.5.0** (local; its 74 files are checksum-verified when the image is built; 23 incident-response recipes) and the **Orion-X Attack Map**, which draws what *this* deck has seen on the event bus. No GeoIP database ships, so sources that cannot be located are drawn in a labelled PUBLIC UNLOCATED sector, and the page says on every render that bearing and distance are layout, not location. The page also links `orionx-logquery`, Pivotglass, nucleotide, the analyzers, `orionx-capture`, the Cockpit, `storyboard-gen.py`, `orionx-diag`, `orionx-freshen-intel` and GODSEYE. Everything under *ON THIS DECK* works with no network. The strip under the title shows the deck's hostname, address, gateway, CPU, memory and disk — the same numbers as the Cockpit's DECK band, read from the same module, so the two can never disagree. `orionx-osint --check` reports what is present.
+
+#### This network (passive picture)
+
+Workbench → **This network** (or `orionx-osint --page network`) shows what this deck has *passively* observed on the segment it is plugged into: the active host count, the local-vs-internet split of the traffic it heard, the neighbour (ARP/NDP) table with the hardware vendor from the IEEE OUI registry, and whether WPAD, NetBIOS/SMB, LLMNR, mDNS, LDAP, DHCP, SSDP/UPnP or IoT-looking chatter is present. The Cockpit's **NETWORK** panel carries the same two headline lines; both read `scripts/awareness/network_picture.py`, so they cannot disagree.
+
+Read the labels literally. Every count is **observed by this deck** inside the window you pick (5 min to 6 h; the Cockpit uses 15 min): it is a sample of what spoke while the deck listened, not an inventory of the segment. Local vs internet is RFC 1918 classification of addresses, nothing more — there is no geolocation on this page or in its data. A vendor is a registry lookup of the 24-bit prefix; a randomised (locally administered) address has no vendor and the row says so. "IoT" is a heuristic from vendor prefixes and mDNS service names, labelled as such. Neighbour-table entries age by the kernel's rules, not by the window.
+
+Zeek is optional. With it (Tier 1 or 2 starts the managed sensor; `sudo /opt/orionx/optional/install-zeek.sh` installs it), the picture reads its `conn`, `dns`, `dhcp` and `ssdp` logs. Without it, the page falls back to the neighbour table and the OUI registry and names every degraded row: a sighting whose log was read and held nothing is **absent**; a sighting whose log is not available is **unknown**, never zero. Reads are bounded (tail-capped per log, 1.5 s budget); when a cap bites, the counts are declared a lower bound. Nothing on this page transmits a frame; the gateway-identity and upstream-filtering checks planned for it (#94) will be operator-initiated and posture-gated, and sit beneath the passive picture.
 
 ### GODSEYE (globe)
 
