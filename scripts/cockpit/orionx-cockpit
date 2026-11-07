@@ -43,6 +43,7 @@ sys.path.insert(0, str(_here.parent))
 import cockpit_lib as L  # noqa: E402
 sys.path.insert(0, str(_here.parent.parent / "awareness"))
 import deck_vitals as V  # noqa: E402  (DEC-PHASE12-049: one authority for hostname/IP/vitals)
+import network_picture as NP  # noqa: E402  (DEC-PHASE13-046: the NETWORK panel's host count and local/internet split, #93)
 sys.path.insert(0, str(_here.parent.parent))
 from control_center import app as CC  # noqa: E402  (DEC-PHASE12-053: the tab authority)
 from control_center.helpers import ux as CCUX  # noqa: E402
@@ -149,6 +150,7 @@ class Cockpit(Gtk.Window):
         self.flash = 0.0                    # 1.0 on a new warning/critical, decays
         self.systems = {"NEBULA": False, "FIREWALL": False, "MESH": False, "R.A.I.N.": False}
         self.vitals: dict = {}
+        self.net_picture: dict = {}    # network_picture.collect() (#93); {} until the first sys poll
         self._cpu_prev = None
         self.posture = "0"
         self.posture_status: dict = {}
@@ -232,8 +234,14 @@ class Cockpit(Gtk.Window):
             systems = {"NEBULA": True, "FIREWALL": True, "MESH": True, "R.A.I.N.": True}
         # DEC-PHASE12-024: what the tier is ENFORCING, not just what it is set
         # to. Empty dict when orionx-postured is not running.
+        # #93 (DEC-PHASE13-046): the NETWORK panel's host count and local/internet
+        # split come from the same module the Workbench serves, on this poller
+        # (POLL_SYS_MS = 5 s): it forks `ip neigh` and tails Zeek logs, so it
+        # belongs with the other forking probes, off the main loop. The engine
+        # is bounded (1.5 s budget) and never raises; {} means "not yet read".
         return {"systems": systems, "posture": L.posture_tier(),
-                "posture_status": L.posture_status(), "heal": L.healing_actions()}
+                "posture_status": L.posture_status(), "heal": L.healing_actions(),
+                "net_picture": NP.collect()}
 
     def _apply_sys(self, d: dict | None, err) -> None:
         if err is not None:
@@ -241,6 +249,7 @@ class Cockpit(Gtk.Window):
             return
         self.systems.update(d["systems"])
         self.posture, self.posture_status, self.heal = d["posture"], d["posture_status"], d["heal"]
+        self.net_picture = d.get("net_picture") or {}
         self.header.queue_draw()
 
     def _collect_vitals(self, _visible: bool) -> dict:
@@ -945,6 +954,13 @@ class Cockpit(Gtk.Window):
     # --- network sparkline ---
     def _net_panel(self, cr, x, y, w, h):
         cx, cy, cw, ch = self._panel(cr, x, y, w, h, "NETWORK")
+        # #93 (DEC-PHASE13-046): the passive picture's two headline lines, verbatim
+        # from network_picture.summary_of() — the same strings the Workbench page
+        # shows — so the two surfaces cannot disagree. The headline sits on the
+        # title row (right of "NETWORK"); the split sits between the two rates.
+        summ = (self.net_picture or {}).get("summary") or {}
+        self._text(cr, cx + cw, y + 20, summ.get("headline") or "network picture: reading…", 10.5,
+                   L.DIM, align="right", max_w=cw - 80)
         graph_h = ch - 22
         vmax = max(max(self.rates.rx_hist), max(self.rates.tx_hist), 1024.0)
         for hist, col in ((self.rates.rx_hist, L.CYAN), (self.rates.tx_hist, L.EMBER)):
@@ -968,6 +984,9 @@ class Cockpit(Gtk.Window):
             cr.stroke()
         self._text(cr, cx, cy + ch - 4, f"↓ {L.fmt_rate(self.rates.rx_rate)}", 12, L.CYAN, bold=True)
         self._text(cr, cx + cw, cy + ch - 4, f"↑ {L.fmt_rate(self.rates.tx_rate)}", 12, L.EMBER, bold=True, align="right")
+        if summ.get("split_line"):
+            col = L.DIM if summ.get("split_available") else L.AMBER
+            self._text(cr, cx + cw / 2, cy + ch - 4, summ["split_line"], 10.5, col, align="center", max_w=cw - 190)
 
     # --- systems LEDs ---
     def _systems_panel(self, cr, x, y, w, h):
