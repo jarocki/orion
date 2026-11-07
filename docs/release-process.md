@@ -416,7 +416,13 @@ bash scripts/release/stage-split-release.sh output/<iso> <tag> --out tmp/release
   - `scripts/release/stage-split-release.sh` — the release asset set (parts, sums, signatures, notes)
   - `scripts/release/ci-local.sh` — the CI gates, run locally
   - `CHANGELOG.md` — single source of truth for release notes
-- **Decisions (see MASTER_PLAN.md → Decision Log):**
+- **Decisions.** From Phase 12 onward the authority is the inline `@decision`
+  block beside the code (`grep -rn '@decision DEC-PHASE12-026' scripts iso
+  tests .github`); MASTER_PLAN.md → Decision Log is a table *derived* from
+  those blocks by `scripts/decisions/decision_log.py` (`make decision-log`
+  regenerates it; `tests/unit/test_decision_log.sh` fails when it drifts;
+  DEC-PHASE13-045). Phases 1-11 remain hand-written rows in the same section.
+  Relevant here:
   - `DEC-PHASE8-002` — release artifact pipeline rationale (Docker-in-CI for
     live-build, DRAFT-mode mandatory)
   - `DEC-PHASE12-026` — GPG signing is hard-fail (the earlier
