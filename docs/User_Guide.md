@@ -1418,11 +1418,13 @@ You can customize the terminal for your workflow:
 
 You can extend Orion-X with additional tools:
 
-1. Install additional packages:
+1. Install additional packages. Prefer the [optional installers](#15-optional-installers) under `/opt/orionx/optional/` when one exists: each goes through the shared `orionx_apt_install` helper (root and network checked first, non-interactive, a clear error when offline). For a package no installer covers, read the plan before you accept it:
    ```bash
-   sudo apt update
-   sudo apt install package-name
+   sudo apt-get update                 # the image ships no package lists; the `update` command does this and shows the upgrade plan without applying it
+   apt-get -s install package-name     # simulation: shows exactly what would be installed or changed
+   sudo apt-get install package-name
    ```
+   Keep in mind what you are installing into: on a live stick `/` is a RAM-backed overlay, so anything you install is gone at the next reboot unless a [persistence](#persistence-options) volume covers `/`, and every package upgraded in the running session replaces libraries under the desktop you are using. `sudo apt-get upgrade` is therefore a deliberate step, never part of a routine refresh. Display brightness needs no extra package: `xfce4-power-manager` ships since v3.1.1 and owns the Fn keys and `/sys/class/backlight`, so `brightnessctl` is unnecessary. If an install changes more than you expected, do not keep experimenting — run `sudo /opt/orionx/optional/apt-evidence.sh` (read-only; it bundles `/var/log/apt/history.log`, the simulations and the apt sources into `~/orionx-apt-evidence-<date>.tar.gz`) and attach the tarball to an issue.
 
 2. Install Python packages (Debian 13 marks the system Python as externally managed, so use a virtual environment):
    ```bash
@@ -1649,6 +1651,8 @@ Each installer:
 - Exits cleanly with an error message when offline (no partial installs)
 - Uses the shared `lib/orionx-installer-common.sh` for logging, apt/wget helpers,
   and SHA256 verification
+
+The same directory holds one diagnostic, not an installer: `sudo /opt/orionx/optional/apt-evidence.sh` collects what apt did and would do on this deck (`/var/log/apt/history.log` and `term.log`, `apt-get -s install` and `apt-get -s upgrade` simulations, `apt-cache policy`, packages not in the `ii` state, the overlay's free space, the sources) into `~/orionx-apt-evidence-<date>.tar.gz`. It changes nothing — every apt call it makes is a simulation — and prints the tarball path last. Run it when a package install behaved unexpectedly and attach the tarball to the issue.
 
 ## 16. Troubleshooting
 
