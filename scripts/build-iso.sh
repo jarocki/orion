@@ -127,6 +127,7 @@ check_no_stale_skips() {  # <lb build output log>
 
 # ---------------------------------------------------------------------------
 # @decision DEC-PHASE12-114
+# @canonical
 # @title A release-looking version needs its CHANGELOG section before it builds
 # @status accepted
 # @rationale The v2.2.0-beta shipped as v2.2.0-trixie-dev9, and QA found that a
@@ -503,6 +504,7 @@ fi
 # via `docker run -e`. Derive only when the caller supplied nothing.
 #
 # @decision DEC-PHASE13-031
+# @category BUILD
 # @title Build identity is derived from the repository that owns build-iso.sh,
 #   never from the caller's working directory
 # @status accepted
@@ -514,6 +516,19 @@ fi
 #   (#152, found building the 2026-10-28 development ISO). Both values now use
 #   the same root as the version: the directory above this script. The macOS
 #   wrapper does the same with REPO_ROOT_MACOS before `docker run -e`.
+#
+#   Decision Log entry as hand-written on 2026-11-01 (merged into this block
+#   by #97, which made the block the authority): Build identity
+#   (`ORIONX_GIT_SHA`, `ORIONX_GIT_TITLE`) is derived with `git -C` from the
+#   repository that owns `scripts/build-iso.sh`, in both the macOS Docker
+#   wrapper (`REPO_ROOT_MACOS`) and the inner derivation, the same root the
+#   version derivation already used; the dry-run banner prints `git_sha`. A
+#   bare `git rev-parse HEAD` resolves against `$PWD`, so a worktree build
+#   launched from the main checkout baked the main checkout's HEAD into
+#   `/etc/orionx-version` while `ISO_VERSION` named the worktree (#152, found
+#   building the 2026-10-28 development ISO): one identity file, two
+#   authorities. `test_build_iso.sh` T43 proves cwd independence with two
+#   scratch repos and forbids any bare identity call from returning
 _GIT_ID_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export ORIONX_GIT_SHA
 ORIONX_GIT_SHA="${ORIONX_GIT_SHA:-$(git -C "$_GIT_ID_ROOT" rev-parse --short=12 HEAD 2>/dev/null || echo unknown)}"

@@ -24,6 +24,7 @@ on:
     branches: [develop, 'release/**']
 
 # @decision DEC-PHASE13-037
+# @category CI
 # @title The QEMU gate runs on a pinned runner image (ubuntu-24.04), not
 #   ubuntu-latest
 # @status accepted
@@ -35,6 +36,24 @@ on:
 #   produces (#141, DEC-PHASE13-030) is only comparable on one QEMU/TCG
 #   baseline; a label that silently changes the OS, QEMU and firmware under it
 #   is not a baseline. Bump deliberately, with a run that shows the timings.
+#
+#   Decision Log entry as hand-written on 2026-11-02 (merged into this block
+#   by #97, which made the block the authority): Every workflow that builds or
+#   gates the ISO (`qemu-test.yml`, `release.yml`) runs on a pinned runner
+#   image (`runs-on: ubuntu-24.04`), and `qemu-boot-test.sh` searches the 4M
+#   OVMF pair (`OVMF_CODE_4M.fd`/`OVMF_VARS_4M.fd`) after the 2M pair. GitHub
+#   moved `ubuntu-latest` 24.04 → 26.04 between two runs of the gate (same
+#   provisioner version); 26.04's `ovmf-generic` ships only 4M images, UEFI
+#   SKIPped (exit 2) and run 41408913990 failed on nothing the image did. The
+#   gate's boot timings are #141's evidence and are comparable only on one
+#   OS/QEMU/firmware baseline; a floating label is not a baseline. Bumps are a
+#   deliberate change with a run that shows the timings. Extended 2026-11-03:
+#   the first v3.1.3 tag run (41575829468) failed in `release.yml`'s
+#   content-presence gate on 26.04 — xorriso's squashfs extraction in the
+#   `debian:trixie-slim` container exited 5 within 2 s — on an ISO the
+#   24.04-pinned QEMU workflow had passed at 427/0 the same hour; the release
+#   gate was pinned to the same image and the test now surfaces xorriso's
+#   stderr (`test_qemu_boot_test_default.sh` asserts neither workflow floats)
 jobs:
   qemu-boot:
     runs-on: ubuntu-24.04

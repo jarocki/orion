@@ -1,6 +1,7 @@
 # Orion-X Phoenix Edition — explain a plymouth-quit-wait failure in the serial log.
 #
 # @decision DEC-PHASE13-028
+# @category BOOT
 # @title plymouth-quit-wait failures dump plymouth/getty/console state via /dev/kmsg
 # @status accepted
 # @rationale The QEMU Boot Test fails intermittently in either firmware mode
@@ -18,6 +19,22 @@
 #   enabled, has no [Install] section, and is itself bounded so it cannot add
 #   to the hang. Every line carries the ORIONX-PLYMOUTH-DIAG prefix so
 #   qemu-boot-test.sh can lift the block out of the serial log.
+#
+#   Decision Log entry as hand-written on 2026-10-31 (merged into this block
+#   by #97, which made the block the authority): plymouth-quit-wait failures
+#   explain themselves: the wizard's `plymouth quit` is bounded (`timeout
+#   10`), `plymouth-quit-wait.service` pulls `orionx-plymouth-diag.service` in
+#   via `OnFailure=` to record
+#   plymouth/getty/DRM/serial-driver/console-termios state and every holder of
+#   the console through `/dev/kmsg` (prefix `ORIONX-PLYMOUTH-DIAG`), and
+#   `qemu-boot-test.sh` prints that block and every systemd failure line when
+#   a mode fails. Seven QEMU failures since 2026-10-25 (#141; UEFI six times,
+#   BIOS once, the other mode passing) end in a silent serial getty after the
+#   quit-wait cap fires, and nothing user space writes to the console tty
+#   appears afterwards while kernel messages do; a first diag unit with
+#   `StandardOutput=tty` printed nothing for the same reason, so delivery goes
+#   through kmsg. Diagnostics first, then the fix; the splash stays
+#   (DEC-PHASE11-025 was reversed for a reason)
 
 [Unit]
 Description=Orion-X plymouth-quit-wait failure diagnostics (kmsg dump)

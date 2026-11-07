@@ -9,6 +9,7 @@
 #   silent failures in package installation pipelines.
 #
 # @decision DEC-PHASE12-102
+# @canonical
 # @title Server mode drives the package unit matrix-synapse.service, writes ONE
 #   explicit listener, keeps registration closed and never puts a password on
 #   argv
@@ -87,6 +88,21 @@ SYNAPSE_UNIT="matrix-synapse.service"
 SYNAPSE_PORT=8008
 MESH_IFACE="${MESH_IFACE:-wg0}"
 
+# @decision DEC-PHASE12-060
+# @title Synapse is probed and run from its dh-virtualenv
+#   (/opt/venvs/matrix-synapse), not from system python or PATH
+# @status accepted
+# @date 2026-10-06
+# @rationale v2.2.0-rc9: "Set up as server" failed right after apt installed
+#   Synapse. matrix-synapse-py3 links synctl and register_new_matrix_user into
+#   /usr/bin but not synapse_homeserver, and the system python3 has no synapse
+#   module, so `command -v synapse_homeserver` and `python3 -m
+#   synapse.app.homeserver` both fail on a correct install. The installer and
+#   the shipped unit use the venv's binaries; the unit's ExecStartPre that
+#   looked for /etc/wireguard/wg0.conf (a file this image never creates) is
+#   gone; the Comms tab's "installed" probe follows the same path and says
+#   "once it is active, clients will connect to …".
+# ----------------------------------------------------------------------------
 # DEC-PHASE12-060: matrix-synapse-py3 (packages.matrix.org) is a dh-virtualenv
 # package. It links synctl/register_new_matrix_user into /usr/bin but NOT
 # synapse_homeserver, and the system python3 has no `synapse` module.
@@ -188,6 +204,17 @@ parse_args() {
         esac
     done
 
+    # @decision DEC-PHASE12-020
+    # @title setup-matrix.sh run bare asks for client or server instead of
+    #   failing
+    # @status accepted
+    # @date 2026-09-20
+    # @rationale Beta audit BLK-4 (v2.2.0-rc5): --mode is required, but the
+    #   Orion menu entry and the bare command the User Guide shows launch the
+    #   script without one, and it exited with a usage error. On an
+    #   interactive terminal it now asks; non-interactive runs still fail
+    #   fast.
+    # ------------------------------------------------------------------------
     # --mode is required. When launched interactively without it (the Orion
     # menu entry, or an operator typing the bare command as the User Guide
     # shows), ask instead of failing — DEC-PHASE12-020 (beta audit BLK-4).

@@ -52,6 +52,16 @@ MESH_HEALTH_COUNTER_DIR="${MESH_HEALTH_COUNTER_DIR:-$MESH_RUNTIME_DIR}"
 # Per-sender beacon rate limiter state (DEC-PHASE12-096).
 MESH_RATE_DIR="${MESH_RATE_DIR:-$MESH_RUNTIME_DIR/beacon-rate}"
 MESH_BEACON_MIN_INTERVAL="${MESH_BEACON_MIN_INTERVAL:-5}"
+# @decision DEC-PHASE13-009
+# @title Auto-peer only when a PSK is installed; otherwise hold beacons as
+#   candidates
+# @status accepted
+# @date 2026-10-18
+# @category MESH
+# @rationale Unknown LAN hosts cannot join by broadcasting; the Mesh tab
+#   lists candidates and the operator confirms or installs the PSK. Gated on
+#   DEC-PHASE13-001.
+# ----------------------------------------------------------------------------
 # Unauthenticated discovery never becomes peer authority by itself.  Without a
 # team PSK, validated beacons are held in this bounded, ephemeral candidate
 # queue until the operator approves one explicitly (DEC-PHASE13-009).

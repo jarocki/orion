@@ -2,6 +2,7 @@
 # nucleotide-cli — launcher for the vendored nucleotide package (roadmap #89).
 #
 # @decision DEC-PHASE12-012
+# @canonical
 # @title nucleotide vendored as a plain package + launcher (no pip, no venv)
 # @status accepted
 # @rationale nucleotide (github.com/jarocki/nucleotide) needs Python >= 3.10 and

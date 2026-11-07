@@ -1,6 +1,7 @@
 """style — the CSS class names the Cockpit tabs are themed by (DEC-PHASE13-019).
 
 @decision DEC-PHASE13-019
+@category COCKPIT
 @title Every Cockpit tab wears the LIVE look; classes are named once, here
 @status accepted
 @rationale #106: LIVE is drawn in Cairo (gradient, 40 px grid, ember-framed
@@ -11,6 +12,17 @@
   hand-build bold headings at each site, which CSS cannot select;
   heading() is the one way now, so a heading is themed because it is a
   heading, not because someone remembered a class.
+
+  Decision Log entry as hand-written on 2026-10-25 (merged into this block by
+  #97, which made the block the authority): Every tab wears the LIVE look. The
+  Cockpit paints each GTK page with LIVE's own gradient, window-aligned grid
+  and ember panel frame. Shared CSS gives page widgets Hack, ember glowing
+  titles/headings and ember dividers. Headings come only from
+  `style.heading()`. The dead headerbar/tagline/launcher CSS is removed.
+  Owner's request (#106). Reusing the Cairo primitives rather than imitating
+  them in CSS means the tabs cannot drift from LIVE. The animated scanline
+  stays LIVE-only, because a 6 fps redraw of widget trees is not worth the
+  reference deck's CPU.
 """
 from __future__ import annotations
 

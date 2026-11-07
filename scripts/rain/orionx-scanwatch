@@ -2,6 +2,7 @@
 """orionx-scanwatch — turn firewall drops into R.A.I.N. scan events.
 
 @decision DEC-PHASE12-022
+@canonical
 @title Port-scan detection sourced from nftables drop logs, not an IDS
 @status accepted
 @rationale The Cockpit's network panel reads byte counters from /proc/net/dev.

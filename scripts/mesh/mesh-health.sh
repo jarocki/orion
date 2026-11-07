@@ -42,6 +42,7 @@
 #   fault is the interface rather than one peer.
 #
 # @decision DEC-PHASE12-041
+# @canonical
 # @title Mesh healing is bounded, verified, non-destructive, and audible
 # @status accepted
 # @rationale Three defects, measured on rc4, all in these ~40 lines:

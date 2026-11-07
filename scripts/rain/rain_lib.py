@@ -62,6 +62,20 @@ MAX_REQUEST_BYTES = 128 * 1024
 SEVERITIES = ("info", "notice", "warning", "critical")
 
 # ---------------------------------------------------------------------------
+# @decision DEC-PHASE12-040
+# @title Event categories are a closed vocabulary owned by rain_lib
+#   (self-status vs detection); emitters cannot invent one
+# @status accepted
+# @date 2026-10-01
+# @rationale `category` used to be a free-form string (emit_event did
+#   str(category)[:64] or "general" and the CLI had no choices=) while
+#   --severity beside it was constrained. Consumers then decided what each
+#   category meant (pressure() excluded self-status categories from THREAT
+#   PRESSURE, scans-count.py counted detection ones) and emitters never saw
+#   that policy, so a mesh self-heal or a capture note could move the threat
+#   gauge. One vocabulary, enforced at emit time, makes "self-diagnosis is not
+#   a threat" a property of the bus rather than of each consumer.
+# ----------------------------------------------------------------------------
 # Category vocabulary (DEC-PHASE12-040)
 #
 # `category` used to be a free-form string: emit_event() did
@@ -204,6 +218,18 @@ def save_config(cfg: dict[str, Any]) -> bool:
 
 # --- Emission ---------------------------------------------------------------
 # ---------------------------------------------------------------------------
+# @decision DEC-PHASE12-029
+# @title Bus events carry a structured `detail` object (sid, signature,
+#   addresses, evidence) beside the message, and the broker serializes appends
+# @status accepted
+# @date 2026-09-28
+# @rationale The bus carried only a flat message string, so the Cockpit
+#   could say "port scan from 192.168.4.77" and nothing more; a drill-down
+#   ([s]quelch / [t]une on a signature) needs sid, rule and addresses to exist
+#   on the bus in the first place. Detail rides through untruncated, emitters
+#   (postured, scanwatch) attach it, and it must not cost the bus its
+#   integrity: the broker serializes appends from concurrent emitters.
+# ----------------------------------------------------------------------------
 # Structured detail (DEC-PHASE12-029)
 #
 # The bus carried only a flat message string, so the Cockpit could say "port

@@ -117,6 +117,17 @@ network-manager
 # nm-applet tray icon; ships /etc/xdg/autostart/nm-applet.desktop for
 # automatic startup in XFCE and any other XDG-compliant desktop session.
 network-manager-gnome
+# @decision DEC-PHASE12-061
+# @title gnome-keyring ships so the live session has a Secret Service
+# @status accepted
+# @date 2026-10-06
+# @rationale v2.2.0-rc9: Element opened with "No encryption support …
+#   keyring gnome_libsecret" and NetworkManager could not keep Wi-Fi secrets
+#   per user because the live session ran no Secret Service. ~4.7 MB plus
+#   gcr/pinentry. The autologin session has no password to unlock a keyring
+#   with, so the first secret may still prompt once; documented in the Guide
+#   rather than hidden.
+# ----------------------------------------------------------------------------
 # gnome-keyring: a Secret Service for the live session (DEC-PHASE12-061). Without
 # it Element (Electron) opens with "No encryption support … keyring
 # gnome_libsecret" and NetworkManager cannot keep Wi-Fi secrets per user.

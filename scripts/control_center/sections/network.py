@@ -9,6 +9,31 @@ nothing here changes state without a visible terminal: helpers/net_data.py
 
 Probes run in a worker thread while the tab is visible (DEC-PHASE12-068).
 
+@decision DEC-PHASE13-014
+@title Third-party VPNs come in only as NetworkManager WireGuard connections
+  (status for every NM vpn/wireguard connection, import of a provider's
+  .conf). No OpenVPN.
+@status accepted
+@date 2026-10-25
+@category NETWORK
+@rationale Owner's call. This narrows DEC-PHASE11-003 rather than reversing
+  it: one VPN protocol stays on the base, and NM already ships WireGuard
+  support, so no package is added. A provider that offers only OpenVPN is out
+  of scope.
+
+@decision DEC-PHASE13-015
+@title Network-tab capture controls drive the bounded orionx-capture@ unit
+  through `sudo` in a visible terminal. Status comes from posture-status.json.
+  "Open in Wireshark" opens the latest ring file read-only. The operator is
+  not added to the wireshark group.
+@status accepted
+@date 2026-10-25
+@category CAPTURE
+@rationale Owner's call. It reuses the one capture path that already has
+  ring, duration and free-space limits. It keeps the never-silent-sudo
+  convention (mesh.py:5-8) and gives the desktop session no new raw-capture
+  privilege.
+
 @decision DEC-PHASE9-019
 @title Bullseye Python 3.9 + PEP-563 (from __future__ import annotations)
 @status accepted

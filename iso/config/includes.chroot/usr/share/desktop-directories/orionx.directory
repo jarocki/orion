@@ -1,4 +1,15 @@
 [Desktop Entry]
+# @decision DEC-PHASE12-006
+# @title One branded "Orion" application-menu group collects every Orion-X
+#   tool
+# @status accepted
+# @date 2026-09-14
+# @rationale v2.2.0-beta: every Orion tool carries Categories=X-Orion; and
+#   applications-merged/orionx.menu collects them under this single submenu,
+#   so the operator finds the deck's tools in one place instead of scattered
+#   across the stock XFCE categories. test_cockpit_and_menu.sh asserts the
+#   group and its members.
+# ----------------------------------------------------------------------------
 # Orion-X Phoenix Edition — application-menu group (DEC-PHASE12-006).
 # Every Orion tool carries Categories=X-Orion; and applications-merged/orionx.menu
 # collects them under this single branded "Orion" submenu.

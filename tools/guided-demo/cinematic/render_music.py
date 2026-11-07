@@ -17,6 +17,7 @@ impact at that time; "riser": N schedules an N-second riser ending there;
 
 @decision DEC-PHASE12-063
 @title The trailer's music bed is synthesised, not licensed
+@status accepted
 @rationale A release video that ships in the repo and on GitHub must be
   redistributable without a music licence trail. Synthesis keeps the whole
   deliverable reproducible from source (same standard as the narration and

@@ -119,8 +119,10 @@ PURGE_WANTED=(
     python3-fonttools unicode-data
     # stray polkit agent + its OpenCV/GDAL tail
     ukui-polkit
-    # @decision DEC-PHASE12-048 — no screen-lock mechanism on the live deck.
-    # light-locker arrives as a Recommends of xfce4-session/task-xfce-desktop
+    # @decision DEC-PHASE12-048
+    # @title No screen-lock mechanism on the live deck: light-locker is purged
+    # @status accepted
+    # @rationale light-locker arrives as a Recommends of xfce4-session/task-xfce-desktop
     # on trixie and, after idle, hands the display to the LightDM greeter with
     # a password box over the Phoenix wallpaper — indistinguishable from a
     # failed autologin (reference deck, 2026-10-05). W11-2f (#76) disables

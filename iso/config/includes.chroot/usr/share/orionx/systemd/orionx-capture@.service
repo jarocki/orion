@@ -105,6 +105,19 @@ ProtectHostname=yes
 ProtectProc=invisible
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
+# @decision DEC-PHASE12-107
+# @title Unit sandboxes match what the confined code does: @privileged stays
+#   allowed for dumpcap, and StateDirectory= creates /var/lib/orionx
+# @status accepted
+# @date 2026-10-07
+# @rationale System QA P1-1: dumpcap runs as root and drops privileges
+#   itself with capset() and setres[ug]id(), which are in @privileged; denying
+#   the group killed every capture with 31/SYS (proven under systemd 257: with
+#   this exact filter list the pcap is written). @chown @clock @raw-io stay
+#   denied. P2-1: /var/lib/orionx is not in the image, so the capture and
+#   posture units declare StateDirectory= instead of assuming it.
+#   test_unit_sandbox.sh checks each sandbox against the code it confines.
+# ----------------------------------------------------------------------------
 # DEC-PHASE12-107 (system P1-1): @privileged is NOT denied. dumpcap runs as
 # root, so it drops privileges itself with capset() and setres[ug]id(), which
 # are in @privileged; denying them killed every capture with 31/SYS (proven

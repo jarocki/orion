@@ -210,6 +210,7 @@ EOF
 # ---
 # xfce4-power-manager.xml — v3.1.1 (#119, #120).
 # @decision DEC-PHASE13-023
+# @category DESKTOP
 # @title xfce4-power-manager ships, owns brightness and battery, never blanks or suspends the deck
 # @status accepted
 # @rationale The xfce4 metapackage only Suggests xfce4-power-manager, so no
@@ -226,6 +227,19 @@ EOF
 #   blank-on-* keys; blanking is xfce4-screensaver's, disabled above). Single
 #   writer, same /etc/skel authority (DEC-PHASE11-014); nothing else in the
 #   image writes this channel.
+#
+#   Decision Log entry as hand-written on 2026-10-27 (merged into this block
+#   by #97, which made the block the authority): `xfce4-power-manager` (+
+#   `upower`, `-plugins`) ships; 0100-create-user seeds its xfconf channel so
+#   it handles the brightness keys and the backlight but never blanks,
+#   DPMS-offs, suspends on lid close or locks on resume. The panel gains the
+#   pulseaudio (volume/mute) and power-manager (battery + brightness) plugins,
+#   ids 15-16, before the clock. #119/#120 (HP Pavilion, 2026-10-26): the
+#   `xfce4` metapackage only Suggests the power manager, so no shipped ISO
+#   handled brightness or showed a battery. Installing it alone would undo
+#   DEC-PHASE9-002/#76 (a monitoring deck stays visible) through its own DPMS
+#   defaults, so the seed is part of the same change. Panel plugins beat
+#   systray icons because the systray only shows what happens to register.
 # ---
 cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-power-manager.xml << EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -486,6 +500,20 @@ cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml << 'EOF
 EOF
 
 # ---
+# @decision DEC-PHASE12-005
+# @title Panel widgets are genmon plugins with a per-plugin Command= file
+#   and <txt> markup
+# @status accepted
+# @date 2026-09-13
+# @rationale xfce4-genmon-plugin does not read its command from the panel
+#   XML; without a per-plugin ~/.config/xfce4/panel/genmon-<id>.rc the widget
+#   is unconfigured and shows its "(genmon)" placeholder, and without <txt>
+#   markup the output is not rendered. This hook writes one config file per
+#   plugin into the operator's skeleton, and the widgets (clients-count,
+#   scans-count, net-status) print <txt>/<tool> markup with glyphs (U+25C9,
+#   U+25CE) that render in the panel font. test_desktop_wiring.sh checks both
+#   halves.
+# ----------------------------------------------------------------------------
 # genmon per-plugin config files (DEC-PHASE12-005).
 # xfce4-genmon-plugin does NOT read its command from the panel XML above — it
 # reads Command= from ~/.config/xfce4/panel/genmon-<plugin-id>.rc. Without these

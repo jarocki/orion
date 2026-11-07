@@ -2,6 +2,7 @@
 """orionx-logquery — forensic query and local threat correlation for Orion-X.
 
 @decision DEC-PHASE12-027
+@canonical
 @title logquery ported into Orion-X as a multi-source, intel-aged IR tool
 @status accepted
 @rationale Ported, with the owner's authorization, from jarocki-edge
@@ -445,6 +446,17 @@ def resolve_local_path(path: str | None, stdin_is_tty: bool) -> str:
     """Decide what a local run reads, before anything blocks on it.
 
     @decision DEC-PHASE13-016
+    @title With no --path: piped stdin is read; on an interactive terminal
+      it reads /run/orionx/events.jsonl and says so; with neither, it refuses
+      at once. -v narrates each stage on stderr.
+    @status accepted
+    @date 2026-10-25
+    @category LOGQUERY
+    @rationale Root cause of the reported hang: --path defaulted to stdin,
+      so the bare command advertised by the Workbench card, the Attack Map and
+      orionx-help blocked on the tty with no output. Those surfaces point the
+      operator at the event stream, so that is the interactive default.
+      Annotated at resolve_local_path().
     The old default was stdin unconditionally, so the advertised bare command
     sat on an interactive terminal waiting for input that was never coming,
     with no output at all — the reported "hang". Now: piped input is still

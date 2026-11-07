@@ -649,6 +649,7 @@ def live_layout(W: float, H: float, pad: int = 16,
 # ---------------------------------------------------------------------------
 # #124 — the Attack Map from the Cockpit.
 # @decision DEC-PHASE13-026
+# @category COCKPIT
 # @title A click on THREAT PRESSURE or DEFENSIVE ACTIONS opens the Attack Map (orionx-osint --page pewpew), detached
 # @status accepted
 # @rationale The owner asked for the Attack Map inside the Cockpit, or at least
@@ -659,6 +660,16 @@ def live_layout(W: float, H: float, pad: int = 16,
 #   exactly that, in its own session so closing the Cockpit does not kill it.
 #   Resolution is a pure function of the layout the frame was drawn with, so
 #   clicks and pixels cannot disagree. The APPROVE button keeps precedence.
+#
+#   Decision Log entry as hand-written on 2026-10-27 (merged into this block
+#   by #97, which made the block the authority): A click on THREAT PRESSURE or
+#   DEFENSIVE ACTIONS opens the Attack Map by spawning `orionx-osint --page
+#   pewpew` detached (`cockpit_lib.open_attack_map`); clicks resolve with the
+#   pure `panel_at()` against the layout the frame was drawn with; APPROVE
+#   keeps precedence. Not embedded. #124. Embedding needs WebKitGTK inside a
+#   Cairo window that must stay thread-free and cheap on Bay Trail; the map
+#   already has a launcher that reuses the running osint server and the
+#   dedicated Firefox profile (DEC-PHASE12-142).
 # ---------------------------------------------------------------------------
 ATTACK_MAP_PANELS = ("gauge", "actions")
 ATTACK_MAP_ARGV = ("orionx-osint", "--page", "pewpew")

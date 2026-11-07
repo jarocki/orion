@@ -5,6 +5,7 @@
 # retries and waits (release-process §1, §4, §10; DEC-PHASE13-029).
 #
 # @decision DEC-PHASE13-038
+# @category RELEASE
 # @title The owner's release steps are a script with error checking, retries
 #   and waits, not a list of commands to paste
 # @status accepted
@@ -54,6 +55,28 @@
 # Runs from the repository root on the Mac. Needs: gh (authenticated), git,
 # shasum, gpg, xorriso, unsquashfs, python3, dpkg (for signed staging), and
 # caffeinate (optional; keeps the Mac awake during uploads).
+#
+#   Decision Log entry as hand-written on 2026-11-02 (merged into this block
+#   by #97, which made the block the authority): The owner's release steps are
+#   `scripts/release/owner-release.sh`: merge (checks green, base must be
+#   develop, wait for MERGED), fast-forward main (refuse when the CHANGELOG
+#   lacks the tag's section), tag (never move a tag that has a Release;
+#   `--retag` for a bare one), wait for the tag run, download + sidecar check,
+#   stage + sign, draft + per-part size-verified retried uploads, fresh
+#   signature verification, `--publish` to flip; `--from` resumes, `--dry-run`
+#   plans; bash 3.2. 2026-11-02: seven stacked PRs merged nine seconds apart,
+#   before GitHub retargeted them, each into its own base; only #157 reached
+#   develop; the pasted fast-forward and tag followed and the tag run failed
+#   at the CHANGELOG gate. A list of commands has no check between steps; a
+#   script does. Tested against stub tools (`test_owner_release.sh`). Extended
+#   2026-11-03 to 2026-11-05 by the v3.1.3 publication (PRs #171, #169;
+#   shipped in v3.1.4): run selected by the tag's commit, draft read by id
+#   through the REST assets endpoint (hidden `starter` assets from reset
+#   uploads deleted), parts already uploaded skipped,
+#   `--part-size`/`--restage`, upload stderr kept, ERR trap, and a
+#   `.owner-release-source` marker binding the downloaded ISO and staging to
+#   tag commit + run id + ISO hash, rejecting unproven caches instead of
+#   adopting or deleting them
 
 set -Eeuo pipefail   # -E: the ERR trap below also fires inside functions and $(...)
 

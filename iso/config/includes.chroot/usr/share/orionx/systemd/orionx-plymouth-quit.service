@@ -2,6 +2,9 @@
 # wizard takes tty1.
 #
 # @decision DEC-PHASE13-030
+# @canonical
+# @category BOOT
+# @date 2026-11-01
 # @title Plymouth is quit from a unit with no TTY, never from the wizard's own
 #   exec context (#141)
 # @status accepted
@@ -31,6 +34,31 @@
 #   wizard, plymouthd is gone. It runs only while the wizard's own guard file
 #   is absent; later boots leave the splash to lightdm as before.
 # @see orionx-first-boot.service, DEC-PHASE11-044, DEC-PHASE13-028
+#
+#   Decision Log entry as hand-written on 2026-11-01 (merged into this block
+#   by #97, which made the block the authority): Plymouth is quit from a unit
+#   with no TTY, never from the first-boot wizard's own exec context: new
+#   `orionx-plymouth-quit.service` (`ExecStart=-/usr/bin/plymouth quit`,
+#   `TimeoutStartSec=20`, the wizard's first-boot guard, no TTY settings), and
+#   `orionx-first-boot.service` `Wants=` it and orders `After=` it and
+#   `plymouth-quit-wait.service`, the rule the stock `getty@.service` follows;
+#   the wizard's `ExecStartPre=plymouth quit` is gone. Supersedes the
+#   ExecStartPre part of DEC-PHASE11-044 and the `timeout 10` part of
+#   DEC-PHASE13-028. Root cause of the QEMU boot flake (#141), from the first
+#   two `ORIONX-PLYMOUTH-DIAG` blocks (runs 41272254094 and 41272250733, both
+#   BIOS, identical signature): plymouthd alive and not blocked (`epoll_wait`
+#   in one, on CPU in the other); the wizard's pre-exec child (`(timeout)`,
+#   never execed) holding tty1 on fds 0-2 and the `/dev/console` lock on fd 3;
+#   serial-getty's `(agetty)` child in `locks_lock_inode_wait` on that lock;
+#   no login prompt. systemd v257 `exec-invoke.c` acquires, locks and resets a
+#   `StandardInput=tty`/`TTYReset=yes` unit's TTY before exec, and the wizard
+#   did that to tty1 while plymouthd owned the VT because the only thing that
+#   would quit the splash was the command waiting to exec; `lightdm.service`
+#   `Conflicts=` the stock `plymouth-quit.service`, so nothing else quits it
+#   on first boot. A `timeout` around a command cannot bound a block that
+#   happens before exec. The diag script now records stack/wchan/syscall of
+#   every console holder and pre-exec child plus `/proc/locks`. Evidence of
+#   the fix: the PR's own QEMU runs; not reproduced locally
 
 [Unit]
 Description=Orion-X: quit the Plymouth splash before the first-boot wizard takes tty1

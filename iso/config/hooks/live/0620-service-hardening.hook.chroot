@@ -102,6 +102,7 @@ EOF
 # 4. Systemd unit hardening — REMOVED. It never ran, and could not have.
 #
 # @decision DEC-PHASE12-039
+# @canonical
 # @title Unit hardening belongs in the unit file, not in a build-time injector
 # @status accepted
 # @rationale This hook used to append ProtectSystem=strict / NoNewPrivileges /

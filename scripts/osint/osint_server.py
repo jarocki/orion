@@ -8,6 +8,7 @@ not edited by this slice, so the entrypoint ships as a real file via
 includes.chroot rather than as a second symlink authority.
 
 @decision DEC-PHASE12-043
+@canonical
 @title Local OSINT surface: launcher page, vendored CyberChef, local pew-pew map
 @status accepted
 @rationale Three things on this deck are web pages that must work with no
@@ -29,6 +30,7 @@ includes.chroot rather than as a second symlink authority.
   the network to find out whether the network is there.
 
 @decision DEC-PHASE12-045
+@canonical
 @title GODSEYE on Orion-X: vendored static globe, posture-gated at the server
 @status accepted
 @rationale GODSEYE (VrushankPatel/godseye, Apache-2.0) is a CesiumJS globe
@@ -541,6 +543,20 @@ def build_status() -> dict:
         "deck": deck_vitals.collect(sample=0.15),
         "geoip": geo,
         "server": {"pid": os.getpid(), "root": str(WEB_ROOT)},
+        # @decision DEC-PHASE12-052
+        # @title Optional features are listed on the Workbench with their
+        #   real state, taken from each installer's own idempotence probe
+        # @status accepted
+        # @date 2026-10-05
+        # @rationale v2.2.0-rc6: the Workbench's Optional section was
+        #   missing Piper voice, Element and gomuks, and said nothing about
+        #   whether an installer had been run. /api/status.json now reports
+        #   installed / not installed from the installer's own probe
+        #   (optional_state() is pure: installed only from evidence), an entry
+        #   without evidence is shown as unknown rather than claimed, and the
+        #   Piper card states what the voice costs and that espeak-ng speaks
+        #   without it.
+        # --------------------------------------------------------------------
         # DEC-PHASE12-052: optional installers, with evidence of whether each
         # has been run on this deck, so the Workbench can say so.
         "optional": optional_state(load_installable(WEB_ROOT), bool(geo.get("available"))),

@@ -71,6 +71,7 @@ RestartSec=5
 TimeoutStartSec=120
 
 # @decision DEC-PHASE12-101
+# @canonical
 # @title "ollama is localhost-only" is enforced here, by the kernel, not by
 #   an AppArmor rule that cannot express it
 # @status accepted

@@ -71,6 +71,7 @@ jobs:
           fi
 
       # @decision DEC-PHASE13-029
+      # @category RELEASE
       # @title CI builds and gates; the owner signs. The passphrase is never a secret.
       # @status accepted
       # @rationale The signing key's passphrase stays on the owner's Mac. The
@@ -85,6 +86,21 @@ jobs:
       #   unsigned draft is still impossible (DEC-PHASE12-026): the draft step
       #   only runs after signed staging. Secrets cannot be tested in `if:`, so
       #   they are reduced to booleans in env here.
+      #
+      #   Decision Log entry as hand-written on 2026-10-31 (merged into this
+      #   block by #97, which made the block the authority): CI builds, gates
+      #   and imports the signing key; it never signs. `GPG_PASSPHRASE` is not
+      #   a repository secret and the release workflow must not require it:
+      #   the automated pipeline ends at the gated artifact
+      #   (`release-artifacts-<run>`), and staging, signing and the draft
+      #   release are the owner's steps on his Mac (release-process §10). The
+      #   owner's standing rule, restated 2026-10-31 ("I am not going to set
+      #   my GPG Passphrase as a repository secret. Never."); a repo with no
+      #   branch/tag protection, a write-capable default token and movable
+      #   action tags cannot hold the passphrase safely, and an unsigned
+      #   release must still be impossible to produce by accident
+      #   (DEC-PHASE12-026). v3.1.2 was produced this way: CI run 41248480723
+      #   built and gated, the owner signed
       - name: Decide whether this run can sign (DEC-PHASE13-029)
         id: signing
         if: startsWith(github.ref, 'refs/tags/v')
@@ -155,6 +171,18 @@ jobs:
               bash tests/integration/test-iso-content-presence.sh "$ISO"
             '
 
+      # @decision DEC-PHASE12-026
+      # @title Unsigned releases must fail, not ship quietly: GPG import and
+      #   signing carry no continue-on-error
+      # @status accepted
+      # @date 2026-09-27
+      # @rationale v2.2.0-rc5: with continue-on-error on the import and sign
+      #   steps a missing key produced an unsigned draft and a green run. A
+      #   missing key now fails the run; the fix is to provision the key,
+      #   never to re-add continue-on-error. check_workflows.py asserts every
+      #   signing/staging/draft step runs only when can_sign is true. Extended
+      #   by DEC-PHASE13-029: CI imports the key and gates; the owner signs.
+      # ----------------------------------------------------------------------
       # These steps deliberately DO NOT set continue-on-error (DEC-PHASE12-026).
       # An unsigned public release cannot be produced by accident. If import
       # fails, provision GPG_PRIVATE_KEY and GPG_PASSPHRASE in repository

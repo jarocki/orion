@@ -7,6 +7,7 @@ With --require-kernel a real, supported amd64 kernel image must be present; with
 --squashfs/--boot-kernel the ISO's boot payload must be one of those kernels.
 
 @decision DEC-PHASE13-027
+@category RELEASE
 @title One floor table for every security promise the release notes make
 @status accepted
 @rationale v3.0.1 added this gate for one advisory (DSA-6574-1, the PHP2Shell
@@ -34,6 +35,17 @@ With --require-kernel a real, supported amd64 kernel image must be present; with
   Comparison stays with dpkg: a Debian host or container is the only place
   this runs for real, and a Python re-implementation would be a second
   authority on version order.
+
+  Decision Log entry as hand-written on 2026-10-31 (merged into this block by
+  #97, which made the block the authority): Package security floors are one
+  table in `check-package-security.py` (label, name regex, Debian floor,
+  advisory), enforced by hook 0890, `build-iso.sh`, the content-presence gate
+  and signed staging; absence is safe; dpkg compares;
+  `test_package_security.py` requires CHANGELOG.md to cite every row's
+  advisory. v3.1.1 had to promise Node2Shell (Brotli, DSA-6582-1), Zeek 9.0.1
+  and firefox-esr DSA-6590-1 on top of the PHP2Shell floor from v3.0.1; a
+  promise the gate does not check is a claim, and a second version comparator
+  would be a second authority
 """
 
 import argparse

@@ -5,6 +5,7 @@
 # on the live deck, no reboot (#151, DEC-PHASE13-035)
 #
 # @decision DEC-PHASE13-035
+# @category DECK
 # @title Bluetooth is an operator-run optional installer that prefers a deb
 #   cache baked into the ISO at build time and falls back to the network
 # @status accepted
@@ -54,6 +55,28 @@
 #   Enables bluetooth.service, unblocks the radio (rfkill), opens
 #   blueman-manager for pairing.
 #   Mission verb: operate — a mouse or keyboard on the deck.
+#
+#   Decision Log entry as hand-written on 2026-11-01 (merged into this block
+#   by #97, which made the block the authority): Bluetooth is an operator-run
+#   optional installer, `install-bluetooth.sh`: bluez + blueman +
+#   pulseaudio-module-bluetooth with `--no-install-recommends`, from a deb
+#   cache the 0500 hook bakes into the ISO at build time
+#   (`/opt/orionx/optional/cache/bluetooth/`, package list read from the
+#   installer, soft-fail) with a network fallback; unmasks and starts
+#   `bluetooth.service`, `rfkill unblock bluetooth`, opens Blueman; `--check`
+#   verdict, `--dry-run` plan, idempotent re-run re-asserts service + radio;
+#   listed in the Orion Tools catalogue, README and User Guide §15; the image
+#   still ships no Bluetooth userspace. Pavilion #151: "an optional installer
+#   that does not require a reboot". Kernel modules and firmware were always
+#   on the image, only userspace is missing. Measured against the v3.1.2
+#   package set (debian:trixie-slim, 2026-11-01): 20 debs / 6.8 MB without
+#   Recommends (21 / 6.9 MB with the PulseAudio module), 119 debs / 75.7 MB
+#   with blueman's Recommends — so no Recommends, and 7 MB is cheap to cache
+#   on a 3 GB ISO. The cache is downloaded by the same apt run that built the
+#   image, so it matches the image's libraries, which a later online install
+#   cannot promise; and the deck most wants a mouse exactly where it has no
+#   network. The banner states that a radio is being turned on and how to turn
+#   it off (fewer-radios posture stays a stated default, not a lock)
 
 set -euo pipefail
 

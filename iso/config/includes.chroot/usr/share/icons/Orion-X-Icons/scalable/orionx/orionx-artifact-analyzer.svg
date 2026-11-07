@@ -1,7 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48">
   <!-- Orion-X Phoenix Edition — Artifact Analyzer icon (evidence file under a lens) -->
-  <!-- @decision DEC-PHASE13-018 — Orion-themed glyph replacing a generic theme icon (#104) -->
+  <!-- @decision DEC-PHASE13-018
+       @title Artifact Analyzer, DJ Deck, Matrix Comms, Matrix Setup and
+       Storyboard Generator get orionx-* glyphs in the existing style; the
+       Cockpit and DJ Deck windows set their glyph by theme name
+       @status accepted
+       @date 2026-10-25
+       @category ICONS
+       @rationale Owner's request (#104). Same 48×48 disc and ring, same
+       accent palette. Rendered through the shipped image's own gdk-pixbuf
+       before commit. Workbench windows remain a terminal and Firefox, by
+       design of its launcher. -->
   <!-- License: GPL-3.0+ (Orion-X project, original work) -->
   <circle cx="24" cy="24" r="23" fill="#1a1a1a" stroke="#FF5722" stroke-width="1"/>
   <!-- evidence file with a folded corner and hex-dump lines -->

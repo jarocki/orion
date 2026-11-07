@@ -22,6 +22,19 @@
 [Unit]
 Description=Orion-X Threat Posture Enforcement (tiers, Suricata IDS, deception)
 Documentation=file:/var/lib/suricata/orionx-README.md
+# @decision DEC-PHASE12-032
+# @title orionx-postured is deliberately not ordered after
+#   nebula-runtime.service
+# @status accepted
+# @date 2026-09-29
+# @rationale The Nebula contextualiser is best-effort by design: an absent,
+#   slow or dead model must never gate an alert. Ordering the whole daemon
+#   behind the model runtime inverted that guarantee; on v2.2.0-rc3
+#   orionx-postured sat "inactive (dead)" with a pending job, so Shields Up
+#   enforcement and Zeek ingest were both dormant on the first image that
+#   shipped Zeek. test_awareness_daemon.sh asserts the unit carries no
+#   ordering on the model runtime.
+# ----------------------------------------------------------------------------
 # Deliberately NOT ordered on nebula-runtime.service (DEC-PHASE12-032).
 #
 # The Nebula contextualiser is best-effort by design: an absent, slow or dead

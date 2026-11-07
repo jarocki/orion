@@ -284,6 +284,23 @@ run_identity_checks() {
             "expected=orionx-operator actual=$actual_user"
     fi
 
+    # @decision DEC-PHASE12-021
+    # @title orionx-diag lives in scripts/ (the single authority
+    #   build-iso.sh stages) and its assertions match the shipped image
+    # @status accepted
+    # @date 2026-09-20
+    # @rationale v2.2.0-beta shipped without orionx-diag: build-iso.sh
+    #   rsyncs scripts/ over /opt/orionx/scripts/ with --delete and the tool
+    #   lived only in the chroot overlay, so every build removed it before the
+    #   0700 hook could symlink it. Moved to scripts/orionx-diag, which the
+    #   build stages. Its stale checks were corrected at the same time: the
+    #   radare2 and GRUB-theme-directory checks are gone, the socket check
+    #   targets nebula-runtime.service (DEC-PHASE11-033), the branding check
+    #   asserts Theme=orionx-phoenix in plymouthd.conf (DEC-PHASE11-044), and
+    #   the hostname check requires only that `hostname` is set and agrees
+    #   with /etc/hostname, because the wizard sets whatever the operator
+    #   chose.
+    # ------------------------------------------------------------------------
     # 1b: hostname is set and consistent. live-config boots as "orionx"; the
     # first-boot wizard then sets whatever the operator chose (default
     # "orionx-node"), so the value itself is not asserted — only that the kernel

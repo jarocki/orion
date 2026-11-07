@@ -437,6 +437,21 @@ if [[ -d /opt/orionx/theme ]]; then
     find /opt/orionx/theme -type f -exec chmod 644 {} \;
 fi
 
+# @decision DEC-PHASE12-108
+# @title Root-executed trees stay root-owned: the latent `chown -R
+#   orionx:orionx /opt/orionx` is removed, and /var/log/orionx stays 1777
+#   without squattable root log files
+# @status accepted
+# @date 2026-10-07
+# @rationale Security review F19-F21 (v3.0.0): a chown guarded on a user
+#   named "orionx" (which does not exist) stood in this hook; had anyone
+#   "fixed" the name, every script root units execute (postured, heald, the
+#   wizard) would have become operator-writable, a local privilege escalation.
+#   Removed, not disabled. Root unit log files under /var/log/orionx are
+#   pre-created by tmpfiles so they cannot be squatted while the directory
+#   stays 1777 for operator tools, and the units' kernel-facing hardening
+#   touches none of their real behaviour.
+# ----------------------------------------------------------------------------
 # DEC-PHASE12-108 (security F20): a latent `chown -R orionx:orionx /opt/orionx`
 # (guarded on a user named "orionx", which does not exist) stood here. Had
 # anyone "fixed" the name, every script root units execute (postured, heald,

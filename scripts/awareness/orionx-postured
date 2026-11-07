@@ -2,6 +2,7 @@
 """orionx-postured — make the threat-posture tier mean something.
 
 @decision DEC-PHASE12-024
+@canonical
 @title Threat posture is enforced by a daemon, and a blind IDS says so out loud
 @status accepted
 @rationale W10-5 shipped the tier selector (DEC-PHASE10-005) and W11-6 Layer A
@@ -165,6 +166,21 @@ CAPTURE_STATE_DIR = Path("/run/orionx/capture")
 # several places depending on how it was started. All three are runtime
 # questions, re-asked on every reassert cycle.
 #
+# @decision DEC-PHASE12-003
+# @title Trixie's PEP 668 is honoured (system-interpreter package setup uses
+#   --break-system-packages) and third-party tools such as Zeek come from the
+#   OpenSUSE Build Service repository under /opt/zeek
+# @status accepted
+# @date 2026-09-28
+# @rationale v2.2.0-beta flipped the base to Debian 13 (DEC-PHASE12-001).
+#   Python 3.13 marks the system interpreter externally managed, so the
+#   build's package setup passes --break-system-packages instead of creating
+#   a venv per tool. Zeek has no trixie package; the security:zeek OBS
+#   repository (Debian_13) is added by the 0500 hook and installs under
+#   /opt/zeek, which is why this daemon probes /opt/zeek/bin/zeek first. The
+#   repo install is soft-fail: a third-party repository outage must not break
+#   the image build.
+# ----------------------------------------------------------------------------
 # /opt/zeek is where the OBS zeek-core package lands (DEC-PHASE12-003). The
 # others cover a hand-built install and a distro package, in case the install
 # path changes under us.
@@ -187,6 +203,16 @@ ZEEK_NOTICE_LOG = "notice.log"
 ZEEK_WEIRD_LOG = "weird.log"
 ZEEK_CONN_LOG = "conn.log"
 
+# @decision DEC-PHASE13-004
+# @title Ship orionx-zeek@.service in 3.0.1
+# @status accepted
+# @date 2026-10-18
+# @category DETECTION
+# @rationale Templated on the interface like orionx-capture@; the Tier-1
+#   plan starts it alongside Suricata. Owner's call against the reviewers'
+#   'defer to v3.1': Tier 1 promises IDS coverage and Zeek ingest-only leaves
+#   half of it silent. Implemented in v3.1.3 as DEC-PHASE13-033 (#150).
+# ----------------------------------------------------------------------------
 # --- Zeek as a managed sensor (DEC-PHASE13-033, implements DEC-PHASE13-004) --
 # orionx-zeek@<iface>.service runs Zeek on one interface with
 # LogsDirectory=zeek/<iface>, so each instance writes /var/log/zeek/<iface>/.
@@ -2401,6 +2427,20 @@ def capture_status(state_dir: Path = CAPTURE_STATE_DIR) -> list[dict]:
 
 class PostureDaemon:
     def __init__(self, args):
+        # @decision DEC-PHASE12-034
+        # @title The Suricata restart loop is bounded and Orion-X ships its
+        #   own capture config (/etc/suricata/orionx.yaml)
+        # @status accepted
+        # @date 2026-10-01
+        # @rationale v2.2.0-rc5: Debian's unit hardcodes af-packet eth0; on
+        #   a deck with no eth0 suricata 7.0.10 exits 1 immediately and this
+        #   daemon re-issued `systemctl start` every 30 s, flooding the bus
+        #   with one warning and inflating THREAT PRESSURE to 5.1 ELEVATED on
+        #   an idle machine. Recovery attempts are now counted and given up
+        #   on, and the shipped config includes Debian's while overriding the
+        #   interface. This bounded the loop without fixing its cause;
+        #   DEC-PHASE12-038 (suricata_capture.py) did that.
+        # --------------------------------------------------------------------
         # DEC-PHASE12-034: bounded Suricata restart state.
         self._suricata_recovery = {"attempts": 0, "last_attempt": 0.0, "given_up": False}
         self.args = args
@@ -2448,6 +2488,18 @@ class PostureDaemon:
         self.tuned_suppressed = 0
         self._tuning_warned = 0.0
         self._posture_refusal: str | None = None
+        # @decision DEC-PHASE12-051
+        # @title Deck-originated alerts are tagged origin=self (SELF in the
+        #   stream) and do not count toward THREAT PRESSURE
+        # @status accepted
+        # @date 2026-10-05
+        # @rationale v2.2.0-rc6: an alert whose source address is one of
+        #   this deck's own (the archive.ph policy hit on the reference deck)
+        #   read like an intruder and raised the gauge. deck_vitals supplies
+        #   the deck's addresses; the alert detail carries origin=self, the
+        #   Cockpit says "this deck did this", and pressure() ignores it.
+        #   test_tuning.sh covers the pure-library half.
+        # --------------------------------------------------------------------
         # DEC-PHASE12-051: alerts whose SOURCE is this deck are labelled
         # origin=self so the Cockpit says "this deck did this" instead of
         # implying an intruder, and the threat gauge does not count them.

@@ -17,6 +17,7 @@
 # @decision DEC-PHASE13-030 (supersedes the ExecStartPre part of DEC-PHASE11-044
 #   and the `timeout 10` part of DEC-PHASE13-028)
 # @title The wizard never touches tty1 while plymouth owns it (#141)
+# @status accepted
 # @rationale This unit used to run `plymouth quit` itself, as ExecStartPre. That
 #   command runs in this unit's exec context — StandardInput=tty on tty1 with
 #   TTYReset=yes — so before it could exec, systemd's child acquired tty1, took

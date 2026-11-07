@@ -9,6 +9,7 @@ file or talks to Synapse — those live in playbooks.py behind an injectable
 runner, so the reasoning above can be proved in CI on a laptop with no root.
 
 @decision DEC-PHASE12-023
+@canonical
 @title Auto-healing engine: static playbook registry, autonomy-gated, reversible,
   hash-chained
 @status accepted

@@ -5,6 +5,7 @@
 # result by profile name. Run by orionx-apparmor-load.service.
 #
 # @decision DEC-PHASE12-103
+# @canonical
 # @title AppArmor load reports partial confinement by name and fails only
 #   when an Orion-X confinement claim is false
 # @status accepted

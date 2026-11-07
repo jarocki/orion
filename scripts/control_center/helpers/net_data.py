@@ -1,6 +1,7 @@
 """net_data — what the Network tab shows, read without privilege (#107-#109).
 
 @decision DEC-PHASE13-022
+@category NETWORK
 @title The Network tab reads, and only a visible terminal changes anything
 @status accepted
 @rationale The tab was a list of NetworkManager connection names and one
@@ -20,6 +21,18 @@
   Importing a provider's .conf, and starting, stopping or exporting a capture,
   run in a terminal with sudo, the Cockpit's never-silent-sudo convention
   (mesh.py:5-8). The mesh's own wg0 is the Mesh tab's and is not listed here.
+
+  Decision Log entry as hand-written on 2026-10-25 (merged into this block by
+  #97, which made the block the authority): The Network tab reads without
+  privilege: interfaces/route/DNS from deck_vitals, protocol counters from
+  /proc/net/snmp{,6} (system-wide), VPNs from nmcli, capture state from
+  posture-status.json. VPN connect/disconnect is nmcli as the session user.
+  Import, capture start/stop/export run in a visible sudo terminal. #107-#109.
+  One parser per source (deck_vitals gained parse_net_dev_by_iface/parse_snmp;
+  totals now sum the per-interface parse). The orphaned
+  state_polling.get_active_connections was removed rather than left as a
+  second NM reader. Per-interface protocol breakdown needs capture/Zeek data
+  (#93), and the tab says so.
 """
 from __future__ import annotations
 

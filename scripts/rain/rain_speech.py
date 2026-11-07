@@ -11,6 +11,7 @@ and nothing in this module pretends otherwise. The split is:
     event  ->  Nebula writes one sentence  ->  validator  ->  TTS speaks it
 
 @decision DEC-PHASE12-046
+@canonical
 @title R.A.I.N. speaks: model-authored, fact-constrained spoken alerts
 @status accepted
 @rationale Three non-negotiables shaped every line of this file.
@@ -144,6 +145,20 @@ info notice warning critical
 _IP_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 
 # ---------------------------------------------------------------------------
+# @decision DEC-PHASE13-025
+# @title Pronunciation lives in `rain_speech.speakable()` as `_SPOKEN_FORMS`
+#   (word-boundary, case-sensitive), `_SPOKEN_LITERALS` and
+#   `_SPOKEN_PATTERNS`, applied after `validate_line()` and before either
+#   engine.
+# @status accepted
+# @date 2026-10-27
+# @category RAIN
+# @rationale #123 ("IDS" spoken as "eye-dees"). Placing it after the guard
+#   means spoken forms can never widen what the model may claim; placing it in
+#   speakable() means template and model output are treated alike and the
+#   engines never see a screen spelling. A drift check in test_rain_speech
+#   asserts the shipped templates' vocabulary is covered.
+# ----------------------------------------------------------------------------
 # Pronunciation: how the engines should SAY tokens that are spelled for the
 # screen (#123, DEC-PHASE13-025). Both piper and espeak-ng read "IDS" as a
 # word ("eye-dees", HP Pavilion 2026-10-26), "→" as nothing or "arrow",
@@ -700,6 +715,24 @@ def _speak_espeak(line: str, vol: float) -> bool:
         timeout=playback_timeout(None, line))
 
 
+# @decision DEC-PHASE13-024
+# @title Speech degrades loudly, never silently: a piper failure (non-zero
+#   exit, timeout, no audio, voice without sidecar) falls through to espeak-ng
+#   and is announced once as a `tooling` status event; the player's timeout is
+#   the WAV's measured length plus 3 s (text estimate for espeak-ng, floor 5
+#   s, cap 60 s); rain_speech and the installer share the voice directory
+#   (`ORIONX_VOICE_DIR`), the sidecar requirement and the piper flags;
+#   `--speech-status` measures a synthesis; piper-tts is pinned.
+# @status accepted
+# @date 2026-10-27
+# @category RAIN
+# @rationale #122 (HP Pavilion 2026-10-26, Lenovo 2026-10-05). The old
+#   `speak()` returned False on any piper problem and never reached the espeak
+#   branch, and `rain_lib._run` killed every player at 10 s while
+#   SPEAK_MAX_CHARS allows ~20 s. Presence checks (binary + .onnx) were the
+#   only status evidence, and the installer and runtime disagreed on where a
+#   voice lives and what makes it valid.
+# ----------------------------------------------------------------------------
 def speak_with_fallback(text: str, cfg: dict[str, Any] | None = None,
                         backend: str | None = None) -> tuple[bool, str | None]:
     """Say one line. Returns (spoken, degradation).

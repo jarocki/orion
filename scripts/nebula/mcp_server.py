@@ -27,6 +27,7 @@ confinement is a unix-domain socket (`--socket`); stdio remains for direct
 scripts/nebula/toolchat.py.
 
 @decision DEC-PHASE12-025
+@canonical
 @title W10-3 confinement: nebula-mcp runs unprivileged, networkless, and
   argument-validated; the model reaches it over a unix socket
 @status accepted
@@ -360,6 +361,19 @@ def _registry() -> list[Tool]:
             path_args=("artifact",),
             timeout=600,
         ),
+        # @decision DEC-PHASE12-002
+        # @title go-roast ships as a static Go binary and the Nebula tools
+        #   oast_extract/oast_decode/oast_analyze wrap it
+        # @status accepted
+        # @date 2026-09-13
+        # @rationale Roadmap #91 (v2.2.0-beta): the local model gets
+        #   first-class OAST triage: find, decode and cluster Interactsh
+        #   out-of-band callback domains in a log or text file. A static
+        #   binary at /usr/local/bin/roast needs no Go toolchain on the image;
+        #   the three tools read a file (argv only, no shell, no stdin) and
+        #   emit JSON, matching the tshark/pcap file-tool pattern, so the
+        #   model cannot be steered into running anything else.
+        # --------------------------------------------------------------------
         # --- go-roast: Interactsh OAST metadata decoding (roadmap #91) -------
         # A static Go binary at /usr/local/bin/roast (DEC-PHASE12-002). These
         # give the local model first-class OAST triage: find, decode, and

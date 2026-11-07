@@ -3,6 +3,7 @@
 # GitHub release assets.
 #
 # @decision DEC-PHASE12-115
+# @canonical
 # @title One script stages, splits, checksums, signs and self-verifies the release
 # @status accepted
 # @rationale GitHub rejects release assets over 2 GiB and every Trixie image

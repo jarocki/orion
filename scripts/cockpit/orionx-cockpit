@@ -118,6 +118,7 @@ class Cockpit(Gtk.Window):
         self.toast_bar = CC.ToastBar()
         CCUX.set_notifier(self.toast_bar.notify)
         # @decision DEC-PHASE13-020
+        # @category COCKPIT
         # @title The status line is a strip above the tabs, fed on every tab
         # @status accepted
         # @rationale #105: host, address, posture and clock were painted in
@@ -126,6 +127,14 @@ class Cockpit(Gtk.Window):
         #   hidden. The strip is its own widget above the notebook, drawn with
         #   LIVE's primitives, and owns those two pollers; it is mapped on
         #   every tab, so they keep running.
+        #
+        #   Decision Log entry as hand-written on 2026-10-25 (merged into this
+        #   block by #97, which made the block the authority): The status line
+        #   (host, IP, posture, clock) is a strip above the tabs and owns the
+        #   vitals and systems pollers. Owner's request (#105). It used to be
+        #   painted in the top of the LIVE canvas, with pollers owned by that
+        #   canvas, so other tabs had no status line and its data froze while
+        #   LIVE was hidden.
         self.header = Gtk.DrawingArea()
         self.header.set_size_request(-1, L.HEADER_H)
         self.header.connect("draw", self._draw_header)
