@@ -50,6 +50,34 @@
 #   Reference: /usr/lib/live/config/0080-user-setup bullseye package v5.20210204.
 #   DEC-PHASE11-012: identity value 'orionx-operator' is derived from
 #     live-config.username=orionx-operator in iso/auto/config --bootappend-live.
+#
+# @decision DEC-PHASE13-051
+# @title The shipped `update` command refreshes apt lists and only SIMULATES the upgrade; it never upgrades the live overlay
+# @status accepted
+# @rationale Owner report (#121, HP Pavilion, v3.1.0, 2026-10-26): `apt install
+#   brightnessctl` on the booted image "seemed to mess up other packages".
+#   brightnessctl itself depends on libc6 alone and cannot cascade, but the
+#   .bashrc this hook seeded carried
+#     alias update='sudo apt-get update && sudo apt-get upgrade'
+#   so the one word every Debian user types to "refresh" also upgraded every
+#   package the mirror had moved since the build — into the RAM-backed live
+#   overlay (gone at reboot unless persistence covers /), under the running
+#   desktop, with no chance to read the plan. That is the strongest candidate
+#   in the tree for "other packages changed"; the evidence
+#   (/var/log/apt/history.log, `apt-get -s install brightnessctl` on a fresh
+#   boot) has to come from the deck and is gathered by
+#   /opt/orionx/optional/apt-evidence.sh, whose header ranks the suspects.
+#   Decision: `update` becomes a function that runs `sudo apt-get update`,
+#   then `apt-get -s upgrade` and says why it stopped (live overlay; upgrade
+#   on purpose with `sudo apt-get upgrade`; add tools through the optional
+#   installers / orionx_apt_install, DEC-PHASE11-011; apt-evidence.sh when apt
+#   misbehaves). Proportional: no apt pins, no wrapper around apt itself, no
+#   removal of the operator's ability to upgrade; only the silent part goes.
+#   The function lives in this heredoc because this hook is the single
+#   authority for /etc/skel/.bashrc (DEC-PHASE11-014); tests/unit/
+#   test_apt_evidence.sh executes it against stubs and asserts it never calls
+#   a real upgrade. The User Guide (§13 "Adding Custom Tools") is reconciled
+#   with DEC-PHASE11-011 in the same change.
 
 set -e
 
@@ -140,8 +168,24 @@ PS1='\[\033[38;5;214m\][Orion-X]\[\033[00m\] \[\033[01;34m\]\w\[\033[00m\]\\$ '
 alias ll='ls -la'
 alias la='ls -A'
 alias l='ls -CF'
-alias update='sudo apt-get update && sudo apt-get upgrade'
 alias cls='clear'
+
+# update — refresh the package lists, then SHOW what an upgrade would do.
+# It never upgrades: DEC-PHASE13-051 (this hook's header). Upgrade on purpose
+# with: sudo apt-get upgrade
+update() {
+    sudo apt-get update || return \$?
+    echo
+    echo "[update] Lists refreshed. This is a live system: / is a RAM-backed overlay, lost at"
+    echo "[update] reboot unless a persistence volume covers it, and upgrading replaces"
+    echo "[update] libraries under the running desktop. Simulation only — nothing changed:"
+    echo
+    apt-get -s upgrade
+    echo
+    echo "[update] Upgrade deliberately:   sudo apt-get upgrade"
+    echo "[update] Add a tool:             sudo /opt/orionx/optional/install-<tool>.sh  (orionx_apt_install)"
+    echo "[update] apt misbehaved?         sudo /opt/orionx/optional/apt-evidence.sh"
+}
 
 # Source bash_completion if present (XFCE Terminal sets PS1; completion is nice-to-have)
 [ -f /etc/bash_completion ] && . /etc/bash_completion
