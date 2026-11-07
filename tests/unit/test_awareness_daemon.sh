@@ -83,6 +83,17 @@ ck("NOT be detected" in msg or "not watching" in msg, "warning states the conseq
 ck("orionx-freshen-suricata" in msg, "warning names the remedy")
 ck("scanwatch" in msg, "warning says what still works, so it is not read as total blindness")
 
+# W11-6b (DEC-PHASE13-043): the baked layout is ONE merged file,
+# /var/lib/suricata/rules/suricata.rules. It must count as coverage, or every
+# fresh image would announce a gap it does not have; an emptied one must not.
+ck(m.is_threat_rule_file("suricata.rules") is True, "the baked suricata.rules is recognised as threat signatures")
+ck(m.assess_rules([("/var/lib/suricata/rules/suricata.rules", 2707122)])["usable"] is True,
+   "the shipped layout (one merged suricata.rules) IS coverage")
+ck(m.assess_rules([("/var/lib/suricata/rules/suricata.rules", 0)])["usable"] is False,
+   "an emptied suricata.rules is NOT coverage")
+ck("suricata.rules" in msg and "DEC-PHASE13-043" in msg,
+   "warning says the image ships rules, so the operator reads the gap as damage, not design")
+
 # empty threat file must not count as coverage
 ck(m.assess_rules([("/var/lib/suricata/rules/emerging-all.rules", 0)])["usable"] is False,
    "a zero-byte threat rule file is not coverage")

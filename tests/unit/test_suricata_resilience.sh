@@ -706,6 +706,32 @@ PY
            bash -c "$SEED suricata -T -c /etc/suricata/orionx.yaml 2>&1; echo RC=\$?" 2>&1)"
     if echo "$OUT2" | grep -q 'RC=0'; then pass "GENERATED two-interface config loads cleanly (suricata -T)"; else fail "generated config loads" "$OUT2"; fi
 
+    # W11-6b (DEC-PHASE13-043): the file hook 0530 produces — stock *-events
+    # rules from the REAL Debian package plus ET-shaped category files — must
+    # load in the real engine with 0 failures under the shipped orionx.yaml
+    # (detect profile low + memcaps, DEC-PHASE13-044). This is what caught
+    # dnp3/modbus-events.rules being unparseable under Debian's config; if
+    # Debian ever disables another app-layer protocol, this goes red before
+    # the deck does. The fixture tarball is tiny; the stock half is real.
+    HOOK0530="$REPO_ROOT/iso/config/hooks/live/0530-suricata-rules.hook.chroot"
+    FX="$TMP/fx"; mkdir -p "$FX/rules"
+    for c in scan attack_response exploit dos shellcode current_events; do
+      printf 'alert tcp any any -> $HOME_NET any (msg:"ET %s fixture"; sid:%d; rev:1;)\n' "$c" "$((2900000 + ${#c}))" > "$FX/rules/emerging-$c.rules"
+    done
+    printf '# fixture license\n' > "$FX/rules/LICENSE"
+    tar -czf "$TMP/fx.tgz" -C "$FX" rules
+    FXSHA="$(shasum -a 256 "$TMP/fx.tgz" | awk '{print $1}')"
+    OUT6="$(docker run --rm -v "$TOPCFG:/etc/suricata/orionx.yaml:ro" \
+            -v "$BASECFG:/var/lib/suricata/orionx-interfaces.yaml:ro" \
+            -v "$HOOK0530:/hook:ro" -v "$TMP/fx.tgz:/fx.tgz:ro" "$IMG" \
+            bash -c "ORIONX_0530_LIB_ONLY=1 source /hook; set +e; mkdir -p /tmp/l; install_rules /fx.tgz $FXSHA /etc/suricata/rules /var/lib/suricata/rules file:///fx 2026-01-01 scan attack_response exploit dos shellcode current_events; echo INSTALL_RC=\$?; suricata -T -v -c /etc/suricata/orionx.yaml -l /tmp/l 2>&1 | grep -E 'rules successfully|rror'; echo RC=\${PIPESTATUS[0]}" 2>&1)"
+    if echo "$OUT6" | grep -q 'INSTALL_RC=0' && echo "$OUT6" | grep -q 'RC=0' \
+       && echo "$OUT6" | grep -qE '[0-9]+ rules successfully loaded, 0 rules failed'; then
+      pass "hook 0530's merge (real stock -events + ET categories) loads with 0 failures under the tuned orionx.yaml: $(echo "$OUT6" | grep -oE '[0-9]+ rules successfully loaded, 0 rules failed')"
+    else
+      fail "hook 0530 merge loads in the real engine" "$(echo "$OUT6" | tail -8)"
+    fi
+
     # The bug itself: Debian's stock config on a deck with no eth0 exits 1.
     # If this ever stops failing, the fix is no longer needed and this file
     # should be revisited rather than quietly passing.
@@ -777,6 +803,41 @@ sys.exit(0 if errs else 1)'; then
     else
       fail "socket-error detection vs the real engine" "$(echo "$OUT5" | tail -5)"
     fi
+  fi
+fi
+
+section "Shipped rules load in THIS host's suricata (a deck, or CI with suricata installed)"
+# W11-6b (DEC-PHASE13-043). The baked ruleset exists only on a built image, so
+# this can only run where one is booted (or where a deck's /var/lib/suricata
+# was copied in). Anywhere else it SKIPS and says so — never a silent pass.
+SHIPPED_RULES="${ORIONX_SURICATA_RULES_DIR:-/var/lib/suricata/rules}/suricata.rules"
+SHIPPED_PROV="${ORIONX_SURICATA_RULES_DIR:-/var/lib/suricata/rules}/orionx-rules.provenance.txt"
+if ! command -v suricata >/dev/null 2>&1; then
+  skip "suricata -T against the shipped rules" "suricata is not installed on this host (built images only)"
+elif [[ ! -s "$SHIPPED_RULES" ]]; then
+  skip "suricata -T against the shipped rules" "$SHIPPED_RULES absent or empty on this host — not a built Orion-X image"
+else
+  SHIPPED_CFG=/etc/suricata/orionx.yaml; [[ -r "$SHIPPED_CFG" ]] || SHIPPED_CFG=/etc/suricata/suricata.yaml
+  mkdir -p "$TMP/tlog"
+  TOUT="$(suricata -T -v -c "$SHIPPED_CFG" -l "$TMP/tlog" 2>&1)"; TRC=$?
+  TLOADED="$(printf '%s\n' "$TOUT" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) rules successfully loaded.*/\1/p' | tail -n1)"
+  TFAILED="$(printf '%s\n' "$TOUT" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) rules failed.*/\1/p' | tail -n1)"
+  if [[ $TRC -eq 0 && -n "$TLOADED" && "$TLOADED" -ge 1000 && "${TFAILED:-0}" -eq 0 ]]; then
+    pass "suricata -T ($SHIPPED_CFG) loads the shipped rules: $TLOADED loaded, ${TFAILED:-0} failed"
+  else
+    fail "suricata -T loads the shipped rules" "rc=$TRC loaded='${TLOADED:-none}' failed='${TFAILED:-?}' $(printf '%s\n' "$TOUT" | grep -iE 'rror' | head -3)"
+  fi
+  # Provenance must describe the file that is actually there (unless freshen
+  # has replaced it, in which case it says so and the comparison is moot).
+  if [[ -f "$SHIPPED_PROV" ]] && ! grep -q 'SUPERSEDED' "$SHIPPED_PROV"; then
+    PSIGS="$(sed -n 's/^signatures: \([0-9]*\)$/\1/p' "$SHIPPED_PROV" | head -1)"
+    if [[ -n "$PSIGS" && -n "$TLOADED" && "$PSIGS" -eq "$TLOADED" ]]; then
+      pass "provenance signature count ($PSIGS) equals what the engine loaded"
+    else
+      fail "provenance matches the engine" "provenance says '${PSIGS:-?}', engine loaded '${TLOADED:-?}'"
+    fi
+  else
+    skip "provenance vs engine count" "no provenance file, or superseded by orionx-freshen-suricata"
   fi
 fi
 
