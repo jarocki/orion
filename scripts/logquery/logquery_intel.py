@@ -270,7 +270,8 @@ def enrich_record(rec: dict, intel: dict | None) -> dict:
     # The producer's attribution (detail.tool on a bus event) wins; the
     # User-Agent fingerprint below only fills an empty column.
     tool = str(rec.get("tool") or "")
-    tool_conf = category = product = prevalence = cve = research = ""
+    tool_conf = str(rec.get("tool_conf") or "") if tool else ""
+    category = product = prevalence = cve = research = ""
     kev = kev_ransomware = 0
     spoof: list[str] = []
 

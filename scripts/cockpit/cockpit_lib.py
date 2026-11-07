@@ -704,6 +704,21 @@ def fade_for(age: float) -> float:
     return max(FADE_FLOOR, 1.0 - min(max(age, 0.0), 600.0) / 800.0)
 
 
+def source_label(ev: dict[str, Any]) -> str:
+    """The event row's source/category cell.
+
+    `SELF ` prefixes the deck's own traffic (DEC-PHASE12-051) and the
+    producer-named tool follows a middle dot (DEC-PHASE13-040), e.g.
+    `suricata/ids·nmap`. One cell, so the row stays one line; the drill-down
+    carries the confidence. No tool named means no suffix, not a guess.
+    """
+    d = ev.get("detail") or {}
+    tag = "SELF " if d.get("origin") == "self" else ""
+    tool = d.get("tool")
+    suffix = f"·{tool}" if isinstance(tool, str) and tool else ""
+    return f"{tag}{ev.get('source', '')}/{ev.get('category', '')}{suffix}"
+
+
 def drill_rows(ev: dict[str, Any], chars: int) -> list[tuple[str, str]]:
     """Every (label, text) row of the drill-down, values wrapped — never cut (UX-19)."""
     import textwrap  # noqa: PLC0415
@@ -712,9 +727,9 @@ def drill_rows(ev: dict[str, Any], chars: int) -> list[tuple[str, str]]:
     for i, line in enumerate(textwrap.wrap(str(ev.get("message", "")), width=chars + 18) or [""]):
         rows.append(("message" if i == 0 else "", line))
     d = ev.get("detail") or {}
-    order = ["src_ip", "dest_ip", "signature", "sid", "technique", "scan_kind",
-             "distinct_ports", "window_seconds", "protocols", "latest_dport",
-             "detector", "evidence", "triggering_rule", "ports_seen"]
+    order = ["src_ip", "dest_ip", "signature", "sid", "technique", "tool", "tool_conf",
+             "scan_kind", "scan_order", "distinct_ports", "window_seconds", "protocols",
+             "latest_dport", "detector", "evidence", "triggering_rule", "ports_seen"]
     for k in [k for k in order if k in d] + [k for k in sorted(d) if k not in order]:
         v = d[k]
         label = "full evidence" if k == "_full" else k.replace("_", " ")

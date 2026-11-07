@@ -348,7 +348,8 @@ SELECT coalesce(nullif(signature,''),'(unnamed)') AS signature,
        max(nullif(detector,'')) AS detector,
        count(*) AS alerts, count(DISTINCT ip) AS uniq_sources,
        count(DISTINCT port) AS dest_ports, max(tier) AS max_tier,
-       min(ts) AS first_seen, max(ts) AS last_seen
+       min(ts) AS first_seen, max(ts) AS last_seen,
+       max(nullif(tool,'')) AS tool
 FROM r WHERE reason = 'ids' OR detector IN ('suricata', 'zeek')
 GROUP BY 1 ORDER BY alerts DESC, last_seen DESC LIMIT 40""",
 
@@ -359,7 +360,8 @@ SELECT ip, count(*) AS events, count(DISTINCT detector) AS detectors,
        max(nullif(technique,'')) AS technique,
        count(DISTINCT port) AS ports_reported,
        min(port) AS port_lo, max(port) AS port_hi, max(proto) AS proto,
-       max(tier) AS max_tier, min(ts) AS first_seen, max(ts) AS last_seen
+       max(tier) AS max_tier, min(ts) AS first_seen, max(ts) AS last_seen,
+       max(nullif(tool,'')) AS tool
 FROM r WHERE ip IS NOT NULL
   AND (reason = 'scan' OR upper(coalesce(signature,'')) LIKE '%SCAN%'
        OR technique LIKE 'T1046%')

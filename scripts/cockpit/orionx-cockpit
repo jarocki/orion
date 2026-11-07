@@ -670,8 +670,8 @@ class Cockpit(Gtk.Window):
             cr.fill()
             self._text(cr, x_age, ry, f"{L.fmt_age(age):>3}", 11, tuple(c * fade for c in L.DIM))
             self._text(cr, x_sev, ry, L.SEVERITY_TAG.get(ev["severity"], "NOTE"), 11, tuple(c * fade for c in col), bold=True)
-            tag = "SELF " if (ev.get("detail") or {}).get("origin") == "self" else ""
-            self._text(cr, x_src, ry, f"{tag}{ev['source']}/{ev['category']}", 11, tuple(c * fade for c in col),
+            # source/category, plus SELF and the producer-named tool (cockpit_lib.source_label).
+            self._text(cr, x_src, ry, L.source_label(ev), 11, tuple(c * fade for c in col),
                        bold=True, max_w=x_msg - x_src - 8)
             # UX-16: fitted to the room actually left, with an ellipsis; the
             # drill-down shows it whole.

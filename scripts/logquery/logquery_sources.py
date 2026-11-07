@@ -325,6 +325,11 @@ def _flatten_detail(rec: dict, raw: dict, stats: dict | None) -> None:
                 rec[field] = value
                 touched = True
                 break
+    # The producer's confidence travels with its tool (DEC-PHASE13-040); it is
+    # an enrichment column, so it rides on the record outside RECORD_FIELDS
+    # and enrich_record keeps it when the tool was not fingerprinted there.
+    if rec.get("tool") == detail.get("tool") and detail.get("tool_conf"):
+        rec["tool_conf"] = str(detail["tool_conf"])
     if touched and stats is not None:
         stats["detail_flattened"] += 1
 
