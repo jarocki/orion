@@ -250,7 +250,11 @@ def browser_like(ua: str) -> bool:
                 and not _NOT_BROWSER.search(ua))
 
 
-ENRICHMENT_FIELDS = ("tool", "tool_conf", "category", "product", "prevalence",
+# `tool` is a RECORD field (logquery_sources.RECORD_FIELDS, #127): the producer's
+# own attribution rides in from a bus event's detail. Enrichment finalizes it —
+# kept when set, filled from the User-Agent only when empty — so the table has
+# one `tool` column and one precedence rule.
+ENRICHMENT_FIELDS = ("tool_conf", "category", "product", "prevalence",
                      "cve", "kev", "kev_ransomware", "research_org", "spoof")
 
 
@@ -263,12 +267,17 @@ def enrich_record(rec: dict, intel: dict | None) -> dict:
     """
     ua = rec.get("userAgent") or ""
     path = rec.get("path") or ""
-    tool = tool_conf = category = product = prevalence = cve = research = ""
+    # The producer's attribution (detail.tool on a bus event) wins; the
+    # User-Agent fingerprint below only fills an empty column.
+    tool = str(rec.get("tool") or "")
+    tool_conf = category = product = prevalence = cve = research = ""
     kev = kev_ransomware = 0
     spoof: list[str] = []
 
     if intel:
         for sig in intel.get("signatures", []):
+            if tool:
+                break
             try:
                 if ua and re.search(sig["ua_regex"], ua):
                     tool = sig.get("tool", "")
