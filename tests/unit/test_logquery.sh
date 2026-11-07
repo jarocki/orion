@@ -497,6 +497,11 @@ check(producer["tool"] == "masscan", f"a producer-set tool is kept over the UA r
 ua_only = {"ip": "10.0.0.2", "userAgent": "Nmap Scripting Engine", "path": "/", "tool": None}
 I.enrich_record(ua_only, intel)
 check(ua_only["tool"] == "nmap", f"with no producer tool the UA fingerprint still fills it ({ua_only['tool']})")
+conf = S.parse_json_line(json.dumps({"severity": "warning", "message": "m", "category": "ids",
+    "detail": {"src_ip": "10.0.0.3", "signature": "ET SCAN Masscan Scan", "tool": "masscan", "tool_conf": "high"}}))
+I.enrich_record(conf, intel)
+check((conf["tool"], conf["tool_conf"]) == ("masscan", "high"),
+      f"the producer's tool_conf travels with its tool (#128): {conf['tool']}/{conf['tool_conf']}")
 
 # --- top level beats detail ----------------------------------------------
 top = S.parse_json_line(json.dumps({"severity": "warning", "message": "m", "category": "ids",
@@ -558,6 +563,16 @@ else fail "--report scans 198.51.100.7 row" "$OUT"; fi
 if echo "$OUT" | grep -q '^203.0.113.60,1,1,zeek,Scan::Port_Scan,'; then
     pass "--report scans: the Zeek-only scanner is a row (visible only through detail)"
 else fail "--report scans Zeek-only row" "$OUT"; fi
+# #128: a producer-set detail.tool is the last column of the scans and ids rows.
+printf '%s\n' '{"ts": 1790000200, "severity": "critical", "source": "suricata", "category": "ids", "message": "ET SCAN Masscan Scan — 198.51.100.9 → 10.0.0.1:443", "id": "d4e5f60718293041", "detail": {"engine": "suricata", "src_ip": "198.51.100.9", "dest_ip": "10.0.0.1", "proto": "tcp", "sid": 2018489, "signature": "ET SCAN Masscan Scan", "dest_port": 443, "tool": "masscan", "tool_conf": "high"}}' > "$WORK/tool_events.jsonl"
+OUT="$(python3 "$LQ" --path "$WORK/tool_events.jsonl" --report scans --format csv 2>/dev/null)"
+if echo "$OUT" | grep -q '^198.51.100.9,1,1,suricata,ET SCAN Masscan Scan,.*,masscan'; then
+    pass "--report scans: the producer-set tool reaches the per-source row"
+else fail "--report scans tool column" "$OUT"; fi
+OUT="$(python3 "$LQ" --path "$WORK/tool_events.jsonl" --report ids --format csv 2>/dev/null)"
+if echo "$OUT" | grep -q '^ET SCAN Masscan Scan,2018489,.*,masscan'; then
+    pass "--report ids: the producer-set tool reaches the per-signature row"
+else fail "--report ids tool column" "$OUT"; fi
 OUT="$(python3 "$LQ" --path "$WORK/evidence" --report sources --format csv 2>/dev/null)"
 if echo "$OUT" | grep -q '^203.0.113.60,'; then
     pass "--report sources now counts a source that exists only in bus detail"

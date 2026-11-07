@@ -140,6 +140,14 @@ ck(d["src_ip"] == "192.168.4.77", "detail names the actual source IP")
 ck("ORIONX-DROP" in d["triggering_rule"], "detail names the nftables rule that produced the evidence")
 ck(isinstance(d.get("ports_seen"), list) and d["ports_seen"], "detail lists the ports observed")
 ck(len(d["ports_seen"]) <= 64, "port list is bounded")
+# #128: attribution is set here, at the producer, and only when a profile matches.
+ck("tool" not in d and d.get("scan_order") == "sequential",
+   f"a 20..59 walk records scan_order=sequential and names no tool ({d.get('scan_order')}, {d.get('tool')})")
+ck("ports_order" not in d, "the raw probe order stays in the alert; the detail carries one port list")
+sys.path.insert(0, str(root/"scripts/rain"))
+import tool_fingerprint as T
+sd = T.attribute({"engine": "suricata", "src_ip": "10.0.0.9", "signature": "ET SCAN Nmap Scripting Engine"})
+ck((sd.get("tool"), sd.get("tool_conf")) == ("nmap", "high"), "Suricata detail gets tool + tool_conf from the shared helper")
 sys.exit(0 if ok else 1)
 PY
 then pass "producer evidence assertions"; else fail "producer evidence assertions" "see above"; fi

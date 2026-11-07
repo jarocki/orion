@@ -109,6 +109,14 @@ joined = "".join(t for _l, t in rows)
 ck("S" * 300 in joined.replace(" ", "") and "39" in joined and all(len(t) <= 78 for _l, t in rows),
    f"drill-down rows carry every char of a 300-char signature and all 40 ports, wrapped ({len(rows)} rows) (UX-19)")
 ck([l for l, _t in rows if l][:3] == ["message", "src ip", "signature"], "operator-first field order kept")
+# #128: the producer-named tool is one cell on the event row and two rows in the drill-down.
+ev3 = {"source": "suricata", "category": "ids", "message": "m",
+       "detail": {"src_ip": "10.0.0.9", "signature": "ET SCAN Nmap", "tool": "nmap", "tool_conf": "high", "origin": "self"}}
+ck(L.source_label(ev3) == "SELF suricata/ids·nmap", f"event row cell carries SELF and the tool: {L.source_label(ev3)!r}")
+ck(L.source_label({"source": "firewall", "category": "scan", "detail": {}}) == "firewall/scan", "no tool named -> no suffix, no guess")
+labels = [l for l, _t in L.drill_rows(ev3, 60) if l]
+ck(labels[:5] == ["message", "src ip", "signature", "tool", "tool conf"], f"drill-down shows tool and its confidence right after the signature: {labels}")
+ck("L.source_label(ev)" in (root/"scripts/cockpit/orionx-cockpit").read_text(), "the event row is drawn from cockpit_lib.source_label")
 PY
 then pass "LIVE layout fits the reference deck; text is fitted, never clipped mid-word"; else fail "LIVE layout" "see above"; fi
 

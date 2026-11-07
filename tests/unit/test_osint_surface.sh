@@ -141,6 +141,10 @@ for js in "$WEB/app.js" "$WEB/pewpew/map.js"; do
         pass "no network URLs in $(basename "$js") (comments/attribution aside)"
     fi
 done
+# #128: the source list shows the producer-named tool next to the detectors.
+if grep -q 's\.tools' "$WEB/pewpew/map.js" && grep -q 'tool: ' "$WEB/pewpew/map.js"; then
+    pass "map.js lists sources[*].tools beside 'seen by' (DEC-PHASE13-040)"
+else fail "map.js lists sources[*].tools" "no s.tools / 'tool: ' in map.js"; fi
 
 section "Catalogue: every local entry points at something that actually ships"
 if python3 - "$REPO_ROOT" <<'PY'
@@ -539,6 +543,13 @@ check(sorted(s["protocols"]) == ["tcp", "udp"],
       % (detail["protocols"], s["protocols"]))
 check(detail["detector"] in s["detectors"], "detector round-trips")
 check(detail["scan_kind"] in s["kinds"], "scan_kind round-trips")
+# #128: the map lists the producer's detail.tool and never fingerprints itself.
+check(s["tools"] == [] and "tool" not in detail,
+      "a 20..79 sequential sweep names no tool, so the source lists none (no guess)")
+feed2 = F.build_feed([json.dumps(dict(event, detail=dict(detail, tool="nmap", tool_conf="low")))], now=2001.0)
+check(feed2["sources"][0]["tools"] == ["nmap"], "sources[*].tools aggregates detail.tool like detectors")
+check(not any("nmap" in str(v).lower() for k, v in vars(F).items() if k.isupper() and isinstance(v, (str, tuple, list, dict))),
+      "pewpew_feed carries no tool pattern of its own (one authority: tool_fingerprint)")
 check(s["location"]["located"] is False,
       "and it is still unlocated, because nothing told the map where it is")
 sys.exit(0 if ok else 1)
