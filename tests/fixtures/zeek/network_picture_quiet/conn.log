@@ -1,0 +1,11 @@
+#separator \x09
+#set_separator	,
+#empty_field	(empty)
+#unset_field	-
+#path	conn
+#open	2026-11-06-10-00-00
+#fields	ts	uid	id.orig_h	id.orig_p	id.resp_h	id.resp_p	proto	service	duration	orig_bytes	resp_bytes	conn_state	local_orig	local_resp	missed_bytes	history	orig_pkts	orig_ip_bytes	resp_pkts	resp_ip_bytes	tunnel_parents	ip_proto
+#types	time	string	addr	port	addr	port	enum	string	interval	count	count	string	bool	bool	count	string	count	count	count	count	set[string]	count
+1790658010.000000	Cq1	192.168.4.57	50000	93.184.216.34	443	tcp	ssl	0.5	1200	54000	SF	T	F	0	Dd	20	2000	45	55800	-	6
+1790658020.000000	Cq2	192.168.4.23	51000	192.168.4.57	22	tcp	ssh	0.5	3000	8000	SF	T	T	0	Dd	30	4200	28	9120	-	6
+#close	2026-11-06-10-15-00

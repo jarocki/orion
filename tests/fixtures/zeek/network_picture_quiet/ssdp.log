@@ -1,0 +1,9 @@
+#separator \x09
+#set_separator	,
+#empty_field	(empty)
+#unset_field	-
+#path	ssdp
+#open	2026-11-06-10-00-00
+#fields	ts	uid	id.orig_h	id.orig_p	id.resp_h	id.resp_p	method	uri	user_agent	server	location
+#types	time	string	addr	port	addr	port	string	string	string	string	string
+#close	2026-11-06-10-15-00
