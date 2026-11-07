@@ -262,6 +262,48 @@ sys.exit(0 if ok else 1)
 PY
 then pass "cockpit assertions"; else fail "cockpit assertions" "see above"; fi
 
+section "logquery reads what the broker writes (#127, DEC-PHASE13-039)"
+# Producer-to-consumer contract: the broker budgets the line and spills the
+# rest to a sidecar; logquery must recover the full detail from THAT file,
+# by the broker's own naming, with no second copy of the format logic.
+if python3 - "$REPO_ROOT" <<'PY'
+import sys, json, tempfile, pathlib
+from importlib.machinery import SourceFileLoader
+root = pathlib.Path(sys.argv[1]); ok = True
+def ck(c, label):
+    global ok
+    print(("  ok   " if c else "  BAD  ") + label); ok = ok and bool(c)
+rl = SourceFileLoader("rain_lib", str(root/"scripts/rain/rain_lib.py")).load_module()
+td = pathlib.Path(tempfile.mkdtemp(dir=str(root/"tmp")))
+rl.EVENT_LOG = td/"events.jsonl"; rl.DETAIL_DIR = td/"details"
+sys.path.insert(0, str(root/"tests/unit")); sys.path.insert(0, str(root/"scripts/logquery"))
+from broker_fixture import BrokerFixture
+import logquery_sources as S
+S.DETAIL_DIR = rl.DETAIL_DIR
+fixture = BrokerFixture(td, rl); fixture.__enter__()
+long_sig = "ET TROJAN " + "payload-" * 120          # > 512 chars: the value is truncated inline
+rl.emit_event("critical", "suricata", "ids", "alert",
+              detail={"engine": "suricata", "src_ip": "10.0.0.9", "dest_port": 445,
+                      "proto": "tcp", "sid": 2031234, "signature": long_sig,
+                      "technique": "T1021 Remote Services", "packet_hex": "ab" * 6000})
+line = rl.EVENT_LOG.read_text().splitlines()[0]
+raw = json.loads(line)
+ck("_full" in raw["detail"] and raw["detail"]["signature"].endswith("…"),
+   "the broker truncated the signature inline and wrote a sidecar")
+stats = S.new_parse_stats()
+rec = S.parse_json_line(line, stats)
+ck(rec["signature"] == long_sig, f"logquery recovered the full {len(long_sig)}-char signature from the sidecar")
+ck(rec["ip"] == "10.0.0.9" and rec["port"] == 445 and rec["sid"] == 2031234
+   and rec["detector"] == "suricata" and rec["technique"].startswith("T1021") and rec["tier"] == 3,
+   f"ip/port/sid/detector/technique/tier flattened ({rec['ip']}:{rec['port']} sid {rec['sid']} tier {rec['tier']})")
+ck(stats["sidecar_read"] == 1 and stats["sidecar_unreadable"] == 0, "the sidecar read is counted")
+ck(pathlib.Path(raw["detail"]["_full"]).name == raw["id"] + ".json",
+   "the broker names the sidecar <id>.json — the rule logquery enforces")
+fixture.__exit__(None, None, None)
+sys.exit(0 if ok else 1)
+PY
+then pass "broker -> logquery sidecar round trip"; else fail "broker -> logquery sidecar round trip" "see above"; fi
+
 section "Category vocabulary is a single authority (DEC-PHASE12-040)"
 if python3 - "$REPO_ROOT" <<'PYV'
 import sys, pathlib, time
