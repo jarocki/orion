@@ -3669,6 +3669,34 @@ else
 fi
 
 # ===========================================================================
+# 42. apt on the live overlay (DEC-PHASE13-051, #121): the read-only evidence
+#     collector ships, and the seeded .bashrc no longer upgrades on `update`.
+# ===========================================================================
+section "42. apt evidence collector shipped; 'update' simulates, never upgrades (DEC-PHASE13-051)"
+
+if [[ -f "$SQF/opt/orionx/optional/apt-evidence.sh" && -x "$SQF/opt/orionx/optional/apt-evidence.sh" ]]; then
+    pass "42a: /opt/orionx/optional/apt-evidence.sh present and executable"
+else
+    fail "42a: apt-evidence.sh present and executable" "operators cannot gather the #121 evidence without it"
+fi
+_42_rc="$SQF/etc/skel/.bashrc"
+if [[ -f "$_42_rc" ]]; then
+    if grep -q '^update() {' "$_42_rc" && grep -q 'apt-get -s upgrade' "$_42_rc"; then
+        pass "42b: baked /etc/skel/.bashrc defines update() with a simulated upgrade"
+    else
+        fail "42b: baked /etc/skel/.bashrc defines update() with a simulated upgrade" "0100 heredoc not applied?"
+    fi
+    if grep -vE '^[[:space:]]*#' "$_42_rc" | grep -qE 'alias update=|^[^#]*sudo apt-get upgrade[^"]*$'; then
+        fail "42c: baked .bashrc carries no silent 'apt-get upgrade'" "$(grep -nE 'alias update=|sudo apt-get upgrade' "$_42_rc" | head -3 | tr '\n' ' ')"
+    else
+        pass "42c: baked .bashrc carries no silent 'apt-get upgrade' (the only one is quoted advice)"
+    fi
+else
+    fail "42b: baked /etc/skel/.bashrc present" "$_42_rc missing from the squashfs"
+    fail "42c: baked .bashrc carries no silent 'apt-get upgrade'" "cannot check — .bashrc missing"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""
