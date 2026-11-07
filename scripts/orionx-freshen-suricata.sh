@@ -51,14 +51,15 @@
 #   Sourcing this file defines the functions without running anything, so the
 #   unit test exercises the real Plan and Do logic with no root and no network.
 #
-# W11-6b update (DEC-PHASE13-043, issue #125): the image now BAKES a curated,
-# SHA-256-pinned ET-Open subset (~3,200 signatures: scan, attack_response,
-# exploit, dos, shellcode, current_events + Debian's stock *-events rules)
-# into /var/lib/suricata/rules/suricata.rules at build time, with its
-# provenance in orionx-rules.provenance.txt beside it. The DEC-PHASE11-008
+# W11-6b update (DEC-PHASE13-043, issue #125): the image now SHIPS a curated
+# ET-Open subset (~3,200 signatures: scan, attack_response, exploit, dos,
+# shellcode, current_events + Debian's stock *-events rules), vendored in the
+# source tree and refreshed by `make suricata-rules-refresh`, as
+# /var/lib/suricata/rules/suricata.rules, with its provenance (upstream SHA-256,
+# date, counts, license) in orionx-rules.provenance.txt beside it. The DEC-PHASE11-008
 # sentence "ships no bundled ruleset" above is therefore history. This script
 # is now the OPT-IN path to the FULL feed (~52,000 signatures, ~48 MB of
-# rules): it replaces the baked subset in place, which was measured to
+# rules): it replaces the shipped subset in place, which was measured to
 # exhaust a 2 GB deck. It says so before it downloads, and it marks the
 # provenance file as superseded afterwards so the file never claims a subset
 # that is no longer there.
@@ -157,7 +158,7 @@ merge_rules() {
 }
 
 # mark_provenance_superseded <provenance_file> <new_signature_count>
-# The baked subset's provenance (DEC-PHASE13-043) must not describe a file that
+# The shipped subset's provenance (DEC-PHASE13-043) must not describe a file that
 # the full feed has just replaced. Appends a dated stanza; a missing file is
 # not an error (pre-W11-6b images, or an operator who deleted it).
 mark_provenance_superseded() {
@@ -168,7 +169,7 @@ mark_provenance_superseded() {
     {
         printf '\n# --- SUPERSEDED by orionx-freshen-suricata on %s ---\n' "$stamp"
         printf 'superseded-by: full ET-Open feed (%s), %s signatures merged into %s\n' "$ET_URL" "$n" "$target"
-        printf 'note: the counts and category list above describe the BAKED subset, not the file now on disk\n'
+        printf 'note: the counts and category list above describe the SHIPPED subset, not the file now on disk\n'
     } >> "$prov" 2>/dev/null || true
 }
 
@@ -244,11 +245,11 @@ main() {
     echo "[orionx-freshen-suricata] merging into: $RULES_DIR/$target"
 
     # DEC-PHASE13-043: say what this replaces and what it costs, before doing it.
-    local baked
-    baked="$(count_signatures "$RULES_DIR/$target")"
+    local shipped
+    shipped="$(count_signatures "$RULES_DIR/$target")"
     if [[ -f "$RULES_DIR/$PROVENANCE_FILE" ]]; then
         echo "[orionx-freshen-suricata] NOTE: the image ships a curated ET-Open subset"
-        echo "  ($baked signatures; see $RULES_DIR/$PROVENANCE_FILE). This replaces it"
+        echo "  ($shipped signatures; see $RULES_DIR/$PROVENANCE_FILE). This replaces it"
         echo "  with the FULL feed (~52,000 signatures). Suricata will need several"
         echo "  hundred MB more RAM; the full feed exhausted a 2 GB deck. Ctrl-C now"
         echo "  to keep the subset."
