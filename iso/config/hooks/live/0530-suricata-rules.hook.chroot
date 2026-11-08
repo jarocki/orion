@@ -9,6 +9,7 @@
 #   refreshed by a reviewed commit, because the upstream URL is a rolling
 #   daily object; the build verifies the vendored files fail-closed
 # @status accepted
+# @category DETECTION
 # @rationale Reported from the v3.1.0 ISO on the HP Pavilion and the Lenovo
 #   (Bay Trail, 2 GB): "Suricata is still failing to start because there are
 #   no initial signatures. Installing the full signature set exhausts the
@@ -96,6 +97,7 @@
 # @title Suricata runs `detect: profile: low` with deck-sized memcaps and a
 #   MemoryMax ceiling; the ceiling is provisional until measured on the deck
 # @status accepted
+# @category DETECTION
 # @rationale The 2 GB Lenovo is the floor Orion-X promises to run on
 #   (DEC-PHASE11-003), and Suricata's defaults are sized for a sensor: flow
 #   memcap 128 MB, stream 64 MB + reassembly 256 MB, defrag 32 MB, host

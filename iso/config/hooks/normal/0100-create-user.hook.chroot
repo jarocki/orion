@@ -54,6 +54,7 @@
 # @decision DEC-PHASE13-051
 # @title The shipped `update` command refreshes apt lists and only SIMULATES the upgrade; it never upgrades the live overlay
 # @status accepted
+# @category PACKAGES
 # @rationale Owner report (#121, HP Pavilion, v3.1.0, 2026-10-26): `apt install
 #   brightnessctl` on the booted image "seemed to mess up other packages".
 #   brightnessctl itself depends on libc6 alone and cannot cascade, but the

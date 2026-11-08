@@ -29,6 +29,7 @@ renders idle descriptors and finished probes with the same code.
 # @decision DEC-PHASE13-047
 # @title Gateway-reported values are displayed as claims; upstream probes reuse outbound_verdict and are never automatic
 # @status accepted
+# @category AWARENESS
 # @rationale Issue #94 asks for two things the passive picture cannot give:
 #   who the gateway is, and whether the upstream filters or blocks. Neither is
 #   passive and they are not the same kind of active, so this module keeps

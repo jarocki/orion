@@ -3,6 +3,7 @@
 # @decision DEC-PHASE13-040
 # @title Tool attribution is a producer-side fingerprint with a stated confidence
 # @status accepted
+# @category DETECTION
 # @rationale Only logquery named tools, and only from an HTTP User-Agent, so
 #   a Suricata alert whose signature text literally says "ET SCAN Nmap"
 #   reached the Cockpit, the Attack Map and the reports as an anonymous

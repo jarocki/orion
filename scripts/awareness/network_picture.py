@@ -22,6 +22,7 @@ extension point at the bottom of this file and is NOT part of the picture.
 # @decision DEC-PHASE13-046
 # @title The network picture is labelled "observed by this deck", windowed, never geolocated, and degrades by naming the missing log
 # @status accepted
+# @category AWARENESS
 # @rationale A passive sensor on one segment sees a sample, not the network. The
 #   honest wording is a contract every surface must keep, so it is fixed here
 #   and tested (tests/unit/test_network_picture.sh), not left to each page:
