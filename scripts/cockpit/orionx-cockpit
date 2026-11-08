@@ -157,6 +157,8 @@ class Cockpit(Gtk.Window):
         self.scroll = 0                # rows scrolled back from newest (0 = live)
         self.drill = False             # detail overlay open
         self.heal: dict = {"readable": False, "pending": [], "active": [], "reason": ""}
+        self.sources: dict | None = None    # L.attack_sources over self.tail (#126)
+        self._sources_at = 0.0
         self.heal_sel = 0
         self.drill_scroll = 0          # first drill-down row shown
         self._approve_rect: tuple[float, float, float, float] | None = None
@@ -193,10 +195,16 @@ class Cockpit(Gtk.Window):
 
     # ------------------------------------------------------------------ polling
     def _poll_events(self) -> bool:
-        for ev in self.tail.poll():
+        new = self.tail.poll()
+        for ev in new:
             if ev["severity"] in ("warning", "critical"):
                 self.flash = 1.0
-        self.pressure_target = L.pressure(self.tail.events, time.time())
+        now = time.time()
+        self.pressure_target = L.pressure(self.tail.events, now)
+        # DEFENSIVE ACTIONS > SOURCES (#126): the Attack Map's aggregation over
+        # this buffer, re-run on new events and every 5 s so the window slides.
+        if new or self.sources is None or now - self._sources_at >= 5.0:
+            self.sources, self._sources_at = L.attack_sources(self.tail.events, now), now
         return True
 
     def _demo_event(self) -> bool:
@@ -687,7 +695,9 @@ class Cockpit(Gtk.Window):
         operator set that class to `confirm`. Before this panel, that decision
         was visible only to `orionx-heal pending` on a terminal — so the deck
         could be holding a block-this-host decision while the dashboard the
-        operator was actually watching said nothing.
+        operator was actually watching said nothing. #126 added what the
+        engine suggested (level `propose`), why the pane is empty when it is,
+        and the recent attack sources the Attack Map shows.
         """
         cx, cy, cw, ch = self._panel(cr, x, y, w, h, "DEFENSIVE ACTIONS")
         cr.save()
@@ -695,68 +705,52 @@ class Cockpit(Gtk.Window):
         cr.clip()
         self._approve_rect = None
         pend = self.heal.get("pending", [])
-        act = self.heal.get("active", [])
-
-        if not self.heal.get("readable", False):
-            # Never render an empty list here: "no pending actions" and "I
-            # could not look" must not look the same on a defensive dashboard.
-            self._text(cr, cx + 8, cy + 20, "state unknown \u2014 " + (self.heal.get("reason") or "no snapshot"),
-                       11, L.AMBER)
-            self._text(cr, cx + 8, cy + 38, "check: systemctl status orionx-heald  \u00b7  sudo orionx-heal status", 11, L.DIM)
-            cr.restore()
-            return
-
+        # #126 (DEC-PHASE13-041): every line comes from cockpit_lib.actions_pane,
+        # healing rows from heald's snapshot and SOURCES from pewpew_feed. Rows
+        # are in priority order (approval, in force, suggested, why-empty,
+        # sources); what does not fit is counted on the last line, not dropped.
+        rows = L.actions_pane(self.heal, self.sources, time.time())
+        tone = {"red": L.RED, "amber": L.AMBER, "dim": L.DIM, "text": (0.85, 0.85, 0.85)}
+        head = {"red": L.RED, "amber": L.AMBER, "dim": L.DIM, "text": L.AMBER}
+        line_h, approve_h = 15.0, 52.0
+        bottom = cy + ch + 4
         ry = cy + 18
-        if self.heal.get("chain_ok") is False:
-            self._text(cr, cx + 8, ry, "\u26a0 audit chain does not verify \u2014 sudo orionx-heal verify", 11, L.RED, bold=True)
-            ry += 18
-        if pend:
-            rec = pend[self.heal_sel % len(pend)]
-            self._text(cr, cx + 8, ry, f"AWAITING APPROVAL  ({len(pend)})", 11, L.RED, bold=True)
-            ry += 20
-            self._text(cr, cx + 8, ry,
-                       f"{rec.get('action','?')} \u2192 {rec.get('target','?')}", 12,
-                       (0.95, 0.95, 0.95), max_w=cw - 16)
-            ry += 12
-            bw, bh = 104.0, 26.0
-            bx, by = cx + 8, ry
-            cr.set_source_rgba(*L.RED, 0.22)
-            self._rrect(cr, bx, by, bw, bh, 6.0)
-            cr.fill()
-            cr.set_source_rgba(*L.RED, 0.95)
-            cr.set_line_width(1.2)
-            self._rrect(cr, bx, by, bw, bh, 6.0)
-            cr.stroke()
-            self._text(cr, bx + bw / 2, by + 17, "APPROVE?", 11.5, L.RED, bold=True, align="center")
-            self._approve_rect = (bx, by, bw, bh)
-            self._text(cr, bx + bw + 10, by + 17, f"[a]  Tab: next  \u00b7  id {rec.get('id','')}", 11, L.DIM,
-                       max_w=cw - bw - 26)
-            ry += bh + 20
-        else:
-            self._text(cr, cx + 8, ry, "nothing awaiting approval", 11, L.DIM)
-            ry += 20
-
-        if act:
-            # The first action shares the header line, so IN FORCE is never
-            # pushed off the panel by a pending approval; the rest fill the
-            # remaining rows, and what does not fit is counted, not dropped.
-            now = time.time()
-
-            def _line(rec):
-                exp = rec.get("expires_ts")
-                left = f"  (reverts in {L.fmt_age(exp - now)})" if exp and exp > now else ""
-                return f"{rec.get('action','?')} \u2192 {rec.get('target','?')}{left}"
-            hw = self._text(cr, cx + 8, ry, f"IN FORCE ({len(act)}): ", 11, L.AMBER, bold=True)
-            self._text(cr, cx + 8 + hw, ry, _line(act[0]), 11, (0.85, 0.85, 0.85), max_w=cw - 16 - hw)
-            ry += 15
-            rest = act[1:]
-            fit = max(0, int((cy + ch - ry + 4) // 15))
-            for i, rec in enumerate(rest[:fit]):
-                more = len(rest) - fit
-                txt = (f"+{more + 1} more \u2014 sudo orionx-heal status" if i == fit - 1 and more > 0
-                       else "\u2022 " + _line(rec))
-                self._text(cr, cx + 8, ry, txt, 11, (0.85, 0.85, 0.85), max_w=cw - 16)
-                ry += 15
+        for i, row in enumerate(rows):
+            need = approve_h if row["kind"] == "approve" else line_h
+            reserve = line_h if i < len(rows) - 1 else 0.0
+            if ry + need + reserve > bottom:      # keep one line for the count
+                self._text(cr, cx + 8, ry, f"+{len(rows) - i} more lines \u2014 sudo orionx-heal status"
+                           "  \u00b7  click: Attack Map", 11, L.DIM, max_w=cw - 16)
+                break
+            col = tone.get(row["tone"], L.DIM)
+            if row["kind"] == "approve" and pend:
+                rec = pend[self.heal_sel % len(pend)]
+                self._text(cr, cx + 8, ry, f"{rec.get('action','?')} \u2192 {rec.get('target','?')}", 12,
+                           (0.95, 0.95, 0.95), max_w=cw - 16)
+                bw, bh = 104.0, 26.0
+                bx, by = cx + 8, ry + 8
+                cr.set_source_rgba(*L.RED, 0.22)
+                self._rrect(cr, bx, by, bw, bh, 6.0)
+                cr.fill()
+                cr.set_source_rgba(*L.RED, 0.95)
+                cr.set_line_width(1.2)
+                self._rrect(cr, bx, by, bw, bh, 6.0)
+                cr.stroke()
+                self._text(cr, bx + bw / 2, by + 17, "APPROVE?", 11.5, L.RED, bold=True, align="center")
+                self._approve_rect = (bx, by, bw, bh)
+                self._text(cr, bx + bw + 10, by + 17, f"[a]  Tab: next  \u00b7  id {rec.get('id','')}", 11, L.DIM,
+                           max_w=cw - bw - 26)
+                ry += need
+                continue
+            lw = 0.0
+            if row["label"]:
+                bullet = row["label"] == "\u2022 "
+                lw = self._text(cr, cx + 8, ry, row["label"], 11, col if bullet else head.get(row["tone"], L.AMBER),
+                                bold=not bullet, max_w=cw - 16)
+            if row["text"]:
+                self._text(cr, cx + 8 + lw, ry, row["text"], 11, col, bold=row["tone"] == "red" and not lw,
+                           max_w=max(1.0, cw - 16 - lw))
+            ry += need
         cr.restore()
 
     # --- drill-down overlay ---

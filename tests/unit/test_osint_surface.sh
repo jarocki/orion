@@ -498,6 +498,18 @@ check(narrow["counts"]["sources"] == 3 and
       "8.8.4.4" not in {s["ip"] for s in narrow["sources"]},
       "a 90s look-back drops the 100s-old source and keeps the rest (%d left)"
       % narrow["counts"]["sources"])
+
+# #126 (DEC-PHASE13-041): the Cockpit's DEFENSIVE ACTIONS > SOURCES is this
+# feed over the Cockpit's own EventTail buffer; same fixture, same answer.
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(sys.argv[1]), "cockpit"))
+import cockpit_lib as L
+tail = L.EventTail(sys.argv[2], backfill=200); tail.poll()
+cock = L.attack_sources(tail.events, now=1100.0)
+check(cock["rows"] == [{k: s[k] for k in L.SOURCE_FIELDS} for s in feed["sources"][:L.SOURCES_MAX]]
+      and cock["total"] == feed["counts"]["sources"] and cock["window"] == feed["window_seconds"],
+      "Cockpit SOURCES rows equal build_feed's sources for the same bus (%d of %d)" % (len(cock["rows"]), cock["total"]))
+check(L._pewpew is F or L._pewpew.__file__ == F.__file__, "the Cockpit imports this very module, not a copy")
 sys.exit(0 if ok else 1)
 PY
 then pass "adapter parses real bus fixtures including scanwatch detail"

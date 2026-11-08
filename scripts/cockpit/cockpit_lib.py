@@ -33,6 +33,7 @@ import os
 import shutil
 import re
 import subprocess
+import sys
 import time
 from collections import deque
 from pathlib import Path
@@ -520,8 +521,145 @@ def healing_actions(path: Path = HEAL_STATUS, now: float | None = None,
     act = [x for x in (_heal_rec(r, "applied_ts") for r in data.get("in_force") or []) if x]
     pend.sort(key=lambda r: r["proposed_ts"] or 0.0, reverse=True)
     act.sort(key=lambda r: r["applied_ts"] or 0.0, reverse=True)
-    out.update(readable=True, pending=pend, active=act)
+    # DEC-PHASE13-041: suggestions and the consent heald acts on, from the same file.
+    prop = [x for x in (_heal_proposal(r) for r in data.get("proposed") or []) if x]
+    prop.sort(key=lambda r: r["ts"] or 0.0, reverse=True)
+    aut = data.get("autonomy")
+    out.update(readable=True, pending=pend, active=act, proposed=prop,
+               proposed_window=_f(data.get("proposed_window")),
+               autonomy=({str(k): str(v) for k, v in aut.items()} if isinstance(aut, dict) else None))
     return out
+
+
+def _heal_proposal(r: Any) -> dict[str, Any] | None:
+    if not isinstance(r, dict) or not str(r.get("action", "")).strip():
+        return None
+    try:
+        count = max(1, int(r.get("count", 1)))
+    except (TypeError, ValueError):
+        count = 1
+    return {"action": str(r["action"]), "target": str(r.get("target", "")),
+            "ts": _f(r.get("ts")), "count": count, "level": str(r.get("level", "")),
+            "reason": str(r.get("reason", ""))[:200],
+            "event_id": str(r["event_id"]) if r.get("event_id") else None}
+
+
+# ---------------------------------------------------------------------------
+# Recent attack sources (#126, DEC-PHASE13-041) — pewpew_feed is the authority.
+# The Attack Map and this pane aggregate the SAME bus events with the SAME
+# function, so they cannot disagree about who is hitting the deck. The import
+# has no fallback on purpose: scripts/osint sits beside scripts/cockpit both
+# in the repo and at /opt/orionx/scripts on the image, and a silent fallback
+# would be a second aggregation the day the path moved.
+# ---------------------------------------------------------------------------
+_OSINT_DIR = str(Path(__file__).resolve().parent.parent / "osint")
+if _OSINT_DIR not in sys.path:
+    sys.path.insert(0, _OSINT_DIR)
+import pewpew_feed as _pewpew  # noqa: E402
+
+SOURCES_MAX = 4
+SOURCE_FIELDS = ("ip", "events", "last_seen", "max_severity", "detectors", "tools")
+
+
+def attack_sources(events, now: float | None = None) -> dict[str, Any]:
+    """The pane's SOURCES block: pewpew_feed.build_feed over the Cockpit's buffer.
+
+    `events` are EventTail's parsed events; they are re-serialised to bus
+    lines so build_feed reads exactly what it reads from the bus. Returns
+    {'rows' (the first SOURCES_MAX sources, SOURCE_FIELDS only, in the feed's
+    order), 'total', 'window', 'held' (events the buffer held)}.
+    """
+    events = list(events)
+    feed = _pewpew.build_feed((json.dumps(e, default=str) for e in events),
+                              now=time.time() if now is None else now)
+    rows = [{k: s.get(k) for k in SOURCE_FIELDS} for s in feed["sources"][:SOURCES_MAX]]
+    return {"rows": rows, "total": len(feed["sources"]),
+            "window": float(feed["window_seconds"]), "held": len(events)}
+
+
+def _mins(seconds: float | None) -> str:
+    return f"{(seconds or 0) / 60:.0f} min"
+
+
+def _source_line(s: dict[str, Any], now: float) -> str:
+    sev = SEVERITY_TAG.get(str(s.get("max_severity")), "?")
+    seen = fmt_age(now - float(s.get("last_seen") or now))
+    who = ",".join(s.get("detectors") or []) or "?"
+    tools = s.get("tools") or []
+    return (f"{s.get('ip', '?')}  {sev}  {s.get('events', 0)} ev  {seen} ago  {who}"
+            + (f" · {','.join(tools)}" if tools else ""))
+
+
+def actions_pane(heal: dict[str, Any], sources: dict[str, Any] | None,
+                 now: float | None = None) -> list[dict[str, str]]:
+    """Every line of DEFENSIVE ACTIONS, in draw order (#126). Pure.
+
+    Each row is {'kind', 'tone', 'label', 'text'}: kind is 'line', or
+    'approve' (the renderer draws the APPROVE button for heal['pending'] there);
+    tone is one of red/amber/text/dim; a non-empty label is drawn bold before
+    the text. Healing rows come only from the heald snapshot (healing_actions),
+    SOURCES rows only from attack_sources. The pane is never blank: each reason
+    it has nothing to show is its own line.
+    """
+    now = time.time() if now is None else now
+    rows: list[dict[str, str]] = []
+
+    def add(text: str, tone: str = "text", label: str = "", kind: str = "line") -> None:
+        rows.append({"kind": kind, "tone": tone, "label": label, "text": text})
+
+    if not heal.get("readable", False):
+        # "no pending actions" and "I could not look" must not look the same.
+        add("state unknown — " + (heal.get("reason") or "no snapshot"), "amber")
+        add("check: systemctl status orionx-heald  ·  sudo orionx-heal status", "dim")
+    else:
+        pend = heal.get("pending") or []
+        act = heal.get("active") or []
+        prop = heal.get("proposed") or []
+        win = _mins(heal.get("proposed_window") or 1800.0)
+        if heal.get("chain_ok") is False:
+            add("⚠ audit chain does not verify — sudo orionx-heal verify", "red", kind="line")
+        if pend:
+            add("", "red", f"AWAITING APPROVAL ({len(pend)})")
+            add("", "red", kind="approve")
+        elif act or prop:
+            add("nothing awaiting approval", "dim")
+        for i, rec in enumerate(act):
+            exp = rec.get("expires_ts")
+            left = f"  (reverts in {fmt_age(exp - now)})" if exp and exp > now else ""
+            add(f"{rec.get('action', '?')} → {rec.get('target', '?')}{left}", "text",
+                f"IN FORCE ({len(act)}): " if i == 0 else "• ")
+        for i, rec in enumerate(prop):
+            times = f" ×{rec['count']}" if rec.get("count", 1) > 1 else ""
+            seen = fmt_age(now - rec["ts"]) + " ago" if rec.get("ts") else "?"
+            add(f"{rec['action']} → {rec['target'] or 'this host'}{times}  · {seen}", "amber",
+                f"SUGGESTED ({len(prop)}): " if i == 0 else "• ")
+            if i == 0:
+                add(f"run: sudo orionx-heal run {rec['action']}"
+                    + (f" --target {rec['target']}" if rec["target"] else ""), "dim")
+        aut = heal.get("autonomy")
+        all_off = isinstance(aut, dict) and bool(aut) and all(v == "off" for v in aut.values())
+        if not (pend or act or prop):
+            add("nothing awaiting approval, in force or suggested", "dim")
+            if all_off:
+                add("autonomy is OFF for every action class — set one to propose in "
+                    "Control Center › Auto-Healing", "amber")
+            else:
+                add(f"no bus event met a healing trigger in the last {win}", "dim")
+
+    if sources is None:
+        add("SOURCES: event buffer not read yet", "dim")
+    elif not sources.get("rows"):
+        add(f"SOURCES: no attributed source in the last {_mins(sources.get('window'))} "
+            f"({sources.get('held', 0)} bus events held)", "dim")
+    else:
+        # Header on its own line: a source row is long enough without sharing it.
+        add("", "text", f"SOURCES ({sources['total']}, last {_mins(sources.get('window'))})")
+        for s in sources["rows"]:
+            add(_source_line(s, now), "text", "• ")
+        more = sources["total"] - len(sources["rows"])
+        if more > 0:
+            add(f"+{more} more — the Attack Map (click this panel) lists all", "dim")
+    return rows
 
 
 def _heal_cli(args: list[str], timeout: float = 4.0) -> tuple[int, str]:
@@ -635,7 +773,7 @@ def live_layout(W: float, H: float, pad: int = 16,
     rx = pad + left_w + pad
     rw = W - rx - pad
     avail = max(0, body_h - pad * 3)
-    a_h = int(avail * 0.30)
+    a_h = int(avail * 0.36)   # #126: SUGGESTED + SOURCES joined the pane
     n_h = int(avail * 0.18)
     s_h = max(SYSTEMS_MIN_H, int(avail * 0.17))
     g_h = max(0, avail - a_h - n_h - s_h)

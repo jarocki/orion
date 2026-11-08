@@ -280,13 +280,18 @@ cw.vitals = {"hostname": "incident-2026-10-07-site-b-laptop-03-with-an-even-long
              "disk": {"used_pct": 40.0, "free_bytes": 9 * 1024 ** 3, "path": "/"}}
 cw.posture, cw.posture_status = "1", {}
 cw.heal = {"readable": True, "chain_ok": True, "pending": [{"id": "p1", "action": "block_ip", "target": "10.0.0.5", "proposed_ts": time.time()}],
-           "active": [{"id": "a1", "action": "kill_process", "target": "4242", "applied_ts": time.time(), "expires_ts": time.time() + 600}]}
+           "active": [{"id": "a1", "action": "kill_process", "target": "4242", "applied_ts": time.time(), "expires_ts": time.time() + 600}],
+           "proposed": [{"action": "block_ip", "target": "203.0.113.77", "ts": time.time() - 60, "count": 3, "level": "propose",
+                         "reason": "a host that swept our ports is scanning us; drop it", "event_id": "e1"}],
+           "proposed_window": 1800.0, "autonomy": {"block_ip": "propose"}}
 cw.systems = {"NEBULA": True, "FIREWALL": False, "MESH": None, "R.A.I.N.": True}
 long = "ET SCAN Potential SSH Scan OUTBOUND from 192.168.4.57 to 203.0.113.9 port 22 — repeated 41 times in 60 s by the same source"
 for i, sev in enumerate(("info", "notice", "warning", "critical") * 6):
     cw.tail.events.append({"ts": time.time() - i * 90, "severity": sev, "source": "suricata", "category": "ids",
                            "message": long, "id": "", "detail": {"src_ip": "192.168.4.57", "sid": 2210000,
                                                                  "signature": "S" * 3000, "ports_seen": list(range(60))}})
+cw._sources_at = 0.0           # the events were appended by hand: let the poll re-aggregate now (#126)
+cw._poll_events()
 drawn: list = []
 orig_text = cw._text
 
@@ -331,6 +336,47 @@ stream = [d for d in drawn[:n_first] if d[5].startswith("ET SCAN")]
 ck(stream and all(d[5].endswith("…") for d in stream), "stream messages end with an ellipsis, not a mid-word clip")
 ck(any(d[5] == "CRIT" for d in drawn) and any(d[5] == "INFO" for d in drawn), "severity words drawn in the stream")
 ck(any("rows 1" in d[5] for d in drawn), "drill-down pages long detail (rows x–y of n)")
+
+# #126 (DEC-PHASE13-041): the pane draws cockpit_lib.actions_pane line for line,
+# inside its own rectangle, at >= 11 px, fitted; SOURCES is build_feed's.
+ax, ay, aw, ah = lay["actions"]
+in_actions = [d for d in drawn[:n_first] if ax <= d[0] <= ax + aw and ay <= d[1] <= ay + ah + 30]
+ck(in_actions and all(d[1] <= ay + ah - 4 for d in in_actions),
+   f"DEFENSIVE ACTIONS text stays inside its panel (bottom {ay + ah}; lowest {max(d[1] for d in in_actions) if in_actions else None})")
+ck(any(d[5].startswith("SUGGESTED (1)") for d in in_actions), "a heald proposal is drawn as SUGGESTED")
+ck(any(d[5].startswith("IN FORCE (1)") for d in in_actions) and any(d[5] == "APPROVE?" for d in in_actions),
+   "IN FORCE and APPROVE are still drawn beside it")
+ck(any(d[5].startswith("SOURCES (") for d in in_actions) or any(d[5].startswith("+") and "more lines" in d[5] for d in in_actions),
+   f"with every block full, SOURCES is drawn or counted, never silently cut ({[d[5] for d in in_actions][-2:]})")
+ck(cw.sources is not None and cw.sources["rows"] == CK.L.attack_sources(cw.tail.events, time.time())["rows"][:len(cw.sources["rows"])]
+   and cw.sources["rows"][0]["ip"] == "192.168.4.57", f"the Cockpit's SOURCES are attack_sources over its EventTail ({cw.sources and cw.sources['rows'][:1]})")
+
+
+def pane_texts(heal: dict) -> list:
+    cw.heal = heal
+    drawn.clear()
+    cw._text = rec_text
+    try:
+        cw._draw(cw.da, cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)))
+    finally:
+        cw._text = orig_text
+    return [d for d in drawn if ax <= d[0] <= ax + aw and ay <= d[1] <= ay + ah]
+
+
+cw.drill = False
+base = {"readable": True, "chain_ok": True, "pending": [], "active": [], "proposed": [], "proposed_window": 1800.0}
+t = pane_texts(dict(base, autonomy={"block_ip": "off", "kill_process": "off"}))
+ck(any(d[5].startswith("autonomy is OFF for every action class") for d in t), "empty pane, all classes off: says so on its own line")
+ck(all(d[3] >= 11 for d in t) and all(d[2] <= d[4] + 0.5 for d in t if d[4] is not None), "those lines are >= 11 px and fitted")
+t = pane_texts(dict(base, autonomy={"block_ip": "propose"}))
+ck(any(d[5].startswith("no bus event met a healing trigger") for d in t), "empty pane with consent: no qualifying event, said")
+t = pane_texts(dict(base, autonomy={"block_ip": "propose"}, proposed=[
+    {"action": "block_ip", "target": "203.0.113.77", "ts": time.time() - 60, "count": 3, "level": "propose", "reason": "r", "event_id": "e1"}]))
+ck(any(d[5].startswith("SUGGESTED (1)") for d in t) and any(d[5].startswith("SOURCES (1, last 15 min)") for d in t)
+   and any(d[5].startswith("192.168.4.57  CRIT") for d in t), "propose level (no approval waiting): SUGGESTED and SOURCES rows both fit")
+t = pane_texts({"readable": False, "pending": [], "active": [], "reason": "orionx-heald not publishing (snapshot 45 s old)"})
+ck(any(d[5].startswith("state unknown") for d in t) and any(d[5].startswith("SOURCES") for d in t),
+   "stale snapshot: state unknown, and SOURCES still drawn")
 toasts_before = len(TOASTS)
 cw._say("survives reboot: NO — test\nsquelched: sid 1", "ok")
 ck(cw.toast_bar.get_reveal_child() and "survives reboot" in cw.toast_bar._label.get_text(), "LIVE outcomes use the shared, wrapping ToastBar")
