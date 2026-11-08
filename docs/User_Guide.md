@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition User Guide
 
-Source version: **<!--orionx:release-->v3.1.4<!--/orionx:release-->** — Debian 13 "trixie", Python 3.13, Linux 6.12. On the deck, the rendered guide shows the exact build from `/etc/orionx-version`. The latest published ISO is v3.1.3 (CI-built and gated from the tag, signed by the owner, 2026-11-05); v3.1.0 is the latest one also booted on hardware.
+Source version: **<!--orionx:release-->v3.1.4<!--/orionx:release-->** — Debian 13 "trixie", Python 3.13, Linux 6.12. On the deck, the rendered guide shows the exact build from `/etc/orionx-version`. The latest published ISO is v3.1.4 (CI-built and gated from the tag, signed by the owner, 2026-11-06); v3.1.0 is the latest one also booted on hardware.
 
 ## Table of Contents
 
@@ -204,12 +204,12 @@ sha256sum -c SHA256SUMS        # macOS: shasum -a 256 -c SHA256SUMS
 
 ```powershell
 # Windows (PowerShell)
-# list EVERY part from SHA256SUMS, in order (about seventeen 190 MiB parts: part-aa … part-aq)
+# list EVERY part from SHA256SUMS, in order (v3.1.4 has forty-eight 64 MiB parts, part-aa … part-bv; earlier releases about seventeen 190 MiB parts)
 cmd /c copy /b orionx-phoenix-edition-<version>.iso.part-aa + orionx-phoenix-edition-<version>.iso.part-ab + orionx-phoenix-edition-<version>.iso.part-ac + orionx-phoenix-edition-<version>.iso.part-ad + orionx-phoenix-edition-<version>.iso.part-ae + orionx-phoenix-edition-<version>.iso.part-af + orionx-phoenix-edition-<version>.iso.part-ag orionx-phoenix-edition-<version>.iso
 Get-FileHash orionx-phoenix-edition-<version>.iso -Algorithm SHA256
 ```
 
-Run these in the folder that holds the downloads (`cd ~/Downloads` first if that is where they are). The parts can be uneven (each is at most 190 MiB, and the later ones may be much smaller) — that is expected, not a truncated download. Windows Explorer counts in GiB, so it shows the joined file about 7% smaller than the size on the release page; it is the same file.
+Run these in the folder that holds the downloads (`cd ~/Downloads` first if that is where they are). The parts can be uneven (each is at most the release's part size, 64 MiB for v3.1.4 and 190 MiB before it, and the last one may be much smaller) — that is expected, not a truncated download. Windows Explorer counts in GiB, so it shows the joined file about 7% smaller than the size on the release page; it is the same file.
 
 `SHA256SUMS` lists the whole ISO **and** each part, so a corrupted download can be identified and re-fetched individually: the check prints one `OK` line per file; re-download any file marked `FAILED` and run the check again. If you delete the parts after joining, the part lines report "No such file" — only the `.iso` line matters then. A single `.part-*` file is not bootable.
 
@@ -277,13 +277,13 @@ Nothing is installed on the computer — this checks the file you downloaded and
    Get-FileHash orionx-phoenix-edition-<version>.iso -Algorithm SHA256
    ```
 
-2. Compare the result with the hash on the release page and in `SHA256SUMS` (`orionx-imager` does this for you when it downloads the release). The v3.1.3 ISO hashes to `4ee2a9a706395ae8f6a01ddce39f8a2c8c006005d911e4f1fd4ca5ee12095897`; v3.1.2 to `2718be02e596ddd5a5750252af5accc22865552b583dc0a0bd3a79c170b14d5c`; v3.1.0 to `38ca9d833e93e53fc6e9dd1bcab68207e2ce37d31d6d51702b67985f983ad6c5`; v3.0.0 to `c952ca5be03789208e39ef1807c1f09c1c15fb1f82c223272c8c3c2007332386`. Never carry a hash across releases.
+2. Compare the result with the hash on the release page and in `SHA256SUMS` (`orionx-imager` does this for you when it downloads the release). The v3.1.4 ISO hashes to `456f29326953eddd4cd573f81ab3c1b02dca7b6722a749aa60a114d9d8a3bbd9`; v3.1.3 to `4ee2a9a706395ae8f6a01ddce39f8a2c8c006005d911e4f1fd4ca5ee12095897`; v3.1.2 to `2718be02e596ddd5a5750252af5accc22865552b583dc0a0bd3a79c170b14d5c`; v3.1.0 to `38ca9d833e93e53fc6e9dd1bcab68207e2ce37d31d6d51702b67985f983ad6c5`; v3.0.0 to `c952ca5be03789208e39ef1807c1f09c1c15fb1f82c223272c8c3c2007332386`. Never carry a hash across releases.
 
 3. After booting Orion-X, open a terminal and check the image identity:
    ```bash
    grep ISO_VERSION= /etc/orionx-version
    ```
-   The v3.1.3 ISO prints `ISO_VERSION=v3.1.3`; v3.1.2 prints `ISO_VERSION=v3.1.2`; v3.1.0 prints `ISO_VERSION=v3.1.0`; v3.0.0 prints `ISO_VERSION=v3.0.0`. (The patch images print `ISO_VERSION=v3.0.1` and `ISO_VERSION=v3.0.2`.)
+   The v3.1.4 ISO prints `ISO_VERSION=v3.1.4`; v3.1.3 prints `ISO_VERSION=v3.1.3`; v3.1.2 prints `ISO_VERSION=v3.1.2`; v3.1.0 prints `ISO_VERSION=v3.1.0`; v3.0.0 prints `ISO_VERSION=v3.0.0`. (The patch images print `ISO_VERSION=v3.0.1` and `ISO_VERSION=v3.0.2`.)
 
 4. Run the built-in self-check: `sudo orionx-diag` (without `sudo` the systemd and AppArmor checks are skipped). See [orionx-diag.md](orionx-diag.md).
 
@@ -2200,4 +2200,4 @@ Ctrl+E                         # Export packet dissections
 
 ---
 
-This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.1.4<!--/orionx:release--> source (Debian 13 "trixie"); the latest published ISO is v3.1.3, built and gated by CI from the tag and signed by the owner, and v3.1.0 is the latest ISO that also passed a hardware boot (CHANGELOG, *ISO identity*). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.
+This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.1.4<!--/orionx:release--> source (Debian 13 "trixie"); the latest published ISO is v3.1.4, built and gated by CI from the tag and signed by the owner, and v3.1.0 is the latest ISO that also passed a hardware boot (CHANGELOG, *ISO identity*). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.

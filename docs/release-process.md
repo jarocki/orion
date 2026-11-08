@@ -546,6 +546,8 @@ Never publish a bare `.part-*` set without `SHA256SUMS`, its `.asc` and
   part at the day's measured speed. `owner-release.sh` defaults to `64m`
   (≈48 parts for a 3.0 GB ISO) and takes `--part-size`; `--restage` re-splits,
   re-signs and clears every asset (starters included) off the draft first.
+  **2026-11-06 (v3.1.4):** 48 parts of 64 MiB at ~2.5 MB/s went up in 27 min,
+  median 26 s and slowest 34 s per part, no reset and no `starter` left behind.
 - **Failed uploads leave a hidden `starter` asset** that blocks every retry of
   the same file name with `400 Bad Request` / `500 Error saving asset`. It is
   NOT shown by `gh release view`; list and delete it with the REST API:
