@@ -157,7 +157,7 @@ ck("KIND_PROPOSED" not in src and "chain.jsonl" not in src, "the Cockpit never r
 # (c) why the pane is empty: one line per reason, never a blank pane.
 base = {"readable": True, "chain_ok": True, "pending": [], "active": [], "proposed": [], "proposed_window": 1800.0}
 t = texts(L.actions_pane(dict(base, autonomy={k: "off" for k in hl.PLAYBOOK_NAMES}), None, now))
-ck("autonomy is OFF for every action class — set one to propose in Control Center › Auto-Healing" in t, f"all-off reason: {t}")
+ck("autonomy is OFF for every action class — set one to propose on the Auto-Healing tab" in t, f"all-off reason: {t}")
 hl.write_status(hl.status_snapshot(td/"none.jsonl", now, autonomy=hl.load_autonomy()), status)
 t = texts(L.actions_pane(L.healing_actions(status, now=now), None, now))
 ck(any(x.startswith("autonomy is OFF for every action class") for x in t), "absent autonomy.json reaches the pane as all-off (fail-closed)")
