@@ -122,7 +122,8 @@ ck("192.168.4.57" not in arp and "192.168.4.77" not in arp, "self is never a hos
 summ = p["summary"]
 ck(summ["headline"] == "6 hosts · ARP table + Zeek 15 min · observed by this deck", f"headline: {summ['headline']}")
 ck(summ["split_line"].startswith("30% local / 70% internet by bytes") and "15 min" in summ["split_line"], f"split line: {summ['split_line']}")
-ck(p["active"] == [] and callable(NP.active_extensions), "the #94 extension point exists and is empty")
+ck([a["id"] for a in p["active"]] == ["gateway", "outbound"] and all(a["state"] == "idle" and a["result"] is None for a in p["active"]),
+   "the #94 extension point returns the two IDLE descriptors only; collect() runs no probe (DEC-PHASE13-047)")
 
 # --- quiet fixture: logs present, every class ABSENT (never unknown) ---
 q = NP.collect(now=NOW, log_dirs=[str(FX / "zeek" / "network_picture_quiet")], run=run)
@@ -214,7 +215,7 @@ for f in "$AW/network_picture.py" "$WEB/network/network.js"; do
 done
 grep -q 'observed by this deck' "$WEB/network/index.html" && pass "the page states the label in its own words too" || fail "page label" "missing"
 grep -q 'textContent' "$WEB/network/network.js" && ! grep -q 'innerHTML' "$WEB/network/network.js" && pass "the page writes API strings with textContent only (DNS/DHCP/SSDP strings are attacker-chosen)" || fail "innerHTML" "network.js uses innerHTML"
-grep -q 'id="sec-active" class="hidden"' "$WEB/network/index.html" && grep -q 'def active_extensions' "$AW/network_picture.py" && pass "#94 extension point: hidden section + empty active_extensions()" || fail "#94 extension point" "missing"
+grep -q 'id="sec-active" class="hidden"' "$WEB/network/index.html" && grep -q 'def active_extensions' "$AW/network_picture.py" && pass "#94 extension point: hidden-until-entries section + active_extensions()" || fail "#94 extension point" "missing"
 grep -qE "subprocess\.run" "$AW/network_picture.py" && ! grep -qE "\b(ip|nmcli) (link|addr|neigh) (add|set|del|flush|replace)|sysctl -w|iptables|nft |socket\.(socket|send)" "$AW/network_picture.py" && pass "reads only: no command or socket in the module transmits or mutates" || fail "read-only" "a mutating/transmitting call appears in network_picture.py"
 
 echo "[orionx-postured imports the shared Zeek discovery instead of carrying a copy]"

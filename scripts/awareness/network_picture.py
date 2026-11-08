@@ -59,6 +59,7 @@ from typing import Any, Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import deck_vitals  # noqa: E402  (DEC-PHASE12-049: the deck's own addresses, one authority)
+import gateway_probes  # noqa: E402  (#94, DEC-PHASE13-047: describe() ONLY — pure descriptors, no socket)
 import zeek_logs  # noqa: E402  (shared with orionx-postured: one list of Zeek log directories)
 
 SCHEMA = 1
@@ -874,14 +875,18 @@ def collect(window: float = WINDOW_SECONDS, now: float | None = None,
 # "reported by the gateway, not measured") and blocking/filtering probes that
 # reach the internet and must pass osint_server.outbound_verdict() first.
 # They plug in here and ONLY here, so a reader of collect() can see at a glance
-# that the passive picture never grew a transmitter by accident. Until #94
-# lands this returns an empty list and the page draws nothing for it.
+# that the passive picture never grew a transmitter by accident: the only call
+# into gateway_probes from this file is describe(), which returns the IDLE
+# descriptors (state "idle", result None) and opens no socket. The transmitters
+# run solely from the two POST handlers in osint_server.py when the operator
+# presses a button; their answers come back in this same entry shape
+# (tests/unit/test_gateway_probes.sh proves collect() sends nothing).
 
 def active_extensions() -> list[dict[str, Any]]:
-    """Operator-initiated, posture-gated sections (#94). Empty until implemented;
-    the entries will carry {id, label, state, gated_by, result} and the page
-    renders them under the passive picture with their own labels."""
-    return []
+    """The operator-initiated sections (#94, DEC-PHASE13-047) in their idle state.
+    Entries carry {id, label, state, gated_by, result, endpoint, what, sends, ...};
+    the page draws a button per entry and renders a finished probe with the same code."""
+    return gateway_probes.describe()
 
 
 # ---------------------------------------------------------------- CLI
