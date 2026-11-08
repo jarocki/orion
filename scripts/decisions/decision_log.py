@@ -487,6 +487,21 @@ def _today() -> str:
     return dt.datetime.now(tz=dt.timezone.utc).astimezone().date().isoformat()
 
 
+def shallow_repo(root: Path) -> bool:
+    """True when `root` is a shallow clone. Blame in a shallow clone attributes
+    every line to the boundary commit, so row dates would all read as that
+    commit's date (CI's default depth-1 checkout produced 113 wrong dates on
+    2026-11-07). Rows must never be emitted from one."""
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--is-shallow-repository"],
+            capture_output=True, text=True, check=False,
+        )
+    except OSError:
+        return False
+    return res.returncode == 0 and res.stdout.strip() == "true"
+
+
 def block_category(b: Block) -> str:
     c = b.tags.get("category", "").strip().strip("[]").upper()
     if c:
@@ -701,6 +716,13 @@ def main(argv: list[str] | None = None) -> int:
     since = parse_phase(args.since) if args.since else None
     if phases is None and since is None and not (args.inventory or args.dump):
         since = 12
+
+    emits_dates = not (args.check or args.inventory or args.dump)
+    if emits_dates and shallow_repo(root):
+        print("decision_log: refusing to emit rows from a shallow clone: git blame would date "
+              "every row to the boundary commit. Run `git fetch --unshallow` (CI: "
+              "actions/checkout with fetch-depth: 0).", file=sys.stderr)
+        return 2
 
     scan = scan_repo(root)
 

@@ -11,6 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: tests/unit/test_decision_log.sh compares MASTER_PLAN's
+          # generated Decision Log with the generator, whose row dates come from
+          # git blame; a depth-1 clone dates every row to the checkout commit
+          # (DEC-PHASE13-045).
+          fetch-depth: 0
 
       - name: Install shell and ISO test tools
         run: sudo apt-get install -y shellcheck xorriso squashfs-tools

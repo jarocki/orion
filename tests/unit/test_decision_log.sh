@@ -114,5 +114,17 @@ grep -q '^| DEC-PHASE12-900 | [0-9-]* | \[MISC\] Second, same id, no @canonical 
 OUT="$(python3 "$TOOL" --root "$T" --write 2>&1)"
 [[ "$OUT" == *"already current"* ]] && pass "second --write is a no-op" || fail "idempotent write" "$OUT"
 
+section "A shallow clone refuses to emit rows (blame would misdate every row)"
+S="$WORK/shallow"; mkdir -p "$S/src"
+git -C "$S/src" init -q && git -C "$S/src" -c user.name=t -c user.email=t@t commit -q --allow-empty -m one \
+    && git -C "$S/src" -c user.name=t -c user.email=t@t commit -q --allow-empty -m two
+git clone -q --depth 1 "file://$S/src" "$S/clone" 2>/dev/null
+OUT="$(python3 "$TOOL" --root "$S/clone" --since PHASE12 2>&1)"; RC=$?
+[[ $RC -eq 2 && "$OUT" == *"shallow clone"* ]] && pass "rows refused in a shallow clone (exit 2, says why)" \
+    || fail "shallow guard" "rc=$RC $OUT"
+OUT="$(python3 "$TOOL" --root "$S/clone" --check 2>&1)"; RC=$?
+[[ "$OUT" != *"shallow clone"* ]] && pass "--check still runs in a shallow clone (it emits no dates)" \
+    || fail "shallow --check" "$OUT"
+
 printf "\n%d passed, %d failed\n" "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]]
