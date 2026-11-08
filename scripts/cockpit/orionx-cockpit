@@ -959,7 +959,7 @@ class Cockpit(Gtk.Window):
         # shows — so the two surfaces cannot disagree. The headline sits on the
         # title row (right of "NETWORK"); the split sits between the two rates.
         summ = (self.net_picture or {}).get("summary") or {}
-        self._text(cr, cx + cw, y + 20, summ.get("headline") or "network picture: reading…", 10.5,
+        self._text(cr, cx + cw, y + 20, summ.get("headline") or "network picture: reading…", 11,
                    L.DIM, align="right", max_w=cw - 80)
         graph_h = ch - 22
         vmax = max(max(self.rates.rx_hist), max(self.rates.tx_hist), 1024.0)
@@ -986,7 +986,7 @@ class Cockpit(Gtk.Window):
         self._text(cr, cx + cw, cy + ch - 4, f"↑ {L.fmt_rate(self.rates.tx_rate)}", 12, L.EMBER, bold=True, align="right")
         if summ.get("split_line"):
             col = L.DIM if summ.get("split_available") else L.AMBER
-            self._text(cr, cx + cw / 2, cy + ch - 4, summ["split_line"], 10.5, col, align="center", max_w=cw - 190)
+            self._text(cr, cx + cw / 2, cy + ch - 4, summ["split_line"], 11, col, align="center", max_w=cw - 190)
 
     # --- systems LEDs ---
     def _systems_panel(self, cr, x, y, w, h):
