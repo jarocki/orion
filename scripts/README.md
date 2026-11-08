@@ -131,7 +131,7 @@ If `orionx-diag` emits a FAIL on a freshly booted, unmodified ISO:
 | Script | Description |
 |--------|-------------|
 | `mesh/orionx-mesh` | WireGuard P2P mesh CLI |
-| `control_center/orionx-control-center` | GTK Control Center (cyberdeck UI) |
+| `control_center/orionx-control-center` | Launcher: opens a Cockpit tab, or says where a moved control went and opens its home (`--where`, #95) |
 | `nebula/nebula` | Nebula AI CLI dispatcher |
 | `orionx-freshen-yara.sh` | Post-boot YARA ruleset updater |
 | `orionx-freshen-suricata.sh` | Post-boot Suricata ET-Open rule fetcher |

@@ -61,11 +61,63 @@ CREDENTIALLED_SOURCES = ("r2", "s3", "api")
 
 # The canonical record. Every parser normalizes onto these keys so one set of
 # reports, one correlation pass and one SQL schema serve all four sources.
+#
+# signature/sid/technique/detector/tool arrived with #127: they are what a bus
+# event's `detail` carries and an access log never does. `tool` is the
+# producer's attribution (#128 makes postured/scanwatch set detail.tool); the
+# enrichment pass keeps it when set and fills it from the User-Agent only when
+# it is empty, so there is one `tool` column with one precedence rule.
 RECORD_FIELDS = (
     "ts", "ip", "method", "path", "query", "status", "bytes",
     "userAgent", "referer", "asn", "asOrganization", "country",
     "reason", "tier", "proto", "port", "origin",
+    "signature", "sid", "technique", "detector", "tool",
 )
+
+# @decision DEC-PHASE13-039
+# @title A bus event's detail is flattened onto the record, sidecars included
+# @status accepted
+# @rationale parse_json_line mapped only a bus line's top-level keys, so a
+#   Suricata, Zeek or scanwatch event became {ts, reason, path=message} with no
+#   ip, port or signature, and every report that keys on ip (all of them, plus
+#   correlate) saw nothing of it — the owner's "logquery does not operate on
+#   nmap, IDS and zeek alerts" (#127). The producers already publish the
+#   structure: postured's _alert_detail (engine, src_ip, dest_ip, proto, sid,
+#   signature, dest_port, technique) and scanwatch's build_detail (src_ip,
+#   latest_dport, protocols, detector, ports_seen). This module now lifts
+#   those keys onto the canonical record with one priority list per field
+#   (dest_port before latest_dport, signature before Zeek's note, detector
+#   before engine), fills only fields the top level left empty, and derives
+#   tier from the bus severity rank (rain_lib.SEVERITIES) so the tier-gated
+#   reports (threats, timeline alerts) see an IDS critical the way they see a
+#   firewall drop. When the broker spilled an oversized detail to
+#   /run/orionx/details/<id>.json (rain_lib._write_sidecar), the inline copy
+#   is visibly truncated; the reader here follows `_full` only when the path
+#   resolves inside rain_lib.DETAIL_DIR and is named for the event's own id,
+#   because the bus line is evidence that may have been copied off another
+#   machine and must not be allowed to point this tool at an arbitrary file.
+#   No reader of that sidecar existed before; the location is taken from
+#   rain_lib so there is still one authority over where sidecars live. The
+#   flattening is counted and narrated under -v, and an unreadable sidecar is
+#   a note the operator sees, never a silent fallback to the truncated copy.
+
+# detail.<key> -> record field, applied only to a bus event's detail dict.
+# Keys are tried in order per field; the first present, non-empty one wins.
+_DETAIL_MAP = (
+    ("ip", ("src_ip",)),
+    ("port", ("dest_port", "latest_dport")),
+    ("proto", ("proto", "protocols")),
+    ("signature", ("signature", "note")),
+    ("sid", ("sid",)),
+    ("technique", ("technique",)),
+    ("detector", ("detector", "engine")),
+    ("tool", ("tool",)),
+)
+
+# A sidecar larger than this is refused unread. The broker never writes one
+# above rain_lib.MAX_REQUEST_BYTES (128 KiB); the margin is for a hand-edited
+# file, not for a bigger payload.
+SIDECAR_MAX_BYTES = 1024 * 1024
 
 # Field aliases seen in the wild / in the sealed edge archive.
 _ALIASES = {
@@ -98,6 +150,36 @@ class SourceError(Exception):
     def __init__(self, message: str, hint: str = ""):
         super().__init__(message)
         self.hint = hint
+
+
+# ---------------------------------------------------------------------------
+# R.A.I.N. siblings — loaded from scripts/rain/ (or the installed path), never
+# reimplemented here. Each one is a single authority this module defers to.
+# ---------------------------------------------------------------------------
+def _load_rain_module(filename: str, modname: str):
+    here = Path(__file__).resolve()
+    candidates = [
+        here.parent.parent / "rain" / filename,
+        Path("/opt/orionx/scripts/rain") / filename,
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            try:
+                return SourceFileLoader(modname, str(candidate)).load_module()
+            except (OSError, SyntaxError, ImportError):
+                return None
+    return None
+
+
+_RAIN_LIB = _load_rain_module("rain_lib.py", "orionx_rain_lib")
+
+# Where the broker spills oversized detail (rain_lib._write_sidecar) and the
+# severity rank bus tiers derive from. Both come from rain_lib when it loads;
+# the fallbacks mirror its values so a copy of this module can still read a
+# spool off-deck, and are the only place they are repeated.
+DETAIL_DIR = Path(getattr(_RAIN_LIB, "DETAIL_DIR", "/run/orionx/details"))
+BUS_SEVERITIES = tuple(getattr(_RAIN_LIB, "SEVERITIES",
+                               ("info", "notice", "warning", "critical")))
 
 
 # ---------------------------------------------------------------------------
@@ -172,11 +254,105 @@ def _coerce_int(value):
 # ---------------------------------------------------------------------------
 # per-format parsers (pure)
 # ---------------------------------------------------------------------------
-def parse_json_line(line: str) -> dict | None:
+def new_parse_stats() -> dict:
+    """Counters parse_json_line fills when given one; narrated under -v."""
+    return {"bus_events": 0, "detail_flattened": 0, "sidecar_read": 0,
+            "sidecar_unreadable": 0, "detail_truncated": 0}
+
+
+def read_detail_sidecar(detail: dict, event_id, detail_dir: Path | None = None):
+    """Return the full detail behind a `_full` reference, or None with a reason.
+
+    Follows the broker's own contract (rain_lib._write_sidecar): a JSON object
+    at <DETAIL_DIR>/<event id>.json. Anything else — a path outside that
+    directory, a name that is not this event's id, a symlink that resolves
+    elsewhere, a non-object, an oversized file — is refused, because the bus
+    line is evidence and may have been written anywhere.
+    """
+    ref = detail.get("_full")
+    if not isinstance(ref, str) or not ref:
+        return None, "no sidecar reference"
+    if not isinstance(event_id, str) or not event_id:
+        return None, "event carries no id"
+    base = (detail_dir if detail_dir is not None else DETAIL_DIR)
+    try:
+        base = Path(base).resolve()
+        path = Path(ref).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None, f"sidecar missing: {ref}"
+    if path.parent != base or path.name != f"{event_id}.json":
+        return None, f"sidecar reference refused (outside {base}): {ref}"
+    try:
+        if path.stat().st_size > SIDECAR_MAX_BYTES:
+            return None, f"sidecar too large: {ref}"
+        full = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return None, f"sidecar unreadable: {ref}"
+    if not isinstance(full, dict):
+        return None, f"sidecar is not a JSON object: {ref}"
+    return full, ""
+
+
+def _flatten_detail(rec: dict, raw: dict, stats: dict | None) -> None:
+    """Lift a bus event's detail onto the record's canonical fields.
+
+    Only fields the top level left empty are filled, so a producer that one
+    day puts `ip` at the top level is not overridden by its own detail.
+    """
+    detail = raw.get("detail")
+    if not isinstance(detail, dict) or not detail:
+        return
+    if "_full" in detail:
+        full, why = read_detail_sidecar(detail, raw.get("id"))
+        if full is not None:
+            merged = dict(detail)
+            merged.update(full)
+            detail = merged
+            if stats is not None:
+                stats["sidecar_read"] += 1
+        elif stats is not None:
+            stats["sidecar_unreadable"] += 1
+            stats.setdefault("sidecar_notes", []).append(why)
+    if detail.get("_truncated") and stats is not None:
+        stats["detail_truncated"] += 1
+    touched = False
+    for field, keys in _DETAIL_MAP:
+        if rec.get(field) not in (None, ""):
+            continue
+        for key in keys:
+            value = detail.get(key)
+            if value not in (None, ""):
+                rec[field] = value
+                touched = True
+                break
+    # The producer's confidence travels with its tool (DEC-PHASE13-040); it is
+    # an enrichment column, so it rides on the record outside RECORD_FIELDS
+    # and enrich_record keeps it when the tool was not fingerprinted there.
+    if rec.get("tool") == detail.get("tool") and detail.get("tool_conf"):
+        rec["tool_conf"] = str(detail["tool_conf"])
+    if touched and stats is not None:
+        stats["detail_flattened"] += 1
+
+
+def bus_tier(severity) -> int | None:
+    """Bus severity -> the coarse tier the reports gate on (info 0 .. critical 3).
+
+    The rank is rain_lib's; a firewall drop is tier 2 and a bus 'warning' is
+    the same rung, so the two kinds of evidence sort together.
+    """
+    try:
+        return BUS_SEVERITIES.index(str(severity).lower())
+    except ValueError:
+        return None
+
+
+def parse_json_line(line: str, stats: dict | None = None) -> dict | None:
     """Parse one NDJSON record, mapping known aliases onto the canonical keys.
 
     Also accepts a R.A.I.N. bus line (/run/orionx/events.jsonl), whose
-    'source'/'category'/'message' shape has no ip or path.
+    'source'/'category'/'message' shape puts the address, port, signature
+    and detector inside `detail` — flattened here (DEC-PHASE13-039). `stats`,
+    when given, is a new_parse_stats() dict that counts what was flattened.
     """
     text = line.strip()
     if not text or text[0] != "{":
@@ -191,21 +367,31 @@ def parse_json_line(line: str) -> dict | None:
     rec = blank_record()
     bus_event = "severity" in raw and "message" in raw
     for key, value in raw.items():
-        # A bus event's "source" is a component name, not an address.
-        if bus_event and key == "source":
+        # A bus event's "source" is a component name, not an address, and
+        # its "detail" is structure, flattened below rather than copied.
+        if bus_event and key in ("source", "detail"):
             continue
         field = _ALIASES.get(key, key)
         if field in RECORD_FIELDS:
             rec[field] = value
     if bus_event:
+        if stats is not None:
+            stats["bus_events"] += 1
         rec["reason"] = raw.get("category") or "bus_event"
         rec["path"] = rec["path"] or str(raw.get("message", ""))[:200]
+        _flatten_detail(rec, raw, stats)
+        if rec["tier"] is None:
+            rec["tier"] = bus_tier(raw.get("severity"))
     rec["ts"] = normalize_ts(rec["ts"])
     rec["status"] = _coerce_int(rec["status"])
     rec["asn"] = _coerce_int(rec["asn"])
     rec["port"] = _coerce_int(rec["port"])
     rec["tier"] = _coerce_int(rec["tier"])
     rec["bytes"] = _coerce_int(rec["bytes"])
+    rec["sid"] = _coerce_int(rec["sid"])
+    for field in ("signature", "technique", "detector", "tool", "proto"):
+        if rec[field] is not None:
+            rec[field] = str(rec[field])
     return rec
 
 
@@ -238,18 +424,7 @@ def parse_clf_line(line: str) -> dict | None:
 
 def _load_scanwatch():
     """Load scripts/rain/orionx-scanwatch as the single drop-line authority."""
-    here = Path(__file__).resolve()
-    candidates = [
-        here.parent.parent / "rain" / "orionx-scanwatch",
-        Path("/opt/orionx/scripts/rain/orionx-scanwatch"),
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            try:
-                return SourceFileLoader("orionx_scanwatch", str(candidate)).load_module()
-            except (OSError, SyntaxError, ImportError):
-                return None
-    return None
+    return _load_rain_module("orionx-scanwatch", "orionx_scanwatch")
 
 
 _SCANWATCH = _load_scanwatch()
@@ -293,16 +468,20 @@ def parse_droplog_line(line: str, year: int | None = None) -> dict | None:
     return rec
 
 
-def parse_line(line: str) -> dict | None:
+def parse_line(line: str, stats: dict | None = None) -> dict | None:
     """Sniff one line of evidence and normalize it, or return None.
 
     Order matters: JSON is unambiguous, a drop line is a kernel record that
     can also appear inside a JSON-free syslog file, and CLF is last because
-    its regex is the loosest.
+    its regex is the loosest. `stats` is handed to the JSON parser only; it is
+    the one that flattens bus detail.
     """
     if not line.strip():
         return None
-    for parser in (parse_json_line, parse_droplog_line, parse_clf_line):
+    rec = parse_json_line(line, stats)
+    if rec is not None:
+        return rec
+    for parser in (parse_droplog_line, parse_clf_line):
         rec = parser(line)
         if rec is not None:
             return rec
@@ -345,10 +524,16 @@ PROGRESS_EVERY_LINES = 100_000
 
 
 def _read_stream(stream, origin: str, records: list[dict], progress=None):
-    """Parse one text stream into records. Returns (parsed, skipped)."""
+    """Parse one text stream into records. Returns (parsed, skipped, stats).
+
+    stats is the new_parse_stats() dict the bus-detail flattening filled; it
+    is narrated under -v here so the flattening is a visible step, not an
+    invisible side effect of parsing.
+    """
     parsed = skipped = 0
+    stats = new_parse_stats()
     for lineno, line in enumerate(stream, 1):
-        rec = parse_line(line)
+        rec = parse_line(line, stats)
         if rec is None:
             skipped += 1
         else:
@@ -358,7 +543,25 @@ def _read_stream(stream, origin: str, records: list[dict], progress=None):
         if progress and lineno % PROGRESS_EVERY_LINES == 0:
             progress(f"{origin}: {lineno:,} line(s) read, "
                      f"{parsed:,} record(s) so far")
-    return parsed, skipped
+    if progress and stats["bus_events"]:
+        progress(f"{origin}: flatten bus detail — {stats['detail_flattened']} of "
+                 f"{stats['bus_events']} bus event(s) carried detail "
+                 f"(ip/port/signature/sid/technique/detector/tool lifted onto "
+                 f"the record), {stats['sidecar_read']} completed from a "
+                 f"sidecar, {stats['sidecar_unreadable']} sidecar(s) unreadable, "
+                 f"{stats['detail_truncated']} truncated by the broker")
+    return parsed, skipped, stats
+
+
+def _sidecar_notes(origin: str, stats: dict, notes: list[str]) -> None:
+    """An unreadable sidecar is an observation the operator must see."""
+    if stats.get("sidecar_unreadable"):
+        notes.append(f"{origin}: {stats['sidecar_unreadable']} detail sidecar(s) "
+                     f"unreadable — those records carry the truncated inline "
+                     f"detail only (first: {stats.get('sidecar_notes', ['?'])[0]})")
+    if stats.get("detail_truncated"):
+        notes.append(f"{origin}: {stats['detail_truncated']} event(s) were "
+                     f"truncated by the broker with no sidecar (_truncated)")
 
 
 def read_local(target, stdin=None, progress=None) -> tuple[list[dict], list[str]]:
@@ -377,10 +580,11 @@ def read_local(target, stdin=None, progress=None) -> tuple[list[dict], list[str]
         if progress:
             progress("reading stdin until end of input")
         started = time.monotonic()
-        parsed, skipped = _read_stream(stream, "-", records, progress)
+        parsed, skipped, stats = _read_stream(stream, "-", records, progress)
         if progress:
             progress(f"stdin: done in {time.monotonic() - started:.1f}s")
         notes.append(f"stdin: {parsed} record(s), {skipped} unparsed line(s)")
+        _sidecar_notes("stdin", stats, notes)
         return records, notes
 
     paths = iter_local_paths(Path(target))
@@ -397,7 +601,8 @@ def read_local(target, stdin=None, progress=None) -> tuple[list[dict], list[str]
         started = time.monotonic()
         try:
             with open(path, "r", errors="replace") as handle:
-                parsed, skipped = _read_stream(handle, str(path), records, progress)
+                parsed, skipped, stats = _read_stream(handle, str(path), records,
+                                                      progress)
         except OSError as exc:
             notes.append(f"{path}: unreadable ({exc.strerror})")
             continue
@@ -409,6 +614,7 @@ def read_local(target, stdin=None, progress=None) -> tuple[list[dict], list[str]
             notes.append(f"{path}: no recognizable records ({skipped} line(s))")
         else:
             notes.append(f"{path}: {parsed} record(s)")
+        _sidecar_notes(str(path), stats, notes)
     return records, notes
 
 

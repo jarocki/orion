@@ -143,6 +143,10 @@ for js in "$WEB/app.js" "$WEB/pewpew/map.js" "$WEB/network/network.js"; do
         pass "no network URLs in $(basename "$js") (comments/attribution aside)"
     fi
 done
+# #128: the source list shows the producer-named tool next to the detectors.
+if grep -q 's\.tools' "$WEB/pewpew/map.js" && grep -q 'tool: ' "$WEB/pewpew/map.js"; then
+    pass "map.js lists sources[*].tools beside 'seen by' (DEC-PHASE13-040)"
+else fail "map.js lists sources[*].tools" "no s.tools / 'tool: ' in map.js"; fi
 
 section "Catalogue: every local entry points at something that actually ships"
 if python3 - "$REPO_ROOT" <<'PY'
@@ -496,6 +500,18 @@ check(narrow["counts"]["sources"] == 3 and
       "8.8.4.4" not in {s["ip"] for s in narrow["sources"]},
       "a 90s look-back drops the 100s-old source and keeps the rest (%d left)"
       % narrow["counts"]["sources"])
+
+# #126 (DEC-PHASE13-041): the Cockpit's DEFENSIVE ACTIONS > SOURCES is this
+# feed over the Cockpit's own EventTail buffer; same fixture, same answer.
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(sys.argv[1]), "cockpit"))
+import cockpit_lib as L
+tail = L.EventTail(sys.argv[2], backfill=200); tail.poll()
+cock = L.attack_sources(tail.events, now=1100.0)
+check(cock["rows"] == [{k: s[k] for k in L.SOURCE_FIELDS} for s in feed["sources"][:L.SOURCES_MAX]]
+      and cock["total"] == feed["counts"]["sources"] and cock["window"] == feed["window_seconds"],
+      "Cockpit SOURCES rows equal build_feed's sources for the same bus (%d of %d)" % (len(cock["rows"]), cock["total"]))
+check(L._pewpew is F or L._pewpew.__file__ == F.__file__, "the Cockpit imports this very module, not a copy")
 sys.exit(0 if ok else 1)
 PY
 then pass "adapter parses real bus fixtures including scanwatch detail"
@@ -541,6 +557,13 @@ check(sorted(s["protocols"]) == ["tcp", "udp"],
       % (detail["protocols"], s["protocols"]))
 check(detail["detector"] in s["detectors"], "detector round-trips")
 check(detail["scan_kind"] in s["kinds"], "scan_kind round-trips")
+# #128: the map lists the producer's detail.tool and never fingerprints itself.
+check(s["tools"] == [] and "tool" not in detail,
+      "a 20..79 sequential sweep names no tool, so the source lists none (no guess)")
+feed2 = F.build_feed([json.dumps(dict(event, detail=dict(detail, tool="nmap", tool_conf="low")))], now=2001.0)
+check(feed2["sources"][0]["tools"] == ["nmap"], "sources[*].tools aggregates detail.tool like detectors")
+check(not any("nmap" in str(v).lower() for k, v in vars(F).items() if k.isupper() and isinstance(v, (str, tuple, list, dict))),
+      "pewpew_feed carries no tool pattern of its own (one authority: tool_fingerprint)")
 check(s["location"]["located"] is False,
       "and it is still unlocated, because nothing told the map where it is")
 sys.exit(0 if ok else 1)
@@ -844,7 +867,10 @@ for log in src.glob("*.log"):
     (dst / log.name).write_text("\n".join(out) + "\n", encoding="utf-8")
 REBASE
 E2E_PORT=$(( 8900 + ($$ % 90) ))
+# #95: the Workbench shows the consent heald reads; one class set, the rest absent.
+printf '{"block_ip": "confirm"}\n' > "$TMP/autonomy.json"
 (
+  ORIONX_AUTONOMY_FILE="$TMP/autonomy.json" ORIONX_WARMUP_WANTS="$TMP/no-such-wants" \
   ORIONX_EVENT_LOG="$TMP/live-bus.jsonl" \
   ORIONX_POSTURE_STATUS="$TMP/posture.json" \
   ORIONX_ZEEK_LOG_DIR="$TMP/zeek" ORIONX_OUI_PATH="$REPO_ROOT/tests/fixtures/oui/oui.txt" \
@@ -909,6 +935,18 @@ check(all(("probe" in i) for i in links["installable"]), "every optional entry d
 check(all(i["probe"] for i in links["installable"] if i["id"] != "geoip"), "every probe is non-empty except geoip (answered by the server's own state)")
 check("optional" in st and set(st["optional"]) == set(_ids), "status.optional answers for exactly the offered installers (DEC-PHASE12-052)")
 check(all(st["optional"][k]["known"] for k in _ids), "every answer is from evidence, none 'unknown'")
+eng = st.get("engine") or {}
+_cls = {c["id"]: c for c in (eng.get("autonomy") or {}).get("classes", [])}
+check(list(_cls) == ["block_ip", "kill_process", "quarantine_file", "isolate_node", "rotate_mesh_keys",
+                     "revoke_matrix_session"], "status.engine lists every playbook class, registry order (#95)")
+check(_cls.get("block_ip", {}).get("level") == "confirm" and _cls["block_ip"]["set"] is True,
+      "a class in autonomy.json shows the level heald reads")
+check(all(c["level"] == "off" and c["set"] is False for k, c in _cls.items() if k != "block_ip"),
+      "an absent class shows off (not set), as heald treats it")
+check(eng.get("autonomy", {}).get("command") == "orionx-heal autonomy <class> <level>",
+      "the change is a command for the terminal; the page has no write path")
+check(eng.get("warmup", {}).get("enabled_at_boot") is False and eng["warmup"]["now"] == "nebula warmup",
+      "Nebula warm-up: on demand, with the command (#95)")
 
 status, ctype, body = get("/api/pewpew.json?window=900")
 feed = json.loads(body)
@@ -1141,7 +1179,7 @@ ck(calls == {"status": 0, "outbound": 0}, f"static files cost no status/vitals/p
 get("/godseye/app/")
 ck(calls["outbound"] == 1 and calls["status"] == 0, f"the GODSEYE entry document asks the posture gate once, without vitals: {calls}")
 httpd.shutdown(); httpd.server_close()
-ck("Control Center" not in S.POSTURE_REMEDY and "orionx-cockpit --tab awareness" in S.POSTURE_REMEDY, "remedy names the Cockpit (UX-06)")
+ck("Control Center" not in S.POSTURE_REMEDY and "orionx-cockpit --settings" in S.POSTURE_REMEDY, "remedy names the Cockpit settings drawer (UX-06, #95)")
 PY
 then pass "Workbench request hardening + cheap static serving"; else fail "Workbench request hardening" "see output above"; fi
 

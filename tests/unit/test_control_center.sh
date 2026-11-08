@@ -252,11 +252,43 @@ for sec in "${EXPECTED_SECTIONS[@]}"; do
     fi
 done
 
-# Auto-Healing is a TAB (separate from the 6 main sections)
-if [[ -f "$SECTIONS_DIR/auto_healing.py" ]]; then
-    pass "Auto-Healing tab module present: auto_healing.py"
+# #95 (DEC-PHASE13-049): the Auto-Healing tab moved to the Workbench; its module
+# and its writer went in the same change (no fallback copy).
+if [[ ! -e "$SECTIONS_DIR/auto_healing.py" ]] && ! grep -rq 'auto_healing' "$CC_DIR" "$REPO_ROOT/scripts/cockpit"; then
+    pass "no Auto-Healing tab module and nothing imports one (consent is the Workbench's)"
 else
-    fail "Auto-Healing tab module present: auto_healing.py"
+    fail "Auto-Healing tab removed" "auto_healing.py or a reference to it is still in scripts/control_center or scripts/cockpit"
+fi
+
+section "orionx-control-center is a launcher that says where each control went (#95)"
+if WHERE="$(python3 "$ENTRY" --where 2>&1)" \
+   && python3 - "$REPO_ROOT/scripts" "$WHERE" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from control_center import moved as M
+where = sys.argv[2]
+missing = [k for k in M.MOVED if f"  {k} " not in where.replace(f"  {k}\t", f"  {k} ")]
+assert not missing, f"--where does not list {missing}"
+for key, (_what, home, argv, _cmd) in M.MOVED.items():
+    out, note = M.target_argv(key)
+    assert out[0].endswith(argv[0]) or out[0].endswith("osint_server.py"), (key, out)
+    assert out[1:] == argv[1:] and home in note and "moved to" in note, (key, out, note)
+out, note = M.target_argv("network")
+assert out[0].endswith("orionx-cockpit") and out[1:] == ["--tab", "network"] and note == "", (out, note)
+assert set(M.MOVED) == {"posture", "rain", "theme", "dj", "healing", "warmup", "installers"}, sorted(M.MOVED)
+assert all(M.MOVED[k][1].startswith("Orion Cockpit → Settings") for k in ("posture", "rain", "theme", "dj"))
+assert all(M.MOVED[k][1].startswith("Orion Workbench") for k in ("healing", "warmup", "installers"))
+print("ok")
+PY
+then
+    pass "--where lists every moved control; --tab KEY routes each to its home with a note; tabs still open the Cockpit"
+else
+    fail "launcher map" "see output above"
+fi
+if python3 "$ENTRY" --help 2>&1 | grep -q "Orion Workbench → Engine"; then
+    pass "--help carries the where-it-went map (no display needed)"
+else
+    fail "--help map" "$(python3 "$ENTRY" --help 2>&1 | tail -3)"
 fi
 
 # ===========================================================================
@@ -341,7 +373,7 @@ fi
 # ===========================================================================
 # 11. Compound-interaction: production sequence coherence
 #     Verify that the package is wired consistently end-to-end:
-#     a) app.py imports all 6 sections + auto_healing
+#     a) app.py imports all 6 sections (the Auto-Healing tab went with #95)
 #     b) orionx-control-center calls main() which calls run_app()
 #     c) helpers package is importable from sections (relative imports)
 #     d) widgets directory exists with 4 scripts
@@ -351,7 +383,7 @@ section "Compound-interaction: package wiring coherence"
 # a) app.py imports all section modules
 if grep -q "from .sections import" "$APP_PY" 2>/dev/null; then
     IMPORTS_LINE="$(grep 'from .sections import' "$APP_PY")"
-    for sec_mod in network mesh comms awareness ir nebula auto_healing; do
+    for sec_mod in network mesh comms awareness ir nebula; do
         if [[ "$IMPORTS_LINE" == *"$sec_mod"* ]]; then
             pass "app.py imports section module: $sec_mod"
         else

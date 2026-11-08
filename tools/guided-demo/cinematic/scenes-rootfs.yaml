@@ -47,7 +47,9 @@ scenes:
     teardown: ["pkill -f '^python3 /usr/bin/orionx-cockpit'; true"]
 
   - id: tab-awareness
-    setup: ["(setsid orionx-cockpit --tab awareness --fullscreen >/tmp/ck.log 2>&1 &); sleep 1"]
+    # #95: threat posture and R.A.I.N. are in the Settings drawer now; open it
+    # over the Awareness tab so the shot still shows health and the tiers.
+    setup: ["(setsid orionx-cockpit --tab awareness --settings --fullscreen >/tmp/ck.log 2>&1 &); sleep 1"]
     settle: 6
     record: 10
     teardown: ["pkill -f '^python3 /usr/bin/orionx-cockpit'; true"]
@@ -166,8 +168,8 @@ scenes:
     teardown: ["pkill -9 -u orionx-operator -f '[f]irefox'; pkill -9 -u orionx-operator -f '[c]rashhelper'; pkill -f '^python3 .*pivotglass'; true"]
 
   - id: x-rain
-    # Narration is opt-in on the deck; the operator turns it on (Awareness tab
-    # or this command) — the video shows the shipped voice, not a re-synthesis.
+    # Narration is opt-in on the deck; the operator turns it on (Cockpit
+    # Settings drawer or this command) — the video shows the shipped voice, not a re-synthesis.
     setup: ["orionx-rain --speech on >/dev/null 2>&1; sleep 1"]
     record: 26
     actions:

@@ -24,6 +24,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "cockpit"))
 import cockpit_lib  # noqa: E402  (posture_badge, POSTURE_STATUS_FILE: one wording, one file)
 
 STATUS_FILE = cockpit_lib.POSTURE_STATUS_FILE
+# The REQUEST file: user-writable, read by orionx-postured and the status strip.
+REQUEST_FILE = cockpit_lib.POSTURE_FILE
 STALE_AFTER = 30.0       # postured rewrites the file every poll (2 s)
 CONFIRM_WITHIN = 15.0    # how long a request may stay unconfirmed before we say so
 TIER_LABEL = {"0": "Tier 0 · Passive", "1": "Tier 1 · Active Monitoring", "2": "Tier 2 · Deception"}
@@ -69,3 +71,25 @@ def verdict(requested: str, status: dict[str, Any], requested_at: float, now: fl
     return {"state": "not-enforced", "level": "error",
             "text": f"✗ {want} NOT enforced: orionx-postured still reports "
                     f"{TIER_LABEL.get(have, 'Tier ' + have)} after {waited:.0f} s — journalctl -u orionx-postured"}
+
+
+def load_request(path: Path = REQUEST_FILE) -> str:
+    """The tier the operator last requested ('0' when unset or unreadable)."""
+    try:
+        val = Path(path).read_text(encoding="utf-8").strip()
+        return val if val in TIER_LABEL else "0"
+    except OSError:
+        return "0"
+
+
+def request_tier(tier: str, path: Path = REQUEST_FILE) -> tuple[bool, str]:
+    """THE writer of the threat-posture request file (#95, DEC-PHASE13-048).
+
+    Moved here from the Awareness tab when the control moved to the Cockpit
+    settings drawer, so the write is one function a GTK-free test can call.
+    Returns settings_io's (ok, error text); a refused tier writes nothing.
+    """
+    if tier not in TIER_LABEL:
+        return False, f"{path}: unknown tier {tier!r} (one of {', '.join(TIER_LABEL)})"
+    from . import settings_io  # noqa: PLC0415  (imports tuning_lib; keep verdict() import-light)
+    return settings_io.atomic_write_text(Path(path), tier + "\n")

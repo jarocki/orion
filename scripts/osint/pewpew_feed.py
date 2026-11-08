@@ -347,6 +347,9 @@ def build_feed(lines, now: float | None = None,
                 "detectors": [],
                 "categories": [],
                 "kinds": [],
+                # Producer-set attribution (detail.tool, DEC-PHASE13-040);
+                # the map never fingerprints anything itself.
+                "tools": [],
             }
             entry.update({k: v for k, v in classify_ip(ip).items() if k != "ip"})
             entry["location"] = locate(ip, reader=reader, asn_reader=asn_reader)
@@ -362,7 +365,8 @@ def build_feed(lines, now: float | None = None,
         for proto in _detail_protocols(detail):
             if proto not in entry["protocols"]:
                 entry["protocols"].append(proto)
-        for key, field in (("detector", "detectors"), ("scan_kind", "kinds")):
+        for key, field in (("detector", "detectors"), ("scan_kind", "kinds"),
+                           ("tool", "tools")):
             value = detail.get(key)
             if isinstance(value, str) and value and value not in entry[field]:
                 entry[field].append(value)

@@ -1,10 +1,15 @@
 """
 Orion Cockpit — Orion Tools tab (DEC-PHASE12-057, DEC-PHASE12-072): every
-on-deck and optional tool, read from the Workbench catalogue at runtime, plus
-the guided actions.
+on-deck tool, read from the Workbench catalogue at runtime, plus the guided
+actions.
 
-The catalogue, the presence probes and the network/posture gate are
-collected in a worker thread while the tab is visible (DEC-PHASE12-068).
+#95 (DEC-PHASE13-048): the optional installers are the Workbench's (its
+Optional section, DEC-PHASE12-052), so this tab's copy of them, and the
+network gate that only they needed, are gone; the tab points there. Toggle
+Theme is a display control and moved to the settings drawer.
+
+The catalogue and the presence probes are collected in a worker thread while
+the tab is visible (DEC-PHASE12-068).
 
 @decision DEC-PHASE9-019
 @title Bullseye Python 3.9 + PEP-563 (from __future__ import annotations)
@@ -42,7 +47,6 @@ _SAMPLES_DIR = os.path.expanduser("~/orionx-samples")
 _ARTIFACT_PATTERNS = ["*.raw", "*.mem", "*.dd", "*.img", "*.E01", "*.vmem", "*.log", "*.evtx"]
 _PCAP_PATTERNS = ["*.pcap", "*.pcapng", "*.cap"]
 _DIM = "#9aa0a6"
-_AMBER = "#ffb300"
 _POLL_MS = 30000
 
 
@@ -125,12 +129,6 @@ def _run_samples(_parent: Gtk.Widget) -> None:
                                      f"no default route, so --offline: synthetic practice data into {_SAMPLES_DIR}"))
 
 
-def _run_toggle_theme(_parent: Gtk.Widget) -> None:
-    ux.launch_in_terminal(T.THEME_ARGV, needs="toggle-theme.sh", friendly="Toggle Theme",
-                          title="Orion-X theme — toggle report", own_process=True,
-                          done_note="its report says what changed; a second window opens in the new palette")
-
-
 _IR_TOOLS = [
     ("Artifact Analyzer", "Pick a memory/disk/log artifact and analyze it", _run_artifact),
     ("Storyboard Generator", "Pick a folder of logs and build an HTML incident timeline in ~/Analysis", _run_storyboard),
@@ -138,8 +136,6 @@ _IR_TOOLS = [
     ("Lynis Security Audit", "Run a quick system hardening audit (asks for sudo)", _run_lynis),
     ("Download Samples", "Populate ~/orionx-samples with practice data (downloads when there is a route; "
                          "generates synthetic data offline when there is not)", _run_samples),
-    ("Toggle Theme", "Switch amber ↔ green: wallpaper, GTK accent, window frames, terminal, prompt "
-                     "(shows the toggle's report, then a new terminal in the new palette)", _run_toggle_theme),
 ]
 
 
@@ -150,23 +146,12 @@ def _hdr(box: Gtk.Box, text: str) -> Gtk.Label:
 
 
 def collect_tools(_visible: bool = True) -> dict:
-    """Worker thread: catalogue, presence, optional-installer evidence, network gate."""
+    """Worker thread: catalogue and presence."""
     local, installable = T.load_catalogue()
-    states: dict = {}
-    states_err = _OS_ERR
-    if _OS is not None:
-        try:
-            geo = _OS.geoip_state(Path(_OS.pewpew_feed.GEOIP_COUNTRY_DB), Path(_OS.pewpew_feed.GEOIP_ASN_DB))
-            states = _OS.optional_state(installable, bool(geo.get("available")))
-        except Exception as exc:  # noqa: BLE001 - shown in the tab
-            states_err = f"{exc.__class__.__name__}: {exc}"
-    route, posture = network_state()
-    head, block = T.network_gate(route, posture)
     wb = T.workbench_state()
     deck = [(it, T.run_action(it)) for it in T.on_deck(local, os.path.exists)]
-    return {"deck": [(it, a) for it, a in deck if a is not None], "installable": installable,
-            "states": states, "states_err": states_err, "net_head": head, "block": block, "workbench": wb,
-            "catalogue_empty": not local and not installable}
+    return {"deck": [(it, a) for it, a in deck if a is not None], "n_installable": len(installable),
+            "workbench": wb, "catalogue_empty": not local and not installable}
 
 
 def build_section() -> Gtk.Widget:
@@ -177,11 +162,6 @@ def build_section() -> Gtk.Widget:
     desc.set_halign(Gtk.Align.START)
     desc.set_line_wrap(True)
     box.pack_start(desc, False, False, 2)
-    net = Gtk.Label(label="Network: checking…")
-    net.set_halign(Gtk.Align.START)
-    net.set_line_wrap(True)
-    net.set_selectable(True)
-    box.pack_start(net, False, False, 2)
     wbrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     wblabel = Gtk.Label(label="Workbench server: checking…")
     wblabel.set_halign(Gtk.Align.START)
@@ -214,11 +194,18 @@ def build_section() -> Gtk.Widget:
     deck_grid.set_column_spacing(8)
     deck_grid.set_row_spacing(4)
     box.pack_start(deck_grid, False, False, 0)
-    opt_hdr = _hdr(box, "Optional — install when you need it")
-    opt_grid = Gtk.Grid()
-    opt_grid.set_column_spacing(8)
-    opt_grid.set_row_spacing(4)
-    box.pack_start(opt_grid, False, False, 0)
+    _hdr(box, "Optional — install when you need it")
+    opt_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    opt_note = Gtk.Label(label="The optional installers are on the Workbench (Optional), each with "
+                               "whether it is installed here.")
+    opt_note.set_halign(Gtk.Align.START)
+    opt_note.set_line_wrap(True)
+    opt_btn = Gtk.Button(label="Open the Workbench")
+    opt_btn.get_style_context().add_class("orionx-tool")
+    opt_btn.connect("clicked", lambda _w: ux.launch_detached(["orionx-osint"], friendly="the Workbench"))
+    opt_row.pack_start(opt_note, True, True, 0)
+    opt_row.pack_end(opt_btn, False, False, 0)
+    box.pack_start(opt_row, False, False, 0)
 
     def _clear(g: Gtk.Grid) -> None:
         for ch in g.get_children():
@@ -226,13 +213,13 @@ def build_section() -> Gtk.Widget:
 
     def _apply(d: dict | None, err) -> None:
         if err is not None:
-            net.set_text(f"Could not read the tool catalogue: {err}")
+            wblabel.set_text(f"Could not read the tool catalogue: {err}")
             return
         wb = d.get("workbench") or {}
         wblabel.set_text(f"Workbench server: {wb.get('note', 'unknown')}")
         wbstop.set_sensitive(bool(wb.get("running")))
-        block = d["block"]
-        net.set_markup(_esc(d["net_head"]) + (f'\n<span foreground="{_AMBER}">Installs disabled: {_esc(block)}</span>' if block else ""))
+        opt_note.set_text(f"The {d['n_installable']} optional installers are on the Workbench (Optional), "
+                          "each with whether it is installed here.")
         _clear(deck_grid)
         if d["catalogue_empty"]:
             deck_grid.attach(Gtk.Label(label=f"catalogue missing or unreadable: {T.CATALOGUE}"), 0, 0, 1, 1)
@@ -260,33 +247,7 @@ def build_section() -> Gtk.Widget:
             else:
                 b.set_sensitive(False)
             deck_grid.attach(b, 1, i, 1, 1)
-        states = d["states"]
-        opt_hdr.set_markup("<b>Optional — install when you need it</b>" + (
-            f'  <span foreground="{_AMBER}">install state unknown: {_esc(d["states_err"])}</span>' if d["states_err"] else ""))
-        _clear(opt_grid)
-        for i, it in enumerate(d["installable"]):
-            st = states.get(str(it.get("id")), {})
-            installed = bool(st.get("known") and st.get("installed"))
-            name = Gtk.Label()
-            tag = f"installed — {st.get('evidence', '')}" if installed else ("not installed" if st.get("known") else "unknown")
-            name.set_markup(f"{_esc(it.get('name', it.get('id')))}  <span foreground=\"{_DIM}\">{_esc(tag)}</span>")
-            name.set_halign(Gtk.Align.START)
-            name.set_line_wrap(True)
-            name.set_hexpand(True)
-            opt_grid.attach(name, 0, i, 1, 1)
-            b = Gtk.Button(label=("Re-run installer" if installed else "Install") + " (needs network)")
-            b.get_style_context().add_class("orionx-tool")
-            argv = T.install_argv(it)
-            if argv and not block:
-                needs = argv[1] if argv[0] == "sudo" and len(argv) > 1 else argv[0]
-                b.connect("clicked", lambda _w, a=argv, nd=needs, n=it.get("name", ""): ux.launch_in_terminal(
-                    a, needs=nd, friendly=f"Install {n}", title=f"Install {n}"))
-            else:
-                b.set_sensitive(False)
-                b.set_tooltip_text(block or "no installer command in the catalogue")
-            opt_grid.attach(b, 1, i, 1, 1)
         deck_grid.show_all()
-        opt_grid.show_all()
 
     Poller(box, _POLL_MS, collect_tools, _apply)
     return box
