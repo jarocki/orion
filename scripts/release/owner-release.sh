@@ -461,6 +461,9 @@ if step_due release; then
             if [[ $RESTAGE -eq 1 ]]; then
                 is_draft="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
                 [[ "$is_draft" == "true" ]] || die "--restage refuses to delete assets unless ${TAG} is confirmed to be a draft"
+                # Restaging can change the part count and Windows copy /b list.
+                # Refresh the body before replacing assets; stop if this fails.
+                run "refresh DRAFT release notes" retry 3 10 gh release edit "$TAG" --notes-file "$R/RELEASE-NOTES.md"
                 say "--restage: removing every asset already on the draft (the sums and parts changed)"
                 while read -r aid aname; do [[ -n "$aid" ]] && delete_asset "$aid" "$aname, restage"; done < <(rest_assets '.[] | "\(.id) \(.name)"')
             fi

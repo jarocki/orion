@@ -61,20 +61,28 @@ if name == "git":
         print(tag)
         sys.exit(0)
 if name == "gh":
-    if scenario in ("published-restage", "unknown-restage", "draft-restage"):
+    if scenario in ("published-restage", "unknown-restage", "draft-restage", "draft-notes-failure"):
         if args == ["release", "view", tag]:
             sys.exit(0)
         if args == ["release", "view", tag, "--json", "isDraft", "--jq", ".isDraft"]:
             if scenario == "unknown-restage":
                 sys.exit(74)
-            print("true" if scenario == "draft-restage" else "false")
+            print("true" if scenario in ("draft-restage", "draft-notes-failure") else "false")
+            sys.exit(0)
+        if args == ["release", "edit", tag, "--notes-file", "tmp/release-" + tag + "/RELEASE-NOTES.md"]:
+            if scenario == "draft-notes-failure":
+                sys.exit(74)
+            notes = (pathlib.Path.cwd() / args[-1]).resolve()
+            if root not in notes.parents:
+                sys.exit(95)
+            (root / "draft-body").write_text(notes.read_text())
             sys.exit(0)
         if args[:2] == ["api", "repos/jarocki/orion/releases?per_page=100"]:
             print("42")
             sys.exit(0)
         if args[:3] == ["api", "--paginate", "repos/jarocki/orion/releases/42/assets?per_page=100"]:
             # No actual assets, but recording this call proves draft-only
-            # cleanup was reached. All mutation commands remain forbidden.
+            # cleanup was reached. Only the fixture-local notes edit is allowed.
             sys.exit(0)
     if scenario in ("draft-assets", "draft-assets-failure", "draft-id-failure"):
         if args[:2] == ["api", "repos/fixture/repo/releases?per_page=100"]:
@@ -246,7 +254,7 @@ class OwnerReleaseSafetyTests(unittest.TestCase):
     def test_resume_hint_carries_restage_until_staging_has_run(self):
         result = self.run_helper("stage", extra=("--restage",))
         self.assertNotEqual(result.returncode, 0)
-        hint = [l for l in result.stdout.splitlines() if "resume with (one line):" in l][-1]
+        hint = [line for line in result.stdout.splitlines() if "resume with (one line):" in line][-1]
         self.assertIn("--from download", hint)
         self.assertIn("--restage", hint)
 
@@ -452,17 +460,42 @@ class OwnerReleaseSafetyTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("refuses to delete assets", result.stdout)
                 self.assertFalse(any(c[:3] == ["gh", "api", "--paginate"] for c in self.calls()))
-                self.assertFalse(any(c[0] == "gh" and ("DELETE" in c or "upload" in c)
+                self.assertFalse(any(c[0] == "gh" and ("DELETE" in c or "upload" in c or "edit" in c)
                                      for c in self.calls()))
 
-    def test_confirmed_draft_restaging_reaches_asset_enumeration(self):
+    def test_confirmed_draft_restaging_refreshes_notes_before_asset_enumeration(self):
         self.seed_cache()
         self.seed_stage()
+        notes = "48 parts (part-aa … part-bv)\ncopy /b part-aa + part-ab + part-bv output.iso\n"
+        (self.stage / "RELEASE-NOTES.md").write_text(notes)
+        (self.root / "draft-body").write_text("old 16-part instructions")
         result = self.run_helper("release", "draft-restage", extra=("--restage",))
+        self.assertEqual((self.root / "draft-body").read_text(), notes)
+        calls = self.calls()
+        edit = next(i for i, c in enumerate(calls) if c[:3] == ["gh", "release", "edit"])
+        cleanup = next(i for i, c in enumerate(calls) if c[:3] == ["gh", "api", "--paginate"])
+        self.assertLess(edit, cleanup)
         self.assertIn("removing every asset already on the draft", result.stdout)
         self.assertTrue(any(c[:4] == ["gh", "api", "--paginate",
                                      "repos/jarocki/orion/releases/42/assets?per_page=100"]
                             for c in self.calls()))
+
+    def test_failed_notes_refresh_stops_before_asset_changes(self):
+        self.seed_cache()
+        self.seed_stage()
+        result = self.run_helper("release", "draft-notes-failure", extra=("--restage",))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("refresh DRAFT release notes failed", result.stdout)
+        calls = self.calls()
+        self.assertEqual(sum(c[:3] == ["gh", "release", "edit"] for c in calls), 3)
+        self.assertFalse(any(c[:3] == ["gh", "api", "--paginate"] for c in calls))
+        self.assertFalse(any("DELETE" in c or "upload" in c for c in calls))
+
+    def test_existing_draft_without_restage_keeps_notes(self):
+        self.seed_cache()
+        self.seed_stage()
+        self.run_helper("release", "draft-restage")
+        self.assertFalse(any(c[:3] == ["gh", "release", "edit"] for c in self.calls()))
 
     def test_resume_hint_preserves_owner_flags(self):
         # Missing tag stops before any release step. --publish only exercises
