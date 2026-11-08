@@ -20,6 +20,11 @@
        are Debian's stock decoder/stream protocol-anomaly rules, not threat
        signatures. ET-Open arrives only via `orionx-freshen-suricata`, which
        needs a network the deck may not have.
+       (Since W11-6b, DEC-PHASE13-043, the image ships a curated ET-Open
+       subset plus the stock *-events rules, vendored in the source tree, as
+       /var/lib/suricata/rules/suricata.rules, so an empty directory now
+       means the file was removed or emptied. The warning path below is kept
+       for exactly that case; it is no longer the shipped state.)
 
   This daemon closes all three, and the third one is the reason it exists.
   A detector that is installed, enabled, running, and carrying no signatures
@@ -168,9 +173,10 @@ SURICATA_GATE = Path("/var/lib/suricata/orionx-enabled")
 SURICATA_UNIT = "suricata.service"
 EVE_JSON = Path("/var/log/suricata/eve.json")
 
-# Where ET-Open lands (orionx-freshen-suricata) and where Debian's stock
-# protocol-anomaly rules live. Both are searched; only the first can hold
-# threat signatures.
+# Where the shipped ET-Open subset lives (suricata.rules, vendored in the tree
+# and verified by hook 0530, DEC-PHASE13-043; orionx-freshen-suricata replaces
+# it with the full feed) and where Debian's stock protocol-anomaly rules live.
+# Both are searched; only the first can hold threat signatures.
 RULES_DIRS = (Path("/var/lib/suricata/rules"), Path("/etc/suricata/rules"))
 
 BUS = Path("/run/orionx/events.jsonl")
@@ -433,7 +439,9 @@ def no_rules_message(tier: str, status: dict) -> str:
         f"({status['threat_files']} signature file(s), "
         f"{status['anomaly_files']} stock protocol-anomaly file(s)). "
         "Exploits, malware, C2 and scans will NOT be detected — this deck is "
-        "not watching, it is only listening to itself. "
+        "not watching, it is only listening to itself. The image ships a "
+        "curated ET-Open subset as /var/lib/suricata/rules/suricata.rules "
+        "(DEC-PHASE13-043); if it is gone, that file was removed or emptied. "
         "Remedy: sudo orionx-freshen-suricata (requires network access). "
         "Port-scan detection via orionx-scanwatch is unaffected and still works."
     )
@@ -1185,9 +1193,16 @@ def tier_plan(tier: str, rules_usable: bool, live_ifaces=None) -> dict:
       canary files on this host, and only this host (DEC-PHASE9-008 opt-in).
 
     Note Suricata is started at Tier 1/2 even with no threat rules. Refusing
-    to start would trade one silence for another; the protocol-anomaly rules
-    and flow records still have value. What must never happen is starting it
-    quietly — hence warn_no_rules, which the caller is required to announce.
+    to start would trade one silence for another. (Until W11-6b this text
+    claimed Debian's protocol-anomaly rules "still have value" in that state.
+    They did not: nothing loaded them, because suricata.yaml names only
+    /var/lib/suricata/rules/suricata.rules and that file did not exist on
+    the image. Since DEC-PHASE13-043 it ships on the image (vendored in the
+    tree, verified at build) and carries both the curated ET-Open subset and
+    the stock *-events rules, so "no rules" now means that file is missing or
+    empty.) What must never happen
+    is starting it quietly — hence warn_no_rules, which the caller is
+    required to announce.
 
     zeek (DEC-PHASE13-033, implementing DEC-PHASE13-004) is True at Tier 1/2
     whenever Suricata would start: one orionx-zeek@<iface> instance per
@@ -2602,9 +2617,10 @@ class PostureDaemon:
         Runs before the first start of a tier, not on every reassert: it
         loads the full ruleset and costs seconds. Returns False only when the
         engine positively rejected the config — "no rules" is a valid config
-        with nothing to match on, which DEC-PHASE12-024's own warning owns,
-        and refusing to start on it would mean a deck that has not fetched
-        ET-Open yet gets no protocol-anomaly detection either.
+        with nothing to match on, which DEC-PHASE12-024's own warning owns;
+        refusing to start on it would turn that loud coverage gap into a
+        silent one. (The image now ships a ruleset, DEC-PHASE13-043, so the
+        state is reachable only if suricata.rules was removed or emptied.)
         """
         verdict = capture.check_config(self.suricata_config,
                                        binary=capture.SURICATA_BIN)

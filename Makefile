@@ -8,7 +8,7 @@
 #   a fallback when neither linter is installed.
 ##
 
-.PHONY: lint lint-shell lint-python decision-log test-unit test-unit-bash test-unit-python test-integration test-forensic test-security test-mesh test-matrix test-e2e test-qemu-boot docker-build docker-build-matrix iso-build lynis clean help
+.PHONY: lint lint-shell lint-python decision-log test-unit test-unit-bash test-unit-python test-integration test-forensic test-security test-mesh test-matrix test-e2e test-qemu-boot docker-build docker-build-matrix iso-build suricata-rules-refresh lynis clean help
 
 SHELL_SCRIPTS := $(shell find scripts -name '*.sh' -type f)
 PYTHON_SCRIPTS := $(wildcard scripts/*.py) $(wildcard scripts/decisions/*.py)
@@ -134,6 +134,9 @@ docker-build: ## Build Docker development environment
 
 iso-build: test-unit ## Build ISO image; auto-wraps in Docker on macOS
 	bash scripts/build-iso.sh
+
+suricata-rules-refresh: ## Re-vendor the curated ET-Open subset from upstream (network; local suricata or Docker), then review + commit (DEC-PHASE13-043)
+	bash scripts/suricata-rules-refresh.sh
 
 lynis: ## Run Lynis security audit
 	bash scripts/run-lynis.sh --threshold 75

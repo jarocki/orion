@@ -424,7 +424,10 @@ yara
 # Lazy-start: suricata.service gated on /var/lib/suricata/orionx-enabled sentinel
 # (see /etc/systemd/system/suricata.service.d/orionx-lazy.conf).
 # Operator enables post-boot: sudo touch /var/lib/suricata/orionx-enabled && sudo systemctl start suricata
-# Layer B (W11-6b): bundled ET-Open ruleset snapshot + Nebula tier selector wiring deferred.
+# W11-6b (DEC-PHASE13-043, #125): a curated ET-Open subset is VENDORED at
+# includes.chroot/var/lib/suricata/rules/ (refreshed by `make suricata-rules-refresh`, a reviewed
+# commit); hook 0530-suricata-rules verifies it and runs suricata -T at build time (fail-closed).
+# Tier wiring is orionx-postured (DEC-PHASE12-024). No suricata-update: the merge is ours.
 suricata
 
 # Custom packages (will be installed from config/packages.chroot/)

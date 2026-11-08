@@ -1,0 +1,21 @@
+# Orion-X Suricata ruleset provenance — DEC-PHASE13-043 (W11-6b, issue #125)
+# VENDORED into iso/config/includes.chroot/var/lib/suricata/rules/ by scripts/suricata-rules-refresh.sh
+# (make suricata-rules-refresh). Hook 0530 verifies this file against suricata.rules at build time
+# and appends the build date and the count the engine loaded. Refresh = a reviewed commit.
+target: /var/lib/suricata/rules/suricata.rules
+source-feed: Emerging Threats Open (ET-Open) for Suricata 7.0
+source-url: https://rules.emergingthreats.net/open/suricata-7.0/emerging.rules.tar.gz
+source-note: the URL is a ROLLING daily object (no dated archives); the hash below identifies the version vendored here
+source-sha256: c794e36a5f4d7279fc2100b3dd0122dc1f787385e67935e3bc80c0935b10e689
+source-tarball-bytes: 5679153
+source-last-modified: Fri, 06 Nov 2026 21:47:10 GMT
+refreshed-on: 2026-11-07T22:05:10Z
+categories-included: scan attack_response exploit dos shellcode current_events
+categories-excluded: malware (19,392 sigs / 17.8 MB) and web_specific_apps (6,097 sigs / 5.8 MB) excluded by size; every other category excluded as out of scope for a segment sensor
+stock-files-included: 19 (/etc/suricata/rules/*-events.rules, Debian suricata package)
+stock-files-excluded: dnp3-events.rules modbus-events.rules (app-layer detection for dnp3/modbus is disabled in Debian's suricata.yaml; the engine rejects their signatures)
+signatures: 3233
+bytes: 2707214
+license: ET-Open rules (sids 2000000-2799999) are BSD-licensed, Copyright (c) 2003-2026 Emerging Threats; sids 1-3464 and 100000000-100000908 are GPLv2. Full text: /var/lib/suricata/rules/LICENSE-ET-Open.txt
+refresh: make suricata-rules-refresh  (maintainer, network); on a deck, sudo orionx-freshen-suricata REPLACES this subset with the full feed (~52,000 signatures — measured to exhaust a 2 GB deck)
+refresh-check: 3233 rules loaded, 0 failed (Suricata version 7.0.10 RELEASE, config /etc/suricata/orionx.yaml)

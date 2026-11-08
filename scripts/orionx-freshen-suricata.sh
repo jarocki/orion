@@ -39,21 +39,39 @@
 #     Do     — extract, then merge every ruleset into the file the config names.
 #     Check  — re-read reality through Suricata itself: `suricata -T -v` and
 #              parse "M rules successfully loaded". Note that `suricata -T`
-#              EXITS 0 when it matched no rule files at all (measured), so the
-#              exit code cannot be the gate; the count is.
+#              exits 1 BOTH for a rejected config and for a valid config that
+#              matched no rule file at all (re-measured on the ISO's 7.0.10:
+#              "Warning: detect: No rule files match", exit 1 — an earlier
+#              revision of this comment claimed exit 0 and was wrong), so the
+#              exit code cannot tell the two apart; the count is the gate.
 #     Repair — a zero count is a hard failure with the diagnosis named, not a
 #              warning buried in a success line.
 #     Loop   — a live reload if the service is up, and the exact command if not.
 #
 #   Sourcing this file defines the functions without running anything, so the
 #   unit test exercises the real Plan and Do logic with no root and no network.
+#
+# W11-6b update (DEC-PHASE13-043, issue #125): the image now SHIPS a curated
+# ET-Open subset (~3,200 signatures: scan, attack_response, exploit, dos,
+# shellcode, current_events + Debian's stock *-events rules), vendored in the
+# source tree and refreshed by `make suricata-rules-refresh`, as
+# /var/lib/suricata/rules/suricata.rules, with its provenance (upstream SHA-256,
+# date, counts, license) in orionx-rules.provenance.txt beside it. The DEC-PHASE11-008
+# sentence "ships no bundled ruleset" above is therefore history. This script
+# is now the OPT-IN path to the FULL feed (~52,000 signatures, ~48 MB of
+# rules): it replaces the shipped subset in place, which was measured to
+# exhaust a 2 GB deck. It says so before it downloads, and it marks the
+# provenance file as superseded afterwards so the file never claims a subset
+# that is no longer there.
 
 set -euo pipefail
 
 # Overridable so the suite can drive the real code paths against a fixture tree.
 RULES_DIR="${ORIONX_SURICATA_RULES_DIR:-/var/lib/suricata/rules}"
 SURICATA_YAML="${ORIONX_SURICATA_YAML:-/etc/suricata/suricata.yaml}"
-ET_URL="${ORIONX_SURICATA_ET_URL:-https://rules.emergingthreats.net/open/suricata-6.0/emerging.rules.tar.gz}"
+# Suricata 7.0 feed: the ISO's engine is 7.0.10 (DEC-PHASE13-043 pins the same URL).
+ET_URL="${ORIONX_SURICATA_ET_URL:-https://rules.emergingthreats.net/open/suricata-7.0/emerging.rules.tar.gz}"
+PROVENANCE_FILE="orionx-rules.provenance.txt"
 
 # Rule actions Suricata accepts at the start of a signature line. Used to count
 # signatures in a file without asking Suricata, for the pre-flight check.
@@ -139,6 +157,22 @@ merge_rules() {
     count_signatures "$out"
 }
 
+# mark_provenance_superseded <provenance_file> <new_signature_count>
+# The shipped subset's provenance (DEC-PHASE13-043) must not describe a file that
+# the full feed has just replaced. Appends a dated stanza; a missing file is
+# not an error (pre-W11-6b images, or an operator who deleted it).
+mark_provenance_superseded() {
+    local prov="$1" n="$2" stamp target
+    [[ -f "$prov" ]] || return 0
+    stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    target="$(dirname "$prov")/suricata.rules"
+    {
+        printf '\n# --- SUPERSEDED by orionx-freshen-suricata on %s ---\n' "$stamp"
+        printf 'superseded-by: full ET-Open feed (%s), %s signatures merged into %s\n' "$ET_URL" "$n" "$target"
+        printf 'note: the counts and category list above describe the SHIPPED subset, not the file now on disk\n'
+    } >> "$prov" 2>/dev/null || true
+}
+
 # ---------------------------------------------------------------------------
 # CHECK: ask Suricata what it loaded. Its exit code is not the answer.
 # ---------------------------------------------------------------------------
@@ -210,6 +244,17 @@ main() {
     echo "[orionx-freshen-suricata] suricata.yaml loads: ${want[*]}"
     echo "[orionx-freshen-suricata] merging into: $RULES_DIR/$target"
 
+    # DEC-PHASE13-043: say what this replaces and what it costs, before doing it.
+    local shipped
+    shipped="$(count_signatures "$RULES_DIR/$target")"
+    if [[ -f "$RULES_DIR/$PROVENANCE_FILE" ]]; then
+        echo "[orionx-freshen-suricata] NOTE: the image ships a curated ET-Open subset"
+        echo "  ($shipped signatures; see $RULES_DIR/$PROVENANCE_FILE). This replaces it"
+        echo "  with the FULL feed (~52,000 signatures). Suricata will need several"
+        echo "  hundred MB more RAM; the full feed exhausted a 2 GB deck. Ctrl-C now"
+        echo "  to keep the subset."
+    fi
+
     # --- Do -----------------------------------------------------------------
     mkdir -p "$RULES_DIR"
     local tmp
@@ -221,6 +266,7 @@ main() {
 
     local merged
     merged="$(merge_rules "$RULES_DIR" "$target")"
+    mark_provenance_superseded "$RULES_DIR/$PROVENANCE_FILE" "$merged"
 
     # --- Check --------------------------------------------------------------
     if [[ "$merged" -eq 0 ]]; then
