@@ -1105,6 +1105,20 @@ else
     fail "16e: control_center/app.py present in squashfs" \
          "$CC_APP not found — module package incomplete (issue #66)"
 fi
+# #95 (DEC-PHASE13-049): the launcher's map and the Cockpit's settings drawer
+# ship; the retired Auto-Healing tab does not (no fallback copy on the image).
+for _f in moved.py settings_drawer.py; do
+    if [[ -f "$CC_MODULE_DIR/$_f" ]]; then
+        pass "16e: control_center/$_f present in squashfs (#95)"
+    else
+        fail "16e: control_center/$_f present in squashfs" "#95: stage_application_content incomplete"
+    fi
+done
+if [[ ! -e "$CC_MODULE_DIR/sections/auto_healing.py" ]]; then
+    pass "16e: control_center/sections/auto_healing.py absent (consent is the Workbench's, #95)"
+else
+    fail "16e: control_center/sections/auto_healing.py absent" "a retired tab shipped beside its replacement"
+fi
 
 # ---------------------------------------------------------------------------
 # 16f. W11-2d structural check: def run_app symbol + wrapper import wire

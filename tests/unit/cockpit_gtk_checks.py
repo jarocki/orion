@@ -82,12 +82,12 @@ def last_toast() -> tuple[str, str]:
     return TOASTS[-1] if TOASTS else ("", "")
 
 
-# ---------------------------------------------------------------- Awareness
-print("[awareness: posture is a request; a failed write reverts and says why]")
-from control_center.sections import awareness as AW  # noqa: E402
+# ---------------------------------------------------------------- settings drawer
+print("[settings drawer: posture is a request; a failed write reverts and says why (#95)]")
+from control_center import settings_drawer as SDR  # noqa: E402
 
 win = Gtk.Window()
-aw = AW._AwarenessWidget()
+aw = SDR.SettingsDrawer()
 win.add(aw.box)
 win.show_all()
 pump(0.5)
@@ -112,7 +112,7 @@ if os.geteuid() != 0:
 else:
     print("  (skipped unwritable case: root)")
 
-print("[awareness: R.A.I.N. test reports the real outcome (UX-12)]")
+print("[settings drawer: R.A.I.N. test reports the real outcome (UX-12)]")
 stub("orionx-rain", 'echo "paplay: no audio device" >&2; exit 3')
 n0 = len(TOASTS)
 aw._on_rain_test(None)
@@ -131,7 +131,7 @@ aw._on_rain_test(None)
 wait_for(lambda: any("not installed" in m for _l, m in TOASTS[n0:]))
 ck(any("not installed" in m for _l, m in TOASTS[n0:]), "missing orionx-rain -> 'not installed'")
 
-print("[awareness: R.A.I.N. settings go through rain_lib and toast (UX-13)]")
+print("[settings drawer: R.A.I.N. settings go through rain_lib and toast (UX-13)]")
 n0 = len(TOASTS)
 aw._rain_vol.set_value(40)
 wait_for(lambda: any("volume 40%" in m for _l, m in TOASTS[n0:]))
@@ -140,34 +140,15 @@ ck('"volume": 0.4' in saved, "volume saved through rain_lib.save_config")
 ck(any("volume 40%" in m and "survives reboot:" in m for _l, m in TOASTS[n0:]), f"change toasts the setting + reboot truth ({TOASTS[n0:]})")
 win.destroy()
 
-# ---------------------------------------------------------------- Auto-Healing
-print("[auto-healing: a failed write reverts and says why (P2-5, UX-11)]")
-from control_center.sections import auto_healing as AH  # noqa: E402
-
-win = Gtk.Window()
-ah = AH._AutoHealingWidget()
-win.add(ah.box)
-win.show_all()
-pump(0.2)
-ck((cfg_dir / "autonomy.json").exists() and "Wrote default" in ah._status.get_text(), "materialised defaults are announced")
-ck("survives reboot:" in ah._status.get_text(), "the grid states whether the pre-approvals survive reboot")
-combo = ah._combos["block_ip"]
-combo.set_active(AH._LEVELS.index("autonomous"))
-pump(0.2)
-ck('"block_ip": "autonomous"' in (cfg_dir / "autonomy.json").read_text(), "level saved")
-if os.geteuid() != 0:
-    cfg_dir.chmod(0o500)
-    combo.set_active(AH._LEVELS.index("off"))
-    pump(0.2)
-    cfg_dir.chmod(0o700)
-    lvl, msg = last_toast()
-    ck(lvl == "error" and "NOT changed" in msg, f"unwritable -> error toast ({msg})")
-    ck(combo.get_active_text() == "autonomous", "combo reverts to what the engine will read")
-win.destroy()
+# ---------------------------------------------------------------- Auto-Healing (#95)
+print("[auto-healing consent left the Cockpit: no tab, no write on open (DEC-PHASE13-049)]")
+ck(not (cfg_dir / "autonomy.json").exists(), "nothing in the Cockpit wrote autonomy.json")
 
 # ---------------------------------------------------------------- whole Cockpit
 print("[cockpit: only the visible tab polls; probes never block the main loop (P1-5)]")
 from importlib.machinery import SourceFileLoader  # noqa: E402
+
+from gi.repository import Gdk  # noqa: E402
 
 from control_center.helpers.background import Poller  # noqa: E402
 
@@ -214,6 +195,47 @@ for key in cw._pages:
     pump(0.2)
     seen_header.append(cw.header.get_mapped() and cw.header.get_allocated_height() >= CK.L.HEADER_H)
 ck(all(seen_header), f"the status strip is on screen on every tab ({sum(seen_header)}/{len(seen_header)})")
+cw.select_tab("mesh")
+
+print("[cockpit: the settings drawer is on every tab, F2 and --settings open it (#95)]")
+ck("healing" not in cw._pages and "healing" not in CCAPP.TAB_KEYS, "no Auto-Healing tab (moved to the Workbench)")
+ck(not cw.drawer_rev.get_reveal_child() and not cw.settings_btn.get_active(), "the drawer starts closed")
+cw.select_tab("live")
+cw._on_key(None, type("K", (), {"keyval": Gdk.keyval_from_name("F2"), "state": Gdk.ModifierType(0)})())
+wait_for(lambda: cw.drawer_rev.get_child_revealed(), 3.0)
+ck(cw.drawer_rev.get_reveal_child() and cw.settings_btn.get_active(), "F2 on LIVE opens it, and the button says so")
+dw = cw.drawer_rev.get_allocated_width()
+ck(abs(dw - SDR.WIDTH) <= 24, f"it is {dw} px wide (WIDTH {SDR.WIDTH})")
+ck(cw.da.get_allocated_width() >= 1100, f"LIVE keeps its width under the drawer ({cw.da.get_allocated_width()} px)")
+opened = []
+for key in cw._pages:
+    cw.select_tab(key)
+    pump(0.15)
+    opened.append(cw.drawer_rev.get_child_revealed() and cw.settings.box.get_mapped())
+ck(all(opened), f"the drawer stays out on every tab ({sum(opened)}/{len(opened)})")
+dheads = [w.get_text() for w in walk(cw.settings.box) if isinstance(w, Gtk.Label) and w.get_style_context().has_class("orionx-heading")]
+ck(dheads == ["Threat posture", "Audible alerts · R.A.I.N.", "Display", "DJ deck"], f"drawer groups: {dheads}")
+first = next(w for w in walk(cw.settings.box) if isinstance(w, Gtk.Label))
+ck(cw.settings.box.get_style_context().has_class("orionx-page") and first.get_text() == "Settings"
+   and first.get_style_context().has_class("orionx-panel-title"), "the drawer wears the tab look, titled Settings")
+dbtns = [w.get_label() for w in walk(cw.settings.box) if isinstance(w, Gtk.Button) and w.get_label()]
+ck({"Toggle theme", "Open DJ Deck", "Open the Workbench", "Test alert"} <= set(dbtns), f"drawer buttons: {dbtns}")
+aw_box = cw.nb.get_nth_page(cw._pages["awareness"]).get_child().get_child()
+aw_radios = [w for w in walk(aw_box) if isinstance(w, Gtk.RadioButton)]
+tools_box = cw.nb.get_nth_page(cw._pages["tools"]).get_child().get_child()
+tools_btns = [w.get_label() for w in walk(tools_box) if isinstance(w, Gtk.Button)]
+neb_box = cw.nb.get_nth_page(cw._pages["nebula"]).get_child().get_child()
+neb_btns = [w.get_label() for w in walk(neb_box) if isinstance(w, Gtk.Button)]
+ck(not aw_radios and "Toggle Theme" not in tools_btns and not any(str(b).startswith("Install") for b in tools_btns)
+   and "Warm up model" not in neb_btns, "no tab still carries a moved control (posture, theme, installers, warm-up)")
+cw._on_key(None, type("K", (), {"keyval": Gdk.keyval_from_name("F2"), "state": Gdk.ModifierType(0)})())
+pump(0.4)
+ck(not cw.drawer_rev.get_reveal_child() and not cw.settings_btn.get_active(), "F2 again closes it")
+cw.settings_btn.set_active(True)
+pump(0.2)
+ck(cw.drawer_rev.get_reveal_child(), "the Settings button opens it")
+cw.show_settings(False)
+pump(0.3)
 cw.select_tab("mesh")
 
 print("[cockpit: one name per tab; no retired surface names on screen (UX-45)]")

@@ -16,9 +16,10 @@ as animated instruments:
 
 Keys (LIVE): Up/Down select · Enter detail · s/t squelch/tune in detail ·
 PgUp/PgDn scroll (in detail: page) · a approve · Esc close detail / leave
-fullscreen · F11 fullscreen · Alt+1..8 tabs · Ctrl+Q quit (UX-47: a stray q
-or Esc no longer closes the live view). Ctrl+PgUp/PgDn switch tabs (GTK).
-Flags: --fullscreen, --demo (synthetic events, for demos/screenshots).
+fullscreen · F11 fullscreen · Alt+1..7 tabs · F2 settings drawer · Ctrl+Q quit
+(UX-47: a stray q or Esc no longer closes the live view). Ctrl+PgUp/PgDn switch
+tabs (GTK). Flags: --fullscreen, --demo (synthetic events, for
+demos/screenshots), --settings (open with the settings drawer out, #95).
 
 GLib timers drive polling (events 0.5s, network 1s, systems 5s, vitals 2s) and
 a ~6 fps redraw. Anything that forks (systemctl, pgrep, ip, orionx-heal,
@@ -45,6 +46,7 @@ sys.path.insert(0, str(_here.parent.parent / "awareness"))
 import deck_vitals as V  # noqa: E402  (DEC-PHASE12-049: one authority for hostname/IP/vitals)
 sys.path.insert(0, str(_here.parent.parent))
 from control_center import app as CC  # noqa: E402  (DEC-PHASE12-053: the tab authority)
+from control_center import settings_drawer as SD  # noqa: E402  (#95: the environment controls)
 from control_center.helpers import ux as CCUX  # noqa: E402
 from control_center.helpers import mesh_data as MD  # noqa: E402  (DEC-PHASE12-067)
 from control_center.helpers.background import Poller, run_async  # noqa: E402  (DEC-PHASE12-068)
@@ -85,7 +87,8 @@ _DEMO_MSGS = [
 
 
 class Cockpit(Gtk.Window):
-    def __init__(self, fullscreen: bool = False, demo: bool = False, tab: str = "live") -> None:
+    def __init__(self, fullscreen: bool = False, demo: bool = False, tab: str = "live",
+                 settings: bool = False) -> None:
         super().__init__(title="Orion Cockpit")
         # UX-17: 760 px was taller than a 1366x768 deck minus panel and title
         # bar (~701 px). Open maximised; the default only applies when the
@@ -129,9 +132,29 @@ class Cockpit(Gtk.Window):
         self.header = Gtk.DrawingArea()
         self.header.set_size_request(-1, L.HEADER_H)
         self.header.connect("draw", self._draw_header)
+        # #95 (DEC-PHASE13-048): the environment controls are a drawer over
+        # the right edge of every tab, so changing posture or R.A.I.N. never
+        # means leaving what the deck shows. An overlay, not a column: LIVE
+        # keeps its measured layout whether the drawer is out or not.
+        self.drawer_rev, self.settings, drawer_scroll = SD.build_drawer()
+        self.drawer_rev.set_halign(Gtk.Align.END)
+        self.drawer_rev.set_valign(Gtk.Align.FILL)
+        self._skin_page(drawer_scroll)
+        self.settings_btn = Gtk.ToggleButton(label="\u2699 Settings")
+        self.settings_btn.get_style_context().add_class("orionx-tool")
+        self.settings_btn.set_tooltip_text("Threat posture, R.A.I.N. alerts, theme, DJ deck (F2)")
+        self.settings_btn.set_valign(Gtk.Align.CENTER)
+        self.settings_btn.set_margin_end(12)
+        self.settings_btn.connect("toggled", lambda b: self.drawer_rev.set_reveal_child(b.get_active()))
+        strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        strip.pack_start(self.header, True, True, 0)
+        strip.pack_end(self.settings_btn, False, False, 0)
+        body = Gtk.Overlay()
+        body.add(self.nb)
+        body.add_overlay(self.drawer_rev)
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        root.pack_start(self.header, False, False, 0)
-        root.pack_start(self.nb, True, True, 0)
+        root.pack_start(strip, False, False, 0)
+        root.pack_start(body, True, True, 0)
         root.pack_start(self.toast_bar, False, False, 0)
         self.add(root)
         self.da.connect("draw", self._draw)
@@ -185,6 +208,11 @@ class Cockpit(Gtk.Window):
         # silently left every --tab launch (and the menu's "Network tab" entry)
         # on LIVE. show_all() then select_tab() (QA round 1, lead).
         self._initial_tab = tab
+        self._initial_settings = settings
+
+    def show_settings(self, show: bool = True) -> None:
+        """Open or close the settings drawer (the button stays the one state)."""
+        self.settings_btn.set_active(show)
 
     def select_tab(self, tab: str) -> bool:
         """Switch to a tab by key; True when the notebook is now on it."""
@@ -284,6 +312,9 @@ class Cockpit(Gtk.Window):
             return True
         if ctrl:
             return False   # Ctrl+PgUp/PgDn etc. belong to GTK (tab switching)
+        if name == "F2":
+            self.show_settings(not self.settings_btn.get_active())
+            return True
         on_live = self.nb.get_current_page() == self._pages.get("live", 0)
         if name == "F11" or (name == "Escape" and self._fs and not (on_live and self.drill)):
             if self._fs:
@@ -992,15 +1023,18 @@ def main(argv=None) -> int:
     ap.add_argument("--demo", action="store_true", help="synthesize events/traffic for a live demo")
     ap.add_argument("--tab", default="live", choices=CC.TAB_KEYS,
                     help="open on this tab (DEC-PHASE12-053): " + ", ".join(CC.TAB_KEYS))
+    ap.add_argument("--settings", action="store_true",
+                    help="open with the settings drawer out: threat posture, R.A.I.N., theme, DJ deck (#95)")
     args = ap.parse_args(argv)
     try:
-        win = Cockpit(fullscreen=args.fullscreen, demo=args.demo, tab=args.tab)
+        win = Cockpit(fullscreen=args.fullscreen, demo=args.demo, tab=args.tab, settings=args.settings)
     except Exception as exc:  # no display, etc.
         print(f"orionx-cockpit: cannot open a window ({exc}). Is DISPLAY set?", file=sys.stderr)
         return 1
     win.show_all()
     if not win.select_tab(win._initial_tab):
         print(f"orionx-cockpit: could not open on tab {win._initial_tab!r}", file=sys.stderr)
+    win.show_settings(win._initial_settings)
     Gtk.main()
     return 0
 

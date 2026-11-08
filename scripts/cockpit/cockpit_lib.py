@@ -641,8 +641,9 @@ def actions_pane(heal: dict[str, Any], sources: dict[str, Any] | None,
         if not (pend or act or prop):
             add("nothing awaiting approval, in force or suggested", "dim")
             if all_off:
-                add("autonomy is OFF for every action class — set one to propose on "
-                    "the Auto-Healing tab", "amber")
+                # #95: consent moved to the Workbench; the command is the writer.
+                add("autonomy is OFF for every action class — Workbench → Engine, "
+                    "or: orionx-heal autonomy CLASS propose", "amber")
             else:
                 add(f"no bus event met a healing trigger in the last {win}", "dim")
 

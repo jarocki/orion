@@ -125,10 +125,6 @@ def launch_argv(item: dict) -> tuple[str, list[str]]:
     return "terminal", argv
 
 
-def install_argv(item: dict) -> list[str]:
-    return shlex.split(str(item.get("command", "")))
-
-
 # --- guided actions: argv exactly as each script's own parser expects -------
 
 def samples_argv(samples_dir: str, has_route: bool) -> list[str]:
@@ -142,30 +138,10 @@ def storyboard_argv(input_dir: str, analysis_dir: str, stamp: str) -> tuple[list
     return ["storyboard-gen.py", "-i", input_dir, "-o", out], out
 
 
-# UX-24: run the toggle in a terminal so its own report (FAILED lines and
-# remedies included) is visible, then open a SEPARATE terminal process — the
+# UX-24 (the settings drawer's Display, #95): run the toggle in a terminal so
+# its own report (FAILED lines and remedies included) is visible, then open a SEPARATE terminal process — the
 # only kind born with the new palette — showing --status.
 THEME_ARGV = ["sh", "-c",
               "toggle-theme.sh; rc=$?; "
               "xfce4-terminal --disable-server --title 'Orion-X theme — new palette' --hold "
               "-x toggle-theme.sh --status & exit $rc"]
-
-
-def network_gate(route: dict, posture: dict) -> tuple[str, str]:
-    """(headline for the tab, reason installs are disabled or ''). Pure (UX-34).
-
-    Installers fetch from the network. No default route means they will
-    fail; at a raised posture (shields up) reaching out is what the operator
-    asked the deck not to do. Both are said up front, not after a terminal
-    opens.
-    """
-    has = bool(route.get("default_route"))
-    rt = f"default route via {route.get('interface') or 'IPv6'}" if has else "no default route"
-    tier = posture.get("tier") if posture.get("known") else None
-    pl = str(posture.get("label")) if tier else f"posture unknown ({posture.get('reason') or 'no status'})"
-    head = f"Network: {rt} · {pl}"
-    if not has:
-        return head, "no default route — connect first (Network tab); the installers need the network"
-    if tier is not None and not posture.get("outbound_allowed", True):
-        return head, f"{pl}: the deck is not reaching out — lower the posture (Awareness tab) to install"
-    return head, ""

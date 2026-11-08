@@ -1,17 +1,15 @@
 """
-Orion Cockpit — Awareness tab: live health, trends, threat posture, R.A.I.N.
+Orion Cockpit — Awareness tab: live health and trends.
 
 Surfaces:
 
   1. LIVE HEALTH — CPU load, memory, disk, uptime, and the units that matter
      (Nebula runtime, network, WireGuard mesh, firewall), colour-coded.
   2. TRENDS — packets/s, CPU, memory, disk sparklines (DEC-PHASE12-056).
-  3. THREAT POSTURE — the tier selector (Tier 0 Passive / Tier 1 Active
-     Monitoring / Tier 2 Deception). Selecting a tier writes
-     ~/.config/orionx/threat-posture; orionx-postured (root) enforces it and
-     reports what it actually enforces in /run/orionx/posture-status.json.
-     The tab says "requested" until that file confirms (DEC-PHASE12-070).
-  4. R.A.I.N. — audible-alert settings, through rain_lib (its own authority).
+
+The threat-posture selector and the R.A.I.N. controls that used to sit below
+these moved to the Cockpit settings drawer (#95, DEC-PHASE13-048:
+control_center/settings_drawer.py), so they are one click away on every tab.
 
 Probes run in a worker thread (helpers/background, DEC-PHASE12-068). Only the
 two alertable service probes keep running while the tab is hidden, so a
@@ -21,10 +19,9 @@ degraded firewall still sounds while the operator watches LIVE.
 @title W10-5 Awareness: live health monitor + threat-posture tier selector
 @status accepted
 @rationale Phase 9 W9-2 locked this section as a plug-in surface. W10-5 fills it
-  with (a) the live health monitor the operator asked for and (b) the tier
-  selector that is the single authority for the REQUESTED threat posture
-  (persisted to ~/.config/orionx/threat-posture). Enforcement truth is
-  orionx-postured's status file. No privileged calls, no third-party imports
+  with the live health monitor the operator asked for. (The tier selector it
+  also carried is in the settings drawer since #95; its writer is
+  posture_data.request_tier.) No privileged calls, no third-party imports
   (test_control_center.sh import invariant).
 
 @decision DEC-PHASE9-019
@@ -45,56 +42,24 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk  # type: ignore[import]  # noqa: E402
 
 from ..helpers import mesh_data as M  # noqa: E402
-from ..helpers import posture_data as P  # noqa: E402
-from ..helpers import settings_io as S  # noqa: E402
 from ..helpers import style, ux  # noqa: E402
-from ..helpers.background import Poller, run_async  # noqa: E402
+from ..helpers.background import Poller  # noqa: E402
 
 # python.md P2-3: import once. Inserting into sys.path on every probe grew it
 # by one entry per call (~130k a day).
 _SCRIPTS = Path(__file__).resolve().parents[2]
-for _sub in ("awareness", "rain"):
-    if str(_SCRIPTS / _sub) not in sys.path:
-        sys.path.insert(0, str(_SCRIPTS / _sub))
+if str(_SCRIPTS / "awareness") not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS / "awareness"))
 import deck_vitals as _V  # noqa: E402
-import rain_lib  # noqa: E402  (rain.json schema + atomic save: the one authority)
 
 # Live-health refresh cadence (ms).
 _POLL_MS = 3000
-
-# Threat-posture REQUEST file — user-writable, read by orionx-postured.
-_POSTURE_FILE = Path.home() / ".config" / "orionx" / "threat-posture"
-_RAIN_SEVERITIES = rain_lib.SEVERITIES
-
-
-def _emit_event(severity: str, source: str, category: str, message: str) -> None:
-    """Publish an event onto the Orion-X event bus (heard via R.A.I.N.). Non-blocking."""
-    try:
-        subprocess.Popen(
-            ["orionx-event", "--severity", severity, "--source", source,
-             "--category", category, message],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-    except OSError as exc:
-        print(f"awareness: could not publish to the bus: {exc}", file=sys.stderr)
-
-
-# Tier id -> (label, description). Ids are what get persisted.
-_TIERS = [
-    ("0", P.TIER_LABEL["0"],
-     "Quiet monitoring only — passive host/network observation, no active probing."),
-    ("1", P.TIER_LABEL["1"],
-     "IDS-style detection (Suricata + rules) with Nebula contextualising alerts."),
-    ("2", P.TIER_LABEL["2"],
-     "Canaries / honeytokens / tarpits. Explicit opt-in (DEC-PHASE9-008)."),
-]
 
 # Colour markup helpers (Pango).
 _GREEN = "#34ff9e"
 _AMBER = "#ffb300"
 _RED = "#ff6a4a"
 _DIM = "#9aa0a6"
-_LEVEL_COLOR = {"ok": _GREEN, "info": _AMBER, "error": _RED}
 
 
 def _color(text: str, hexcol: str) -> str:
@@ -234,31 +199,8 @@ def collect_health(visible: bool, cpu_prev=None) -> dict:
     return out
 
 
-def rain_summary(cfg: dict) -> str:
-    if not cfg.get("enabled"):
-        return "R.A.I.N.: audible alerts OFF"
-    parts = [f"alerts from {cfg.get('min_severity')}", f"volume {round(float(cfg.get('volume', 0)) * 100)}%"]
-    if cfg.get("voice"):
-        parts.append("voice cue on")
-    if cfg.get("speech"):
-        parts.append("narration on")
-    return "R.A.I.N.: " + ", ".join(parts)
-
-
-def rain_test_outcome(rc: int | None, stdout: str, stderr: str, err: str = "") -> tuple[bool, str]:
-    """Plain-language result of `orionx-rain --test warning`. Pure."""
-    last = (stderr or stdout or "").strip().splitlines()
-    tail = last[-1][:140] if last else ""
-    if err:
-        return False, f"✗ R.A.I.N. test did not run: {err}"
-    if rc == 0:
-        return True, ("🔊 R.A.I.N. played the warning cue (orionx-rain exit 0). Heard nothing? "
-                      "Check the volume, then: paplay /usr/share/orionx/rain/warning.wav")
-    return False, f"✗ R.A.I.N. test failed (exit {rc})" + (f": {tail}" if tail else "")
-
-
 class _AwarenessWidget:
-    """Live health monitor + threat-posture selector."""
+    """Live health monitor and trends."""
 
     def __init__(self) -> None:
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -297,48 +239,14 @@ class _AwarenessWidget:
             row.pack_start(s, True, True, 0)
         self.box.pack_start(row, False, False, 4)
         self._trend_prev: dict = {}
-
-        self.box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 6)
-
-        # --- Threat posture ---
-        phdr = style.heading("<b>Threat posture</b>")
-        self.box.pack_start(phdr, False, False, 2)
-
-        current = self._load_posture()
-        self._requested = current
-        try:
-            self._requested_at = _POSTURE_FILE.stat().st_mtime
-        except OSError:
-            self._requested_at = 0.0
-        self._announced = True        # the startup state is not a fresh request
-        self._posture_status = Gtk.Label()
-        self._posture_status.set_halign(Gtk.Align.START)
-        self._posture_status.set_line_wrap(True)
-        self._posture_status.set_selectable(True)
-
-        self._radios: dict[str, Gtk.RadioButton] = {}
-        self._reverting = False
-        group: Gtk.RadioButton | None = None
-        for tier_id, label, desc in _TIERS:
-            rb = Gtk.RadioButton.new_with_label_from_widget(group, label)
-            if group is None:
-                group = rb
-            rb.set_tooltip_text(desc)
-            if tier_id == current:
-                rb.set_active(True)
-            rb.connect("toggled", self._on_tier_toggled, tier_id)
-            self._radios[tier_id] = rb
-            self.box.pack_start(rb, False, False, 0)
-
-        self.box.pack_start(self._posture_status, False, False, 4)
-        self._show_posture()
-
-        # --- R.A.I.N. (audible alerts) ---
-        self.box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 6)
-        self._build_rain_controls()
+        moved = Gtk.Label()
+        moved.set_markup(f'<span foreground="{_DIM}">Threat posture and R.A.I.N. alert settings: '
+                         "Settings (top right, or F2) on every tab.</span>")
+        moved.set_halign(Gtk.Align.START)
+        moved.set_line_wrap(True)
+        self.box.pack_start(moved, False, False, 4)
 
         self._poller = Poller(self.box, _POLL_MS, self._collect, self._apply, run_hidden=True)
-        GLib.timeout_add(1000, self._posture_tick)
 
     # ------------------------------------------------------------------ health
 
@@ -375,175 +283,11 @@ class _AwarenessWidget:
         if prev is None:
             return  # baseline poll — establish state, stay silent
         if prev and not healthy:
-            _emit_event(_ALERTABLE[name], "health", "service", f"{name} degraded: {value}")
+            ux.emit_event(_ALERTABLE[name], "health", "service", f"{name} degraded: {value}")
         elif healthy and not prev:
-            _emit_event("notice", "health", "service", f"{name} recovered: {value}")
-
-    # ----------------------------------------------------------------- posture
-
-    def _load_posture(self) -> str:
-        try:
-            val = _POSTURE_FILE.read_text(encoding="utf-8").strip()
-            return val if val in ("0", "1", "2") else "0"
-        except OSError:
-            return "0"
-
-    def _show_posture(self) -> dict:
-        """Requested vs enforced, from postured's status file (cheap file read)."""
-        v = P.verdict(self._requested, P.read_status(), self._requested_at, time.time())
-        self._posture_status.set_markup(_color(GLib.markup_escape_text(v["text"]), _LEVEL_COLOR[v["level"]]))
-        return v
-
-    def _posture_tick(self) -> bool:
-        v = self._show_posture()
-        if not self._announced and v["state"] != "pending":
-            self._announced = True
-            ux.notify(v["text"], v["level"])
-        return True
-
-    def _on_tier_toggled(self, rb: Gtk.RadioButton, tier_id: str) -> None:
-        if not rb.get_active() or self._reverting:
-            return
-        ok, err = S.atomic_write_text(_POSTURE_FILE, tier_id + "\n")
-        if not ok:
-            # The request never reached postured: say so and put the control back.
-            self._reverting = True
-            self._radios[self._requested].set_active(True)
-            self._reverting = False
-            ux.notify(f"✗ Threat posture NOT changed — could not write {err}", ux.LEVEL_ERROR)
-            return
-        self._requested, self._requested_at, self._announced = tier_id, time.time(), False
-        label = P.TIER_LABEL[tier_id]
-        _emit_event("warning" if tier_id == "2" else "notice", "posture", "posture",
-                    f"Threat posture change requested: {label}")
-        v = self._show_posture()
-        ux.notify(f"{v['text']}  ·  {S.reboot_line()}", ux.LEVEL_INFO)
-
-    # ----------------------------------------------------------------- R.A.I.N.
-
-    def _build_rain_controls(self) -> None:
-        """Audible-alert controls; rain_lib owns rain.json's schema and its atomic save."""
-        cfg = rain_lib.load_config()
-
-        rhdr = style.heading("<b>Audible alerts · R.A.I.N.</b>")
-        self.box.pack_start(rhdr, False, False, 2)
-
-        sub = Gtk.Label()
-        sub.set_markup(_color("Hear intrusions without watching the screen — for your 3am self.", _DIM))
-        sub.set_halign(Gtk.Align.START)
-        self.box.pack_start(sub, False, False, 0)
-
-        self._rain_enable = Gtk.CheckButton(label="Enable audible alerts")
-        self._rain_enable.set_active(bool(cfg["enabled"]))
-        self._rain_enable.connect("toggled", self._on_rain_changed)
-        self.box.pack_start(self._rain_enable, False, False, 2)
-
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        mlbl = Gtk.Label(label="Alert from severity:")
-        mlbl.set_halign(Gtk.Align.START)
-        self._rain_sev = Gtk.ComboBoxText()
-        for sev in _RAIN_SEVERITIES:
-            self._rain_sev.append(sev, sev.capitalize())
-        self._rain_sev.set_active_id(cfg["min_severity"])
-        self._rain_sev.connect("changed", self._on_rain_changed)
-        row.pack_start(mlbl, False, False, 0)
-        row.pack_start(self._rain_sev, False, False, 0)
-        self.box.pack_start(row, False, False, 2)
-
-        vrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        vlbl = Gtk.Label(label="Volume:")
-        self._rain_vol = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 5)
-        self._rain_vol.set_value(max(0, min(100, int(float(cfg["volume"]) * 100))))
-        self._rain_vol.set_hexpand(True)
-        self._rain_vol.set_draw_value(True)
-        self._rain_vol.connect("value-changed", self._on_rain_changed)
-        vrow.pack_start(vlbl, False, False, 0)
-        vrow.pack_start(self._rain_vol, True, True, 0)
-        self.box.pack_start(vrow, False, False, 2)
-
-        brow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self._rain_voice = Gtk.CheckButton(label="Spoken voice cue")
-        self._rain_voice.set_active(bool(cfg["voice"]))
-        # UX-13: say how this differs from narration.
-        self._rain_voice.set_tooltip_text(
-            "Speak a short fixed phrase with each tone (for example \"Warning. Suspicious "
-            "activity.\"). It never says what the alert was — that is narration.")
-        self._rain_voice.connect("toggled", self._on_rain_changed)
-        # DEC-PHASE12-046. Off by default and labelled with the consequence.
-        self._rain_speech = Gtk.CheckButton(label="Narrate alerts aloud")
-        self._rain_speech.set_active(bool(cfg.get("speech", False)))
-        self._rain_speech.set_tooltip_text(
-            "Speak a one-sentence description of the alert after the tone. "
-            "Audible to everyone in the room — the tone is not."
-        )
-        self._rain_speech.connect("toggled", self._on_rain_changed)
-        test_btn = Gtk.Button(label="Test alert")
-        test_btn.connect("clicked", self._on_rain_test)
-        self._test_btn = test_btn
-        brow.pack_start(self._rain_voice, False, False, 0)
-        brow.pack_start(self._rain_speech, False, False, 0)
-        brow.pack_start(test_btn, False, False, 0)
-        self.box.pack_start(brow, False, False, 2)
-        self._rain_timer = 0
-
-    def _rain_cfg_from_widgets(self) -> dict:
-        cfg = rain_lib.load_config()
-        cfg.update({
-            "enabled": self._rain_enable.get_active(),
-            "min_severity": self._rain_sev.get_active_id() or "warning",
-            "volume": round(self._rain_vol.get_value() / 100.0, 2),
-            "voice": self._rain_voice.get_active(),
-            "speech": self._rain_speech.get_active(),
-        })
-        return cfg
-
-    def _save_rain(self) -> bool:
-        cfg = self._rain_cfg_from_widgets()
-        if rain_lib.save_config(cfg):
-            ux.notify(f"✓ {rain_summary(cfg)} — {S.reboot_line()}", ux.LEVEL_OK)
-            return True
-        ux.notify(f"✗ R.A.I.N. settings NOT saved — could not write {rain_lib.CONFIG_FILE}", ux.LEVEL_ERROR)
-        return False
-
-    def _on_rain_changed(self, _widget: Gtk.Widget) -> None:
-        """Persist after the slider settles (one toast, not one per step)."""
-        if self._rain_timer:
-            GLib.source_remove(self._rain_timer)
-
-        def _fire() -> bool:
-            self._rain_timer = 0
-            self._save_rain()
-            return False
-        self._rain_timer = GLib.timeout_add(600, _fire)
-
-    def _on_rain_test(self, _btn: Gtk.Button) -> None:
-        """Play a sample cue; report what actually happened (UX-12)."""
-        if self._rain_timer:
-            GLib.source_remove(self._rain_timer)
-            self._rain_timer = 0
-        if not self._save_rain():
-            return
-        self._test_btn.set_sensitive(False)
-        ux.notify("R.A.I.N. test: playing the warning cue…", ux.LEVEL_INFO)
-
-        def _work():
-            try:
-                r = subprocess.run(["orionx-rain", "--test", "warning"], capture_output=True,
-                                   text=True, timeout=8)
-                return rain_test_outcome(r.returncode, r.stdout, r.stderr)
-            except FileNotFoundError:
-                return rain_test_outcome(None, "", "", "orionx-rain is not installed")
-            except subprocess.TimeoutExpired:
-                return rain_test_outcome(None, "", "", "orionx-rain did not finish within 8 s")
-
-        def _done(res, err) -> None:
-            self._test_btn.set_sensitive(True)
-            ok, msg = res if err is None else (False, f"✗ R.A.I.N. test failed: {err}")
-            ux.notify(msg, ux.LEVEL_INFO if ok else ux.LEVEL_ERROR)
-
-        run_async(_work, _done)
+            ux.emit_event("notice", "health", "service", f"{name} recovered: {value}")
 
 
 def build_section() -> Gtk.Widget:
-    """Return the Awareness tab (live health, trends, threat posture, R.A.I.N.)."""
+    """Return the Awareness tab (live health and trends)."""
     return _AwarenessWidget().box

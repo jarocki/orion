@@ -228,23 +228,11 @@ def may_act_now(autonomy: dict[str, str], playbook: str) -> bool:
     return disposition(level_for(autonomy, playbook)) == ACT_EXECUTE
 
 
-# @decision DEC-PHASE13-049
-# @title The Control Center is a launcher; each of its controls lives once, on the surface its role names
-# @status accepted
-# @rationale #95, under DEC-PHASE13-048. The Cockpit's Auto-Healing tab was the
-#   only writer of autonomy.json, and it wrote it as a side effect of being
-#   built: every class the file lacked was set to "propose" whenever the
-#   Cockpit opened, so opening a window granted consent. The autonomy grid is a
-#   tool control, so it moved to the Workbench, which is a terminal plus a
-#   loopback page that only reads. The page shows the levels heald will read
-#   and the exact `orionx-heal autonomy CLASS LEVEL` line for each change; the
-#   write is this function, run by the operator in a terminal. The Workbench
-#   server gained no write endpoint: a page that can grant "autonomous" to
-#   kill_process is a target for any tab that reaches loopback. The tab, the
-#   write-on-open and the grid's own writer are deleted in the same change,
-#   because "keep it as a fallback" is how two writers start. The Control
-#   Center command stays one release as a launcher that names where each
-#   control went (scripts/control_center/app.py MOVED), then goes.
+# #95 (DEC-PHASE13-049, recorded in scripts/control_center/moved.py): the
+# Cockpit's Auto-Healing tab was the only writer of autonomy.json and wrote it
+# whenever it was built, so opening a window granted "propose" consent. The
+# grid moved to the Workbench (read-only page + this writer via
+# `orionx-heal autonomy`); the tab and its writer were deleted.
 def save_autonomy(levels: dict[str, str], path: Path | None = None) -> tuple[bool, str]:
     """THE writer of autonomy.json (DEC-PHASE13-049). Atomic; never raises.
 
