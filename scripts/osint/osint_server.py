@@ -74,6 +74,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pewpew_feed  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "awareness"))
 import deck_vitals  # noqa: E402  (DEC-PHASE12-049: same hostname/IP/vitals as the Cockpit)
+import gateway_probes  # noqa: E402  (DEC-PHASE13-047: the two operator-initiated probes behind POST, #94)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "healing"))
+import healing_lib  # noqa: E402  (DEC-PHASE13-049: the reader heald uses; this page never writes)
+import network_picture  # noqa: E402  (DEC-PHASE13-046: the same picture the Cockpit NETWORK panel draws, #93)
 
 # --- Where things are -------------------------------------------------------
 DEFAULT_ROOT = Path(os.environ.get("ORIONX_OSINT_ROOT", "/opt/orionx/osint"))
@@ -89,8 +93,8 @@ DEFAULT_PORT = 8787
 PORT_TRIES = 8
 
 # UX-06: the remedy names the surface that exists on this image.
-POSTURE_REMEDY = ("Lower the posture in Orion Cockpit -> Awareness -> Threat "
-                  "posture (or: orionx-cockpit --tab awareness) if reaching "
+POSTURE_REMEDY = ("Lower the posture in Orion Cockpit -> Settings -> Threat "
+                  "posture (or: orionx-cockpit --settings) if reaching "
                   "out is appropriate.")
 
 # @decision DEC-PHASE12-086
@@ -527,6 +531,69 @@ def current_outbound() -> dict:
     return outbound_verdict(read_posture(_read(POSTURE_STATUS)), route)
 
 
+# --- Operator-initiated probes (#94, DEC-PHASE13-047) -----------------------
+# The only two routes on this server that transmit anything. POST only (a GET,
+# a prefetch or a page load can never trigger them), and only with the
+# X-Orionx-Operator header the page's button sends: a custom header forces a
+# CORS preflight this server never answers, so a cross-site form cannot fire
+# a probe even before request_allowed() refuses its Origin. One probe at a
+# time, server-wide. Both pass the SAME outbound_verdict() the GODSEYE gate
+# uses: Part B refuses on it, Part A only records it (the segment is local).
+ACTIVE_ROUTES = ("/api/network/gateway", "/api/network/outbound")
+OPERATOR_HEADER = "X-Orionx-Operator"
+_PROBE_LOCK = threading.Lock()
+
+
+def run_active(path: str) -> dict:
+    """Run the probe a POST to `path` asks for, gated by the current posture."""
+    verdict = current_outbound()
+    if path == "/api/network/outbound":
+        return gateway_probes.run_outbound(verdict)
+    return gateway_probes.run_gateway(verdict)
+# Nebula warm-up (DEC-PHASE10-010): the boot-time switch is systemd's own
+# enablement link; the one-off is `nebula warmup`. Both are evidence, read here.
+WARMUP_WANTS = Path(os.environ.get(
+    "ORIONX_WARMUP_WANTS", "/etc/systemd/system/multi-user.target.wants/nebula-warmup.service"))
+WARMUP_LOG = Path(os.environ.get("ORIONX_WARMUP_LOG", "/var/log/orionx/nebula-warmup.log"))
+
+
+def engine_state() -> dict:
+    """Tool controls the Workbench shows (#95, DEC-PHASE13-048/-049). Read-only.
+
+    Auto-healing consent is what heald reads (healing_lib.load_autonomy +
+    level_for: an absent class is off), with the one command that changes
+    each class. Nebula warm-up is the unit's enablement and the last run's log.
+    Every change is a command the operator runs in the Workbench terminal; this
+    server has no write path and gains none.
+    """
+    levels = healing_lib.load_autonomy()
+    classes = [{"id": p.name, "summary": p.summary,
+                "level": healing_lib.level_for(levels, p.name), "set": p.name in levels}
+               for p in healing_lib.REGISTRY]
+    try:
+        last = WARMUP_LOG.stat().st_mtime
+    except OSError:
+        last = None
+    return {
+        "autonomy": {
+            "file": str(healing_lib.AUTONOMY_FILE),
+            "present": healing_lib.AUTONOMY_FILE.is_file(),
+            "levels": list(healing_lib.LEVELS),
+            "classes": classes,
+            "command": "orionx-heal autonomy <class> <level>",
+            "show": "orionx-heal autonomy",
+        },
+        "warmup": {
+            "enabled_at_boot": WARMUP_WANTS.exists(),
+            "last_run": last,
+            "log": str(WARMUP_LOG),
+            "now": "nebula warmup",
+            "enable": "sudo systemctl enable --now nebula-warmup.service",
+            "disable": "sudo systemctl disable nebula-warmup.service",
+        },
+    }
+
+
 def build_status() -> dict:
     route = read_default_route(_read(PROC_ROUTE) or "", _read(PROC_ROUTE6) or "")
     posture = read_posture(_read(POSTURE_STATUS))
@@ -560,6 +627,8 @@ def build_status() -> dict:
         # DEC-PHASE12-052: optional installers, with evidence of whether each
         # has been run on this deck, so the Workbench can say so.
         "optional": optional_state(load_installable(WEB_ROOT), bool(geo.get("available"))),
+        # #95: tool controls that used to be Cockpit tabs (DEC-PHASE13-049).
+        "engine": engine_state(),
         "bus": {
             "path": str(BUS),
             "present": bus_present,
@@ -676,6 +745,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     break
         return self.window
 
+    def _network_window(self) -> float:
+        """?window= for /api/network.json, clamped by the engine's own rule so the
+        page and the Cockpit (which uses the engine default) agree on the bounds."""
+        _, _, query = self.path.partition("?")
+        for part in query.split("&"):
+            key, _, value = part.partition("=")
+            if key == "window":
+                return network_picture.clamp_window(value)
+        return network_picture.WINDOW_SECONDS
+
     def do_GET(self):                            # noqa: N802
         if self._refuse_foreign():
             return
@@ -685,6 +764,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if path == "/api/pewpew.json":
             self._json(build_pewpew(self._window()))
+            return
+        if path == "/api/network.json":
+            # #93: the whole passive picture, from the module the Cockpit reads.
+            # The engine clamps the window itself; the page's selector passes it.
+            self._json(network_picture.collect(window=self._network_window()))
             return
 
         # GODSEYE's Node backend does not exist on this deck (DEC-PHASE12-045).
@@ -708,6 +792,36 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         super().do_GET()
+
+    def do_POST(self):                           # noqa: N802
+        """#94: the two operator-initiated probes. Nothing else accepts POST."""
+        if self._refuse_foreign():
+            return
+        path = self.path.split("?", 1)[0]
+        try:
+            length = min(int(self.headers.get("Content-Length") or 0), 4096)
+        except ValueError:
+            length = 0
+        if length:
+            self.rfile.read(length)              # the body carries nothing; drain it
+        if path not in ACTIVE_ROUTES:
+            self._json_status(405, {"error": "method-not-allowed", "route": path,
+                                    "detail": "Only %s accept POST." % " and ".join(ACTIVE_ROUTES)})
+            return
+        if self.headers.get(OPERATOR_HEADER) != "1":
+            self._json_status(403, {"error": "not-operator-initiated", "route": path,
+                                    "detail": "Probes run only from the This network page's buttons "
+                                              "(header %s: 1)." % OPERATOR_HEADER})
+            return
+        if not _PROBE_LOCK.acquire(blocking=False):
+            self._json_status(409, {"error": "probe-running", "route": path,
+                                    "detail": "Another probe is still running; this one was not started."})
+            return
+        try:
+            entry = run_active(path)
+        finally:
+            _PROBE_LOCK.release()
+        self._json(entry)
 
 
 class Server(socketserver.ThreadingTCPServer):
@@ -813,7 +927,8 @@ def forget_server(path: Path | None) -> None:
 def page_url(port: int, page: str) -> str:
     return "http://%s:%d/%s" % (HOST, port, {"cyberchef": "cyberchef/",
                                              "pewpew": "pewpew/",
-                                             "godseye": "godseye/"}.get(page, ""))
+                                             "godseye": "godseye/",
+                                             "network": "network/"}.get(page, ""))
 
 
 # ===========================================================================
@@ -874,6 +989,9 @@ def check_root(root: Path) -> list[tuple[str, bool, str, str]]:
 
     row("pew-pew map", (root / "pewpew" / "index.html").is_file(),
         str(root / "pewpew" / "index.html"), "")
+    # #93: the passive network picture. The page is required; Zeek is not.
+    row("This network page", (root / "network" / "index.html").is_file(),
+        str(root / "network" / "index.html"), "")
 
     # GODSEYE (DEC-PHASE12-045). Required: if the menu offers it, it ships.
     gs = root / "godseye"
@@ -941,7 +1059,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="loopback port, walks forward if busy "
                              "(default: %(default)s)")
     parser.add_argument("--page", default="",
-                        choices=("", "cyberchef", "pewpew", "godseye"),
+                        choices=("", "cyberchef", "pewpew", "godseye", "network"),
                         help="open this page instead of the launcher")
     parser.add_argument("--window", type=float,
                         default=pewpew_feed.DEFAULT_WINDOW_SECONDS,

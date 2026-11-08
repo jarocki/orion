@@ -6,11 +6,11 @@
 # @rationale Performing a 1-token inference at boot would preload the 4.4 GB model
 #   into RAM, shortening the first chat response latency at the cost of ~10-30s
 #   extra boot time and ~4.5 GB extra RAM. The trade-off is user-dependent (laptop
-#   vs. server use cases differ), so warm-up is opt-in via the Control Center.
+#   vs. server use cases differ), so warm-up is opt-in (Workbench → Engine, #95).
 #   This unit is STAGED here (installed by the 0615 hook) but NOT autoenabled —
 #   it does not appear in the AUTOSTART_UNITS array (DEC-PHASE10-010 invariant).
-#   The Control Center (W10-2) will provide a toggle; the operator may also
-#   manually enable: systemctl enable nebula-warmup.service
+#   The Workbench Engine card shows whether it is enabled and hands over the
+#   command: sudo systemctl enable --now nebula-warmup.service
 #   References: DEC-PHASE10-010 (opt-in warm-up), DEC-PHASE10-009 (integrity chain).
 
 [Unit]
@@ -38,5 +38,5 @@ RemainAfterExit=yes
 [Install]
 # This unit is staged but NOT enabled by the 0615 hook.
 # Operator opts in via: systemctl enable nebula-warmup.service
-# or via the Control Center toggle (W10-2).
+# (the Workbench Engine card hands over this command, #95).
 WantedBy=multi-user.target

@@ -38,6 +38,9 @@ RULES = [
     (re.compile(r"Control Center(?:'s)? (?:→|\*\*|IR Tools)|◈ ?COCKPIT|IR Tools tab"),
      "navigates through a retired surface (the Control Center is the Cockpit's tabs)"),
     (re.compile(r"Investigation surface\b(?! /)"), "uses the retired name for the Orion Workbench"),
+    (re.compile(r"on the \*\*Auto-Healing\*\* tab|the Auto-Healing tab|Awareness tab → (?:Audible|Threat)|"
+                r"[Cc]lick \*\*Warm up model\*\*|Toggle Theme\*\* in the Cockpit's Orion Tools"),
+     "sends the operator to a control that moved in v3.1.5 (#95: Cockpit Settings drawer / Workbench Engine)"),
     (re.compile(r"(?<!sudo )(?<![\w-])orionx-mesh (?:status|peers|join|leave)\b"),
      "runs orionx-mesh without sudo (it refuses to run without root)"),
     (re.compile(r"(?<!sudo )(?<![\w/.-])orionx-diag(?: --(?:json|category))?\s*(?:$|#|>)", re.M),

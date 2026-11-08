@@ -4833,6 +4833,41 @@ them before merge.
 | 4 | Fuller Network tab (#107 status and traffic, #108 VPN, #109 capture) | `scripts/control_center/sections/network.py` | Per-interface addresses and rates. Traffic by protocol and by interface. VPN status, plus import of a provider's WireGuard `.conf` through NetworkManager (DEC-PHASE13-014). Capture start/stop and "Open in Wireshark" (DEC-PHASE13-015). |
 | 5 | `orionx-logquery` silent "hang" and `-v` (#110); Workbench card overclaim (#111) | `scripts/logquery/` | DEC-PHASE13-016. |
 
+### Phase 13 — Control Center demotion (#95)
+
+v3.1.5. Operator decision 2026-10-05, recorded as DEC-PHASE13-048
+(`scripts/control_center/settings_drawer.py`): the **Orion Cockpit** is for
+seeing, hearing and changing the immediate environment; the **Orion
+Workbench** is the analyst's toolbox; every settings file has exactly one
+writer. The demotion is DEC-PHASE13-049 (`scripts/control_center/moved.py`).
+State before this change: the Control Center window was already gone
+(DEC-PHASE12-053), but its sections were the Cockpit's tabs and still the
+only writers of autonomy.json and the posture file.
+
+| Control (where it was) | Old writer | New home | New writer |
+|---|---|---|---|
+| Threat posture tiers (Cockpit → Awareness) | `sections/awareness.py` `_on_tier_toggled` → `settings_io.atomic_write_text` | Cockpit **Settings** drawer | `helpers/posture_data.request_tier` |
+| R.A.I.N. on/off, severity, volume, voice, narration, test (Cockpit → Awareness) | `rain_lib.save_config` (called from awareness.py) | Cockpit **Settings** drawer | `rain_lib.save_config` (unchanged; also `orionx-rain --speech`) |
+| Toggle Theme (Cockpit → Orion Tools) | `toggle-theme.sh` in a terminal | Cockpit **Settings** → Display | `toggle-theme.sh` (unchanged) |
+| DJ deck (menu only) | `orionx_synth.save_config` via orionx-dj | Cockpit **Settings** (launcher) | `orionx_synth.save_config` (unchanged) |
+| Auto-healing autonomy grid (Cockpit → Auto-Healing tab) | `sections/auto_healing.py` `_save_autonomy`, also on every Cockpit start for unset classes | Workbench **Engine** (read-only cards with copyable commands) | `healing_lib.save_autonomy` via `orionx-heal autonomy` |
+| Nebula warm-up button (Cockpit → Nebula AI) | none (spawned `nebula warmup`) | Workbench **Engine** | none; boot-time switch is the operator's `systemctl enable nebula-warmup.service` |
+| Optional installers (Cockpit → Orion Tools, and the Workbench) | each installer | Workbench **Optional** (already there, DEC-PHASE12-052) | each installer (Cockpit copy removed) |
+| Network, Mesh, Comms, Awareness health, Orion Tools launchers, Nebula status and chat | no settings file | unchanged Cockpit tabs | n/a |
+
+- `orionx-control-center` is a launcher for one release: `--where` prints
+  `moved.MOVED`; `--tab KEY` opens a tab or a moved control's new home after
+  saying where it went. Its menu entry is the "Orion Cockpit — Network tab"
+  entry. Remove both in the release after v3.1.5.
+- `tests/unit/test_settings_writers.sh` enforces one writer per
+  `~/.config/orionx` file and fails on a planted second writer (five plant
+  types, run every time). `/var/lib/orionx` holds daemon state, not operator
+  settings, and is out of its scope.
+- Open for the owner: the Orion Tools tab still mirrors the Workbench's
+  on-deck catalogue as Run buttons (DEC-PHASE12-057; not a settings writer);
+  and the `control_center` package name now hosts the Cockpit's tabs, so a
+  rename (`cockpit_tabs`) would retire the last use of the name.
+
 ### Unscheduled — Immutable Platform Migration (the March 2026 v3.1.0 sketch)
 
 - **NixOS migration** — Declarative, reproducible builds replacing Debian live-build

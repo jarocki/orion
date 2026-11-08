@@ -1,0 +1,22 @@
+OUI/MA-L                                                    Organization
+company_id                                                  Organization
+                                                            Address
+
+3C-37-86   (hex)		NETGEAR
+3C3786     (base 16)		NETGEAR
+				350 East Plumeria Drive
+				San Jose  CA  95134
+				US
+
+B8-27-EB   (hex)		Raspberry Pi Foundation
+B827EB     (base 16)		Raspberry Pi Foundation
+				Mitchell Wood House
+				Caldecote  Cambridgeshire  CB23 7NU
+				GB
+
+24-0A-C4   (hex)		Espressif Inc.
+240AC4     (base 16)		Espressif Inc.
+				Room 204, Building 2, 690 Bibo Road
+				Shanghai  Shanghai  201203
+				CN
+

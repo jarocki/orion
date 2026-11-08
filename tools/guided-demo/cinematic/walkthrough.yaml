@@ -75,7 +75,7 @@ shots:
     zoom: {from: [0, 0, 1, 1], to: [0.08, 0.08, 0.8, 0.8]}
     chapter: "AWARENESS"
     music: {intensity: 0.32}
-    narration: "The Awareness tab puts live health, the firewall, the next hop and DNS on one page, with sparklines for packets, processor, memory and disk. Threat posture has three tiers, from passive watching to decoys and canaries, and the deck tells you whether a tier is actually enforced before it claims it is."
+    narration: "The Awareness tab puts live health, the firewall, the next hop and DNS on one page, with sparklines for packets, processor, memory and disk. The settings drawer beside it holds threat posture, in three tiers from passive watching to decoys and canaries, and the deck tells you whether a tier is actually enforced before it claims it is."
 
   - id: tuning
     kind: capture

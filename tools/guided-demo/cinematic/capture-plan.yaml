@@ -52,7 +52,7 @@
 - {send: "pkill -f orionx-cockpit; sleep 2; nohup orionx-cockpit --tab mesh --fullscreen >/tmp/c2.log 2>&1 & w ockpit 90\n", mark: x-tab, fps: 1}
 - {wait: '(?m)^WIN-ockpit-', timeout: 240}
 - {mark: tab-mesh, fps: 2, sleep: 16}
-- {send: "pkill -f orionx-cockpit; sleep 2; nohup orionx-cockpit --tab awareness --fullscreen >/tmp/c3.log 2>&1 & w ockpit 90\n", mark: x-tab, fps: 1}
+- {send: "pkill -f orionx-cockpit; sleep 2; nohup orionx-cockpit --tab awareness --settings --fullscreen >/tmp/c3.log 2>&1 & w ockpit 90\n", mark: x-tab, fps: 1}
 - {wait: '(?m)^WIN-ockpit-', timeout: 240}
 - {mark: tab-awareness, fps: 2, sleep: 18}
 - {send: "pkill -f orionx-cockpit; sleep 2; nohup orionx-cockpit --tab comms --fullscreen >/tmp/c4.log 2>&1 & w ockpit 90\n", mark: x-tab, fps: 1}

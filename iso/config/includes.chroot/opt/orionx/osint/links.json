@@ -25,6 +25,15 @@
       "runtime_path": "/opt/orionx/osint/pewpew/index.html"
     },
     {
+      "id": "network",
+      "name": "This network",
+      "category": "visualise",
+      "blurb": "What this deck has passively observed on its segment: active hosts, local vs internet split, the neighbour table with OUI vendors, and WPAD / NetBIOS / LLMNR / mDNS / LDAP / DHCP / SSDP / IoT sightings. Every count is observed by this deck inside a window; no geolocation. Without Zeek it says which rows are degraded.",
+      "kind": "page",
+      "launch": "/network/",
+      "runtime_path": "/opt/orionx/osint/network/index.html"
+    },
+    {
       "id": "godseye",
       "name": "GODSEYE (globe)",
       "category": "visualise",

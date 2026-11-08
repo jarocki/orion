@@ -82,6 +82,29 @@ check(t4.tracked_sources() == 100, f"source table is bounded ({t4.tracked_source
 t5 = m.ScanTracker()
 many = [a for a in (t5.observe(5000.0 + i*0.01, "10.0.0.8", 1000+i, "tcp") for i in range(400)) if a]
 check(len(many) <= 3, f"ongoing scan is throttled ({len(many)} events for 400 packets)")
+
+# Tool attribution (#128, DEC-PHASE13-040): nmap's default shuffle at the
+# measured DROP-policy rate is named at LOW confidence; a sequential walk is
+# tool-agnostic and names nothing. The rate figure lives once, in the helper.
+import random
+rnd = random.Random(3).sample(range(1, 1025), 60)
+t6 = m.ScanTracker()
+nm = [a for a in (t6.observe(6000.0 + i / m.tool_fingerprint.NMAP_DROP_POLICY_PPS, "10.0.0.9", p, "tcp")
+                  for i, p in enumerate(rnd)) if a]
+seen = rnd[:nm[-1]["ports"]]  # the alert fired part-way through the sweep
+check(nm and nm[-1]["ports_order"] == seen[-64:] and nm[-1]["ports_seen"] == sorted(seen)[:64],
+      "alert carries the probe order as well as the sorted port list")
+d6 = m.build_detail(nm[-1])
+check((d6.get("tool"), d6.get("tool_conf"), d6.get("scan_order")) == ("nmap", "low", "random"),
+      f"shuffled order at ~4.3 pps -> tool nmap/low, scan_order random ({d6.get('tool')}/{d6.get('tool_conf')}/{d6.get('scan_order')})")
+check("ports_order" not in d6, "the detail carries one port list, not two")
+t7 = m.ScanTracker()
+sq = [a for a in (t7.observe(7000.0 + i / 4.3, "10.0.0.10", 20 + i, "tcp") for i in range(60)) if a]
+d7 = m.build_detail(sq[-1])
+check("tool" not in d7 and d7.get("scan_order") == "sequential",
+      f"a 20..79 walk records scan_order sequential and names no tool ({d7.get('scan_order')}, {d7.get('tool')})")
+check(not any(c in open(sys.argv[1]).read() for c in ("PPS = 4.3", "pps = 4.3")),
+      "scanwatch does not restate the 4.3 pps constant (tool_fingerprint owns it)")
 sys.exit(0 if ok else 1)
 PY
 then pass "detection logic assertions"; else fail "detection logic assertions" "see output above"; fi

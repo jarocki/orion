@@ -63,9 +63,10 @@ TABLE_COLUMNS = tuple(RECORD_FIELDS) + tuple(ENRICHMENT_FIELDS) + DERIVED_FIELDS
 
 _TEXT_FIELDS = {"ts", "ip", "method", "path", "query", "userAgent", "referer",
                 "asOrganization", "country", "reason", "proto", "origin",
+                "signature", "technique", "detector",
                 "tool", "tool_conf", "category", "product", "prevalence",
                 "cve", "research_org", "spoof", "day"}
-_INT_FIELDS = {"status", "bytes", "asn", "tier", "port", "kev",
+_INT_FIELDS = {"status", "bytes", "asn", "tier", "port", "sid", "kev",
                "kev_ransomware", "ip_int", "hour"}
 
 
@@ -337,6 +338,35 @@ SELECT ip, count(DISTINCT port) AS distinct_ports, count(*) AS drops,
 FROM r WHERE reason = 'firewall_drop' AND port IS NOT NULL
 GROUP BY ip ORDER BY distinct_ports DESC LIMIT 40""",
 
+    # --- bus-event reports (#127). These read the fields parse_json_line
+    # --- flattens out of a bus event's detail (DEC-PHASE13-039): what the
+    # --- IDS engines and scanwatch saw, per signature and per source. The
+    # --- per-port picture of a sweep is the drop log, which `ports` reads.
+    "ids": """
+SELECT coalesce(nullif(signature,''),'(unnamed)') AS signature,
+       max(sid) AS sid, max(nullif(technique,'')) AS technique,
+       max(nullif(detector,'')) AS detector,
+       count(*) AS alerts, count(DISTINCT ip) AS uniq_sources,
+       count(DISTINCT port) AS dest_ports, max(tier) AS max_tier,
+       min(ts) AS first_seen, max(ts) AS last_seen,
+       max(nullif(tool,'')) AS tool
+FROM r WHERE reason = 'ids' OR detector IN ('suricata', 'zeek')
+GROUP BY 1 ORDER BY alerts DESC, last_seen DESC LIMIT 40""",
+
+    "scans": """
+SELECT ip, count(*) AS events, count(DISTINCT detector) AS detectors,
+       max(nullif(detector,'')) AS detector,
+       max(nullif(signature,'')) AS signature,
+       max(nullif(technique,'')) AS technique,
+       count(DISTINCT port) AS ports_reported,
+       min(port) AS port_lo, max(port) AS port_hi, max(proto) AS proto,
+       max(tier) AS max_tier, min(ts) AS first_seen, max(ts) AS last_seen,
+       max(nullif(tool,'')) AS tool
+FROM r WHERE ip IS NOT NULL
+  AND (reason = 'scan' OR upper(coalesce(signature,'')) LIKE '%SCAN%'
+       OR technique LIKE 'T1046%')
+GROUP BY ip ORDER BY events DESC, last_seen DESC LIMIT 40""",
+
     # --- enrichment-aware. These columns are empty without a fetched intel
     # --- catalog, and the run banner always states the intel's state and age,
     # --- so an empty column is never mistakable for "nothing found".
@@ -392,6 +422,8 @@ REPORT_HELP = {
     "requests": "Every record as its own row. Best narrowed with --focus.",
     "paths": "Most-requested paths, and how many distinct sources asked for each.",
     "ports": "Firewall drops grouped by source: who touched how many distinct blocked ports.",
+    "ids": "IDS alerts (Suricata, Zeek) per signature: sid, ATT&CK technique, sources, ports.",
+    "scans": "Scan events per source: which detectors saw it, how many ports, over what span.",
     "existence": "Who asks for things that do not exist vs real pages — the blind-scanning tell.",
     "uarotation": "Per-source user-agent behaviour: rotating, always-null, or stable.",
     "asn": "Busiest networks. A datacenter ASN on a personal deck is worth a look.",

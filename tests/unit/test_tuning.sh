@@ -211,7 +211,9 @@ then pass "cockpit_lib tune_args + SELF pressure"; else fail "cockpit_lib assert
 CK="$ROOT/scripts/cockpit/orionx-cockpit"
 grep -q 'self._tune_selected("squelch" if name == "s" else "tune")' "$CK" && pass "drill-down keys s/t wired" || fail "keys" "missing"
 grep -q '\[s\] squelch this signature' "$CK" && pass "drill-down shows the two keys for tunable events" || fail "footer" "missing"
-grep -q 'tag = "SELF "' "$CK" && pass "stream row tags SELF events" || fail "SELF tag" "missing"
+# The row cell moved to cockpit_lib.source_label (#128); behaviour is asserted in test_cockpit_honesty.
+grep -q 'tag = "SELF "' "$ROOT/scripts/cockpit/cockpit_lib.py" && grep -q 'L.source_label(ev)' "$CK" \
+    && pass "stream row tags SELF events (via cockpit_lib.source_label)" || fail "SELF tag" "missing"
 PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/orionx-pycache" python3 -m py_compile "$CK" "$ROOT/scripts/cockpit/cockpit_lib.py" 2>/dev/null && pass "cockpit compiles" || fail "cockpit compiles" "syntax"
 # --ttl accepts seconds or m/h/d suffixes and explains a bad value (QA round 2, L-12)
 _tt="$(cd "$ROOT/scripts/awareness" && PYTHONDONTWRITEBYTECODE=1 python3 -c '

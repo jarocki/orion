@@ -8,6 +8,8 @@ W10-1 replaces the W9-2 placeholder text with a dynamic status row that reads:
 
 plus the Ask Nebula chat (W10-2) and the local MCP tool list (W10-3).
 Status and the tool list are collected in a worker thread (DEC-PHASE12-068).
+The warm-up button moved to the Workbench's Engine section (#95,
+DEC-PHASE13-048): warming the model is tuning a tool, not the environment.
 
 @decision DEC-PHASE10-005
 @title Control Center Nebula section: W10-1 activates live runtime status
@@ -37,7 +39,7 @@ import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk  # type: ignore[import]  # noqa: E402
 
-from ..helpers import style, ux  # noqa: E402
+from ..helpers import style  # noqa: E402
 from ..helpers.background import Poller, run_async  # noqa: E402
 
 logger = logging.getLogger("control_center.nebula")
@@ -195,16 +197,13 @@ class _NebulaSectionWidget:
         # A 6 s CLI call used to run inside the constructor (P1-5).
         run_async(_list_tools, _tools_done)
 
-        # --- Warm-up button ---
-        warmup_btn = Gtk.Button(label="Warm up model")
-        warmup_btn.get_style_context().add_class("orionx-tool")
-        warmup_btn.set_halign(Gtk.Align.START)
-        warmup_btn.set_tooltip_text(
-            "Load the model into memory so the first prompt is fast "
-            "(first run can take a few minutes on this hardware)"
-        )
-        warmup_btn.connect("clicked", self._on_warmup_clicked)
-        self.box.pack_start(warmup_btn, False, False, 4)
+        # #95: warm-up is a tool control; it lives on the Workbench now.
+        warm = Gtk.Label(label="Warm-up (load the model so the first prompt is fast): "
+                               "Workbench → Engine, or in a terminal: nebula warmup")
+        warm.set_halign(Gtk.Align.START)
+        warm.set_line_wrap(True)
+        warm.set_selectable(True)
+        self.box.pack_start(warm, False, False, 4)
 
         Poller(self.box, _POLL_INTERVAL_MS, lambda _vis: _read_nebula_status(), self._apply_status)
 
@@ -228,30 +227,6 @@ class _NebulaSectionWidget:
             )
         else:
             self._integrity_label.set_text(f"Integrity: {integrity_state}")
-
-    def _on_warmup_clicked(self, _btn: Gtk.Button) -> None:
-        """Trigger nebula warmup in a subprocess (non-blocking), with feedback."""
-        nebula_bin = Path(_NEBULA_CLI)
-        if not nebula_bin.exists():
-            logger.warning("nebula CLI not found at %s — cannot run warm-up", _NEBULA_CLI)
-            ux.notify("✗ Nebula CLI is not installed on this system", ux.LEVEL_ERROR)
-            return
-        try:
-            subprocess.Popen(
-                [str(nebula_bin), "warmup"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
-        except OSError as exc:
-            logger.error("Failed to launch nebula warmup: %s", exc)
-            ux.notify(f"✗ Could not start warm-up: {exc}", ux.LEVEL_ERROR)
-            return
-        ux.notify(
-            "✓ Warming up Nebula — first run can take a few minutes; "
-            "watch the Runtime line above",
-            ux.LEVEL_OK,
-        )
 
     # ------------------------------------------------------------------
     # Ask Nebula chat (W10-2) — streams `nebula chat` output into the view

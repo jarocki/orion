@@ -44,7 +44,10 @@ for f in "$WEB/index.html" "$WEB/app.js" "$WEB/links.json" "$WEB/recipes.json" \
          "$WEB/cyberchef/PROVENANCE.txt" "$WEB/cyberchef/MANIFEST.sha256" \
          "$WEB/pewpew/index.html" "$WEB/pewpew/map.js" "$WEB/pewpew/pew.mp3" \
          "$WEB/pewpew/PROVENANCE.txt" "$WEB/pewpew/LICENSE.ipew" \
+         "$WEB/network/index.html" "$WEB/network/network.js" \
          "$SRC/osint_server.py" "$SRC/pewpew_feed.py" \
+         "$REPO_ROOT/scripts/awareness/network_picture.py" "$REPO_ROOT/scripts/awareness/zeek_logs.py" \
+         "$REPO_ROOT/scripts/awareness/gateway_probes.py" \
          "$CH/usr/bin/orionx-osint" \
          "$CH/opt/orionx/optional/install-geoip.sh" "$HOOK"; do
     if [[ -f "$f" ]]; then pass "ships: ${f#"$REPO_ROOT"/}"
@@ -60,7 +63,7 @@ for f in "$SRC/pewpew_feed.py" "$SRC/osint_server.py" "$HOOK" \
 done
 
 section "Launcher page is valid, self-contained HTML"
-if python3 - "$WEB/index.html" "$WEB/pewpew/index.html" <<'PY'
+if python3 - "$WEB/index.html" "$WEB/pewpew/index.html" "$WEB/network/index.html" <<'PY'
 import sys
 from html.parser import HTMLParser
 
@@ -134,12 +137,25 @@ PY
 then pass "launcher and map pages parse clean and reference nothing external"
 else fail "launcher/map HTML validity" "see output above"; fi
 
-for js in "$WEB/app.js" "$WEB/pewpew/map.js"; do
+for js in "$WEB/app.js" "$WEB/pewpew/map.js" "$WEB/network/network.js"; do
     if grep -nE "https?://[a-z]" "$js" | grep -vE "^\s*[0-9]+:\s*\*|creativecommons|db-ip\.com|github\.com/hrbrmstr" >/dev/null; then
         fail "no network URLs in $(basename "$js")" "$(grep -nE 'https?://[a-z]' "$js" | head -2)"
     else
         pass "no network URLs in $(basename "$js") (comments/attribution aside)"
     fi
+done
+# #128: the source list shows the producer-named tool next to the detectors.
+if grep -q 's\.tools' "$WEB/pewpew/map.js" && grep -q 'tool: ' "$WEB/pewpew/map.js"; then
+    pass "map.js lists sources[*].tools beside 'seen by' (DEC-PHASE13-040)"
+else fail "map.js lists sources[*].tools" "no s.tools / 'tool: ' in map.js"; fi
+
+# #94 / DEC-PHASE13-047: the two honesty labels are on the rendered page (the
+# static lede states them; network.js draws them again from the API entries).
+for lbl in "reported by the gateway, not measured" "probe, posture-gated"; do
+    if grep -q "$lbl" "$WEB/network/index.html" && grep -q "\"$lbl\"" "$REPO_ROOT/scripts/awareness/gateway_probes.py" \
+       && grep -q 'claim_label || idle.probe_label' "$WEB/network/network.js"; then
+        pass "This network page carries \"$lbl\" (page text + API-driven card label)"
+    else fail "page label: $lbl" "missing from network/index.html, gateway_probes.py or network.js"; fi
 done
 
 section "Catalogue: every local entry points at something that actually ships"
@@ -494,6 +510,18 @@ check(narrow["counts"]["sources"] == 3 and
       "8.8.4.4" not in {s["ip"] for s in narrow["sources"]},
       "a 90s look-back drops the 100s-old source and keeps the rest (%d left)"
       % narrow["counts"]["sources"])
+
+# #126 (DEC-PHASE13-041): the Cockpit's DEFENSIVE ACTIONS > SOURCES is this
+# feed over the Cockpit's own EventTail buffer; same fixture, same answer.
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(sys.argv[1]), "cockpit"))
+import cockpit_lib as L
+tail = L.EventTail(sys.argv[2], backfill=200); tail.poll()
+cock = L.attack_sources(tail.events, now=1100.0)
+check(cock["rows"] == [{k: s[k] for k in L.SOURCE_FIELDS} for s in feed["sources"][:L.SOURCES_MAX]]
+      and cock["total"] == feed["counts"]["sources"] and cock["window"] == feed["window_seconds"],
+      "Cockpit SOURCES rows equal build_feed's sources for the same bus (%d of %d)" % (len(cock["rows"]), cock["total"]))
+check(L._pewpew is F or L._pewpew.__file__ == F.__file__, "the Cockpit imports this very module, not a copy")
 sys.exit(0 if ok else 1)
 PY
 then pass "adapter parses real bus fixtures including scanwatch detail"
@@ -539,6 +567,13 @@ check(sorted(s["protocols"]) == ["tcp", "udp"],
       % (detail["protocols"], s["protocols"]))
 check(detail["detector"] in s["detectors"], "detector round-trips")
 check(detail["scan_kind"] in s["kinds"], "scan_kind round-trips")
+# #128: the map lists the producer's detail.tool and never fingerprints itself.
+check(s["tools"] == [] and "tool" not in detail,
+      "a 20..79 sequential sweep names no tool, so the source lists none (no guess)")
+feed2 = F.build_feed([json.dumps(dict(event, detail=dict(detail, tool="nmap", tool_conf="low")))], now=2001.0)
+check(feed2["sources"][0]["tools"] == ["nmap"], "sources[*].tools aggregates detail.tool like detectors")
+check(not any("nmap" in str(v).lower() for k, v in vars(F).items() if k.isupper() and isinstance(v, (str, tuple, list, dict))),
+      "pewpew_feed carries no tool pattern of its own (one authority: tool_fingerprint)")
 check(s["location"]["located"] is False,
       "and it is still unlocated, because nothing told the map where it is")
 sys.exit(0 if ok else 1)
@@ -823,10 +858,32 @@ with open(sys.argv[2], "w", encoding="utf-8") as out:
     out.write("{ this line is not json\n")
 REBASE
 
+# #93: the network picture's Zeek fixtures, rebased onto now the same way, so
+# the served counts can be asserted (the engine filters to the window).
+mkdir -p "$TMP/zeek"
+python3 - "$REPO_ROOT/tests/fixtures/zeek/network_picture" "$TMP/zeek" <<'REBASE'
+import sys, time
+from pathlib import Path
+src, dst = Path(sys.argv[1]), Path(sys.argv[2])
+now = time.time()
+BASE = 1790658600.0          # the fixtures' "now" (tests/fixtures/zeek/network_picture/README.md)
+for log in src.glob("*.log"):
+    out = []
+    for line in log.read_text(encoding="utf-8").splitlines():
+        if line.startswith("#") or not line:
+            out.append(line); continue
+        ts, _, rest = line.partition("\t")
+        out.append("%.6f\t%s" % (now - (BASE - float(ts)), rest))
+    (dst / log.name).write_text("\n".join(out) + "\n", encoding="utf-8")
+REBASE
 E2E_PORT=$(( 8900 + ($$ % 90) ))
+# #95: the Workbench shows the consent heald reads; one class set, the rest absent.
+printf '{"block_ip": "confirm"}\n' > "$TMP/autonomy.json"
 (
+  ORIONX_AUTONOMY_FILE="$TMP/autonomy.json" ORIONX_WARMUP_WANTS="$TMP/no-such-wants" \
   ORIONX_EVENT_LOG="$TMP/live-bus.jsonl" \
   ORIONX_POSTURE_STATUS="$TMP/posture.json" \
+  ORIONX_ZEEK_LOG_DIR="$TMP/zeek" ORIONX_OUI_PATH="$REPO_ROOT/tests/fixtures/oui/oui.txt" \
   ORIONX_PROC_ROUTE="/dev/null" ORIONX_PROC_ROUTE6="/dev/null" \
   python3 "$SRC/osint_server.py" --root "$WEB" --port "$E2E_PORT" \
           --no-browser >"$TMP/srv.log" 2>&1
@@ -840,7 +897,7 @@ if grep -q "loopback only" "$TMP/srv.log"; then pass "server states it is loopba
 else fail "loopback-only statement"; fi
 
 if [[ -n "$E2E_URL" ]] && python3 - "$E2E_URL" <<'PY'
-import json, sys, urllib.request
+import json, sys, urllib.error, urllib.request
 base = sys.argv[1]
 ok = True
 def check(cond, label):
@@ -888,6 +945,18 @@ check(all(("probe" in i) for i in links["installable"]), "every optional entry d
 check(all(i["probe"] for i in links["installable"] if i["id"] != "geoip"), "every probe is non-empty except geoip (answered by the server's own state)")
 check("optional" in st and set(st["optional"]) == set(_ids), "status.optional answers for exactly the offered installers (DEC-PHASE12-052)")
 check(all(st["optional"][k]["known"] for k in _ids), "every answer is from evidence, none 'unknown'")
+eng = st.get("engine") or {}
+_cls = {c["id"]: c for c in (eng.get("autonomy") or {}).get("classes", [])}
+check(list(_cls) == ["block_ip", "kill_process", "quarantine_file", "isolate_node", "rotate_mesh_keys",
+                     "revoke_matrix_session"], "status.engine lists every playbook class, registry order (#95)")
+check(_cls.get("block_ip", {}).get("level") == "confirm" and _cls["block_ip"]["set"] is True,
+      "a class in autonomy.json shows the level heald reads")
+check(all(c["level"] == "off" and c["set"] is False for k, c in _cls.items() if k != "block_ip"),
+      "an absent class shows off (not set), as heald treats it")
+check(eng.get("autonomy", {}).get("command") == "orionx-heal autonomy <class> <level>",
+      "the change is a command for the terminal; the page has no write path")
+check(eng.get("warmup", {}).get("enabled_at_boot") is False and eng["warmup"]["now"] == "nebula warmup",
+      "Nebula warm-up: on demand, with the command (#95)")
 
 status, ctype, body = get("/api/pewpew.json?window=900")
 feed = json.loads(body)
@@ -907,6 +976,46 @@ check(narrow["counts"]["sources"] == 1,
 status, _, body = get("/api/pewpew.json?window=1")
 check(json.loads(body)["window_seconds"] == 60.0,
       "an absurd window is clamped, not obeyed")
+
+# #93 / DEC-PHASE13-046: the "This network" page and its API over loopback.
+for path, needle in (("/network/", b"This network"), ("/network/network.js", b"api/network.json")):
+    status, ctype, body = get(path)
+    check(status == 200 and needle in body, "%s -> 200, %d bytes" % (path, len(body)))
+status, ctype, body = get("/api/network.json?window=900")
+pic = json.loads(body)
+check(status == 200 and ctype.startswith("application/json") and pic["decision"] == "DEC-PHASE13-046",
+      "/api/network.json is JSON from network_picture (DEC-PHASE13-046)")
+check(pic["label"] == "observed by this deck" and pic["summary"]["headline"].endswith("observed by this deck"),
+      "every served count carries the label (%r)" % pic["summary"]["headline"])
+check(pic["zeek"]["state"] == "ok" and pic["split"]["available"] is True,
+      "the rebased Zeek fixtures are discovered via ORIONX_ZEEK_LOG_DIR and the split is available")
+S = pic["sightings"]
+check(all(S[k]["state"] == "present" for k in ("wpad", "netbios", "llmnr", "mdns", "ldap", "dhcp", "ssdp")),
+      "every sighting class is served present from the fixtures (%s)" % {k: S[k]["state"] for k in S})
+check(pic["degraded"] == [], "nothing degraded with all four logs present")
+raw = body.decode("utf-8")
+for key in ('"lat"', '"lon"', '"latitude"', '"longitude"', '"coordinates"', '"country"'):
+    check(key not in raw, "served picture contains no %s key" % key)
+status, _, body = get("/api/network.json?window=1")
+check(json.loads(body)["window_seconds"] == 60.0, "the picture's window is clamped too")
+# #94: the active entries are served idle; the outbound POST at "no route" is the
+# refusal (no packet can leave this test: /proc/net/route is /dev/null).
+check([a["id"] for a in pic["active"]] == ["gateway", "outbound"] and all(a["state"] == "idle" for a in pic["active"]),
+      "/api/network.json serves both #94 entries idle (nothing ran on GET)")
+def post(path, headers=None):
+    req = urllib.request.Request(base + path, data=b"", method="POST", headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+st_, j = post("/api/network/outbound", {"X-Orionx-Operator": "1"})
+check(st_ == 200 and j["state"] == "refused" and j["refusal"]["state"] == "no-route" and j["refusal"]["remedy"],
+      "POST /api/network/outbound with no default route -> refusal with a remedy, nothing sent")
+st_, j = post("/api/network/outbound")
+check(st_ == 403 and j["error"] == "not-operator-initiated", "a POST without the button's header is 403")
+st_, j = post("/api/status.json", {"X-Orionx-Operator": "1"})
+check(st_ == 405, "no other route accepts POST")
 sys.exit(0 if ok else 1)
 PY
 then pass "all three pages, both APIs and the vendored assets serve over loopback"
@@ -1049,6 +1158,65 @@ ck(res2["geoip"]["installed"], "geoip available -> installed")
 PY
 then pass "optional_state is pure and evidence-based"; else fail "optional_state" "see output above"; fi
 
+section "#94: both POST endpoints end to end against fakes, every blocked tier refused"
+# DEC-PHASE13-047. In-process server; gateway_probes' transmitters replaced by
+# tests/fixtures/gateway/fakes.py, the posture and route read from real files
+# through the real current_outbound() -> outbound_verdict() path.
+if PYTHONDONTWRITEBYTECODE=1 python3 - "$SRC" "$WEB" "$REPO_ROOT/scripts/awareness" "$REPO_ROOT/tests/fixtures/gateway" "$TMP" <<'PY'
+import sys, json, threading, http.client
+from pathlib import Path
+sys.path.insert(0, sys.argv[1]); sys.path.insert(0, sys.argv[3]); sys.path.insert(0, sys.argv[4])
+import osint_server as S, gateway_probes as GP, fakes
+def ck(c, m):
+    print(("  ok   " if c else "  FAIL ") + m)
+    if not c: raise SystemExit(1)
+tmp = Path(sys.argv[5])
+route = tmp / "route94"; posture = tmp / "posture94.json"
+route.write_text("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\nwlan0\t00000000\t0104A8C0\t0003\t0\t0\t600\t00000000\n")
+S.PROC_ROUTE, S.PROC_ROUTE6, S.POSTURE_STATUS = route, tmp / "none6", posture
+log = fakes.install(GP)
+S.WEB_ROOT = Path(sys.argv[2])
+httpd, port = S.bind(Path(sys.argv[2]), 18100 + (id(log) % 500))
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+def post(path):
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=20)
+    c.request("POST", path, body=b"", headers={"Host": "127.0.0.1:%d" % port, "X-Orionx-Operator": "1",
+                                               "Origin": "http://127.0.0.1:%d" % port})
+    r = c.getresponse(); b = r.read(); c.close()
+    return r.status, json.loads(b)
+
+posture.write_text('{"tier": "0", "label": "Tier 0 · Passive"}')
+st, g = post("/api/network/gateway")
+ck(st == 200 and g["id"] == "gateway" and g["state"] == "done", f"Tier 0: POST /api/network/gateway -> done ({st})")
+ck(g["result"]["device"]["manufacturer"] == "NETGEAR" and g["result"]["wan"]["external_ip"] == "100.72.14.9"
+   and g["result"]["wan"]["claim_label"] == "reported by the gateway, not measured", "identity + WAN served, labelled as the gateway's claims")
+del log[:]
+st, o = post("/api/network/outbound")
+ck(st == 200 and o["state"] == "done" and o["result"]["label"] == "probe, posture-gated", f"Tier 0 + route: POST /api/network/outbound runs ({o['state']})")
+ck(o["result"]["dns"]["verdict"].startswith("no filtering") and o["result"]["captive"]["verdict"].startswith("none seen")
+   and "possible blocking: 8080" in o["result"]["ports"]["verdict"], f"fake upstream verdicts served ({o['result']['ports']['verdict']})")
+ck({x[0] for x in log} == {"dns-system", "dns-direct", "captive", "tcp"}, "all three probes went through the (fake) transmitters")
+
+for tier in S.OUTBOUND_BLOCKED_TIERS:
+    label = "Tier %s · Deception" % tier
+    posture.write_text(json.dumps({"tier": tier, "label": label}))
+    del log[:]
+    st, r = post("/api/network/outbound")
+    ck(st == 200 and r["state"] == "refused" and label in r["refusal"]["headline"] and r["refusal"]["remedy"] == S.POSTURE_REMEDY,
+       f"tier {tier}: POST /api/network/outbound -> GODSEYE-style refusal naming {label!r}")
+    ck(log == [], f"tier {tier}: no outbound transmitter called")
+    st, g = post("/api/network/gateway")
+    ck(st == 200 and g["state"] == "done" and label in g["result"].get("caution", ""),
+       f"tier {tier}: the local gateway check still runs and says it transmitted at {label!r}")
+posture.write_text("{garbage")
+del log[:]
+st, r = post("/api/network/outbound")
+ck(r["state"] == "refused" and r["refusal"]["state"] == "posture-unknown" and log == [], "corrupt posture file -> refused, fail closed, nothing sent")
+httpd.shutdown(); httpd.server_close()
+PY
+then pass "#94 POST endpoints: gateway claims served, outbound runs at Tier 0, refused on every blocked tier and on unknown posture"
+else fail "#94 POST endpoints" "see output above"; fi
+
 section "QA round 1: Host/Origin allowlist, cheap static serving, one server per operator"
 # security F3 (DEC-PHASE12-086), python P2-2, UX-25 (DEC-PHASE12-087). Executes the real server.
 if PYTHONDONTWRITEBYTECODE=1 python3 - "$SRC" "$WEB" <<'PY'
@@ -1098,7 +1266,7 @@ ck(calls == {"status": 0, "outbound": 0}, f"static files cost no status/vitals/p
 get("/godseye/app/")
 ck(calls["outbound"] == 1 and calls["status"] == 0, f"the GODSEYE entry document asks the posture gate once, without vitals: {calls}")
 httpd.shutdown(); httpd.server_close()
-ck("Control Center" not in S.POSTURE_REMEDY and "orionx-cockpit --tab awareness" in S.POSTURE_REMEDY, "remedy names the Cockpit (UX-06)")
+ck("Control Center" not in S.POSTURE_REMEDY and "orionx-cockpit --settings" in S.POSTURE_REMEDY, "remedy names the Cockpit settings drawer (UX-06, #95)")
 PY
 then pass "Workbench request hardening + cheap static serving"; else fail "Workbench request hardening" "see output above"; fi
 

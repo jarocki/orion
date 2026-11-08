@@ -16,9 +16,10 @@ as animated instruments:
 
 Keys (LIVE): Up/Down select · Enter detail · s/t squelch/tune in detail ·
 PgUp/PgDn scroll (in detail: page) · a approve · Esc close detail / leave
-fullscreen · F11 fullscreen · Alt+1..8 tabs · Ctrl+Q quit (UX-47: a stray q
-or Esc no longer closes the live view). Ctrl+PgUp/PgDn switch tabs (GTK).
-Flags: --fullscreen, --demo (synthetic events, for demos/screenshots).
+fullscreen · F11 fullscreen · Alt+1..7 tabs · F2 settings drawer · Ctrl+Q quit
+(UX-47: a stray q or Esc no longer closes the live view). Ctrl+PgUp/PgDn switch
+tabs (GTK). Flags: --fullscreen, --demo (synthetic events, for
+demos/screenshots), --settings (open with the settings drawer out, #95).
 
 GLib timers drive polling (events 0.5s, network 1s, systems 5s, vitals 2s) and
 a ~6 fps redraw. Anything that forks (systemctl, pgrep, ip, orionx-heal,
@@ -43,8 +44,10 @@ sys.path.insert(0, str(_here.parent))
 import cockpit_lib as L  # noqa: E402
 sys.path.insert(0, str(_here.parent.parent / "awareness"))
 import deck_vitals as V  # noqa: E402  (DEC-PHASE12-049: one authority for hostname/IP/vitals)
+import network_picture as NP  # noqa: E402  (DEC-PHASE13-046: the NETWORK panel's host count and local/internet split, #93)
 sys.path.insert(0, str(_here.parent.parent))
 from control_center import app as CC  # noqa: E402  (DEC-PHASE12-053: the tab authority)
+from control_center import settings_drawer as SD  # noqa: E402  (#95: the environment controls)
 from control_center.helpers import ux as CCUX  # noqa: E402
 from control_center.helpers import mesh_data as MD  # noqa: E402  (DEC-PHASE12-067)
 from control_center.helpers.background import Poller, run_async  # noqa: E402  (DEC-PHASE12-068)
@@ -85,7 +88,8 @@ _DEMO_MSGS = [
 
 
 class Cockpit(Gtk.Window):
-    def __init__(self, fullscreen: bool = False, demo: bool = False, tab: str = "live") -> None:
+    def __init__(self, fullscreen: bool = False, demo: bool = False, tab: str = "live",
+                 settings: bool = False) -> None:
         super().__init__(title="Orion Cockpit")
         # UX-17: 760 px was taller than a 1366x768 deck minus panel and title
         # bar (~701 px). Open maximised; the default only applies when the
@@ -138,9 +142,29 @@ class Cockpit(Gtk.Window):
         self.header = Gtk.DrawingArea()
         self.header.set_size_request(-1, L.HEADER_H)
         self.header.connect("draw", self._draw_header)
+        # #95 (DEC-PHASE13-048): the environment controls are a drawer over
+        # the right edge of every tab, so changing posture or R.A.I.N. never
+        # means leaving what the deck shows. An overlay, not a column: LIVE
+        # keeps its measured layout whether the drawer is out or not.
+        self.drawer_rev, self.settings, drawer_scroll = SD.build_drawer()
+        self.drawer_rev.set_halign(Gtk.Align.END)
+        self.drawer_rev.set_valign(Gtk.Align.FILL)
+        self._skin_page(drawer_scroll)
+        self.settings_btn = Gtk.ToggleButton(label="\u2699 Settings")
+        self.settings_btn.get_style_context().add_class("orionx-tool")
+        self.settings_btn.set_tooltip_text("Threat posture, R.A.I.N. alerts, theme, DJ deck (F2)")
+        self.settings_btn.set_valign(Gtk.Align.CENTER)
+        self.settings_btn.set_margin_end(12)
+        self.settings_btn.connect("toggled", lambda b: self.drawer_rev.set_reveal_child(b.get_active()))
+        strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        strip.pack_start(self.header, True, True, 0)
+        strip.pack_end(self.settings_btn, False, False, 0)
+        body = Gtk.Overlay()
+        body.add(self.nb)
+        body.add_overlay(self.drawer_rev)
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        root.pack_start(self.header, False, False, 0)
-        root.pack_start(self.nb, True, True, 0)
+        root.pack_start(strip, False, False, 0)
+        root.pack_start(body, True, True, 0)
         root.pack_start(self.toast_bar, False, False, 0)
         self.add(root)
         self.da.connect("draw", self._draw)
@@ -158,6 +182,7 @@ class Cockpit(Gtk.Window):
         self.flash = 0.0                    # 1.0 on a new warning/critical, decays
         self.systems = {"NEBULA": False, "FIREWALL": False, "MESH": False, "R.A.I.N.": False}
         self.vitals: dict = {}
+        self.net_picture: dict = {}    # network_picture.collect() (#93); {} until the first sys poll
         self._cpu_prev = None
         self.posture = "0"
         self.posture_status: dict = {}
@@ -166,6 +191,8 @@ class Cockpit(Gtk.Window):
         self.scroll = 0                # rows scrolled back from newest (0 = live)
         self.drill = False             # detail overlay open
         self.heal: dict = {"readable": False, "pending": [], "active": [], "reason": ""}
+        self.sources: dict | None = None    # L.attack_sources over self.tail (#126)
+        self._sources_at = 0.0
         self.heal_sel = 0
         self.drill_scroll = 0          # first drill-down row shown
         self._approve_rect: tuple[float, float, float, float] | None = None
@@ -192,6 +219,11 @@ class Cockpit(Gtk.Window):
         # silently left every --tab launch (and the menu's "Network tab" entry)
         # on LIVE. show_all() then select_tab() (QA round 1, lead).
         self._initial_tab = tab
+        self._initial_settings = settings
+
+    def show_settings(self, show: bool = True) -> None:
+        """Open or close the settings drawer (the button stays the one state)."""
+        self.settings_btn.set_active(show)
 
     def select_tab(self, tab: str) -> bool:
         """Switch to a tab by key; True when the notebook is now on it."""
@@ -202,10 +234,16 @@ class Cockpit(Gtk.Window):
 
     # ------------------------------------------------------------------ polling
     def _poll_events(self) -> bool:
-        for ev in self.tail.poll():
+        new = self.tail.poll()
+        for ev in new:
             if ev["severity"] in ("warning", "critical"):
                 self.flash = 1.0
-        self.pressure_target = L.pressure(self.tail.events, time.time())
+        now = time.time()
+        self.pressure_target = L.pressure(self.tail.events, now)
+        # DEFENSIVE ACTIONS > SOURCES (#126): the Attack Map's aggregation over
+        # this buffer, re-run on new events and every 5 s so the window slides.
+        if new or self.sources is None or now - self._sources_at >= 5.0:
+            self.sources, self._sources_at = L.attack_sources(self.tail.events, now), now
         return True
 
     def _demo_event(self) -> bool:
@@ -241,8 +279,14 @@ class Cockpit(Gtk.Window):
             systems = {"NEBULA": True, "FIREWALL": True, "MESH": True, "R.A.I.N.": True}
         # DEC-PHASE12-024: what the tier is ENFORCING, not just what it is set
         # to. Empty dict when orionx-postured is not running.
+        # #93 (DEC-PHASE13-046): the NETWORK panel's host count and local/internet
+        # split come from the same module the Workbench serves, on this poller
+        # (POLL_SYS_MS = 5 s): it forks `ip neigh` and tails Zeek logs, so it
+        # belongs with the other forking probes, off the main loop. The engine
+        # is bounded (1.5 s budget) and never raises; {} means "not yet read".
         return {"systems": systems, "posture": L.posture_tier(),
-                "posture_status": L.posture_status(), "heal": L.healing_actions()}
+                "posture_status": L.posture_status(), "heal": L.healing_actions(),
+                "net_picture": NP.collect()}
 
     def _apply_sys(self, d: dict | None, err) -> None:
         if err is not None:
@@ -250,6 +294,7 @@ class Cockpit(Gtk.Window):
             return
         self.systems.update(d["systems"])
         self.posture, self.posture_status, self.heal = d["posture"], d["posture_status"], d["heal"]
+        self.net_picture = d.get("net_picture") or {}
         self.header.queue_draw()
 
     def _collect_vitals(self, _visible: bool) -> dict:
@@ -285,6 +330,9 @@ class Cockpit(Gtk.Window):
             return True
         if ctrl:
             return False   # Ctrl+PgUp/PgDn etc. belong to GTK (tab switching)
+        if name == "F2":
+            self.show_settings(not self.settings_btn.get_active())
+            return True
         on_live = self.nb.get_current_page() == self._pages.get("live", 0)
         if name == "F11" or (name == "Escape" and self._fs and not (on_live and self.drill)):
             if self._fs:
@@ -679,8 +727,8 @@ class Cockpit(Gtk.Window):
             cr.fill()
             self._text(cr, x_age, ry, f"{L.fmt_age(age):>3}", 11, tuple(c * fade for c in L.DIM))
             self._text(cr, x_sev, ry, L.SEVERITY_TAG.get(ev["severity"], "NOTE"), 11, tuple(c * fade for c in col), bold=True)
-            tag = "SELF " if (ev.get("detail") or {}).get("origin") == "self" else ""
-            self._text(cr, x_src, ry, f"{tag}{ev['source']}/{ev['category']}", 11, tuple(c * fade for c in col),
+            # source/category, plus SELF and the producer-named tool (cockpit_lib.source_label).
+            self._text(cr, x_src, ry, L.source_label(ev), 11, tuple(c * fade for c in col),
                        bold=True, max_w=x_msg - x_src - 8)
             # UX-16: fitted to the room actually left, with an ellipsis; the
             # drill-down shows it whole.
@@ -696,7 +744,9 @@ class Cockpit(Gtk.Window):
         operator set that class to `confirm`. Before this panel, that decision
         was visible only to `orionx-heal pending` on a terminal — so the deck
         could be holding a block-this-host decision while the dashboard the
-        operator was actually watching said nothing.
+        operator was actually watching said nothing. #126 added what the
+        engine suggested (level `propose`), why the pane is empty when it is,
+        and the recent attack sources the Attack Map shows.
         """
         cx, cy, cw, ch = self._panel(cr, x, y, w, h, "DEFENSIVE ACTIONS")
         cr.save()
@@ -704,68 +754,52 @@ class Cockpit(Gtk.Window):
         cr.clip()
         self._approve_rect = None
         pend = self.heal.get("pending", [])
-        act = self.heal.get("active", [])
-
-        if not self.heal.get("readable", False):
-            # Never render an empty list here: "no pending actions" and "I
-            # could not look" must not look the same on a defensive dashboard.
-            self._text(cr, cx + 8, cy + 20, "state unknown \u2014 " + (self.heal.get("reason") or "no snapshot"),
-                       11, L.AMBER)
-            self._text(cr, cx + 8, cy + 38, "check: systemctl status orionx-heald  \u00b7  sudo orionx-heal status", 11, L.DIM)
-            cr.restore()
-            return
-
+        # #126 (DEC-PHASE13-041): every line comes from cockpit_lib.actions_pane,
+        # healing rows from heald's snapshot and SOURCES from pewpew_feed. Rows
+        # are in priority order (approval, in force, suggested, why-empty,
+        # sources); what does not fit is counted on the last line, not dropped.
+        rows = L.actions_pane(self.heal, self.sources, time.time())
+        tone = {"red": L.RED, "amber": L.AMBER, "dim": L.DIM, "text": (0.85, 0.85, 0.85)}
+        head = {"red": L.RED, "amber": L.AMBER, "dim": L.DIM, "text": L.AMBER}
+        line_h, approve_h = 15.0, 52.0
+        bottom = cy + ch + 4
         ry = cy + 18
-        if self.heal.get("chain_ok") is False:
-            self._text(cr, cx + 8, ry, "\u26a0 audit chain does not verify \u2014 sudo orionx-heal verify", 11, L.RED, bold=True)
-            ry += 18
-        if pend:
-            rec = pend[self.heal_sel % len(pend)]
-            self._text(cr, cx + 8, ry, f"AWAITING APPROVAL  ({len(pend)})", 11, L.RED, bold=True)
-            ry += 20
-            self._text(cr, cx + 8, ry,
-                       f"{rec.get('action','?')} \u2192 {rec.get('target','?')}", 12,
-                       (0.95, 0.95, 0.95), max_w=cw - 16)
-            ry += 12
-            bw, bh = 104.0, 26.0
-            bx, by = cx + 8, ry
-            cr.set_source_rgba(*L.RED, 0.22)
-            self._rrect(cr, bx, by, bw, bh, 6.0)
-            cr.fill()
-            cr.set_source_rgba(*L.RED, 0.95)
-            cr.set_line_width(1.2)
-            self._rrect(cr, bx, by, bw, bh, 6.0)
-            cr.stroke()
-            self._text(cr, bx + bw / 2, by + 17, "APPROVE?", 11.5, L.RED, bold=True, align="center")
-            self._approve_rect = (bx, by, bw, bh)
-            self._text(cr, bx + bw + 10, by + 17, f"[a]  Tab: next  \u00b7  id {rec.get('id','')}", 11, L.DIM,
-                       max_w=cw - bw - 26)
-            ry += bh + 20
-        else:
-            self._text(cr, cx + 8, ry, "nothing awaiting approval", 11, L.DIM)
-            ry += 20
-
-        if act:
-            # The first action shares the header line, so IN FORCE is never
-            # pushed off the panel by a pending approval; the rest fill the
-            # remaining rows, and what does not fit is counted, not dropped.
-            now = time.time()
-
-            def _line(rec):
-                exp = rec.get("expires_ts")
-                left = f"  (reverts in {L.fmt_age(exp - now)})" if exp and exp > now else ""
-                return f"{rec.get('action','?')} \u2192 {rec.get('target','?')}{left}"
-            hw = self._text(cr, cx + 8, ry, f"IN FORCE ({len(act)}): ", 11, L.AMBER, bold=True)
-            self._text(cr, cx + 8 + hw, ry, _line(act[0]), 11, (0.85, 0.85, 0.85), max_w=cw - 16 - hw)
-            ry += 15
-            rest = act[1:]
-            fit = max(0, int((cy + ch - ry + 4) // 15))
-            for i, rec in enumerate(rest[:fit]):
-                more = len(rest) - fit
-                txt = (f"+{more + 1} more \u2014 sudo orionx-heal status" if i == fit - 1 and more > 0
-                       else "\u2022 " + _line(rec))
-                self._text(cr, cx + 8, ry, txt, 11, (0.85, 0.85, 0.85), max_w=cw - 16)
-                ry += 15
+        for i, row in enumerate(rows):
+            need = approve_h if row["kind"] == "approve" else line_h
+            reserve = line_h if i < len(rows) - 1 else 0.0
+            if ry + need + reserve > bottom:      # keep one line for the count
+                self._text(cr, cx + 8, ry, f"+{len(rows) - i} more lines \u2014 sudo orionx-heal status"
+                           "  \u00b7  click: Attack Map", 11, L.DIM, max_w=cw - 16)
+                break
+            col = tone.get(row["tone"], L.DIM)
+            if row["kind"] == "approve" and pend:
+                rec = pend[self.heal_sel % len(pend)]
+                self._text(cr, cx + 8, ry, f"{rec.get('action','?')} \u2192 {rec.get('target','?')}", 12,
+                           (0.95, 0.95, 0.95), max_w=cw - 16)
+                bw, bh = 104.0, 26.0
+                bx, by = cx + 8, ry + 8
+                cr.set_source_rgba(*L.RED, 0.22)
+                self._rrect(cr, bx, by, bw, bh, 6.0)
+                cr.fill()
+                cr.set_source_rgba(*L.RED, 0.95)
+                cr.set_line_width(1.2)
+                self._rrect(cr, bx, by, bw, bh, 6.0)
+                cr.stroke()
+                self._text(cr, bx + bw / 2, by + 17, "APPROVE?", 11.5, L.RED, bold=True, align="center")
+                self._approve_rect = (bx, by, bw, bh)
+                self._text(cr, bx + bw + 10, by + 17, f"[a]  Tab: next  \u00b7  id {rec.get('id','')}", 11, L.DIM,
+                           max_w=cw - bw - 26)
+                ry += need
+                continue
+            lw = 0.0
+            if row["label"]:
+                bullet = row["label"] == "\u2022 "
+                lw = self._text(cr, cx + 8, ry, row["label"], 11, col if bullet else head.get(row["tone"], L.AMBER),
+                                bold=not bullet, max_w=cw - 16)
+            if row["text"]:
+                self._text(cr, cx + 8 + lw, ry, row["text"], 11, col, bold=row["tone"] == "red" and not lw,
+                           max_w=max(1.0, cw - 16 - lw))
+            ry += need
         cr.restore()
 
     # --- drill-down overlay ---
@@ -954,6 +988,13 @@ class Cockpit(Gtk.Window):
     # --- network sparkline ---
     def _net_panel(self, cr, x, y, w, h):
         cx, cy, cw, ch = self._panel(cr, x, y, w, h, "NETWORK")
+        # #93 (DEC-PHASE13-046): the passive picture's two headline lines, verbatim
+        # from network_picture.summary_of() — the same strings the Workbench page
+        # shows — so the two surfaces cannot disagree. The headline sits on the
+        # title row (right of "NETWORK"); the split sits between the two rates.
+        summ = (self.net_picture or {}).get("summary") or {}
+        self._text(cr, cx + cw, y + 20, summ.get("headline") or "network picture: reading…", 11,
+                   L.DIM, align="right", max_w=cw - 80)
         graph_h = ch - 22
         vmax = max(max(self.rates.rx_hist), max(self.rates.tx_hist), 1024.0)
         for hist, col in ((self.rates.rx_hist, L.CYAN), (self.rates.tx_hist, L.EMBER)):
@@ -977,6 +1018,9 @@ class Cockpit(Gtk.Window):
             cr.stroke()
         self._text(cr, cx, cy + ch - 4, f"↓ {L.fmt_rate(self.rates.rx_rate)}", 12, L.CYAN, bold=True)
         self._text(cr, cx + cw, cy + ch - 4, f"↑ {L.fmt_rate(self.rates.tx_rate)}", 12, L.EMBER, bold=True, align="right")
+        if summ.get("split_line"):
+            col = L.DIM if summ.get("split_available") else L.AMBER
+            self._text(cr, cx + cw / 2, cy + ch - 4, summ["split_line"], 11, col, align="center", max_w=cw - 190)
 
     # --- systems LEDs ---
     def _systems_panel(self, cr, x, y, w, h):
@@ -1007,15 +1051,18 @@ def main(argv=None) -> int:
     ap.add_argument("--demo", action="store_true", help="synthesize events/traffic for a live demo")
     ap.add_argument("--tab", default="live", choices=CC.TAB_KEYS,
                     help="open on this tab (DEC-PHASE12-053): " + ", ".join(CC.TAB_KEYS))
+    ap.add_argument("--settings", action="store_true",
+                    help="open with the settings drawer out: threat posture, R.A.I.N., theme, DJ deck (#95)")
     args = ap.parse_args(argv)
     try:
-        win = Cockpit(fullscreen=args.fullscreen, demo=args.demo, tab=args.tab)
+        win = Cockpit(fullscreen=args.fullscreen, demo=args.demo, tab=args.tab, settings=args.settings)
     except Exception as exc:  # no display, etc.
         print(f"orionx-cockpit: cannot open a window ({exc}). Is DISPLAY set?", file=sys.stderr)
         return 1
     win.show_all()
     if not win.select_tab(win._initial_tab):
         print(f"orionx-cockpit: could not open on tab {win._initial_tab!r}", file=sys.stderr)
+    win.show_settings(win._initial_settings)
     Gtk.main()
     return 0
 

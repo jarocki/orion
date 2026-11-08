@@ -135,9 +135,10 @@ WHAT IT IS
 
 START HERE (no credentials, no network, no setup)
   orionx-logquery --report summary        (this deck's own event stream)
+  orionx-logquery --report ids            (what Suricata and Zeek alerted on)
+  orionx-logquery --report scans          (who scanned this deck, how widely)
   orionx-logquery --path /var/log/nginx/access.log
   orionx-logquery --path /var/log --report targeted
-  orionx-logquery --path /run/orionx/events.jsonl --report summary
   journalctl --dmesg | orionx-logquery --path - --report ports
 
 WHERE EVIDENCE COMES FROM  (--source)
@@ -151,6 +152,21 @@ WHERE EVIDENCE COMES FROM  (--source)
   Local reads three formats, sniffed per line, so a directory of mixed
   evidence works: NDJSON/JSON (including the R.A.I.N. bus), Apache/nginx
   access logs, and the kernel's nftables [ORIONX-DROP] lines.
+
+NOT JUST WEB TRAFFIC  (IDS alerts, Zeek notices, port scans)
+  A bus event carries its evidence in `detail`. That is read, not dropped:
+  the source address, destination port, protocol, signature (or Zeek note),
+  sid, ATT&CK technique and the detector that saw it (suricata, zeek,
+  orionx-scanwatch) become columns on the record, so every report and the
+  targeted verdict see an nmap sweep or a Suricata alert exactly as they see
+  an HTTP probe. Oversized detail the broker spilled to
+  /run/orionx/details/<id>.json is followed. Severity becomes the tier the
+  alert reports gate on (info 0, notice 1, warning 2, critical 3).
+
+  --report ids      per signature: sid, technique, detector, sources, ports
+  --report scans    per source: detectors, ports reported, span, technique
+  --report ports    per port, from the firewall drop log (the raw sweep)
+  --focus 198.51.100.7 --report requests    every event from one address
 
 THE ONE THAT MATTERS
   orionx-logquery --path /var/log --report targeted
@@ -178,7 +194,8 @@ INTEL
 
 SEEMS STUCK?
   Add -v. It narrates every step on stderr — each file as it is read, a
-  heartbeat on long files, and how long enrichment, the engine and the query
+  heartbeat on long files, how many bus events had their detail flattened
+  (and from a sidecar), and how long enrichment, the engine and the query
   took — so slow is never mistaken for hung.
 
 Full report list:  orionx-logquery --list-reports

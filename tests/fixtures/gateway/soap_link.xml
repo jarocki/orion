@@ -1,0 +1,2 @@
+<?xml version="1.0"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"><s:Body><u:GetCommonLinkPropertiesResponse xmlns:u="urn:schemas-upnp-org:service:WANCommonInterfaceConfig:1"><NewWANAccessType>Ethernet</NewWANAccessType><NewLayer1UpstreamMaxBitRate>35000000</NewLayer1UpstreamMaxBitRate><NewLayer1DownstreamMaxBitRate>1000000000</NewLayer1DownstreamMaxBitRate><NewPhysicalLinkStatus>Up</NewPhysicalLinkStatus></u:GetCommonLinkPropertiesResponse></s:Body></s:Envelope>

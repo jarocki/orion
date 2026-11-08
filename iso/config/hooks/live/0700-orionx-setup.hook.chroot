@@ -255,7 +255,7 @@ cat > /usr/share/applications/orionx-control-center.desktop << 'DESKTOP_EOF'
 [Desktop Entry]
 Type=Application
 Name=Orion Cockpit — Network tab
-Comment=Open the Orion Cockpit on its Network tab; Mesh, Comms, Awareness, Orion Tools, Nebula AI and Auto-Healing are in the strip on the left
+Comment=Open the Orion Cockpit on its Network tab; Mesh, Comms, Awareness, Orion Tools and Nebula AI are in the strip on the left, Settings at the top right
 Exec=/usr/bin/orionx-cockpit --tab network
 Icon=orionx-cockpit
 Categories=X-Orion;
@@ -268,7 +268,7 @@ cat > /usr/share/applications/orionx-cockpit.desktop << 'DESKTOP_EOF'
 [Desktop Entry]
 Type=Application
 Name=Orion Cockpit
-Comment=See and hear the cyber activity around you — live dashboard plus the Network, Mesh, Comms, Awareness, Orion Tools, Nebula AI and Auto-Healing tabs
+Comment=See and hear the cyber activity around you — live dashboard plus the Network, Mesh, Comms, Awareness, Orion Tools and Nebula AI tabs and a settings drawer
 Exec=/usr/bin/orionx-cockpit
 Icon=orionx-cockpit
 Categories=X-Orion;

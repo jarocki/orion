@@ -30,11 +30,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 import time
 from collections import OrderedDict
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import tool_fingerprint  # noqa: E402  (DEC-PHASE13-040: one tool-attribution authority)
 
 # nftables log lines look like:
 #   [ORIONX-DROP] IN=eth0 OUT= MAC=... SRC=10.0.0.99 DST=10.0.0.1 LEN=44 ...
@@ -48,7 +52,9 @@ _PROTO_RE = re.compile(r"\bPROTO=(\S+)")
 #
 # The window is 15s, not 10s, because of a measured rate. Against a DROP policy
 # every probe waits out a timeout, so `nmap -Pn -A` on the reference deck swept
-# 1000 ports at ~4.3 ports/sec. A 10s window therefore never holds more than
+# 1000 ports at ~4.3 ports/sec (the figure is kept once, as
+# tool_fingerprint.NMAP_DROP_POLICY_PPS, where the tool heuristic also uses
+# it). A 10s window therefore never holds more than
 # ~43 distinct ports, and PORTS_CRITICAL=50 was unreachable for the exact scan
 # this was built to catch: it would have warned and then never escalated. At
 # 15s the same scan reaches warning in ~3.5s and critical in ~12s, while a fast
@@ -166,6 +172,10 @@ class ScanTracker:
             # Evidence for the Cockpit drill-down (DEC-PHASE12-029): which
             # ports, so the operator can see a sweep vs a targeted probe.
             "ports_seen": sorted(st["hits"])[:64],
+            # The same ports in the order they were probed (most recent 64).
+            # A sorted list cannot say whether the scanner walked the port
+            # space or shuffled it; tool_fingerprint needs the real order.
+            "ports_order": list(st["hits"])[-64:],
         }
 
     def tracked_sources(self) -> int:
@@ -188,8 +198,12 @@ def build_detail(alert: dict) -> dict:
     three questions an operator asks — which ports, how fast, and what
     actually observed it. This is that answer, and it names the nftables rule
     that produced the evidence so the finding can be traced to its source.
+
+    `tool`/`tool_conf`/`scan_order` are set by tool_fingerprint
+    (DEC-PHASE13-040) from the probe order and rate, and only when a known
+    profile matches; an unattributed scan carries no `tool` key at all.
     """
-    return {
+    detail = {
         "src_ip": alert["src"],
         "distinct_ports": alert["ports"],
         "window_seconds": round(alert["span"], 1),
@@ -201,6 +215,7 @@ def build_detail(alert: dict) -> dict:
         "triggering_rule": 'log prefix "[ORIONX-DROP] " drop  (inet orionx_firewall/input)',
         "scan_kind": alert.get("label") or "port scan",
     }
+    return tool_fingerprint.attribute(detail, ports_order=alert.get("ports_order"))
 
 
 def publish(alert: dict, dry_run: bool = False) -> None:
