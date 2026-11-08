@@ -47,6 +47,7 @@ for f in "$WEB/index.html" "$WEB/app.js" "$WEB/links.json" "$WEB/recipes.json" \
          "$WEB/network/index.html" "$WEB/network/network.js" \
          "$SRC/osint_server.py" "$SRC/pewpew_feed.py" \
          "$REPO_ROOT/scripts/awareness/network_picture.py" "$REPO_ROOT/scripts/awareness/zeek_logs.py" \
+         "$REPO_ROOT/scripts/awareness/gateway_probes.py" \
          "$CH/usr/bin/orionx-osint" \
          "$CH/opt/orionx/optional/install-geoip.sh" "$HOOK"; do
     if [[ -f "$f" ]]; then pass "ships: ${f#"$REPO_ROOT"/}"
@@ -142,6 +143,15 @@ for js in "$WEB/app.js" "$WEB/pewpew/map.js" "$WEB/network/network.js"; do
     else
         pass "no network URLs in $(basename "$js") (comments/attribution aside)"
     fi
+done
+
+# #94 / DEC-PHASE13-047: the two honesty labels are on the rendered page (the
+# static lede states them; network.js draws them again from the API entries).
+for lbl in "reported by the gateway, not measured" "probe, posture-gated"; do
+    if grep -q "$lbl" "$WEB/network/index.html" && grep -q "\"$lbl\"" "$REPO_ROOT/scripts/awareness/gateway_probes.py" \
+       && grep -q 'claim_label || idle.probe_label' "$WEB/network/network.js"; then
+        pass "This network page carries \"$lbl\" (page text + API-driven card label)"
+    else fail "page label: $lbl" "missing from network/index.html, gateway_probes.py or network.js"; fi
 done
 
 section "Catalogue: every local entry points at something that actually ships"
@@ -861,7 +871,7 @@ if grep -q "loopback only" "$TMP/srv.log"; then pass "server states it is loopba
 else fail "loopback-only statement"; fi
 
 if [[ -n "$E2E_URL" ]] && python3 - "$E2E_URL" <<'PY'
-import json, sys, urllib.request
+import json, sys, urllib.error, urllib.request
 base = sys.argv[1]
 ok = True
 def check(cond, label):
@@ -950,6 +960,24 @@ for key in ('"lat"', '"lon"', '"latitude"', '"longitude"', '"coordinates"', '"co
     check(key not in raw, "served picture contains no %s key" % key)
 status, _, body = get("/api/network.json?window=1")
 check(json.loads(body)["window_seconds"] == 60.0, "the picture's window is clamped too")
+# #94: the active entries are served idle; the outbound POST at "no route" is the
+# refusal (no packet can leave this test: /proc/net/route is /dev/null).
+check([a["id"] for a in pic["active"]] == ["gateway", "outbound"] and all(a["state"] == "idle" for a in pic["active"]),
+      "/api/network.json serves both #94 entries idle (nothing ran on GET)")
+def post(path, headers=None):
+    req = urllib.request.Request(base + path, data=b"", method="POST", headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+st_, j = post("/api/network/outbound", {"X-Orionx-Operator": "1"})
+check(st_ == 200 and j["state"] == "refused" and j["refusal"]["state"] == "no-route" and j["refusal"]["remedy"],
+      "POST /api/network/outbound with no default route -> refusal with a remedy, nothing sent")
+st_, j = post("/api/network/outbound")
+check(st_ == 403 and j["error"] == "not-operator-initiated", "a POST without the button's header is 403")
+st_, j = post("/api/status.json", {"X-Orionx-Operator": "1"})
+check(st_ == 405, "no other route accepts POST")
 sys.exit(0 if ok else 1)
 PY
 then pass "all three pages, both APIs and the vendored assets serve over loopback"
@@ -1091,6 +1119,65 @@ ck(not res2["zeek"]["installed"] and res2["zeek"]["evidence"].startswith("none o
 ck(res2["geoip"]["installed"], "geoip available -> installed")
 PY
 then pass "optional_state is pure and evidence-based"; else fail "optional_state" "see output above"; fi
+
+section "#94: both POST endpoints end to end against fakes, every blocked tier refused"
+# DEC-PHASE13-047. In-process server; gateway_probes' transmitters replaced by
+# tests/fixtures/gateway/fakes.py, the posture and route read from real files
+# through the real current_outbound() -> outbound_verdict() path.
+if PYTHONDONTWRITEBYTECODE=1 python3 - "$SRC" "$WEB" "$REPO_ROOT/scripts/awareness" "$REPO_ROOT/tests/fixtures/gateway" "$TMP" <<'PY'
+import sys, json, threading, http.client
+from pathlib import Path
+sys.path.insert(0, sys.argv[1]); sys.path.insert(0, sys.argv[3]); sys.path.insert(0, sys.argv[4])
+import osint_server as S, gateway_probes as GP, fakes
+def ck(c, m):
+    print(("  ok   " if c else "  FAIL ") + m)
+    if not c: raise SystemExit(1)
+tmp = Path(sys.argv[5])
+route = tmp / "route94"; posture = tmp / "posture94.json"
+route.write_text("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\nwlan0\t00000000\t0104A8C0\t0003\t0\t0\t600\t00000000\n")
+S.PROC_ROUTE, S.PROC_ROUTE6, S.POSTURE_STATUS = route, tmp / "none6", posture
+log = fakes.install(GP)
+S.WEB_ROOT = Path(sys.argv[2])
+httpd, port = S.bind(Path(sys.argv[2]), 18100 + (id(log) % 500))
+threading.Thread(target=httpd.serve_forever, daemon=True).start()
+def post(path):
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=20)
+    c.request("POST", path, body=b"", headers={"Host": "127.0.0.1:%d" % port, "X-Orionx-Operator": "1",
+                                               "Origin": "http://127.0.0.1:%d" % port})
+    r = c.getresponse(); b = r.read(); c.close()
+    return r.status, json.loads(b)
+
+posture.write_text('{"tier": "0", "label": "Tier 0 · Passive"}')
+st, g = post("/api/network/gateway")
+ck(st == 200 and g["id"] == "gateway" and g["state"] == "done", f"Tier 0: POST /api/network/gateway -> done ({st})")
+ck(g["result"]["device"]["manufacturer"] == "NETGEAR" and g["result"]["wan"]["external_ip"] == "100.72.14.9"
+   and g["result"]["wan"]["claim_label"] == "reported by the gateway, not measured", "identity + WAN served, labelled as the gateway's claims")
+del log[:]
+st, o = post("/api/network/outbound")
+ck(st == 200 and o["state"] == "done" and o["result"]["label"] == "probe, posture-gated", f"Tier 0 + route: POST /api/network/outbound runs ({o['state']})")
+ck(o["result"]["dns"]["verdict"].startswith("no filtering") and o["result"]["captive"]["verdict"].startswith("none seen")
+   and "possible blocking: 8080" in o["result"]["ports"]["verdict"], f"fake upstream verdicts served ({o['result']['ports']['verdict']})")
+ck({x[0] for x in log} == {"dns-system", "dns-direct", "captive", "tcp"}, "all three probes went through the (fake) transmitters")
+
+for tier in S.OUTBOUND_BLOCKED_TIERS:
+    label = "Tier %s · Deception" % tier
+    posture.write_text(json.dumps({"tier": tier, "label": label}))
+    del log[:]
+    st, r = post("/api/network/outbound")
+    ck(st == 200 and r["state"] == "refused" and label in r["refusal"]["headline"] and r["refusal"]["remedy"] == S.POSTURE_REMEDY,
+       f"tier {tier}: POST /api/network/outbound -> GODSEYE-style refusal naming {label!r}")
+    ck(log == [], f"tier {tier}: no outbound transmitter called")
+    st, g = post("/api/network/gateway")
+    ck(st == 200 and g["state"] == "done" and label in g["result"].get("caution", ""),
+       f"tier {tier}: the local gateway check still runs and says it transmitted at {label!r}")
+posture.write_text("{garbage")
+del log[:]
+st, r = post("/api/network/outbound")
+ck(r["state"] == "refused" and r["refusal"]["state"] == "posture-unknown" and log == [], "corrupt posture file -> refused, fail closed, nothing sent")
+httpd.shutdown(); httpd.server_close()
+PY
+then pass "#94 POST endpoints: gateway claims served, outbound runs at Tier 0, refused on every blocked tier and on unknown posture"
+else fail "#94 POST endpoints" "see output above"; fi
 
 section "QA round 1: Host/Origin allowlist, cheap static serving, one server per operator"
 # security F3 (DEC-PHASE12-086), python P2-2, UX-25 (DEC-PHASE12-087). Executes the real server.
