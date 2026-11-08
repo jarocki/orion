@@ -847,7 +847,10 @@ with open(sys.argv[2], "w", encoding="utf-8") as out:
 REBASE
 
 E2E_PORT=$(( 8900 + ($$ % 90) ))
+# #95: the Workbench shows the consent heald reads; one class set, the rest absent.
+printf '{"block_ip": "confirm"}\n' > "$TMP/autonomy.json"
 (
+  ORIONX_AUTONOMY_FILE="$TMP/autonomy.json" ORIONX_WARMUP_WANTS="$TMP/no-such-wants" \
   ORIONX_EVENT_LOG="$TMP/live-bus.jsonl" \
   ORIONX_POSTURE_STATUS="$TMP/posture.json" \
   ORIONX_PROC_ROUTE="/dev/null" ORIONX_PROC_ROUTE6="/dev/null" \
@@ -911,6 +914,18 @@ check(all(("probe" in i) for i in links["installable"]), "every optional entry d
 check(all(i["probe"] for i in links["installable"] if i["id"] != "geoip"), "every probe is non-empty except geoip (answered by the server's own state)")
 check("optional" in st and set(st["optional"]) == set(_ids), "status.optional answers for exactly the offered installers (DEC-PHASE12-052)")
 check(all(st["optional"][k]["known"] for k in _ids), "every answer is from evidence, none 'unknown'")
+eng = st.get("engine") or {}
+_cls = {c["id"]: c for c in (eng.get("autonomy") or {}).get("classes", [])}
+check(list(_cls) == ["block_ip", "kill_process", "quarantine_file", "isolate_node", "rotate_mesh_keys",
+                     "revoke_matrix_session"], "status.engine lists every playbook class, registry order (#95)")
+check(_cls.get("block_ip", {}).get("level") == "confirm" and _cls["block_ip"]["set"] is True,
+      "a class in autonomy.json shows the level heald reads")
+check(all(c["level"] == "off" and c["set"] is False for k, c in _cls.items() if k != "block_ip"),
+      "an absent class shows off (not set), as heald treats it")
+check(eng.get("autonomy", {}).get("command") == "orionx-heal autonomy <class> <level>",
+      "the change is a command for the terminal; the page has no write path")
+check(eng.get("warmup", {}).get("enabled_at_boot") is False and eng["warmup"]["now"] == "nebula warmup",
+      "Nebula warm-up: on demand, with the command (#95)")
 
 status, ctype, body = get("/api/pewpew.json?window=900")
 feed = json.loads(body)
@@ -1121,7 +1136,7 @@ ck(calls == {"status": 0, "outbound": 0}, f"static files cost no status/vitals/p
 get("/godseye/app/")
 ck(calls["outbound"] == 1 and calls["status"] == 0, f"the GODSEYE entry document asks the posture gate once, without vitals: {calls}")
 httpd.shutdown(); httpd.server_close()
-ck("Control Center" not in S.POSTURE_REMEDY and "orionx-cockpit --tab awareness" in S.POSTURE_REMEDY, "remedy names the Cockpit (UX-06)")
+ck("Control Center" not in S.POSTURE_REMEDY and "orionx-cockpit --settings" in S.POSTURE_REMEDY, "remedy names the Cockpit settings drawer (UX-06, #95)")
 PY
 then pass "Workbench request hardening + cheap static serving"; else fail "Workbench request hardening" "see output above"; fi
 

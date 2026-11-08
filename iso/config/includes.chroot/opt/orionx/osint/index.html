@@ -142,6 +142,8 @@ section > p.lede{margin:0 0 14px;color:var(--dim);font-size:.86rem;max-width:78c
 /* local cards read as "this works now" */
 .card.local{border-left:3px solid var(--go)}
 .card.install{border-left:3px solid var(--warn)}
+.card.engine{border-left:3px solid var(--warn)}
+.card.engine .btn.copy.current{border-color:var(--go);color:var(--go)}
 .card.online{border-left:3px solid var(--cool)}
 .card.online.blocked{border-left-color:var(--faint);opacity:.72}
 
@@ -217,6 +219,16 @@ footer a{color:var(--dim)}
   on this deck &mdash; from the installer's own evidence, not a guess. Nothing
   on this deck degrades if you never run any of them.</p>
   <div class="grid" id="grid-install"></div>
+</section>
+
+<section id="sec-engine">
+  <h2>Engine &middot; auto-healing consent and Nebula warm-up</h2>
+  <p class="lede">Settings for the deck's own tools, read from the files those
+  tools read. This page changes nothing: each change is one command, run as you
+  in this Workbench's terminal (no sudo for consent). Auto-healing consent is
+  what <span class="mono">orionx-heald</span> acts within; a class you never
+  set is <b>off</b>.</p>
+  <div class="grid" id="grid-engine"></div>
 </section>
 
 <section id="sec-online">
