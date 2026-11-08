@@ -205,7 +205,8 @@ class Engine:
         payload = hl.status_snapshot(
             self.chain_file(), now,
             extra_error=(f"bus events cannot be verified: {self.key_error}"
-                         if self._bus_key is None and self.key_error else None))
+                         if self._bus_key is None and self.key_error else None),
+            autonomy=self.autonomy())
         try:
             hl.write_status(payload, self.status_file)
             return True
@@ -295,15 +296,18 @@ class Engine:
         elif not trusted:
             return "unverified"
         return self.consider(proposal.playbook, proposal.target, proposal.reason,
-                             now=now, verified=True)
+                             now=now, verified=True,
+                             event_id=str(event.get("id", "") or "")[:32])
 
     def consider(self, playbook: str, target: str, reason: str,
                  now: float | None = None, verified: bool = True,
-                 unverified_why: str = "") -> str:
+                 unverified_why: str = "", event_id: str = "") -> str:
         """Guards, then consent, then rate limit, then act. In that order.
 
         An UNVERIFIED trigger (DEC-PHASE12-084) never parks or executes: at
-        most it becomes a suggestion that says it is unverified."""
+        most it becomes a suggestion that says it is unverified. `event_id`
+        (the triggering bus event's id) rides on a suggestion so the Cockpit
+        can name what raised it (DEC-PHASE13-041)."""
         now = time.time() if now is None else now
 
         # 1. Guards. Unconditional; no level lifts them (DEC-PHASE12-023a).
@@ -326,7 +330,8 @@ class Engine:
 
         if not verified and disp in (hl.ACT_AWAIT, hl.ACT_EXECUTE):
             self.record(kind=hl.KIND_PROPOSED, playbook=playbook, target=target,
-                        level=level, reason=f"UNVERIFIED trigger ({unverified_why}); {reason}")
+                        level=level, reason=f"UNVERIFIED trigger ({unverified_why}); {reason}",
+                        event_id=event_id)
             self.publish("warning",
                          f"NOT acted on: {playbook} on {target or 'this host'} was "
                          f"requested by an unverified bus event ({unverified_why}). "
@@ -337,7 +342,7 @@ class Engine:
 
         if disp == hl.ACT_PROPOSE:
             self.record(kind=hl.KIND_PROPOSED, playbook=playbook, target=target,
-                        level=level, reason=reason)
+                        level=level, reason=reason, event_id=event_id)
             self.publish("notice",
                          f"suggestion: {playbook} on {target or 'this host'} — "
                          f"{reason}. Run: orionx-heal run {playbook}"

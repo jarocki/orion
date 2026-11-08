@@ -1087,13 +1087,46 @@ lnk = WORK / "link.key"; lnk.symlink_to(WORK / "bus.key")
 check(rl.read_bus_key(lnk)[0] is None, "a symlinked key is refused")
 
 # ---- the status projection (contract with the Cockpit) ------------------
-SCHEMA = {"ts", "chain_ok", "in_force", "pending", "error"}
+# #126 (DEC-PHASE13-041): proposals, their window and heald's consent levels joined the schema.
+SCHEMA = {"ts", "chain_ok", "in_force", "pending", "proposed", "proposed_window", "autonomy", "error"}
 e = make({"block_ip": "confirm"})
 check(e.handle_event(sign(scan("203.0.113.40"))) == "pending", "signed confirm-level event parks")
 st = json.loads(e.status_file.read_text())
 mode = stat.S_IMODE(e.status_file.stat().st_mode)
 check(set(st) == SCHEMA and mode == 0o644, f"status written on the state change, schema exact, mode {oct(mode)}")
 check(st["chain_ok"] is True and st["error"] is None and st["in_force"] == [], "chain ok, nothing in force yet")
+check(st["proposed"] == [] and st["proposed_window"] == hl.PROPOSED_WINDOW_SECONDS == 1800.0,
+      "a confirm-level action is pending, not proposed; window is 30 min")
+check(set(st["autonomy"]) == set(hl.PLAYBOOK_NAMES) and st["autonomy"]["block_ip"] == "confirm"
+      and all(v == "off" for k, v in st["autonomy"].items() if k != "block_ip"),
+      f"autonomy lists every class, unset = off: {st['autonomy']}")
+
+# propose-level: KIND_PROPOSED reaches the snapshot, folded per target, newest first.
+ep = make({"block_ip": "propose"})
+s1, s2, s3 = sign(scan("203.0.113.50")), sign(scan("203.0.113.51")), sign(scan("203.0.113.50"))
+check([ep.handle_event(x) for x in (s1, s2, s3)] == ["proposed"] * 3 and not ep.runner.commands,
+      "three signed critical scans at 'propose' are proposals; nothing executed")
+sp = json.loads(ep.status_file.read_text())
+pr = sp["proposed"]
+check(set(sp) == SCHEMA and sp["pending"] == [] and sp["in_force"] == [], "proposals do not appear as pending or in force")
+check([(p["action"], p["target"], p["count"]) for p in pr] == [("block_ip", "203.0.113.50", 2), ("block_ip", "203.0.113.51", 1)],
+      f"one row per (action, target), newest first, with a repeat count: {pr}")
+check(all(set(p) == {"action", "target", "ts", "count", "level", "reason", "event_id"} for p in pr)
+      and pr[0]["event_id"] == s3["id"] and pr[0]["level"] == "propose" and "scanning us" in pr[0]["reason"]
+      and isinstance(pr[0]["ts"], float), f"each proposal names its trigger event and reason: {pr[0]}")
+cfp = ep.chain_file()
+far = hl.status_snapshot(cfp, now=time.time() + hl.PROPOSED_WINDOW_SECONDS + 5, autonomy={})
+check(far["proposed"] == [] and all(v == "off" for v in far["autonomy"].values()),
+      "proposals older than the window drop out; empty consent reads off for every class")
+many = [{"kind": hl.KIND_PROPOSED, "ts": 1000.0 + i, "playbook": "block_ip", "target": f"198.51.100.{i}"} for i in range(30)]
+capped = hl.recent_proposals(many, set(), now=1100.0)
+check(len(capped) == hl.PROPOSED_MAX and capped[0]["target"] == "198.51.100.29", f"capped at {hl.PROPOSED_MAX}, newest first")
+check(hl.recent_proposals(many, {("block_ip", "198.51.100.29")}, now=1100.0)[0]["target"] == "198.51.100.28",
+      "a proposal whose target is now pending or in force is overtaken, not listed twice")
+# DEC-PHASE13-042: block_ip keeps the critical floor; a warning scan proposes nothing.
+check(ep.handle_event(sign(dict(scan("203.0.113.52"), severity="warning"))) == "no-match"
+      and all(p["target"] != "203.0.113.52" for p in json.loads(ep.status_file.read_text())["proposed"]),
+      "warning scan proposes nothing (DEC-PHASE13-042)")
 pend = st["pending"]
 check(len(pend) == 1 and set(pend[0]) == {"id", "action", "target", "proposed_ts"}
       and pend[0]["action"] == "block_ip" and pend[0]["target"] == "203.0.113.40"
