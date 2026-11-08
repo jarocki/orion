@@ -72,6 +72,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import pewpew_feed  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "awareness"))
 import deck_vitals  # noqa: E402  (DEC-PHASE12-049: same hostname/IP/vitals as the Cockpit)
+import gateway_probes  # noqa: E402  (DEC-PHASE13-047: the two operator-initiated probes behind POST, #94)
 import network_picture  # noqa: E402  (DEC-PHASE13-046: the same picture the Cockpit NETWORK panel draws, #93)
 
 # --- Where things are -------------------------------------------------------
@@ -526,6 +527,27 @@ def current_outbound() -> dict:
     return outbound_verdict(read_posture(_read(POSTURE_STATUS)), route)
 
 
+# --- Operator-initiated probes (#94, DEC-PHASE13-047) -----------------------
+# The only two routes on this server that transmit anything. POST only (a GET,
+# a prefetch or a page load can never trigger them), and only with the
+# X-Orionx-Operator header the page's button sends: a custom header forces a
+# CORS preflight this server never answers, so a cross-site form cannot fire
+# a probe even before request_allowed() refuses its Origin. One probe at a
+# time, server-wide. Both pass the SAME outbound_verdict() the GODSEYE gate
+# uses: Part B refuses on it, Part A only records it (the segment is local).
+ACTIVE_ROUTES = ("/api/network/gateway", "/api/network/outbound")
+OPERATOR_HEADER = "X-Orionx-Operator"
+_PROBE_LOCK = threading.Lock()
+
+
+def run_active(path: str) -> dict:
+    """Run the probe a POST to `path` asks for, gated by the current posture."""
+    verdict = current_outbound()
+    if path == "/api/network/outbound":
+        return gateway_probes.run_outbound(verdict)
+    return gateway_probes.run_gateway(verdict)
+
+
 def build_status() -> dict:
     route = read_default_route(_read(PROC_ROUTE) or "", _read(PROC_ROUTE6) or "")
     posture = read_posture(_read(POSTURE_STATUS))
@@ -708,6 +730,36 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         super().do_GET()
+
+    def do_POST(self):                           # noqa: N802
+        """#94: the two operator-initiated probes. Nothing else accepts POST."""
+        if self._refuse_foreign():
+            return
+        path = self.path.split("?", 1)[0]
+        try:
+            length = min(int(self.headers.get("Content-Length") or 0), 4096)
+        except ValueError:
+            length = 0
+        if length:
+            self.rfile.read(length)              # the body carries nothing; drain it
+        if path not in ACTIVE_ROUTES:
+            self._json_status(405, {"error": "method-not-allowed", "route": path,
+                                    "detail": "Only %s accept POST." % " and ".join(ACTIVE_ROUTES)})
+            return
+        if self.headers.get(OPERATOR_HEADER) != "1":
+            self._json_status(403, {"error": "not-operator-initiated", "route": path,
+                                    "detail": "Probes run only from the This network page's buttons "
+                                              "(header %s: 1)." % OPERATOR_HEADER})
+            return
+        if not _PROBE_LOCK.acquire(blocking=False):
+            self._json_status(409, {"error": "probe-running", "route": path,
+                                    "detail": "Another probe is still running; this one was not started."})
+            return
+        try:
+            entry = run_active(path)
+        finally:
+            _PROBE_LOCK.release()
+        self._json(entry)
 
 
 class Server(socketserver.ThreadingTCPServer):

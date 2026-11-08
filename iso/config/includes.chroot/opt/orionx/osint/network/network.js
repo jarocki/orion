@@ -11,6 +11,9 @@
  *      it needed; it is never drawn as zero.
  *   4. Everything from the API is written with textContent. DNS names, DHCP
  *      hostnames and SSDP user agents are attacker-chosen strings.
+ *   5. (#94, DEC-PHASE13-047) The operator-initiated section transmits only
+ *      from a button's click handler. Gateway values carry "reported by the
+ *      gateway, not measured"; a refused upstream probe shows the refusal.
  */
 "use strict";
 
@@ -193,17 +196,148 @@ function renderArp(p){
   if (p.arp.truncated) box.appendChild(el("div", "empty", "Showing the first " + rows.length + " of " + p.arp.count + " entries."));
 }
 
+/* #94 / DEC-PHASE13-047: the operator-initiated section. p.active carries the
+ * IDLE entries from the engine; a button POSTs to the entry's endpoint and the
+ * answer (same shape: {id, label, state, gated_by, result, refusal?}) replaces
+ * the idle entry until the page is reloaded. Nothing here runs on load or on
+ * the poll timer: the button's click handler below is the only caller of
+ * the run function. */
+var ACTIVE_RESULTS = {};
+var ACTIVE_RUNNING = {};
+
+function dl(pairs, claim){
+  var d = el("dl");
+  pairs.forEach(function(kv){
+    if (kv[1] === null || kv[1] === undefined || kv[1] === "") return;
+    d.appendChild(el("dt", null, kv[0]));
+    var dd = el("dd", null, kv[1]);
+    if (claim) { dd.appendChild(el("br")); dd.appendChild(el("span", "claim", claim)); }
+    d.appendChild(dd);
+  });
+  return d;
+}
+function list(items){
+  var ul = el("ul");
+  (items || []).forEach(function(s){ ul.appendChild(el("li", null, s)); });
+  return ul;
+}
+function refusalBanner(r){
+  // GODSEYE-style: what is off, why it matters, what still works, the remedy.
+  var b = el("div", "banner stop");
+  b.appendChild(el("h3", null, r.headline || "Refused"));
+  b.appendChild(el("p", "claim", (r.label || "") + " · refused by orionx-osint · " + (r.state || "")));
+  if (r.what) b.appendChild(el("p", null, "What was not sent: " + r.what));
+  if (r.so_what) b.appendChild(el("p", null, "Why: " + r.so_what));
+  if (r.still_works) b.appendChild(el("p", null, "Still works: " + r.still_works));
+  if (r.remedy) b.appendChild(el("code", "remedy", r.remedy));
+  return b;
+}
+
+function renderGatewayResult(c, it){
+  var r = it.result || {};
+  var claim = it.claim_label || r.claim_label;
+  if (r.caution) c.appendChild(banner("warn", "Transmitted at a raised posture", r.caution, ""));
+  if (!r.answered) {
+    c.appendChild(banner("info", "The gateway did not answer", r.note || "No SSDP answer.", ""));
+  }
+  var dv = r.device;
+  if (dv) {
+    c.appendChild(el("p", "claim", "Identity — " + claim));
+    c.appendChild(dl([["Friendly name", dv.friendly_name], ["Manufacturer", dv.manufacturer],
+      ["Model", dv.model_name], ["Model number", dv.model_number], ["Description", dv.model_description],
+      ["SSDP server", dv.server], ["Answered from", dv.peer], ["Description URL", dv.location]], claim));
+  }
+  var w = r.wan;
+  if (w) {
+    c.appendChild(el("p", "claim", "WAN — " + claim));
+    c.appendChild(dl([["External IP", w.external_ip ? (w.external_ip + " (" + w.external_ip_class + ")") : null],
+      ["Access type", w.access_type], ["Link status", w.link_status],
+      ["Downstream rate", w.downstream_label], ["Upstream rate", w.upstream_label]], claim));
+  }
+  if (r.errors && r.errors.length) { c.appendChild(el("p", null, "Not answered:")); c.appendChild(list(r.errors)); }
+  if (r.skipped && r.skipped.length) {
+    c.appendChild(el("p", null, "Answers not followed:"));
+    c.appendChild(list(r.skipped.map(function(s){ return s.location + " — " + s.why; })));
+  }
+  c.appendChild(el("p", null, "Sent (" + (r.elapsed_ms || 0) + " ms):"));
+  c.appendChild(list(r.sent));
+}
+
+function renderOutboundResult(c, it){
+  var r = it.result || {};
+  var t, tr;
+  if (r.dns) {
+    c.appendChild(el("p", null, "DNS — " + r.dns.verdict));
+    t = el("table"); tr = el("tr");
+    ["Canary", "Expected", "System resolver", "Direct (" + (r.dns.resolvers || []).join(", ") + ")"].forEach(function(h){ tr.appendChild(el("th", null, h)); });
+    t.appendChild(tr);
+    r.dns.rows.forEach(function(row){
+      var x = el("tr");
+      x.appendChild(el("td", "mono", row.name));
+      x.appendChild(el("td", "mono", (row.expected || []).join(", ")));
+      x.appendChild(el("td", "mono", ((row.system || []).join(", ") || "—") + " · " + row.system_verdict));
+      x.appendChild(el("td", "mono", ((row.direct || []).join(", ") || "—") + " · " + row.direct_verdict));
+      t.appendChild(x);
+    });
+    var nx = r.dns.nxdomain || {};
+    var y = el("tr");
+    y.appendChild(el("td", "mono", nx.name)); y.appendChild(el("td", "mono", "NXDOMAIN"));
+    y.appendChild(el("td", "mono", ((nx.system || []).join(", ") || nx.system_rcode || nx.system_error || "—") + " · " + nx.verdict));
+    y.appendChild(el("td", "mono", (nx.direct || []).join(", ") || nx.direct_rcode || nx.direct_error || "—"));
+    t.appendChild(y);
+    c.appendChild(t);
+  }
+  if (r.captive) c.appendChild(el("p", null, "Captive portal — " + r.captive.verdict + " (" + r.captive.url + ")"));
+  if (r.ports) {
+    c.appendChild(el("p", null, "Ports — " + r.ports.verdict + ". " + r.ports.note + "."));
+    t = el("table"); tr = el("tr");
+    ["Port", "Target", "Service", "Result"].forEach(function(h){ tr.appendChild(el("th", null, h)); });
+    t.appendChild(tr);
+    r.ports.rows.forEach(function(row){
+      var x = el("tr");
+      [row.port, row.host, row.service, row.result].forEach(function(v){ x.appendChild(el("td", "mono", v)); });
+      t.appendChild(x);
+    });
+    c.appendChild(t);
+  }
+  if (r.errors && r.errors.length) c.appendChild(list(r.errors));
+  c.appendChild(el("p", null, "Sent (" + (r.elapsed_ms || 0) + " ms): " + (r.sent || "")));
+}
+
+function runActive(it){
+  ACTIVE_RUNNING[it.id] = true;
+  if (PIC) renderActive(PIC);
+  fetch("../" + it.endpoint.replace(/^\//, ""), {method: "POST", cache: "no-store",
+        headers: {"X-Orionx-Operator": "1"}})
+    .then(function(r){ return r.json().then(function(j){ if (!r.ok) throw new Error(j.detail || ("HTTP " + r.status)); return j; }); })
+    .then(function(j){ ACTIVE_RESULTS[it.id] = j; })
+    .catch(function(e){ ACTIVE_RESULTS[it.id] = {id: it.id, state: "error", label: it.label, gated_by: it.gated_by,
+                                                  endpoint: it.endpoint, result: {errors: [String(e.message || e)], sent: []}}; })
+    .then(function(){ ACTIVE_RUNNING[it.id] = false; if (PIC) renderActive(PIC); });
+}
+
 function renderActive(p){
-  // Extension point for #94. Nothing is drawn until the engine returns entries.
   var sec = $("sec-active"), box = $("active"); clear(box);
   var items = p.active || [];
   if (!items.length) { sec.className = "hidden"; return; }
   sec.className = "";
-  items.forEach(function(it){
-    var c = el("div", "card");
-    c.appendChild(el("h3", null, it.label || it.id));
-    c.appendChild(el("div", "big dim", it.state || "—"));
-    if (it.gated_by) c.appendChild(el("p", null, "gated by " + it.gated_by));
+  items.forEach(function(idle){
+    var it = ACTIVE_RESULTS[idle.id] || idle;
+    var c = el("div", "card active");
+    c.appendChild(el("h3", null, idle.label || idle.id));
+    c.appendChild(el("span", "label", idle.claim_label || idle.probe_label || ""));
+    c.appendChild(el("p", null, idle.what || ""));
+    c.appendChild(el("p", null, "Gated by " + (idle.gated_by || "—") + ". Pressing the button sends: " + (idle.sends || "—")));
+    var btn = el("button", "ctl run", ACTIVE_RUNNING[idle.id] ? "running…" : (it.state === "idle" ? idle.button : "run again"));
+    btn.type = "button";
+    btn.disabled = !!ACTIVE_RUNNING[idle.id];
+    btn.addEventListener("click", function(){ runActive(idle); });
+    c.appendChild(btn);
+    if (it.state === "refused" && it.refusal) c.appendChild(refusalBanner(it.refusal));
+    else if (it.state !== "idle" && it.result) {
+      c.appendChild(el("p", "claim", "state: " + it.state + " · " + new Date((it.generated || 0) * 1000).toLocaleTimeString()));
+      if (idle.id === "gateway") renderGatewayResult(c, it); else renderOutboundResult(c, it);
+    }
     box.appendChild(c);
   });
 }

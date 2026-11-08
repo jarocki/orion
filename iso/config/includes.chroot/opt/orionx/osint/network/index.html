@@ -95,6 +95,13 @@ tr.degraded td{color:var(--faint)}
 .empty{color:var(--faint);font-style:italic;padding:8px 0;font-size:.86rem}
 footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);color:var(--faint);font-size:.76rem}
 .hidden{display:none}
+.card.active{grid-column:1/-1}
+.card.active .claim{color:var(--phoenix-soft);font-family:var(--mono);font-size:.7rem}
+.card.active dl{display:grid;grid-template-columns:max-content 1fr;gap:3px 12px;margin:10px 0 0;font-size:.82rem}
+.card.active dt{color:var(--dim)}
+.card.active dd{margin:0;font-family:var(--mono);word-break:break-word}
+.card.active ul{margin:6px 0 0;padding-left:18px;color:var(--dim);font-size:.8rem}
+.card.active .run{margin-top:10px}
 @media (max-width:720px){ th:nth-child(n+5),td:nth-child(n+5){display:none} }
 </style>
 </head>
@@ -156,14 +163,21 @@ footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);color:v
     <div id="arp"></div>
   </section>
 
-  <!-- Reserved for #94: gateway identity (SSDP/IGD, operator-initiated) and
-       posture-gated outbound probes. Hidden until the API returns entries;
-       nothing on this page pretends those exist yet. -->
+  <!-- #94 / DEC-PHASE13-047: gateway identity (SSDP/IGD, local segment) and
+       upstream probes (internet, posture-gated). Drawn from the entries in
+       /api/network.json "active"; each runs ONLY when its button is pressed
+       (POST /api/network/gateway, POST /api/network/outbound), never on load
+       and never on the poll timer. Hidden until the API returns entries. -->
   <section id="sec-active" class="hidden">
     <h2>Operator-initiated</h2>
-    <p class="lede">Active checks. Each is started by you, each says what it
-    sent, and each is gated by the threat posture.</p>
-    <div id="active"></div>
+    <p class="lede">Active checks, beneath the passive picture because they are
+    not passive. Each is started by you and says what it sent.
+    <b>Gateway identity</b> transmits on this segment only; every value it
+    shows is <b>reported by the gateway, not measured</b>.
+    <b>Upstream probes</b> reach the internet: each is a <b>probe, posture-gated</b>
+    by the same rule as GODSEYE, and at a blocked posture you see the refusal,
+    not a result.</p>
+    <div class="cards" id="active"></div>
   </section>
 
   <footer id="foot"></footer>
