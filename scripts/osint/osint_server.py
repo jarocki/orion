@@ -73,6 +73,8 @@ import pewpew_feed  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "awareness"))
 import deck_vitals  # noqa: E402  (DEC-PHASE12-049: same hostname/IP/vitals as the Cockpit)
 import gateway_probes  # noqa: E402  (DEC-PHASE13-047: the two operator-initiated probes behind POST, #94)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "healing"))
+import healing_lib  # noqa: E402  (DEC-PHASE13-049: the reader heald uses; this page never writes)
 import network_picture  # noqa: E402  (DEC-PHASE13-046: the same picture the Cockpit NETWORK panel draws, #93)
 
 # --- Where things are -------------------------------------------------------
@@ -89,8 +91,8 @@ DEFAULT_PORT = 8787
 PORT_TRIES = 8
 
 # UX-06: the remedy names the surface that exists on this image.
-POSTURE_REMEDY = ("Lower the posture in Orion Cockpit -> Awareness -> Threat "
-                  "posture (or: orionx-cockpit --tab awareness) if reaching "
+POSTURE_REMEDY = ("Lower the posture in Orion Cockpit -> Settings -> Threat "
+                  "posture (or: orionx-cockpit --settings) if reaching "
                   "out is appropriate.")
 
 # @decision DEC-PHASE12-086
@@ -546,6 +548,48 @@ def run_active(path: str) -> dict:
     if path == "/api/network/outbound":
         return gateway_probes.run_outbound(verdict)
     return gateway_probes.run_gateway(verdict)
+# Nebula warm-up (DEC-PHASE10-010): the boot-time switch is systemd's own
+# enablement link; the one-off is `nebula warmup`. Both are evidence, read here.
+WARMUP_WANTS = Path(os.environ.get(
+    "ORIONX_WARMUP_WANTS", "/etc/systemd/system/multi-user.target.wants/nebula-warmup.service"))
+WARMUP_LOG = Path(os.environ.get("ORIONX_WARMUP_LOG", "/var/log/orionx/nebula-warmup.log"))
+
+
+def engine_state() -> dict:
+    """Tool controls the Workbench shows (#95, DEC-PHASE13-048/-049). Read-only.
+
+    Auto-healing consent is what heald reads (healing_lib.load_autonomy +
+    level_for: an absent class is off), with the one command that changes
+    each class. Nebula warm-up is the unit's enablement and the last run's log.
+    Every change is a command the operator runs in the Workbench terminal; this
+    server has no write path and gains none.
+    """
+    levels = healing_lib.load_autonomy()
+    classes = [{"id": p.name, "summary": p.summary,
+                "level": healing_lib.level_for(levels, p.name), "set": p.name in levels}
+               for p in healing_lib.REGISTRY]
+    try:
+        last = WARMUP_LOG.stat().st_mtime
+    except OSError:
+        last = None
+    return {
+        "autonomy": {
+            "file": str(healing_lib.AUTONOMY_FILE),
+            "present": healing_lib.AUTONOMY_FILE.is_file(),
+            "levels": list(healing_lib.LEVELS),
+            "classes": classes,
+            "command": "orionx-heal autonomy <class> <level>",
+            "show": "orionx-heal autonomy",
+        },
+        "warmup": {
+            "enabled_at_boot": WARMUP_WANTS.exists(),
+            "last_run": last,
+            "log": str(WARMUP_LOG),
+            "now": "nebula warmup",
+            "enable": "sudo systemctl enable --now nebula-warmup.service",
+            "disable": "sudo systemctl disable nebula-warmup.service",
+        },
+    }
 
 
 def build_status() -> dict:
@@ -567,6 +611,8 @@ def build_status() -> dict:
         # DEC-PHASE12-052: optional installers, with evidence of whether each
         # has been run on this deck, so the Workbench can say so.
         "optional": optional_state(load_installable(WEB_ROOT), bool(geo.get("available"))),
+        # #95: tool controls that used to be Cockpit tabs (DEC-PHASE13-049).
+        "engine": engine_state(),
         "bus": {
             "path": str(BUS),
             "present": bus_present,

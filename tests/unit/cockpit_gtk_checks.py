@@ -82,12 +82,12 @@ def last_toast() -> tuple[str, str]:
     return TOASTS[-1] if TOASTS else ("", "")
 
 
-# ---------------------------------------------------------------- Awareness
-print("[awareness: posture is a request; a failed write reverts and says why]")
-from control_center.sections import awareness as AW  # noqa: E402
+# ---------------------------------------------------------------- settings drawer
+print("[settings drawer: posture is a request; a failed write reverts and says why (#95)]")
+from control_center import settings_drawer as SDR  # noqa: E402
 
 win = Gtk.Window()
-aw = AW._AwarenessWidget()
+aw = SDR.SettingsDrawer()
 win.add(aw.box)
 win.show_all()
 pump(0.5)
@@ -112,7 +112,7 @@ if os.geteuid() != 0:
 else:
     print("  (skipped unwritable case: root)")
 
-print("[awareness: R.A.I.N. test reports the real outcome (UX-12)]")
+print("[settings drawer: R.A.I.N. test reports the real outcome (UX-12)]")
 stub("orionx-rain", 'echo "paplay: no audio device" >&2; exit 3')
 n0 = len(TOASTS)
 aw._on_rain_test(None)
@@ -131,7 +131,7 @@ aw._on_rain_test(None)
 wait_for(lambda: any("not installed" in m for _l, m in TOASTS[n0:]))
 ck(any("not installed" in m for _l, m in TOASTS[n0:]), "missing orionx-rain -> 'not installed'")
 
-print("[awareness: R.A.I.N. settings go through rain_lib and toast (UX-13)]")
+print("[settings drawer: R.A.I.N. settings go through rain_lib and toast (UX-13)]")
 n0 = len(TOASTS)
 aw._rain_vol.set_value(40)
 wait_for(lambda: any("volume 40%" in m for _l, m in TOASTS[n0:]))
@@ -140,34 +140,15 @@ ck('"volume": 0.4' in saved, "volume saved through rain_lib.save_config")
 ck(any("volume 40%" in m and "survives reboot:" in m for _l, m in TOASTS[n0:]), f"change toasts the setting + reboot truth ({TOASTS[n0:]})")
 win.destroy()
 
-# ---------------------------------------------------------------- Auto-Healing
-print("[auto-healing: a failed write reverts and says why (P2-5, UX-11)]")
-from control_center.sections import auto_healing as AH  # noqa: E402
-
-win = Gtk.Window()
-ah = AH._AutoHealingWidget()
-win.add(ah.box)
-win.show_all()
-pump(0.2)
-ck((cfg_dir / "autonomy.json").exists() and "Wrote default" in ah._status.get_text(), "materialised defaults are announced")
-ck("survives reboot:" in ah._status.get_text(), "the grid states whether the pre-approvals survive reboot")
-combo = ah._combos["block_ip"]
-combo.set_active(AH._LEVELS.index("autonomous"))
-pump(0.2)
-ck('"block_ip": "autonomous"' in (cfg_dir / "autonomy.json").read_text(), "level saved")
-if os.geteuid() != 0:
-    cfg_dir.chmod(0o500)
-    combo.set_active(AH._LEVELS.index("off"))
-    pump(0.2)
-    cfg_dir.chmod(0o700)
-    lvl, msg = last_toast()
-    ck(lvl == "error" and "NOT changed" in msg, f"unwritable -> error toast ({msg})")
-    ck(combo.get_active_text() == "autonomous", "combo reverts to what the engine will read")
-win.destroy()
+# ---------------------------------------------------------------- Auto-Healing (#95)
+print("[auto-healing consent left the Cockpit: no tab, no write on open (DEC-PHASE13-049)]")
+ck(not (cfg_dir / "autonomy.json").exists(), "nothing in the Cockpit wrote autonomy.json")
 
 # ---------------------------------------------------------------- whole Cockpit
 print("[cockpit: only the visible tab polls; probes never block the main loop (P1-5)]")
 from importlib.machinery import SourceFileLoader  # noqa: E402
+
+from gi.repository import Gdk  # noqa: E402
 
 from control_center.helpers.background import Poller  # noqa: E402
 
@@ -214,6 +195,47 @@ for key in cw._pages:
     pump(0.2)
     seen_header.append(cw.header.get_mapped() and cw.header.get_allocated_height() >= CK.L.HEADER_H)
 ck(all(seen_header), f"the status strip is on screen on every tab ({sum(seen_header)}/{len(seen_header)})")
+cw.select_tab("mesh")
+
+print("[cockpit: the settings drawer is on every tab, F2 and --settings open it (#95)]")
+ck("healing" not in cw._pages and "healing" not in CCAPP.TAB_KEYS, "no Auto-Healing tab (moved to the Workbench)")
+ck(not cw.drawer_rev.get_reveal_child() and not cw.settings_btn.get_active(), "the drawer starts closed")
+cw.select_tab("live")
+cw._on_key(None, type("K", (), {"keyval": Gdk.keyval_from_name("F2"), "state": Gdk.ModifierType(0)})())
+wait_for(lambda: cw.drawer_rev.get_child_revealed(), 3.0)
+ck(cw.drawer_rev.get_reveal_child() and cw.settings_btn.get_active(), "F2 on LIVE opens it, and the button says so")
+dw = cw.drawer_rev.get_allocated_width()
+ck(abs(dw - SDR.WIDTH) <= 24, f"it is {dw} px wide (WIDTH {SDR.WIDTH})")
+ck(cw.da.get_allocated_width() >= 1100, f"LIVE keeps its width under the drawer ({cw.da.get_allocated_width()} px)")
+opened = []
+for key in cw._pages:
+    cw.select_tab(key)
+    pump(0.15)
+    opened.append(cw.drawer_rev.get_child_revealed() and cw.settings.box.get_mapped())
+ck(all(opened), f"the drawer stays out on every tab ({sum(opened)}/{len(opened)})")
+dheads = [w.get_text() for w in walk(cw.settings.box) if isinstance(w, Gtk.Label) and w.get_style_context().has_class("orionx-heading")]
+ck(dheads == ["Threat posture", "Audible alerts · R.A.I.N.", "Display", "DJ deck"], f"drawer groups: {dheads}")
+first = next(w for w in walk(cw.settings.box) if isinstance(w, Gtk.Label))
+ck(cw.settings.box.get_style_context().has_class("orionx-page") and first.get_text() == "Settings"
+   and first.get_style_context().has_class("orionx-panel-title"), "the drawer wears the tab look, titled Settings")
+dbtns = [w.get_label() for w in walk(cw.settings.box) if isinstance(w, Gtk.Button) and w.get_label()]
+ck({"Toggle theme", "Open DJ Deck", "Open the Workbench", "Test alert"} <= set(dbtns), f"drawer buttons: {dbtns}")
+aw_box = cw.nb.get_nth_page(cw._pages["awareness"]).get_child().get_child()
+aw_radios = [w for w in walk(aw_box) if isinstance(w, Gtk.RadioButton)]
+tools_box = cw.nb.get_nth_page(cw._pages["tools"]).get_child().get_child()
+tools_btns = [w.get_label() for w in walk(tools_box) if isinstance(w, Gtk.Button)]
+neb_box = cw.nb.get_nth_page(cw._pages["nebula"]).get_child().get_child()
+neb_btns = [w.get_label() for w in walk(neb_box) if isinstance(w, Gtk.Button)]
+ck(not aw_radios and "Toggle Theme" not in tools_btns and not any(str(b).startswith("Install") for b in tools_btns)
+   and "Warm up model" not in neb_btns, "no tab still carries a moved control (posture, theme, installers, warm-up)")
+cw._on_key(None, type("K", (), {"keyval": Gdk.keyval_from_name("F2"), "state": Gdk.ModifierType(0)})())
+pump(0.4)
+ck(not cw.drawer_rev.get_reveal_child() and not cw.settings_btn.get_active(), "F2 again closes it")
+cw.settings_btn.set_active(True)
+pump(0.2)
+ck(cw.drawer_rev.get_reveal_child(), "the Settings button opens it")
+cw.show_settings(False)
+pump(0.3)
 cw.select_tab("mesh")
 
 print("[cockpit: one name per tab; no retired surface names on screen (UX-45)]")
@@ -280,13 +302,18 @@ cw.vitals = {"hostname": "incident-2026-10-07-site-b-laptop-03-with-an-even-long
              "disk": {"used_pct": 40.0, "free_bytes": 9 * 1024 ** 3, "path": "/"}}
 cw.posture, cw.posture_status = "1", {}
 cw.heal = {"readable": True, "chain_ok": True, "pending": [{"id": "p1", "action": "block_ip", "target": "10.0.0.5", "proposed_ts": time.time()}],
-           "active": [{"id": "a1", "action": "kill_process", "target": "4242", "applied_ts": time.time(), "expires_ts": time.time() + 600}]}
+           "active": [{"id": "a1", "action": "kill_process", "target": "4242", "applied_ts": time.time(), "expires_ts": time.time() + 600}],
+           "proposed": [{"action": "block_ip", "target": "203.0.113.77", "ts": time.time() - 60, "count": 3, "level": "propose",
+                         "reason": "a host that swept our ports is scanning us; drop it", "event_id": "e1"}],
+           "proposed_window": 1800.0, "autonomy": {"block_ip": "propose"}}
 cw.systems = {"NEBULA": True, "FIREWALL": False, "MESH": None, "R.A.I.N.": True}
 long = "ET SCAN Potential SSH Scan OUTBOUND from 192.168.4.57 to 203.0.113.9 port 22 — repeated 41 times in 60 s by the same source"
 for i, sev in enumerate(("info", "notice", "warning", "critical") * 6):
     cw.tail.events.append({"ts": time.time() - i * 90, "severity": sev, "source": "suricata", "category": "ids",
                            "message": long, "id": "", "detail": {"src_ip": "192.168.4.57", "sid": 2210000,
                                                                  "signature": "S" * 3000, "ports_seen": list(range(60))}})
+cw._sources_at = 0.0           # the events were appended by hand: let the poll re-aggregate now (#126)
+cw._poll_events()
 drawn: list = []
 orig_text = cw._text
 
@@ -331,6 +358,47 @@ stream = [d for d in drawn[:n_first] if d[5].startswith("ET SCAN")]
 ck(stream and all(d[5].endswith("…") for d in stream), "stream messages end with an ellipsis, not a mid-word clip")
 ck(any(d[5] == "CRIT" for d in drawn) and any(d[5] == "INFO" for d in drawn), "severity words drawn in the stream")
 ck(any("rows 1" in d[5] for d in drawn), "drill-down pages long detail (rows x–y of n)")
+
+# #126 (DEC-PHASE13-041): the pane draws cockpit_lib.actions_pane line for line,
+# inside its own rectangle, at >= 11 px, fitted; SOURCES is build_feed's.
+ax, ay, aw, ah = lay["actions"]
+in_actions = [d for d in drawn[:n_first] if ax <= d[0] <= ax + aw and ay <= d[1] <= ay + ah + 30]
+ck(in_actions and all(d[1] <= ay + ah - 4 for d in in_actions),
+   f"DEFENSIVE ACTIONS text stays inside its panel (bottom {ay + ah}; lowest {max(d[1] for d in in_actions) if in_actions else None})")
+ck(any(d[5].startswith("SUGGESTED (1)") for d in in_actions), "a heald proposal is drawn as SUGGESTED")
+ck(any(d[5].startswith("IN FORCE (1)") for d in in_actions) and any(d[5] == "APPROVE?" for d in in_actions),
+   "IN FORCE and APPROVE are still drawn beside it")
+ck(any(d[5].startswith("SOURCES (") for d in in_actions) or any(d[5].startswith("+") and "more lines" in d[5] for d in in_actions),
+   f"with every block full, SOURCES is drawn or counted, never silently cut ({[d[5] for d in in_actions][-2:]})")
+ck(cw.sources is not None and cw.sources["rows"] == CK.L.attack_sources(cw.tail.events, time.time())["rows"][:len(cw.sources["rows"])]
+   and cw.sources["rows"][0]["ip"] == "192.168.4.57", f"the Cockpit's SOURCES are attack_sources over its EventTail ({cw.sources and cw.sources['rows'][:1]})")
+
+
+def pane_texts(heal: dict) -> list:
+    cw.heal = heal
+    drawn.clear()
+    cw._text = rec_text
+    try:
+        cw._draw(cw.da, cairo.Context(cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)))
+    finally:
+        cw._text = orig_text
+    return [d for d in drawn if ax <= d[0] <= ax + aw and ay <= d[1] <= ay + ah]
+
+
+cw.drill = False
+base = {"readable": True, "chain_ok": True, "pending": [], "active": [], "proposed": [], "proposed_window": 1800.0}
+t = pane_texts(dict(base, autonomy={"block_ip": "off", "kill_process": "off"}))
+ck(any(d[5].startswith("autonomy is OFF for every action class") for d in t), "empty pane, all classes off: says so on its own line")
+ck(all(d[3] >= 11 for d in t) and all(d[2] <= d[4] + 0.5 for d in t if d[4] is not None), "those lines are >= 11 px and fitted")
+t = pane_texts(dict(base, autonomy={"block_ip": "propose"}))
+ck(any(d[5].startswith("no bus event met a healing trigger") for d in t), "empty pane with consent: no qualifying event, said")
+t = pane_texts(dict(base, autonomy={"block_ip": "propose"}, proposed=[
+    {"action": "block_ip", "target": "203.0.113.77", "ts": time.time() - 60, "count": 3, "level": "propose", "reason": "r", "event_id": "e1"}]))
+ck(any(d[5].startswith("SUGGESTED (1)") for d in t) and any(d[5].startswith("SOURCES (1, last 15 min)") for d in t)
+   and any(d[5].startswith("192.168.4.57  CRIT") for d in t), "propose level (no approval waiting): SUGGESTED and SOURCES rows both fit")
+t = pane_texts({"readable": False, "pending": [], "active": [], "reason": "orionx-heald not publishing (snapshot 45 s old)"})
+ck(any(d[5].startswith("state unknown") for d in t) and any(d[5].startswith("SOURCES") for d in t),
+   "stale snapshot: state unknown, and SOURCES still drawn")
 toasts_before = len(TOASTS)
 cw._say("survives reboot: NO — test\nsquelched: sid 1", "ok")
 ck(cw.toast_bar.get_reveal_child() and "survives reboot" in cw.toast_bar._label.get_text(), "LIVE outcomes use the shared, wrapping ToastBar")

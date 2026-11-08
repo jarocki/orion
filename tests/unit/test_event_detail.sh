@@ -140,6 +140,14 @@ ck(d["src_ip"] == "192.168.4.77", "detail names the actual source IP")
 ck("ORIONX-DROP" in d["triggering_rule"], "detail names the nftables rule that produced the evidence")
 ck(isinstance(d.get("ports_seen"), list) and d["ports_seen"], "detail lists the ports observed")
 ck(len(d["ports_seen"]) <= 64, "port list is bounded")
+# #128: attribution is set here, at the producer, and only when a profile matches.
+ck("tool" not in d and d.get("scan_order") == "sequential",
+   f"a 20..59 walk records scan_order=sequential and names no tool ({d.get('scan_order')}, {d.get('tool')})")
+ck("ports_order" not in d, "the raw probe order stays in the alert; the detail carries one port list")
+sys.path.insert(0, str(root/"scripts/rain"))
+import tool_fingerprint as T
+sd = T.attribute({"engine": "suricata", "src_ip": "10.0.0.9", "signature": "ET SCAN Nmap Scripting Engine"})
+ck((sd.get("tool"), sd.get("tool_conf")) == ("nmap", "high"), "Suricata detail gets tool + tool_conf from the shared helper")
 sys.exit(0 if ok else 1)
 PY
 then pass "producer evidence assertions"; else fail "producer evidence assertions" "see above"; fi
@@ -261,6 +269,48 @@ ck(src.count("self.drill") >= 3, "drill state actually used, not just declared")
 sys.exit(0 if ok else 1)
 PY
 then pass "cockpit assertions"; else fail "cockpit assertions" "see above"; fi
+
+section "logquery reads what the broker writes (#127, DEC-PHASE13-039)"
+# Producer-to-consumer contract: the broker budgets the line and spills the
+# rest to a sidecar; logquery must recover the full detail from THAT file,
+# by the broker's own naming, with no second copy of the format logic.
+if python3 - "$REPO_ROOT" <<'PY'
+import sys, json, tempfile, pathlib
+from importlib.machinery import SourceFileLoader
+root = pathlib.Path(sys.argv[1]); ok = True
+def ck(c, label):
+    global ok
+    print(("  ok   " if c else "  BAD  ") + label); ok = ok and bool(c)
+rl = SourceFileLoader("rain_lib", str(root/"scripts/rain/rain_lib.py")).load_module()
+td = pathlib.Path(tempfile.mkdtemp(dir=str(root/"tmp")))
+rl.EVENT_LOG = td/"events.jsonl"; rl.DETAIL_DIR = td/"details"
+sys.path.insert(0, str(root/"tests/unit")); sys.path.insert(0, str(root/"scripts/logquery"))
+from broker_fixture import BrokerFixture
+import logquery_sources as S
+S.DETAIL_DIR = rl.DETAIL_DIR
+fixture = BrokerFixture(td, rl); fixture.__enter__()
+long_sig = "ET TROJAN " + "payload-" * 120          # > 512 chars: the value is truncated inline
+rl.emit_event("critical", "suricata", "ids", "alert",
+              detail={"engine": "suricata", "src_ip": "10.0.0.9", "dest_port": 445,
+                      "proto": "tcp", "sid": 2031234, "signature": long_sig,
+                      "technique": "T1021 Remote Services", "packet_hex": "ab" * 6000})
+line = rl.EVENT_LOG.read_text().splitlines()[0]
+raw = json.loads(line)
+ck("_full" in raw["detail"] and raw["detail"]["signature"].endswith("…"),
+   "the broker truncated the signature inline and wrote a sidecar")
+stats = S.new_parse_stats()
+rec = S.parse_json_line(line, stats)
+ck(rec["signature"] == long_sig, f"logquery recovered the full {len(long_sig)}-char signature from the sidecar")
+ck(rec["ip"] == "10.0.0.9" and rec["port"] == 445 and rec["sid"] == 2031234
+   and rec["detector"] == "suricata" and rec["technique"].startswith("T1021") and rec["tier"] == 3,
+   f"ip/port/sid/detector/technique/tier flattened ({rec['ip']}:{rec['port']} sid {rec['sid']} tier {rec['tier']})")
+ck(stats["sidecar_read"] == 1 and stats["sidecar_unreadable"] == 0, "the sidecar read is counted")
+ck(pathlib.Path(raw["detail"]["_full"]).name == raw["id"] + ".json",
+   "the broker names the sidecar <id>.json — the rule logquery enforces")
+fixture.__exit__(None, None, None)
+sys.exit(0 if ok else 1)
+PY
+then pass "broker -> logquery sidecar round trip"; else fail "broker -> logquery sidecar round trip" "see above"; fi
 
 section "Category vocabulary is a single authority (DEC-PHASE12-040)"
 if python3 - "$REPO_ROOT" <<'PYV'

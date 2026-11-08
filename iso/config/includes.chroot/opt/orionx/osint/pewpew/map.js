@@ -292,10 +292,15 @@ function renderList(){
     }
     row.appendChild(loc);
 
-    if (s.detectors.length || s.kinds.length) {
+    // Tool names come from the producers' detail.tool (DEC-PHASE13-040); an
+    // empty list means no detector named one, so nothing is shown rather
+    // than a guess.
+    var tools = s.tools || [];
+    if (s.detectors.length || s.kinds.length || tools.length) {
       row.appendChild(el("div", "meta",
         (s.kinds.length ? s.kinds.join(", ") + "  —  " : "") +
-        "seen by " + s.detectors.join(", ")));
+        "seen by " + s.detectors.join(", ") +
+        (tools.length ? "  ·  tool: " + tools.join(", ") : "")));
     }
 
     row.addEventListener("click", function(){

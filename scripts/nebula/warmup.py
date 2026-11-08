@@ -2,7 +2,8 @@
 Nebula AI — Model Warm-up (1-token inference).
 
 Invoked by nebula-warmup.service (Type=oneshot, NOT autoenabled — operator
-opts in via the Control Center or ``systemctl enable nebula-warmup.service``).
+opts in with ``sudo systemctl enable nebula-warmup.service``, which the Workbench
+Engine card hands over, #95).
 
 Issues a single 1-token inference against the loaded model so the GGUF is
 paged into RAM before the first real operator request arrives.  This trades

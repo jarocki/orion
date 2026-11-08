@@ -2,7 +2,9 @@
 Orion-X Control Center — GTK Application + main window.
 
 Tab authority for the Orion Cockpit (DEC-PHASE12-053):
-  LIVE (Cockpit), Network, Mesh, Comms, Awareness, Orion Tools, Nebula AI, Auto-Healing
+  LIVE (Cockpit), Network, Mesh, Comms, Awareness, Orion Tools, Nebula AI
+plus the settings drawer (settings_drawer.py) and MOVED, the map of where each
+control of the old Control Center lives now (#95, DEC-PHASE13-049).
 
 The window carries three "works like magic" affordances added in W11-15:
   - a HeaderBar with the operator-facing tagline ("Designed for your 3am self"),
@@ -61,9 +63,7 @@ The window carries three "works like magic" affordances added in W11-15:
 """
 from __future__ import annotations
 
-import os
 import time
-import shutil
 import sys
 from pathlib import Path
 
@@ -73,8 +73,9 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk  # type: ignore[import]  # noqa: E402
 
+from . import moved  # noqa: E402  (MOVED: where each old Control Center control lives, #95)
 from .helpers import style  # noqa: E402
-from .sections import auto_healing, awareness, comms, ir, mesh, nebula, network  # noqa: E402
+from .sections import awareness, comms, ir, mesh, nebula, network  # noqa: E402
 
 # Dark-cyberdeck accent — layered OVER the system theme, not a full replacement.
 #
@@ -145,7 +146,6 @@ SECTIONS = [
     ("awareness", "Awareness", "security-high-symbolic", awareness.build_section),
     ("tools", "Orion Tools", "applications-utilities-symbolic", ir.build_section),
     ("nebula", "Nebula AI", "system-run-symbolic", nebula.build_section),
-    ("healing", "Auto-Healing", "emblem-synchronizing-symbolic", auto_healing.build_section),
 ]
 TAB_KEYS = ["live"] + [k for k, _l, _i, _b in SECTIONS]
 
@@ -264,27 +264,5 @@ class ToastBar(Gtk.Revealer):
 
 
 def run_app(argv: list[str] | None = None) -> int:
-    """Entry point for `orionx-control-center`: open the Orion Cockpit on a tab.
-
-    The Control Center window no longer exists (DEC-PHASE12-053). `--tab <key>`
-    picks the tab; the default is the first section, so the old habit of
-    opening the Control Center still lands on the same content.
-    """
-    args = list(argv if argv is not None else sys.argv)[1:]
-    tab = SECTIONS[0][0]
-    for i, a in enumerate(args):
-        if a == "--tab" and i + 1 < len(args):
-            tab = args[i + 1]
-        elif a.startswith("--tab="):
-            tab = a.split("=", 1)[1]
-    if tab not in TAB_KEYS:
-        print(f"orionx-control-center: unknown tab {tab!r}; one of {', '.join(TAB_KEYS)}", file=sys.stderr)
-        return 2
-    exe = shutil.which("orionx-cockpit") or str(
-        Path(__file__).resolve().parents[1] / "cockpit" / "orionx-cockpit")
-    if not os.path.exists(exe):
-        print("orionx-control-center: orionx-cockpit is not installed; the tabs live there now "
-              "(DEC-PHASE12-053). Remedy: check /opt/orionx/scripts/cockpit/orionx-cockpit", file=sys.stderr)
-        return 127
-    os.execv(exe, [exe, "--tab", tab])
-    return 1  # unreachable
+    """Entry point for `orionx-control-center`: a launcher, nothing more (DEC-PHASE13-049, moved.py)."""
+    return moved.launch(list(argv if argv is not None else sys.argv)[1:], TAB_KEYS, SECTIONS[0][0])

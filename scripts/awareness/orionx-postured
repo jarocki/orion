@@ -132,6 +132,7 @@ import suricata_capture as capture  # noqa: E402
 import tuning_lib  # noqa: E402  (DEC-PHASE12-050: operator squelch/tune authority)
 import deck_vitals  # noqa: E402  (DEC-PHASE12-051: the deck's own addresses -> origin=self)
 import rain_lib  # noqa: E402  (shared bus attestation authority)
+import tool_fingerprint  # noqa: E402  (DEC-PHASE13-040: one tool-attribution authority)
 # Zeek log discovery and record decoding live in zeek_logs.py (one authority,
 # shared with network_picture.py, #93). The names stay bound here because the
 # daemon, its tests and the ingest thread refer to them as module attributes.
@@ -2340,7 +2341,12 @@ class PostureDaemon:
 
     # --- bus helper ---
     def _alert_detail(self, alert: dict, engine: str, technique: tuple) -> dict:
-        """Evidence for the drill-down, plus origin (DEC-PHASE12-051)."""
+        """Evidence for the drill-down, plus origin (DEC-PHASE12-051).
+
+        `tool`/`tool_conf` come from tool_fingerprint (DEC-PHASE13-040): the
+        Suricata signature text or the Zeek note+msg, only when a known tool
+        is named. Unattributed alerts carry no `tool` key.
+        """
         src = alert.get("src_ip") or ""
         d: dict = {"engine": engine, "src_ip": src, "dest_ip": alert.get("dest_ip") or "",
                    "proto": alert.get("proto") or ""}
@@ -2349,13 +2355,16 @@ class PostureDaemon:
                       "classtype": alert.get("classtype") or "",
                       "src_port": alert.get("src_port"), "dest_port": alert.get("dest_port")})
         else:
-            d.update({"note": alert.get("note") or "", "msg": alert.get("msg") or ""})
+            # parse_zeek_notice carries dest_port (id.resp_p); #127 found the
+            # drill-down and the logquery `port` column lost it here.
+            d.update({"note": alert.get("note") or "", "msg": alert.get("msg") or "",
+                      "dest_port": alert.get("dest_port")})
         if technique and technique[0]:
             d["technique"] = f"{technique[0]} {technique[1]}".strip()
         if src and src in self.deck_addrs:
             d["origin"] = "self"
             d["origin_note"] = "this deck's own traffic; not an intruder"
-        return d
+        return tool_fingerprint.attribute(d)
 
     def _refresh_deck_addrs(self, now: float) -> None:
         if now - self._deck_addrs_at < 30.0:

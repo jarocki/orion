@@ -109,8 +109,104 @@ joined = "".join(t for _l, t in rows)
 ck("S" * 300 in joined.replace(" ", "") and "39" in joined and all(len(t) <= 78 for _l, t in rows),
    f"drill-down rows carry every char of a 300-char signature and all 40 ports, wrapped ({len(rows)} rows) (UX-19)")
 ck([l for l, _t in rows if l][:3] == ["message", "src ip", "signature"], "operator-first field order kept")
+# #128: the producer-named tool is one cell on the event row and two rows in the drill-down.
+ev3 = {"source": "suricata", "category": "ids", "message": "m",
+       "detail": {"src_ip": "10.0.0.9", "signature": "ET SCAN Nmap", "tool": "nmap", "tool_conf": "high", "origin": "self"}}
+ck(L.source_label(ev3) == "SELF suricata/ids·nmap", f"event row cell carries SELF and the tool: {L.source_label(ev3)!r}")
+ck(L.source_label({"source": "firewall", "category": "scan", "detail": {}}) == "firewall/scan", "no tool named -> no suffix, no guess")
+labels = [l for l, _t in L.drill_rows(ev3, 60) if l]
+ck(labels[:5] == ["message", "src ip", "signature", "tool", "tool conf"], f"drill-down shows tool and its confidence right after the signature: {labels}")
+ck("L.source_label(ev)" in (root/"scripts/cockpit/orionx-cockpit").read_text(), "the event row is drawn from cockpit_lib.source_label")
 PY
 then pass "LIVE layout fits the reference deck; text is fitted, never clipped mid-word"; else fail "LIVE layout" "see above"; fi
+
+echo "[DEFENSIVE ACTIONS: suggestions from heald's snapshot, SOURCES from pewpew_feed, every empty reason said (#126)]"
+if ORIONX_AUTONOMY_FILE="$ROOT/tmp/no-such-autonomy.json" python3 - "$ROOT" <<'PY'
+import json, sys, tempfile, time, pathlib
+root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(root/"scripts/cockpit")); sys.path.insert(0, str(root/"scripts/healing"))
+sys.path.insert(0, str(root/"scripts/osint"))
+import cockpit_lib as L
+import healing_lib as hl
+import pewpew_feed as F
+def ck(c, m):
+    print(("  ok   " if c else "  FAIL ") + m)
+    if not c: raise SystemExit(1)
+td = pathlib.Path(tempfile.mkdtemp(dir=str(root/"tmp")))
+now = time.time()
+texts = lambda rows: [r["label"] + r["text"] for r in rows]
+
+# (a) a proposal sealed into the chain reaches the pane through the ONE snapshot.
+chain, status = td/"chain.jsonl", td/"healing-status.json"
+hl.append_entry({"ts": now - 90, "kind": hl.KIND_PROPOSED, "playbook": "block_ip", "target": "203.0.113.9",
+                 "level": "propose", "reason": "a host that swept our ports is scanning us; drop it",
+                 "event_id": "ab12cd34ef56ab78"}, chain)
+hl.append_entry({"ts": now - 30, "kind": hl.KIND_PROPOSED, "playbook": "block_ip", "target": "203.0.113.9",
+                 "level": "propose", "reason": "again", "event_id": "ab12cd34ef56ab79"}, chain)
+hl.write_status(hl.status_snapshot(chain, now, autonomy={"block_ip": "propose"}), status)
+heal = L.healing_actions(status, now=now)
+ck(heal["readable"] and [(p["action"], p["target"], p["count"], p["event_id"]) for p in heal["proposed"]]
+   == [("block_ip", "203.0.113.9", 2, "ab12cd34ef56ab79")], f"healing_actions carries heald's proposals: {heal['proposed']}")
+ck(heal["autonomy"]["block_ip"] == "propose" and heal["autonomy"]["isolate_node"] == "off", "and heald's consent levels")
+t = texts(L.actions_pane(heal, None, now))
+ck(any(x.startswith("SUGGESTED (1): block_ip → 203.0.113.9 ×2") for x in t), f"SUGGESTED row drawn from the snapshot: {t}")
+ck("run: sudo orionx-heal run block_ip --target 203.0.113.9" in t, "with the one command that acts on it")
+src = (root/"scripts/cockpit/cockpit_lib.py").read_text()
+ck("KIND_PROPOSED" not in src and "chain.jsonl" not in src, "the Cockpit never reads the chain itself (DEC-PHASE12-065)")
+
+# (c) why the pane is empty: one line per reason, never a blank pane.
+base = {"readable": True, "chain_ok": True, "pending": [], "active": [], "proposed": [], "proposed_window": 1800.0}
+t = texts(L.actions_pane(dict(base, autonomy={k: "off" for k in hl.PLAYBOOK_NAMES}), None, now))
+ck("autonomy is OFF for every action class — Workbench → Engine, or: orionx-heal autonomy CLASS propose" in t, f"all-off reason: {t}")
+hl.write_status(hl.status_snapshot(td/"none.jsonl", now, autonomy=hl.load_autonomy()), status)
+t = texts(L.actions_pane(L.healing_actions(status, now=now), None, now))
+ck(any(x.startswith("autonomy is OFF for every action class") for x in t), "absent autonomy.json reaches the pane as all-off (fail-closed)")
+t = texts(L.actions_pane(dict(base, autonomy={"block_ip": "propose"}), None, now))
+ck("no bus event met a healing trigger in the last 30 min" in t and "nothing awaiting approval, in force or suggested" in t,
+   f"consent given but nothing qualified: {t}")
+ck(not any("autonomy is OFF" in x for x in t), "and it does not claim autonomy is off")
+old = dict(json.loads(status.read_text()), ts=now - 45); status.write_text(json.dumps(old))
+t = texts(L.actions_pane(L.healing_actions(status, now=now), None, now))
+ck(t[:2] == ["state unknown — orionx-heald not publishing (snapshot 45 s old)",
+             "check: systemctl status orionx-heald  ·  sudo orionx-heal status"], f"stale snapshot: {t[:2]}")
+t = texts(L.actions_pane(L.healing_actions(td/"missing.json", now=now), None, now))
+ck(t[0].startswith("state unknown — orionx-heald not publishing") and "missing" in t[0], f"heald not running: {t[0]}")
+ck("SOURCES: event buffer not read yet" in t, "SOURCES still says something while healing state is unknown")
+
+# (b) SOURCES rows ARE build_feed's sources for the same events (cannot disagree).
+bus = td/"events.jsonl"
+lines = [json.dumps({"ts": now - 4000, "severity": "critical", "source": "firewall", "category": "scan",
+                     "message": "old", "detail": {"src_ip": "192.0.2.1"}}), "not json"]
+for i in range(9):
+    ip = f"203.0.113.{i % 6 + 1}"
+    lines.append(json.dumps({"ts": now - 60 + i, "severity": ("warning", "critical", "notice")[i % 3],
+                             "source": ("firewall", "suricata", "zeek")[i % 3], "category": "scan", "id": f"e{i}",
+                             "message": f"port scan from {ip}",
+                             "detail": {"src_ip": ip, "detector": "orionx-scanwatch", "tool": ("nmap", "masscan")[i % 2]}}))
+lines.append(json.dumps({"ts": now - 2, "severity": "warning", "source": "suricata", "category": "ids", "message": "no address"}))
+bus.write_text("\n".join(lines) + "\n")
+tail = L.EventTail(bus, backfill=200); tail.poll()
+got = L.attack_sources(tail.events, now)
+feed = F.build_feed(bus.read_text().splitlines(), now=now)
+want = [{k: s[k] for k in L.SOURCE_FIELDS} for s in feed["sources"][:L.SOURCES_MAX]]
+ck(got["rows"] == want and got["total"] == len(feed["sources"]) == 6 and got["window"] == feed["window_seconds"],
+   f"SOURCES rows == pewpew_feed.build_feed sources for the same bus lines ({len(want)} of {got['total']})")
+ck(set(L.SOURCE_FIELDS) == {"ip", "events", "last_seen", "max_severity", "detectors", "tools"}, "ip, events, last_seen, severity, detectors, tools")
+ck(got["rows"][0]["tools"] and got["rows"][0]["max_severity"] == "critical", f"producer tools ride through: {got['rows'][0]}")
+t = texts(L.actions_pane(dict(base, autonomy={"block_ip": "propose"}), got, now))
+i = t.index("SOURCES (6, last 15 min)")
+ck(t[i + 1].startswith(f"• {want[0]['ip']}  CRIT  {want[0]['events']} ev") and len(t[i + 1:i + 1 + L.SOURCES_MAX]) == 4,
+   f"SOURCES header, then one row per source in the feed's order: {t[i + 1]!r}")
+ck("+2 more — the Attack Map (click this panel) lists all" in t, "rows past SOURCES_MAX are counted, not dropped")
+import inspect
+body = inspect.getsource(L.attack_sources)
+ck("_pewpew.build_feed(" in body and "+=" not in body and "sorted(" not in body and "classify_ip" not in body,
+   "attack_sources calls build_feed and does no counting, sorting or classifying of its own")
+empty = L.attack_sources([], now)
+t = texts(L.actions_pane(dict(base, autonomy={"block_ip": "propose"}), empty, now))
+ck("SOURCES: no attributed source in the last 15 min (0 bus events held)" in t, f"no sources is said: {t[-1]}")
+PY
+then pass "DEFENSIVE ACTIONS shows proposals, SOURCES and every empty reason from one authority each (#126)"; else fail "DEFENSIVE ACTIONS pane model" "see above"; fi
 
 echo "==========================================="
 echo "Results: $PASS passed, $FAIL failed"

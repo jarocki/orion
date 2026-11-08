@@ -895,32 +895,29 @@ fi
 section "WIRING — owned by another file, cannot be fixed from scripts/rain/"
 PENDING=0
 pending() { PENDING=$((PENDING+1)); printf "  ${RED}WIRING PENDING${NC}: %s — %s\n" "$1" "$2"; }
-CC_AWARE="$REPO_ROOT/scripts/control_center/sections/awareness.py"
-# The Control Center writes rain.json as a COMPLETE REPLACEMENT of four known
-# keys (_on_rain_changed). Any key it does not know about is silently deleted,
-# so `orionx-rain --speech on` is undone the moment an operator touches any
-# R.A.I.N. control in the panel. That is the dual-authority bug of RESILIENCE
-# rule 7, and the fix is one line in a file this decision does not own.
-if [[ -f "$CC_AWARE" ]]; then
-    if python3 - "$CC_AWARE" <<'CCPY'
+CC_DRAWER="$REPO_ROOT/scripts/control_center/settings_drawer.py"
+# The Cockpit's R.A.I.N. controls (the settings drawer since #95) must save
+# rain.json as a MERGE over rain_lib.load_config(), so keys they do not own
+# survive, and must own "speech" themselves (DEC-PHASE12-046). A fresh dict
+# of widget keys would undo `orionx-rain --speech on` the moment an operator
+# touched any control: the dual-authority bug of RESILIENCE rule 7.
+if [[ -f "$CC_DRAWER" ]]; then
+    if python3 - "$CC_DRAWER" <<'CCPY'
 import re, sys
 src = open(sys.argv[1]).read()
-m = re.search(r"def _on_rain_changed.*?\n\n", src, re.S)
+m = re.search(r"def _rain_cfg_from_widgets.*?\n\n", src, re.S)
 body = m.group(0) if m else ""
-# Safe if it merges over the loaded config, or if it writes the speech key.
-sys.exit(0 if ("_load_rain()" in body or '"speech"' in body) else 1)
+sys.exit(0 if ("rain_lib.load_config()" in body and '"speech"' in body) else 1)
 CCPY
     then
-        pass "Control Center preserves the speech key when it saves rain.json"
+        pass "the settings drawer merges over rain_lib.load_config() and owns the speech key"
     else
-        pending "Control Center clobbers rain.json keys it does not know" \
-"scripts/control_center/sections/awareness.py:_on_rain_changed() writes a fresh 4-key dict, so \
-saving any R.A.I.N. control deletes \"speech\" and silently turns narration off. Fix: build the \
-payload from _load_rain() and update only the four widget-owned keys, and add a Speak toggle \
-bound to \"speech\" (DEC-PHASE12-046). rain.json's authority is scripts/rain/rain_lib.py."
+        pending "the settings drawer clobbers rain.json keys it does not know" \
+"scripts/control_center/settings_drawer.py:_rain_cfg_from_widgets() must start from rain_lib.load_config() \
+and set \"speech\" from its toggle (DEC-PHASE12-046). rain.json's authority is scripts/rain/rain_lib.py."
     fi
 else
-    pending "Control Center awareness section not found" "expected $CC_AWARE"
+    pending "Cockpit settings drawer not found" "expected $CC_DRAWER"
 fi
 
 printf "\n===========================================\n"

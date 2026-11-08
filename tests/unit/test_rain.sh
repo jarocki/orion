@@ -72,24 +72,26 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-section "Control Center: Awareness emits + exposes R.A.I.N."
+section "Cockpit: events go out through orionx-event; R.A.I.N. controls in the settings drawer (#95)"
 # ---------------------------------------------------------------------------
-AW="$REPO_ROOT/scripts/control_center/sections/awareness.py"
-if grep -q '"orionx-event"' "$AW"; then
-    pass "awareness.py emits events via the orionx-event CLI (allowlist-safe)"
+UX="$REPO_ROOT/scripts/control_center/helpers/ux.py"
+DRAWER="$REPO_ROOT/scripts/control_center/settings_drawer.py"
+if grep -q '"orionx-event"' "$UX" && grep -q 'ux.emit_event(' "$REPO_ROOT/scripts/control_center/sections/awareness.py" \
+   && grep -q 'ux.emit_event(' "$DRAWER"; then
+    pass "health alerts and posture requests publish via the orionx-event CLI (allowlist-safe, one helper)"
 else
-    fail "awareness.py emits via orionx-event" "no orionx-event Popen found"
+    fail "events via orionx-event" "ux.emit_event missing or bypassed"
 fi
-if grep -q "rain.json" "$AW" && grep -q "_build_rain_controls" "$AW"; then
-    pass "awareness.py builds R.A.I.N. controls + persists rain.json"
+if grep -q "def _build_rain" "$DRAWER" && grep -q "rain_lib.load_config()" "$DRAWER"; then
+    pass "the settings drawer builds the R.A.I.N. controls from rain_lib's config"
 else
-    fail "awareness.py R.A.I.N. controls" "missing controls or config path"
+    fail "settings drawer R.A.I.N. controls" "missing controls or rain_lib read"
 fi
-# rain.json has ONE writer: awareness.py saves through rain_lib.save_config (python P2-5)
-if grep -q "rain_lib.save_config(" "$AW" && ! grep -qE "open\([^)]*rain\.json[^)]*['\"]w" "$AW"; then
-    pass "awareness.py writes rain.json only through rain_lib.save_config"
+# rain.json has ONE writer, rain_lib.save_config; test_settings_writers.sh proves it repo-wide.
+if grep -q "rain_lib.save_config(" "$DRAWER" && ! grep -qE "open\([^)]*rain\.json[^)]*['\"]w" "$DRAWER"; then
+    pass "the drawer writes rain.json only through rain_lib.save_config"
 else
-    fail "rain.json single writer" "awareness.py writes rain.json itself"
+    fail "rain.json single writer" "settings_drawer.py writes rain.json itself"
 fi
 
 # ---------------------------------------------------------------------------
