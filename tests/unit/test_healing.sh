@@ -994,11 +994,44 @@ if grep -q 'HEAL_TABLE = "orionx_healing"' "$HEAL_DIR/playbooks.py"; then
 else
     fail "blocks go into the engine own table"
 fi
-CC_TAB="$REPO_ROOT/scripts/control_center/sections/auto_healing.py"
-if grep -q 'orionx-heald' "$CC_TAB"; then
-    pass "the Control Center tab names the engine that consumes its file"
+section "orionx-heal autonomy: the one writer of autonomy.json (#95, DEC-PHASE13-049)"
+# Effect test: the file heald reads is what the command wrote, and nothing else.
+AUT_T="$WORK/autonomy-cli.json"
+rm -f "$AUT_T"
+if ORIONX_AUTONOMY_FILE="$AUT_T" python3 "$HEAL_DIR/orionx-heal" autonomy | grep -q "absent: every class is off"; then
+    pass "no file: every class is shown as off, which is what heald does with it"
 else
-    fail "Control Center tab still claims execution is unimplemented"
+    fail "absent autonomy.json is shown as off" "$(ORIONX_AUTONOMY_FILE="$AUT_T" python3 "$HEAL_DIR/orionx-heal" autonomy 2>&1 | head -3)"
+fi
+if [[ ! -e "$AUT_T" ]]; then pass "showing consent writes nothing (no write-on-open)"; else fail "showing consent wrote $AUT_T"; fi
+ORIONX_AUTONOMY_FILE="$AUT_T" python3 "$HEAL_DIR/orionx-heal" autonomy block_ip confirm >/dev/null
+ORIONX_AUTONOMY_FILE="$AUT_T" python3 "$HEAL_DIR/orionx-heal" autonomy kill_process propose >/dev/null
+if ORIONX_AUTONOMY_FILE="$AUT_T" python3 -c '
+import sys; sys.path.insert(0, sys.argv[1]); import healing_lib as hl
+a = hl.load_autonomy()
+assert a == {"block_ip": "confirm", "kill_process": "propose"}, a
+assert hl.level_for(a, "isolate_node") == "off"
+' "$HEAL_DIR"; then
+    pass "two changes merge; heald's reader sees exactly them; untouched classes stay off"
+else
+    fail "orionx-heal autonomy merge"
+fi
+if ! ORIONX_AUTONOMY_FILE="$AUT_T" python3 "$HEAL_DIR/orionx-heal" autonomy no_such_class off >/dev/null 2>&1 \
+   && grep -q '"block_ip": "confirm"' "$AUT_T"; then
+    pass "an unknown class is refused and the file is unchanged"
+else
+    fail "unknown class refused"
+fi
+if [[ "$(id -u)" != 0 ]]; then
+    AUT_RO="$WORK/ro/autonomy.json"
+    mkdir -p "$WORK/ro" && cp "$AUT_T" "$AUT_RO" && chmod 0500 "$WORK/ro"
+    OUT="$(ORIONX_AUTONOMY_FILE="$AUT_RO" python3 "$HEAL_DIR/orionx-heal" autonomy block_ip autonomous 2>&1)"; RC=$?
+    chmod 0700 "$WORK/ro"
+    if [[ $RC -ne 0 ]] && grep -q "consent NOT changed" <<<"$OUT" && grep -q '"block_ip": "confirm"' "$AUT_RO"; then
+        pass "an unwritable config dir: exit non-zero, says NOT changed, file untouched"
+    else
+        fail "unwritable config dir" "rc=$RC $OUT"
+    fi
 fi
 
 section "Bus attestation (DEC-PHASE12-084) and the published status (DEC-PHASE12-085)"

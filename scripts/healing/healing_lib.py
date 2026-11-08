@@ -31,11 +31,10 @@ runner, so the reasoning above can be proved in CI on a laptop with no root.
 
   2. autonomy.json IS THE SINGLE AUTHORITY, AND IT FAILS CLOSED. Absent,
      unreadable, truncated, not-a-dict, or naming a level we do not recognise
-     all resolve to "off". A corrupt config must never be read as consent. Note
-     this is deliberately stricter than the Control Center's *display* default
-     of "propose": the UI shows propose for a class the operator has never
-     touched, the engine treats it as off. Both are non-acting, and the engine
-     errs downward on purpose.
+     all resolve to "off". A corrupt config must never be read as consent.
+     (Until #95 the Cockpit's grid displayed "propose" for an untouched class
+     and wrote it on open; now the Workbench and `orionx-heal autonomy` show
+     an untouched class as off, which is what this engine does with it.)
 
   3. EVERY ACTION IS REVERSIBLE AND EXPIRES. An automated responder that leaves
      permanent state behind is a self-inflicted outage waiting for the operator
@@ -125,7 +124,7 @@ def operator_config_dir() -> Path:
     return Path.home() / ".config" / "orionx"
 
 
-#: Operator's standing consent. Written by the Control Center Auto-Healing tab.
+#: Operator's standing consent. Written only by save_autonomy() (`orionx-heal autonomy`).
 AUTONOMY_FILE = Path(
     os.environ.get("ORIONX_AUTONOMY_FILE", "")
     or (operator_config_dir() / "autonomy.json")
@@ -227,6 +226,66 @@ def disposition(level: str) -> str:
 def may_act_now(autonomy: dict[str, str], playbook: str) -> bool:
     """True only when the operator pre-approved fully autonomous action."""
     return disposition(level_for(autonomy, playbook)) == ACT_EXECUTE
+
+
+# @decision DEC-PHASE13-049
+# @title The Control Center is a launcher; each of its controls lives once, on the surface its role names
+# @status accepted
+# @rationale #95, under DEC-PHASE13-048. The Cockpit's Auto-Healing tab was the
+#   only writer of autonomy.json, and it wrote it as a side effect of being
+#   built: every class the file lacked was set to "propose" whenever the
+#   Cockpit opened, so opening a window granted consent. The autonomy grid is a
+#   tool control, so it moved to the Workbench, which is a terminal plus a
+#   loopback page that only reads. The page shows the levels heald will read
+#   and the exact `orionx-heal autonomy CLASS LEVEL` line for each change; the
+#   write is this function, run by the operator in a terminal. The Workbench
+#   server gained no write endpoint: a page that can grant "autonomous" to
+#   kill_process is a target for any tab that reaches loopback. The tab, the
+#   write-on-open and the grid's own writer are deleted in the same change,
+#   because "keep it as a fallback" is how two writers start. The Control
+#   Center command stays one release as a launcher that names where each
+#   control went (scripts/control_center/app.py MOVED), then goes.
+def save_autonomy(levels: dict[str, str], path: Path | None = None) -> tuple[bool, str]:
+    """THE writer of autonomy.json (DEC-PHASE13-049). Atomic; never raises.
+
+    Only known classes and known levels are written. Returns (True, "") or
+    (False, "<path>: <reason>"). Refuses as root: the file lives in the
+    operator's home and must stay theirs (sudo would leave it root-owned and
+    unwritable for the operator's next change).
+    """
+    p = Path(path) if path is not None else AUTONOMY_FILE
+    clean = {k: v for k, v in levels.items() if k in PLAYBOOK_NAMES and v in LEVEL_RANK}
+    if os.geteuid() == 0 and not os.environ.get("ORIONX_AUTONOMY_FILE"):
+        return False, f"{p}: refusing to write as root; run orionx-heal autonomy as the operator, without sudo"
+    tmp = None
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".autonomy.", suffix=".tmp", dir=str(p.parent))
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(clean, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, p)
+        return True, ""
+    except OSError as exc:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        return False, f"{p}: {exc.strerror or exc}"
+
+
+def set_autonomy(changes: dict[str, str], path: Path | None = None) -> tuple[bool, str]:
+    """Merge `changes` into the current file and save. Unknown names are refused, not dropped."""
+    bad = [f"{k}={v}" for k, v in changes.items() if k not in PLAYBOOK_NAMES or v not in LEVEL_RANK]
+    if bad:
+        return False, (f"unknown class or level: {', '.join(bad)} (classes: {', '.join(PLAYBOOK_NAMES)}; "
+                       f"levels: {', '.join(LEVELS)})")
+    levels = load_autonomy(path)
+    levels.update(changes)
+    return save_autonomy(levels, path)
 
 
 # ---------------------------------------------------------------------------
