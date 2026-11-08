@@ -247,6 +247,10 @@ then pass "no-fabrication guard assertions"; else fail "no-fabrication guard ass
 # ---------------------------------------------------------------------------
 WORK="$(mktemp -d "$REPO_ROOT/tmp/rain-speech-test.XXXXXX")" || { echo "cannot create work dir"; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
+# Every Narrator and CLI run below records synth timing (#96). Point the ONE
+# state path at the work dir so the suite never writes the developer's
+# $XDG_RUNTIME_DIR or ~/.cache.
+export ORIONX_SPEECH_STATE="$WORK/speech-timing.json"
 
 cat > "$WORK/harness.py" <<'PYEOF'
 """Run the real orionx-rain loop with a faked model and a faked speaker.
@@ -641,8 +645,14 @@ check(spoken is True, f"the line is still spoken when piper fails -> {spoken}")
 check(why is not None and "piper exited 3" in why, f"the degradation names piper's failure -> {why!r}")
 check(why is not None and "could not load model" in why, "and carries piper's own last stderr line")
 check(sum(l.startswith("espeak-ng ") for l in lines()) == 1, f"espeak-ng ran exactly once -> {lines()}")
-check(not any(l.startswith("paplay") for l in lines()), "nothing was played from a failed synthesis")
-check(not list((fb / "scratch").glob("*.wav")), "the scratch WAV is removed after a failure")
+# espeak-ng renders to a WAV and the same player plays it (#96: one playback
+# path, and its synth time is measured). What must never be played is the
+# WAV a FAILED piper left behind.
+piper_wavs = [l.split(" -f ")[1].split()[0] for l in lines() if l.startswith("piper ") and " -f " in l]
+played = [l for l in lines() if l.startswith("paplay")]
+check(len(played) == 1 and piper_wavs and not any(w in played[0] for w in piper_wavs),
+      f"piper's failed output was not played; espeak-ng's WAV was played once -> {played}")
+check(not list((fb / "scratch").glob("*.wav")), "the scratch WAVs are removed after a failure")
 
 # 2. The Narrator tells the operator ONCE across many alerts, as a status event.
 reset("fail")
@@ -745,6 +755,267 @@ if grep -q '"\${PIPER_ARGS\[@\]}"' "$INSTALLER" && grep -q 'PIPER_ARGS=(--length
     pass "the installer verifies with the same piper flags rain_speech runs with"
 else
     fail "installer flags == runtime flags" "PIPER_ARGS drift between installer and rain_speech"
+fi
+
+section "Synth time is measured, kept and judged (#96, DEC-PHASE13-050)"
+if grep -q '@decision DEC-PHASE13-050' "$RS" && grep -A2 '@decision DEC-PHASE13-050' "$RS" | grep -q '@status proposed'; then
+    pass "DEC-PHASE13-050 is recorded as PROPOSED (the mitigation awaits deck numbers)"
+else
+    fail "DEC-PHASE13-050 proposed annotation" "missing or not 'proposed'"
+fi
+: > "$WORK/fb/voices/en_US-lessac-low.onnx"      # a second voice, WITHOUT a sidecar: not a voice
+if STUB_LOG="$WORK/fb/stub.log" STUB_MKWAV="$WORK/fb/mkwav.py" PATH="$WORK/fb/bin:$PATH" \
+   ORIONX_VOICE_DIR="$WORK/fb/voices" python3 - "$REPO_ROOT" "$WORK/fb" <<'PY'
+import json, os, sys
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+root, fb = Path(sys.argv[1]), Path(sys.argv[2])
+rl = SourceFileLoader("rain_lib", str(root / "scripts/rain/rain_lib.py")).load_module()
+sys.modules["rain_lib"] = rl
+rl.CONFIG_FILE = fb / "rain.json"
+sys.path.insert(0, str(root / "scripts/rain"))
+import rain_speech as rs                                            # noqa: E402
+rs.SPEECH_SCRATCH = fb / "scratch"
+log = fb / "stub.log"
+ok = True
+def check(cond, label):
+    global ok
+    print(("  ok   " if cond else "  BAD  ") + label)
+    ok = ok and bool(cond)
+def reset(mode, secs="3"):
+    log.write_text("")
+    os.environ["STUB_MODE"] = mode
+    os.environ["STUB_SECS"] = secs
+
+# --- the store: one file, bounded, tolerant, locked ----------------------
+state_path = fb / "stats" / "speech-timing.json"
+st = rs.SpeechStats(state_path)
+check(st.load() == rs._empty_state(), "a missing history reads as empty, never as an error")
+for i in range(25):
+    st.record_synth(rs.timing_sample("piper", "/v/en_US-lessac-medium.onnx", 60, 1.0 + i, 4.0, True, kind="alert"))
+d = st.load()
+check(len(d["synth"]) == rs.SPEECH_HISTORY_MAX == 20, f"history is bounded at SPEECH_HISTORY_MAX -> {len(d['synth'])}")
+check(d["synth"][-1]["synth_s"] == 25.0 and d["synth"][0]["synth_s"] == 6.0, "it keeps the NEWEST 20")
+check(d["synth"][-1]["voice"] == "en_US-lessac-medium", "the voice is stored by name, not path")
+for age in (21.5, 240.0, 30.0):
+    st.record_stale(age, ts=1000.0)
+d = st.load()
+check(d["stale"]["count"] == 3 and d["stale"]["max_age_s"] == 240.0, f"stale drops are counted with the worst age -> {d['stale']}")
+check([r["age_s"] for r in d["stale"]["recent"]] == [21.5, 240.0, 30.0], "each stale drop keeps the age that caused it")
+check(json.loads(state_path.read_text())["version"] == rs.STATE_VERSION, "the file is versioned JSON")
+state_path.write_text("{ torn write")
+check(st.load() == rs._empty_state(), "a torn/corrupt file reads as empty")
+check(st.record_synth(rs.timing_sample("espeak-ng", None, 9, 0.2, 1.0, True)) and len(st.load()["synth"]) == 1,
+      "and recording over a corrupt file recovers it")
+check(rs.SpeechStats(fb / "nope" / "deeper" / "x.json").record_stale(30.0), "a missing directory is created")
+ro = rs.SpeechStats(Path("/proc/does-not-exist/speech.json"))
+check(ro.record_synth(rs.timing_sample("piper", None, 1, 1.0, 1.0, True)) is False and ro.load() == rs._empty_state(),
+      "an unwritable path costs the measurement, never raises")
+check(not st.record_synth({"no": "engine"}), "a sample without an engine is refused")
+os.environ["ORIONX_SPEECH_STATE"] = str(fb / "env.json")
+check(rs.speech_state_path() == fb / "env.json", "ORIONX_SPEECH_STATE is honoured (tests, experiments)")
+del os.environ["ORIONX_SPEECH_STATE"]
+os.environ["XDG_RUNTIME_DIR"] = "/run/user/1000"
+check(rs.speech_state_path() == Path("/run/user/1000/orionx/speech-timing.json"),
+      "otherwise the per-session runtime dir (the daemon is per-session; /run/orionx is root 0755)")
+del os.environ["XDG_RUNTIME_DIR"]
+check(rs.speech_state_path().name == "speech-timing.json" and ".cache/orionx" in str(rs.speech_state_path()),
+      "and ~/.cache/orionx without a session manager")
+os.environ["ORIONX_SPEECH_STATE"] = str(fb / "unused.json")
+
+# --- the verdict: pure, against the module's own numbers -----------------
+v = rs.timing_verdict(None)
+check(v["verdict"] == "NO DATA" and v["inside_tts_timeout"] is None, f"no samples -> NO DATA -> {v}")
+v = rs.timing_verdict(1.9)
+check(v["verdict"] == "OK" and v["inside_tts_timeout"] and v["inside_max_age"] and not v["tight"], f"1.9s -> OK -> {v}")
+edge = rs.SPEECH_MAX_AGE_SECONDS - rs.SPEECH_TIMEOUT          # 14.0: model budget + synth == shelf life
+check(rs.timing_verdict(edge)["verdict"] == "OK", f"{edge}s (budget+synth == max age) is still OK")
+v = rs.timing_verdict(edge + 0.5)
+check(v["verdict"] == "TIGHT" and v["inside_tts_timeout"] and v["inside_max_age"] and v["tight"],
+      f"{edge + 0.5}s is inside both bounds but TIGHT (a slow model answer would miss the shelf life) -> {v}")
+v = rs.timing_verdict(rs.TTS_TIMEOUT + 1.0)
+check(v["verdict"] == "OVER BUDGET" and not v["inside_tts_timeout"] and v["inside_max_age"],
+      f"{rs.TTS_TIMEOUT + 1.0}s is OVER BUDGET: outside TTS_TIMEOUT, inside max age -> {v}")
+v = rs.timing_verdict(rs.SPEECH_MAX_AGE_SECONDS + 5.0)
+check(v["verdict"] == "OVER BUDGET" and not v["inside_max_age"], "25s is outside both")
+
+# --- the summary: per engine, failures counted not averaged --------------
+S = {"synth": [
+    rs.timing_sample("piper", "/v/en_US-lessac-medium.onnx", 60, 2.0, 4.0, True, kind="alert"),
+    rs.timing_sample("piper", "/v/en_US-lessac-medium.onnx", 60, 9.0, 4.0, True, kind="test"),
+    rs.timing_sample("piper", "/v/en_US-lessac-medium.onnx", 60, 15.0, None, False, "piper timed out after 15s", kind="alert"),
+    rs.timing_sample("piper", "/v/en_US-lessac-medium.onnx", 60, 3.0, 4.0, True, kind="probe"),
+    rs.timing_sample("espeak-ng", None, 60, 0.3, 2.0, True, kind="test"),
+], "stale": {"count": 2, "max_age_s": 31.0, "recent": [{"ts": 1, "age_s": 22.0}, {"ts": 2, "age_s": 31.0}]}}
+s = rs.summarize_timing(S, engine="piper")
+check(s["median_s"] == 3.0 and s["ok_count"] == 3, f"piper median is over its OK samples only (2, 9, 3 -> 3.0) -> {s['median_s']}")
+check(s["failed"] == 1 and s["timeouts"] == 1, "the timeout is counted as a failure, and as a timeout")
+check(s["last"]["synth_s"] == 3.0 and s["last"]["kind"] == "probe", "last = most recent OK sample of that engine")
+check(s["engines"]["espeak-ng"]["median_s"] == 0.3 and s["engines"]["piper"]["n"] == 3, f"per-engine breakdown -> {s['engines']}")
+check(s["kinds"] == {"alert": 2, "test": 2, "probe": 1}, f"the sample mix is visible -> {s['kinds']}")
+check(s["stale_count"] == 2 and s["stale_max_age_s"] == 31.0, "stale drops surface with the worst age")
+check(s["verdict"] == "OK", "3.0s median -> OK")
+s2 = rs.summarize_timing(S)        # no engine named: the most recent sample's
+check(s2["engine"] == "espeak-ng" and s2["median_s"] == 0.3, f"engine defaults to the most recent sample's -> {s2['engine']}")
+check(rs.summarize_timing({"synth": [], "stale": {}})["verdict"] == "NO DATA", "empty history -> NO DATA, no exception")
+
+# --- the printed formats are fixed and grep-able -------------------------
+line = rs.format_timing(rs.timing_sample("piper", "/v/en_US-lessac-medium.onnx", 62, 1.8449, 4.1, True), line="full")
+check(line == "SPEECH_TIMING engine=piper voice=en_US-lessac-medium chars=62 synth_s=1.84 audio_s=4.10 ok=true line=full", f"-> {line}")
+line = rs.format_timing(rs.timing_sample("piper", "/v/x.onnx", 62, 15.0, None, False, "piper timed out after 15s"))
+check(line == 'SPEECH_TIMING engine=piper voice=x chars=62 synth_s=15.00 audio_s=- ok=false reason="piper timed out after 15s"', f"-> {line}")
+check(rs.format_voices(["en_US-lessac-low", "en_US-lessac-medium"], "/v/en_US-lessac-medium.onnx")
+      == "PIPER_VOICES present=en_US-lessac-low,en_US-lessac-medium active=en_US-lessac-medium medium=yes low=yes", "voices line")
+check(rs.format_voices([], None) == "PIPER_VOICES present=- active=- medium=no low=no", "voices line with nothing installed")
+present = rs.piper_voices_present()
+check(present == ["en_US-lessac-medium"], f"discovery lists voices WITH a sidecar only (low.onnx alone is not a voice) -> {present}")
+
+# --- speak_measured: one sample per engine that RAN ----------------------
+reset("good", "3")
+spoken, why, samples = rs.speak_measured("Port scan from 192.168.4.77, 900 ports.", rl.load_config())
+check(spoken and why is None and len(samples) == 1, f"a good piper: spoken, one sample -> {samples}")
+sm = samples[0]
+check(sm["engine"] == "piper" and sm["voice"] == "en_US-lessac-medium" and sm["ok"] and sm["kind"] == "alert", "the sample names piper, its voice, kind alert")
+check(sm["chars"] == len(rs.speakable("Port scan from 192.168.4.77, 900 ports.")) and 2.9 <= sm["audio_s"] <= 3.1 and sm["synth_s"] > 0,
+      f"chars are the SPOKEN text's, audio is measured from the WAV, synth time is wall-clock -> {sm}")
+reset("fail")
+spoken, why, samples = rs.speak_measured("Port scan.", rl.load_config())
+check(spoken and [s["engine"] for s in samples] == ["piper", "espeak-ng"], f"piper fails -> BOTH engines are measured -> {[s['engine'] for s in samples]}")
+check(samples[0]["ok"] is False and "piper exited 3" in samples[0]["reason"] and samples[1]["ok"] is True,
+      "the failed piper sample carries the reason; the espeak-ng sample is ok")
+check(spoken is True and why is not None, "...and the operator still hears the line")
+reset("good", "3")
+spoken, why, samples = rs.speak_measured("Port scan.", rl.load_config(), backend="espeak-ng")
+check(spoken and samples and samples[0]["engine"] == "espeak-ng" and samples[0]["voice"] is None, f"espeak-ng as the engine is measured too -> {samples}")
+check(any(l.startswith("espeak-ng -w ") for l in log.read_text().splitlines()) and any(l.startswith("paplay") for l in log.read_text().splitlines()),
+      "espeak-ng renders to a WAV that the one player plays (render-then-play, like piper)")
+
+# --- the Narrator records what its speaker measured, and every stale drop --
+nstats = rs.SpeechStats(fb / "narrator.json")
+clk = {"t": 5000.0}
+n = rs.Narrator(transport=lambda p: None, emitter=lambda *a, **k: True, clock=lambda: clk["t"],
+                backend_probe=lambda: "piper", stats=nstats,
+                speaker=lambda text, cfg=None, backend=None: rs.SpeakResult(
+                    True, None, [rs.timing_sample("piper", "/v/en_US-lessac-medium.onnx", len(text), 2.5, 4.0, True)]))
+ev = {"severity": "critical", "source": "firewall", "category": "scan", "message": "port scan from 192.168.4.77"}
+n.offer(dict(ev, ts=clk["t"])); n.pump_one(block=0.0)
+d = nstats.load()
+check(n.spoken == 1 and len(d["synth"]) == 1 and d["synth"][0]["synth_s"] == 2.5, f"a narration's synth time lands in the history -> {d['synth']}")
+n._last_spoken = 0.0                 # past the rate gate; staleness is what is under test
+n.offer(dict(ev, ts=clk["t"] - 95.0))
+r = n.pump_one(block=0.0)
+d = nstats.load()
+check(r == "stale" and d["stale"]["count"] == 1 and d["stale"]["recent"][0]["age_s"] == 95.0,
+      f"a drop-as-stale is recorded WITH its age -> {r}, {d['stale']}")
+n_off = rs.Narrator(transport=lambda p: None, emitter=lambda *a, **k: True, clock=lambda: 1000.0,
+                    backend_probe=lambda: "piper", stats=None, speaker=lambda *a, **k: True)
+n_off.offer(dict(ev, ts=1000.0)); check(n_off.pump_one(block=0.0) == "spoken", "stats=None disables recording without breaking narration")
+class Boom:
+    def record_synth(self, s): raise RuntimeError("disk on fire")
+    def record_stale(self, a, t=None): raise RuntimeError("disk on fire")
+nb = rs.Narrator(transport=lambda p: None, emitter=lambda *a, **k: True, clock=lambda: 1000.0,
+                 backend_probe=lambda: "piper", stats=Boom(),
+                 speaker=lambda *a, **k: rs.SpeakResult(True, None, [rs.timing_sample("piper", None, 1, 1.0, 1.0, True)]))
+nb.offer(dict(ev, ts=1000.0))
+check(nb.pump_one(block=0.0) == "spoken" and nb.spoken == 1, "a recorder that raises costs nothing but the number")
+nb._last_spoken = 0.0
+nb.offer(dict(ev, ts=100.0)); check(nb.pump_one(block=0.0) == "stale", "...on the stale path too")
+check("timing" in repr(rs.SpeakResult(True)) and rs.SpeakResult(False).timing == [], "SpeakResult carries .timing, default empty")
+sys.exit(0 if ok else 1)
+PY
+then pass "timing store, verdict, summary, formats, speak_measured, Narrator recording"; else fail "timing assertions (#96)" "see output above"; fi
+rm -f "$WORK/fb/voices/en_US-lessac-low.onnx"
+
+# The real CLI, stub engines: --speech-test prints the measurement, --all-engines
+# times both engines on a short and a full line, --speech-status judges it.
+T96="$WORK/fb/cli-timing.json"; rm -f "$T96"
+OUT="$(STUB_LOG="$WORK/fb/stub.log" STUB_MKWAV="$WORK/fb/mkwav.py" STUB_MODE=good STUB_SECS=4 ORIONX_SPEECH_STATE="$T96" \
+       ORIONX_VOICE_DIR="$WORK/fb/voices" PATH="$WORK/fb/bin:$PATH" python3 "$RAIN" --speech-test --all-engines 2>&1)"; RC=$?
+RE_FULL='^SPEECH_TIMING engine=piper voice=en_US-lessac-medium chars=[0-9]+ synth_s=[0-9]+\.[0-9]{2} audio_s=4\.00 ok=true line=full played=true$'
+if [[ $RC -eq 0 ]] && echo "$OUT" | grep -qE "$RE_FULL"; then
+    pass "--speech-test prints the played narration's SPEECH_TIMING in the fixed format"
+else
+    fail "--speech-test SPEECH_TIMING" "rc=$RC $(echo "$OUT" | grep SPEECH_TIMING | head -2)"
+fi
+if [[ "$(echo "$OUT" | grep -cE '^SPEECH_TIMING engine=piper .* line=short played=false$')" == 1 ]] \
+   && [[ "$(echo "$OUT" | grep -cE '^SPEECH_TIMING engine=piper .* line=full played=false$')" == 1 ]] \
+   && [[ "$(echo "$OUT" | grep -cE '^SPEECH_TIMING engine=espeak-ng voice=- chars=[0-9]+ synth_s=[0-9]+\.[0-9]{2} audio_s=2\.00 ok=true line=(short|full) played=false$')" == 2 ]]; then
+    pass "--all-engines times piper AND espeak-ng, each on a short and a full line, nothing played"
+else
+    fail "--all-engines lines" "$(echo "$OUT" | grep SPEECH_TIMING)"
+fi
+if echo "$OUT" | grep -qE '^SPEECH_TIMING engine=piper .* chars=9 synth_s=.* line=short'; then
+    pass "the short line really is short (9 chars: the fixed per-utterance cost)"
+else
+    fail "short probe line" "$(echo "$OUT" | grep 'line=short')"
+fi
+if echo "$OUT" | grep -qx 'PIPER_VOICES present=en_US-lessac-medium active=en_US-lessac-medium medium=yes low=no'; then
+    pass "--speech-test lists the piper voices present (medium / low) for the step-3 decision"
+else
+    fail "PIPER_VOICES line" "$(echo "$OUT" | grep PIPER_VOICES)"
+fi
+N_REC="$(python3 -c "import json,sys;d=json.load(open(sys.argv[1]));print(len(d['synth']), sorted({s['kind'] for s in d['synth']}))" "$T96" 2>/dev/null)"
+if [[ "$N_REC" == "3 ['test']" ]]; then
+    pass "the played line and the two full-line probes are recorded as kind=test (short lines are not)"
+else
+    fail "recorded samples" "-> $N_REC"
+fi
+OUT="$(STUB_LOG="$WORK/fb/stub.log" STUB_MKWAV="$WORK/fb/mkwav.py" STUB_MODE=good STUB_SECS=3 ORIONX_SPEECH_STATE="$T96" \
+       ORIONX_VOICE_DIR="$WORK/fb/voices" PATH="$WORK/fb/bin:$PATH" python3 "$RAIN" --speech-status 2>&1)"
+if echo "$OUT" | grep -qE '^  synth history : 4 samples \(1 probe, 3 test\)' \
+   && echo "$OUT" | grep -qE '^  piper         : last synth [0-9]+\.[0-9]{2}s, median [0-9]+\.[0-9]{2}s over 3 ok samples  voice en_US-lessac-medium$' \
+   && echo "$OUT" | grep -qE '^  espeak-ng     : last synth [0-9]+\.[0-9]{2}s, median [0-9]+\.[0-9]{2}s over 1 ok sample$'; then
+    pass "--speech-status reports last/median synth time, sample count and engine (its own probe included)"
+else
+    fail "--speech-status timing lines" "$(echo "$OUT" | grep -E 'synth history|piper  |espeak-ng  ')"
+fi
+if echo "$OUT" | grep -qE '^  verdict       : OK -- piper median [0-9]+\.[0-9]{2}s is inside TTS_TIMEOUT 15\.0s and inside SPEECH_MAX_AGE_SECONDS 20\.0s \(model budget 6\.0s \+ synth = [0-9]+\.[0-9]{2}s of the 20\.0s shelf life\)$'; then
+    pass "--speech-status states the verdict against TTS_TIMEOUT and SPEECH_MAX_AGE_SECONDS, with the numbers"
+else
+    fail "--speech-status verdict" "$(echo "$OUT" | grep verdict)"
+fi
+if echo "$OUT" | grep -qE '^  stale drops   : 0  \(narrations older than 20s are dropped, never spoken\)$'; then
+    pass "--speech-status reports the stale-drop count"
+else
+    fail "--speech-status stale drops" "$(echo "$OUT" | grep 'stale')"
+fi
+# Two real stale drops through the real Narrator, then the status reads them back.
+ORIONX_SPEECH_STATE="$T96" python3 - "$REPO_ROOT" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(sys.argv[1]) / "scripts/rain"))
+import rain_speech as rs                                        # noqa: E402
+n = rs.Narrator(transport=lambda p: None, speaker=lambda *a, **k: True, emitter=lambda *a, **k: True,
+                clock=lambda: 2000.0, backend_probe=lambda: "piper")
+for ts in (1900.0, 1950.0):
+    n.offer({"ts": ts, "severity": "critical", "source": "firewall", "category": "scan", "message": "x"})
+    n.pump_one(block=0.0)
+PY
+OUT="$(STUB_LOG="$WORK/fb/stub.log" STUB_MKWAV="$WORK/fb/mkwav.py" STUB_MODE=good STUB_SECS=3 ORIONX_SPEECH_STATE="$T96" \
+       ORIONX_VOICE_DIR="$WORK/fb/voices" PATH="$WORK/fb/bin:$PATH" python3 "$RAIN" --speech-status 2>&1)"
+if echo "$OUT" | grep -qE '^  stale drops   : 2 \(oldest 100\.0s at dequeue; last: 100\.0s, 50\.0s\)'; then
+    pass "stale drops made by the daemon's Narrator show in --speech-status with their ages"
+else
+    fail "--speech-status stale drops with ages" "$(echo "$OUT" | grep 'stale')"
+fi
+# A failing piper: the test prints the failure as a measurement, and espeak-ng's.
+OUT="$(STUB_LOG="$WORK/fb/stub.log" STUB_MKWAV="$WORK/fb/mkwav.py" STUB_MODE=fail ORIONX_SPEECH_STATE="$T96" \
+       ORIONX_VOICE_DIR="$WORK/fb/voices" PATH="$WORK/fb/bin:$PATH" python3 "$RAIN" --speech-test 2>&1)"
+if echo "$OUT" | grep -qE '^SPEECH_TIMING engine=piper voice=en_US-lessac-medium chars=[0-9]+ synth_s=[0-9.]+ audio_s=- ok=false line=full played=true reason="piper exited 3' \
+   && echo "$OUT" | grep -qE '^SPEECH_TIMING engine=espeak-ng .* ok=true line=full played=true$'; then
+    pass "--speech-test with a failing piper prints BOTH measurements (the failure with its reason)"
+else
+    fail "--speech-test failing piper" "$(echo "$OUT" | grep SPEECH_TIMING)"
+fi
+if python3 "$RAIN" --all-engines >/dev/null 2>&1; then
+    fail "--all-engines without --speech-test" "accepted"
+else
+    pass "--all-engines without --speech-test is refused"
+fi
+if grep -q -- '--speech-test --all-engines' "$REPO_ROOT/docs/User_Guide.md" && grep -q 'SPEECH_TIMING' "$REPO_ROOT/docs/User_Guide.md"; then
+    pass "the User Guide documents the timing test and its output"
+else
+    fail "User Guide documents --speech-test --all-engines / SPEECH_TIMING"
 fi
 
 section "Piper decision + build wiring"

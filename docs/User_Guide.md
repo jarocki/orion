@@ -710,6 +710,24 @@ orionx-rain --oneshot        # play the most urgent pending event once, then exi
 
 R.A.I.N. can speak a one-sentence description *after* the alert tone — for example "critical: port scan from 192.168.4.77, 900 ports in 11 seconds". It is off by default because speech is intelligible to everyone within earshot and a tone is not. Turn it on in the Cockpit → **Awareness** tab → **Narrate alerts aloud**, or with `orionx-rain --speech on`. Narration is bounded (6 s timeout, a queue of two, 20 s minimum gap, 24 words) and never delays the tone; when Nebula is reachable it writes the sentence, otherwise a template built from the event's own fields is spoken. `espeak-ng` ships on the image. For a natural voice run `sudo /opt/orionx/optional/install-piper-voice.sh` (§15) — it is discovered automatically, nothing else changes. `orionx-rain --speech-status` reports the engine, synthesises one line and prints how long it took, Nebula reachability and the bounds; `orionx-rain --speech-test` narrates one synthetic alert end to end. Acronyms and symbols are spoken the way an operator says them (IDS as "I D S", `→` as "to", `10.0.0.5:22` as "… port 22"). If piper fails or hangs, the alert is spoken by `espeak-ng` instead and R.A.I.N. says so once on the event bus. On a live USB, piper (installed by pip into the RAM overlay) does not survive a reboot unless your persistence volume covers `/`; re-run the installer, it only fetches what is missing.
 
+**Is the voice fast enough for this deck?** A narration that takes too long to synthesise is dropped as stale rather than spoken late (max age 20 s), so on a slow CPU a slow voice shows up as "sometimes silent". R.A.I.N. measures every synthesis (the daemon's own narrations, `--speech-test` and the status probe) and keeps the last 20, per session, in `$XDG_RUNTIME_DIR/orionx/speech-timing.json`. To time the engines on your hardware, run the test three times and then read the verdict:
+
+```bash
+orionx-rain --speech-test --all-engines   # run three times; prints one line per measurement:
+# SPEECH_TIMING engine=piper voice=en_US-lessac-medium chars=65 synth_s=1.84 audio_s=4.10 ok=true line=full played=true
+# SPEECH_TIMING engine=piper ... line=short played=false        (a one-word line: the fixed cost per utterance)
+# SPEECH_TIMING engine=espeak-ng voice=- ... line=full played=false
+# PIPER_VOICES present=en_US-lessac-medium active=en_US-lessac-medium medium=yes low=no
+orionx-rain --speech-status                # ...then the summary:
+#   synth history : 7 samples (1 probe, 6 test)  [/run/user/1000/orionx/speech-timing.json]
+#   piper         : last synth 1.84s, median 1.90s over 4 ok samples  voice en_US-lessac-medium
+#   espeak-ng     : last synth 0.21s, median 0.21s over 3 ok samples
+#   verdict       : OK -- piper median 1.90s is inside TTS_TIMEOUT 15.0s and inside SPEECH_MAX_AGE_SECONDS 20.0s (model budget 6.0s + synth = 7.90s of the 20.0s shelf life)
+#   stale drops   : 0  (narrations older than 20s are dropped, never spoken)
+```
+
+`--all-engines` only synthesises (nothing is played) and times piper and espeak-ng each on a one-word line and on the full narration, so the fixed per-utterance cost and the per-character cost are both visible. The verdict is `OK`, `TIGHT` (inside both budgets, but a slow Nebula answer plus this render would miss the shelf life) or `OVER BUDGET`; a non-zero stale-drop count with its ages is the direct evidence that narrations are being lost. If the verdict is not `OK` on your deck, the `SPEECH_TIMING` lines are what to paste into a report (issue #96 collects them for the reference hardware).
+
 ### The Event Bus
 
 The live bus is a broker-owned JSON Lines file at `/run/orionx/events.jsonl`. Each line has the fields `ts`, `iso`, `severity`, `source`, `category`, `message`. Publishers send to the local `/run/orionx/events.sock` socket; only the root-owned `orionx-event-broker` writes the file. If the broker is unavailable, `orionx-event` exits nonzero rather than writing around it. Check `systemctl status orionx-event-broker` when publication fails.
@@ -1936,7 +1954,7 @@ For problems with Matrix communication:
      sudo tail /var/log/orionx/nebula-mcp.log
      ```
 
-**No spoken narration (the tone plays, nothing is said).** Run `orionx-rain --speech-status`; it names each gap and its remedy. Narration is off by default (`orionx-rain --speech on`); with no TTS engine the deck is tone-only (`sudo apt-get install -y espeak-ng`); if Nebula is not answering, a built-in phrasing is spoken anyway.
+**No spoken narration (the tone plays, nothing is said).** Run `orionx-rain --speech-status`; it names each gap and its remedy. Narration is off by default (`orionx-rain --speech on`); with no TTS engine the deck is tone-only (`sudo apt-get install -y espeak-ng`); if Nebula is not answering, a built-in phrasing is spoken anyway. If narration is *sometimes* silent, look at the `stale drops` and `verdict` lines of the same report: a voice that is too slow for the CPU is dropped rather than spoken late. Time it with `orionx-rain --speech-test --all-engines` (see *Spoken narration*).
 
 ### Tool Execution Problems
 
@@ -2025,7 +2043,8 @@ orionx-event -s SEV --source NAME -c CAT "msg"   # Publish an event
 orionx-rain --test warning     # Play a sample alert cue
 orionx-rain --oneshot          # Play the most urgent pending event once
 orionx-rain --speech on|off    # Spoken narration after the cue (off by default)
-orionx-rain --speech-status    # Narration engine, Nebula reachability, bounds
+orionx-rain --speech-status    # Narration engine, Nebula reachability, bounds, synth timing verdict
+orionx-rain --speech-test [--all-engines]   # Narrate one synthetic alert; time piper and espeak-ng
 orionx-osint [--page NAME]                       # Open the Workbench (one server per operator; reuses it)
 orionx-osint --status [--json] | --stop | --new  # Workbench server state / stop it / force a new one
 orionx-tune squelch --sid N [--src IP] [--ttl S]   # Silence an IDS signature for a while
