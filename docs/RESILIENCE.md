@@ -3,6 +3,7 @@
 **@decision DEC-PHASE12-037**
 **@title Plan → Do → Check → Repair → Loop, as a design requirement**
 **@status accepted**
+**@rationale** Operator directive of 2026-10-01, below; the rest of this document is the rationale and the rules it produced. Every rule names the defect that taught it.
 
 Operator directive, 2026-10-01:
 

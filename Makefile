@@ -8,10 +8,10 @@
 #   a fallback when neither linter is installed.
 ##
 
-.PHONY: lint lint-shell lint-python test-unit test-unit-bash test-unit-python test-integration test-forensic test-security test-mesh test-matrix test-e2e test-qemu-boot docker-build docker-build-matrix iso-build lynis clean help
+.PHONY: lint lint-shell lint-python decision-log test-unit test-unit-bash test-unit-python test-integration test-forensic test-security test-mesh test-matrix test-e2e test-qemu-boot docker-build docker-build-matrix iso-build suricata-rules-refresh lynis clean help
 
 SHELL_SCRIPTS := $(shell find scripts -name '*.sh' -type f)
-PYTHON_SCRIPTS := $(wildcard scripts/*.py)
+PYTHON_SCRIPTS := $(wildcard scripts/*.py) $(wildcard scripts/decisions/*.py)
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -35,8 +35,17 @@ lint-python: ## Lint Python scripts with ruff (or flake8 fallback)
 	@# PYTHONDONTWRITEBYTECODE and litters scripts/**/__pycache__ (release-tests F-23).
 	@for f in $(PYTHON_SCRIPTS); do python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$$f" && echo "  $$f: OK" || exit 1; done
 
+# DEC-PHASE13-045 (#97): inline @decision blocks are the authority for the
+# Decision Log from Phase 12 onward; MASTER_PLAN.md's table for those phases
+# is generated. Run this after adding or editing a block, then commit
+# MASTER_PLAN.md. tests/unit/test_decision_log.sh (make test-unit) fails
+# when the committed table and the blocks disagree.
+decision-log: ## Regenerate MASTER_PLAN.md's Phase 12+ Decision Log from the inline @decision blocks
+	@python3 scripts/decisions/decision_log.py --check && python3 scripts/decisions/decision_log.py --write
+
 # ---------------------------------------------------------------------------
 # @decision DEC-PHASE12-110
+# @canonical
 # @title Unit gates run every suite and fail on any failure (no soft-fail)
 # @status accepted
 # @rationale test-unit-python used to end in `2>/dev/null || echo "No Python
@@ -125,6 +134,9 @@ docker-build: ## Build Docker development environment
 
 iso-build: test-unit ## Build ISO image; auto-wraps in Docker on macOS
 	bash scripts/build-iso.sh
+
+suricata-rules-refresh: ## Re-vendor the curated ET-Open subset from upstream (network; local suricata or Docker), then review + commit (DEC-PHASE13-043)
+	bash scripts/suricata-rules-refresh.sh
 
 lynis: ## Run Lynis security audit
 	bash scripts/run-lynis.sh --threshold 75

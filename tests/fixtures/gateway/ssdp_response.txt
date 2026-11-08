@@ -1,0 +1,8 @@
+HTTP/1.1 200 OK
+CACHE-CONTROL: max-age=120
+ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1
+USN: uuid:5d1f0c4e-0000-4000-8000-fixture00001::urn:schemas-upnp-org:device:InternetGatewayDevice:1
+EXT:
+SERVER: Linux/4.4 UPnP/1.1 MiniUPnPd/2.2.1
+LOCATION: http://192.168.4.1:5000/rootDesc.xml
+

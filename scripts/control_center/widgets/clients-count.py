@@ -11,6 +11,7 @@ Output "◉ 0" when nothing has spoken to us, never "?": a real zero is
 information, a placeholder is not.
 
 @decision DEC-PHASE12-010
+@canonical
 @title Panel scan/client widgets read real data (event bus / neighbour table)
 @status accepted
 @rationale See scans-count.py. `ip neigh` is the cheapest truthful "who is on

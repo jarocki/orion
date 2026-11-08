@@ -2,6 +2,7 @@
 """pip-lock.py — turn a pinned closure (*.in) into a --require-hashes file (*.txt).
 
 @decision DEC-PHASE12-116
+@canonical
 @title Build-time pip installs come from committed, hash-locked closures
 @status accepted
 @rationale The 0500 hook installed volatility3, stix2/pyfiglet, flare-capa and

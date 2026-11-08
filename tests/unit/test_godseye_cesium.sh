@@ -5,6 +5,19 @@
 # the vendored bundle, so the checks read those bytes; the MANIFEST check
 # proves the edit is the pinned state, not a drift.
 # ---------------------------------------------------------------------------
+# @decision DEC-PHASE12-124
+# @title No shared Cesium ion token ships; CesiumJS's licence and
+#   third-party notices do
+# @status accepted
+# @date 2026-10-07
+# @rationale Security review F23: the vendored Cesium.js carried a built-in
+#   default ion access token, a shared credential that would leave the deck
+#   with every globe load; it is blanked in the bundle
+#   (godseye/PROVENANCE.txt, edit 3) and LICENSE.cesium is installed beside
+#   the app by the 0715 hook. The property is the bytes of the vendored
+#   bundle, so this suite reads those bytes, and the MANIFEST check proves the
+#   edit is the pinned state rather than a drift.
+# ----------------------------------------------------------------------------
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"

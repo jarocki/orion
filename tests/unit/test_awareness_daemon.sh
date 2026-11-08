@@ -83,6 +83,17 @@ ck("NOT be detected" in msg or "not watching" in msg, "warning states the conseq
 ck("orionx-freshen-suricata" in msg, "warning names the remedy")
 ck("scanwatch" in msg, "warning says what still works, so it is not read as total blindness")
 
+# W11-6b (DEC-PHASE13-043): the shipped layout is ONE merged file,
+# /var/lib/suricata/rules/suricata.rules. It must count as coverage, or every
+# fresh image would announce a gap it does not have; an emptied one must not.
+ck(m.is_threat_rule_file("suricata.rules") is True, "the shipped suricata.rules is recognised as threat signatures")
+ck(m.assess_rules([("/var/lib/suricata/rules/suricata.rules", 2707122)])["usable"] is True,
+   "the shipped layout (one merged suricata.rules) IS coverage")
+ck(m.assess_rules([("/var/lib/suricata/rules/suricata.rules", 0)])["usable"] is False,
+   "an emptied suricata.rules is NOT coverage")
+ck("suricata.rules" in msg and "DEC-PHASE13-043" in msg,
+   "warning says the image ships rules, so the operator reads the gap as damage, not design")
+
 # empty threat file must not count as coverage
 ck(m.assess_rules([("/var/lib/suricata/rules/emerging-all.rules", 0)])["usable"] is False,
    "a zero-byte threat rule file is not coverage")
@@ -135,6 +146,30 @@ if hasattr(d, "should_emit"):
     ck(size <= 50, f"alert deduper bounded under a flood ({size} keys)")
 else:
     ck(True, "alert deduper present (API name differs; flood test skipped)")
+
+# --- tool attribution at the producer (#128, DEC-PHASE13-040) --------------
+from types import SimpleNamespace
+_self = SimpleNamespace(deck_addrs=set())
+suri = m.PostureDaemon._alert_detail(_self, {
+    "src_ip": "10.0.0.9", "dest_ip": "10.0.0.1", "proto": "tcp", "signature_id": 2009582,
+    "signature": "ET SCAN Nmap Scripting Engine User-Agent Detected", "classtype": "attempted-recon",
+    "src_port": 40123, "dest_port": 80}, "suricata", ("T1046", "Network Service Discovery"))
+ck((suri.get("tool"), suri.get("tool_conf")) == ("nmap", "high"),
+   f"Suricata detail names the tool from the signature text -> {suri.get('tool')}/{suri.get('tool_conf')}")
+plain = m.PostureDaemon._alert_detail(_self, {"src_ip": "10.0.0.9", "signature": "ET SCAN Potential SSH Scan",
+                                              "signature_id": 1}, "suricata", ("", ""))
+ck("tool" not in plain and "tool_conf" not in plain, "a signature naming no tool sets no tool key (unknown, not a guess)")
+zk = m.parse_zeek_notice({"note": "Scan::Port_Scan", "src": "10.0.0.9", "dst": "10.0.0.1", "p": 22,
+                          "msg": "10.0.0.9 scanned at least 15 unique ports of host 10.0.0.1 in 0m3s"})
+zd = m.PostureDaemon._alert_detail(_self, zk, "zeek", ("T1046", "Network Service Discovery"))
+ck(zd.get("dest_port") == 22, f"Zeek detail carries dest_port (the #127 omission) -> {zd.get('dest_port')}")
+ck("tool" not in zd, "Zeek Port_Scan names no tool -> no tool key")
+zd2 = m.PostureDaemon._alert_detail(_self, m.parse_zeek_notice(
+    {"note": "HTTP::Suspicious_UA", "msg": "User-Agent Nmap Scripting Engine", "src": "10.0.0.9"}), "zeek", ("", ""))
+ck((zd2.get("tool"), zd2.get("tool_conf")) == ("nmap", "medium"),
+   "a Zeek message naming a tool is attributed at medium (it may echo attacker bytes)")
+ck(m.tool_fingerprint.SIGNATURES_ORIGIN == "intel-base.json",
+   "postured's tool patterns are logquery's intel-base.json, not a second list")
 sys.exit(0 if ok else 1)
 PY
 then pass "pure-logic assertions"; else fail "pure-logic assertions" "see output above"; fi

@@ -50,6 +50,35 @@
 #   Reference: /usr/lib/live/config/0080-user-setup bullseye package v5.20210204.
 #   DEC-PHASE11-012: identity value 'orionx-operator' is derived from
 #     live-config.username=orionx-operator in iso/auto/config --bootappend-live.
+#
+# @decision DEC-PHASE13-051
+# @title The shipped `update` command refreshes apt lists and only SIMULATES the upgrade; it never upgrades the live overlay
+# @status accepted
+# @category PACKAGES
+# @rationale Owner report (#121, HP Pavilion, v3.1.0, 2026-10-26): `apt install
+#   brightnessctl` on the booted image "seemed to mess up other packages".
+#   brightnessctl itself depends on libc6 alone and cannot cascade, but the
+#   .bashrc this hook seeded carried
+#     alias update='sudo apt-get update && sudo apt-get upgrade'
+#   so the one word every Debian user types to "refresh" also upgraded every
+#   package the mirror had moved since the build — into the RAM-backed live
+#   overlay (gone at reboot unless persistence covers /), under the running
+#   desktop, with no chance to read the plan. That is the strongest candidate
+#   in the tree for "other packages changed"; the evidence
+#   (/var/log/apt/history.log, `apt-get -s install brightnessctl` on a fresh
+#   boot) has to come from the deck and is gathered by
+#   /opt/orionx/optional/apt-evidence.sh, whose header ranks the suspects.
+#   Decision: `update` becomes a function that runs `sudo apt-get update`,
+#   then `apt-get -s upgrade` and says why it stopped (live overlay; upgrade
+#   on purpose with `sudo apt-get upgrade`; add tools through the optional
+#   installers / orionx_apt_install, DEC-PHASE11-011; apt-evidence.sh when apt
+#   misbehaves). Proportional: no apt pins, no wrapper around apt itself, no
+#   removal of the operator's ability to upgrade; only the silent part goes.
+#   The function lives in this heredoc because this hook is the single
+#   authority for /etc/skel/.bashrc (DEC-PHASE11-014); tests/unit/
+#   test_apt_evidence.sh executes it against stubs and asserts it never calls
+#   a real upgrade. The User Guide (§13 "Adding Custom Tools") is reconciled
+#   with DEC-PHASE11-011 in the same change.
 
 set -e
 
@@ -140,8 +169,24 @@ PS1='\[\033[38;5;214m\][Orion-X]\[\033[00m\] \[\033[01;34m\]\w\[\033[00m\]\\$ '
 alias ll='ls -la'
 alias la='ls -A'
 alias l='ls -CF'
-alias update='sudo apt-get update && sudo apt-get upgrade'
 alias cls='clear'
+
+# update — refresh the package lists, then SHOW what an upgrade would do.
+# It never upgrades: DEC-PHASE13-051 (this hook's header). Upgrade on purpose
+# with: sudo apt-get upgrade
+update() {
+    sudo apt-get update || return \$?
+    echo
+    echo "[update] Lists refreshed. This is a live system: / is a RAM-backed overlay, lost at"
+    echo "[update] reboot unless a persistence volume covers it, and upgrading replaces"
+    echo "[update] libraries under the running desktop. Simulation only — nothing changed:"
+    echo
+    apt-get -s upgrade
+    echo
+    echo "[update] Upgrade deliberately:   sudo apt-get upgrade"
+    echo "[update] Add a tool:             sudo /opt/orionx/optional/install-<tool>.sh  (orionx_apt_install)"
+    echo "[update] apt misbehaved?         sudo /opt/orionx/optional/apt-evidence.sh"
+}
 
 # Source bash_completion if present (XFCE Terminal sets PS1; completion is nice-to-have)
 [ -f /etc/bash_completion ] && . /etc/bash_completion
@@ -210,6 +255,7 @@ EOF
 # ---
 # xfce4-power-manager.xml — v3.1.1 (#119, #120).
 # @decision DEC-PHASE13-023
+# @category DESKTOP
 # @title xfce4-power-manager ships, owns brightness and battery, never blanks or suspends the deck
 # @status accepted
 # @rationale The xfce4 metapackage only Suggests xfce4-power-manager, so no
@@ -226,6 +272,19 @@ EOF
 #   blank-on-* keys; blanking is xfce4-screensaver's, disabled above). Single
 #   writer, same /etc/skel authority (DEC-PHASE11-014); nothing else in the
 #   image writes this channel.
+#
+#   Decision Log entry as hand-written on 2026-10-27 (merged into this block
+#   by #97, which made the block the authority): `xfce4-power-manager` (+
+#   `upower`, `-plugins`) ships; 0100-create-user seeds its xfconf channel so
+#   it handles the brightness keys and the backlight but never blanks,
+#   DPMS-offs, suspends on lid close or locks on resume. The panel gains the
+#   pulseaudio (volume/mute) and power-manager (battery + brightness) plugins,
+#   ids 15-16, before the clock. #119/#120 (HP Pavilion, 2026-10-26): the
+#   `xfce4` metapackage only Suggests the power manager, so no shipped ISO
+#   handled brightness or showed a battery. Installing it alone would undo
+#   DEC-PHASE9-002/#76 (a monitoring deck stays visible) through its own DPMS
+#   defaults, so the seed is part of the same change. Panel plugins beat
+#   systray icons because the systray only shows what happens to register.
 # ---
 cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-power-manager.xml << EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -486,6 +545,20 @@ cat > /etc/skel/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-panel.xml << 'EOF
 EOF
 
 # ---
+# @decision DEC-PHASE12-005
+# @title Panel widgets are genmon plugins with a per-plugin Command= file
+#   and <txt> markup
+# @status accepted
+# @date 2026-09-13
+# @rationale xfce4-genmon-plugin does not read its command from the panel
+#   XML; without a per-plugin ~/.config/xfce4/panel/genmon-<id>.rc the widget
+#   is unconfigured and shows its "(genmon)" placeholder, and without <txt>
+#   markup the output is not rendered. This hook writes one config file per
+#   plugin into the operator's skeleton, and the widgets (clients-count,
+#   scans-count, net-status) print <txt>/<tool> markup with glyphs (U+25C9,
+#   U+25CE) that render in the panel font. test_desktop_wiring.sh checks both
+#   halves.
+# ----------------------------------------------------------------------------
 # genmon per-plugin config files (DEC-PHASE12-005).
 # xfce4-genmon-plugin does NOT read its command from the panel XML above — it
 # reads Command= from ~/.config/xfce4/panel/genmon-<plugin-id>.rc. Without these

@@ -99,6 +99,20 @@ UNIT_FILES=(
     # orionx-mesh-discover.service was never triggered either. Both halves of
     # discovery were dead.
     "orionx-mesh-beacon.service"
+    # @decision DEC-PHASE12-109
+    # @title The CI runtime probes (orionx-perf-measure,
+    #   orionx-runtime-verify) are installed and enabled only by the 0615 hook
+    #   and run only in a VM
+    # @status accepted
+    # @date 2026-10-07
+    # @rationale System QA P2-2: the probes arrived through a second install
+    #   path (committed copies in includes.chroot/lib/systemd/system plus
+    #   committed wants/ symlinks) outside this hook's authority, and ran on
+    #   every production boot. One install authority now; each unit carries
+    #   ConditionVirtualization=vm, so on a deck they are skipped.
+    #   test_perf_measure_unit.sh and test_runtime_verify_unit.sh assert both
+    #   halves.
+    # ------------------------------------------------------------------------
     # DEC-PHASE12-109: the CI runtime probes. They used to arrive through a
     # SECOND install path (committed copies in includes.chroot/lib/systemd/system
     # plus committed wants/ symlinks), outside this authority, and ran on every

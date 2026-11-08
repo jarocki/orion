@@ -35,7 +35,20 @@
 #   palette, showing this script's status report.
 #
 # ---------------------------------------------------------------------------
+# @decision DEC-PHASE12-035
+# @title toggle-theme.sh delegates the wallpaper to set-wallpaper.sh and
+#   never writes backdrop properties itself
+# @status accepted
+# @date 2026-10-03
+# @rationale The script wrote the backdrop to a hardcoded monitor0 xfconf
+#   path that XFCE 4.20 never uses, duplicating and contradicting
+#   set-wallpaper.sh: two authorities for one property, one of them wrong.
+#   set-wallpaper.sh is the single authority for backdrop properties;
+#   test_desktop_wiring.sh fails if this script writes them again. The rest of
+#   the script's honesty problems were fixed by DEC-PHASE12-042.
+# ----------------------------------------------------------------------------
 # @decision DEC-PHASE12-042
+# @canonical
 # @title toggle-theme.sh plans, applies, re-reads, and reports honestly
 # @status accepted
 # @rationale This script is named three separate times in docs/RESILIENCE.md.

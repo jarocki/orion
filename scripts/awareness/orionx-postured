@@ -2,6 +2,7 @@
 """orionx-postured — make the threat-posture tier mean something.
 
 @decision DEC-PHASE12-024
+@canonical
 @title Threat posture is enforced by a daemon, and a blind IDS says so out loud
 @status accepted
 @rationale W10-5 shipped the tier selector (DEC-PHASE10-005) and W11-6 Layer A
@@ -19,6 +20,11 @@
        are Debian's stock decoder/stream protocol-anomaly rules, not threat
        signatures. ET-Open arrives only via `orionx-freshen-suricata`, which
        needs a network the deck may not have.
+       (Since W11-6b, DEC-PHASE13-043, the image ships a curated ET-Open
+       subset plus the stock *-events rules, vendored in the source tree, as
+       /var/lib/suricata/rules/suricata.rules, so an empty directory now
+       means the file was removed or emptied. The warning path below is kept
+       for exactly that case; it is no longer the shipped state.)
 
   This daemon closes all three, and the third one is the reason it exists.
   A detector that is installed, enabled, running, and carrying no signatures
@@ -132,6 +138,23 @@ import suricata_capture as capture  # noqa: E402
 import tuning_lib  # noqa: E402  (DEC-PHASE12-050: operator squelch/tune authority)
 import deck_vitals  # noqa: E402  (DEC-PHASE12-051: the deck's own addresses -> origin=self)
 import rain_lib  # noqa: E402  (shared bus attestation authority)
+import tool_fingerprint  # noqa: E402  (DEC-PHASE13-040: one tool-attribution authority)
+# Zeek log discovery and record decoding live in zeek_logs.py (one authority,
+# shared with network_picture.py, #93). The names stay bound here because the
+# daemon, its tests and the ingest thread refer to them as module attributes.
+from zeek_logs import (  # noqa: E402,F401
+    ZEEK_ARCHIVE_DIR,
+    ZEEK_CONN_LOG,
+    ZEEK_INSTANCE_ROOT,
+    ZEEK_LOG_DIRS,
+    ZEEK_NOTICE_LOG,
+    ZEEK_WEIRD_LOG,
+    assess_zeek_logs,
+    expand_zeek_log_dirs,
+    zeek_fields_from_file,
+    zeek_fields_from_header,
+    zeek_record,
+)
 
 # --- Paths (single authorities, all overridable for tests) ------------------
 
@@ -150,9 +173,10 @@ SURICATA_GATE = Path("/var/lib/suricata/orionx-enabled")
 SURICATA_UNIT = "suricata.service"
 EVE_JSON = Path("/var/log/suricata/eve.json")
 
-# Where ET-Open lands (orionx-freshen-suricata) and where Debian's stock
-# protocol-anomaly rules live. Both are searched; only the first can hold
-# threat signatures.
+# Where the shipped ET-Open subset lives (suricata.rules, vendored in the tree
+# and verified by hook 0530, DEC-PHASE13-043; orionx-freshen-suricata replaces
+# it with the full feed) and where Debian's stock protocol-anomaly rules live.
+# Both are searched; only the first can hold threat signatures.
 RULES_DIRS = (Path("/var/lib/suricata/rules"), Path("/etc/suricata/rules"))
 
 BUS = Path("/run/orionx/events.jsonl")
@@ -165,6 +189,21 @@ CAPTURE_STATE_DIR = Path("/run/orionx/capture")
 # several places depending on how it was started. All three are runtime
 # questions, re-asked on every reassert cycle.
 #
+# @decision DEC-PHASE12-003
+# @title Trixie's PEP 668 is honoured (system-interpreter package setup uses
+#   --break-system-packages) and third-party tools such as Zeek come from the
+#   OpenSUSE Build Service repository under /opt/zeek
+# @status accepted
+# @date 2026-09-28
+# @rationale v2.2.0-beta flipped the base to Debian 13 (DEC-PHASE12-001).
+#   Python 3.13 marks the system interpreter externally managed, so the
+#   build's package setup passes --break-system-packages instead of creating
+#   a venv per tool. Zeek has no trixie package; the security:zeek OBS
+#   repository (Debian_13) is added by the 0500 hook and installs under
+#   /opt/zeek, which is why this daemon probes /opt/zeek/bin/zeek first. The
+#   repo install is soft-fail: a third-party repository outage must not break
+#   the image build.
+# ----------------------------------------------------------------------------
 # /opt/zeek is where the OBS zeek-core package lands (DEC-PHASE12-003). The
 # others cover a hand-built install and a distro package, in case the install
 # path changes under us.
@@ -173,30 +212,29 @@ ZEEK_BIN_CANDIDATES = (
     Path("/usr/local/zeek/bin/zeek"),
     Path("/usr/bin/zeek"),
 )
-# All readable sources are ingested; these are not mutually exclusive sensors.
-# /opt/zeek/logs/current is zeekctl's live directory; /var/log/zeek/current is
-# the convention an operator running `zeek -i` by hand is told to use by
-# install-zeek.sh; /var/lib/orionx/zeek is where Orion-X's own offline runs go.
-ZEEK_LOG_DIRS = (
-    Path("/opt/zeek/logs/current"),
-    Path("/var/log/zeek/current"),
-    Path("/var/log/zeek"),
-    Path("/var/lib/orionx/zeek"),
-)
-ZEEK_NOTICE_LOG = "notice.log"
-ZEEK_WEIRD_LOG = "weird.log"
-ZEEK_CONN_LOG = "conn.log"
+# The candidate log directories (ZEEK_LOG_DIRS) and log names are defined in
+# zeek_logs.py and imported above: all readable sources are ingested; they are
+# not mutually exclusive sensors.
 
+# @decision DEC-PHASE13-004
+# @title Ship orionx-zeek@.service in 3.0.1
+# @status accepted
+# @date 2026-10-18
+# @category DETECTION
+# @rationale Templated on the interface like orionx-capture@; the Tier-1
+#   plan starts it alongside Suricata. Owner's call against the reviewers'
+#   'defer to v3.1': Tier 1 promises IDS coverage and Zeek ingest-only leaves
+#   half of it silent. Implemented in v3.1.3 as DEC-PHASE13-033 (#150).
+# ----------------------------------------------------------------------------
 # --- Zeek as a managed sensor (DEC-PHASE13-033, implements DEC-PHASE13-004) --
 # orionx-zeek@<iface>.service runs Zeek on one interface with
 # LogsDirectory=zeek/<iface>, so each instance writes /var/log/zeek/<iface>/.
 # The tier plan starts one instance per measured live interface at Tier 1/2
 # (the same set Suricata captures on, DEC-PHASE12-038) and stops them at
-# Tier 0. Log discovery expands ZEEK_INSTANCE_ROOT's subdirectories so the
-# ingest attaches to every instance directory without naming interfaces here.
+# Tier 0. Log discovery (zeek_logs.expand_zeek_log_dirs) expands
+# ZEEK_INSTANCE_ROOT's subdirectories so the ingest attaches to every instance
+# directory without naming interfaces here.
 ZEEK_UNIT_TEMPLATE = "orionx-zeek@{iface}.service"
-ZEEK_INSTANCE_ROOT = Path("/var/log/zeek")
-ZEEK_ARCHIVE_DIR = "archive"
 
 
 def zeek_unit(iface: str) -> str:
@@ -207,30 +245,6 @@ def zeek_unit(iface: str) -> str:
 def zeek_units(ifaces) -> tuple[str, ...]:
     return tuple(zeek_unit(i) for i in sorted(set(ifaces or ())))
 
-
-def expand_zeek_log_dirs(dirs=None, instance_root: Path = ZEEK_INSTANCE_ROOT):
-    """ZEEK_LOG_DIRS plus every instance directory under the instance root.
-
-    Instance directories (/var/log/zeek/<iface>/) are inserted right before
-    the root entry itself, sorted, with legacy zeekctl `current` and hand-run
-    directories retained as additional sources. The bare root (where nothing
-    writes any more) stays last. `archive` is a rotation target, never a
-    live log directory, and is skipped. Pure apart from one listdir.
-    """
-    dirs = tuple(Path(d) for d in (ZEEK_LOG_DIRS if dirs is None else dirs))
-    root = Path(instance_root)
-    out: list[Path] = []
-    for d in dirs:
-        if d == root:
-            try:
-                subs = sorted(p for p in root.iterdir()
-                              if p.is_dir() and p.name != ZEEK_ARCHIVE_DIR)
-            except OSError:
-                subs = []
-            out.extend(sub for sub in subs if sub not in out and sub not in dirs)
-        if d not in out:
-            out.append(d)
-    return tuple(out)
 
 # weird.log is aggregated, not forwarded: N of the same weird type inside the
 # window is one event. Chosen so a genuinely broken/attacked protocol surfaces
@@ -425,7 +439,9 @@ def no_rules_message(tier: str, status: dict) -> str:
         f"({status['threat_files']} signature file(s), "
         f"{status['anomaly_files']} stock protocol-anomaly file(s)). "
         "Exploits, malware, C2 and scans will NOT be detected — this deck is "
-        "not watching, it is only listening to itself. "
+        "not watching, it is only listening to itself. The image ships a "
+        "curated ET-Open subset as /var/lib/suricata/rules/suricata.rules "
+        "(DEC-PHASE13-043); if it is gone, that file was removed or emptied. "
         "Remedy: sudo orionx-freshen-suricata (requires network access). "
         "Port-scan detection via orionx-scanwatch is unaffected and still works."
     )
@@ -836,58 +852,6 @@ def find_zeek_binary(candidates=ZEEK_BIN_CANDIDATES,
     return Path(found) if found else None
 
 
-def assess_zeek_logs(dirs=ZEEK_LOG_DIRS, logs=(ZEEK_NOTICE_LOG,
-                                               ZEEK_WEIRD_LOG,
-                                               ZEEK_CONN_LOG)) -> dict:
-    """All distinct Zeek log directories to read, and why not when none exist.
-
-    The three failure states are kept DISTINCT because they call for three
-    different things from the operator, and collapsing them into "no Zeek
-    logs" is how a permissions bug gets mistaken for a quiet network:
-
-      absent     — no candidate directory exists. Zeek has not been run.
-      unreadable — a directory exists but this daemon cannot read it. THIS IS
-                   THE DANGEROUS ONE: Zeek may be detecting plenty and we are
-                   blind to all of it. Reported at warning, repeatedly.
-      empty      — readable, but holds none of the logs we consume.
-      ok         — readable and holding at least one log.
-    """
-    considered: list[str] = []
-    unreadable: list[str] = []
-    empty: list[str] = []
-    sources: list[dict] = []
-    seen: set[Path] = set()
-    for d in expand_zeek_log_dirs(dirs):
-        d = Path(d)
-        considered.append(str(d))
-        if not d.is_dir():
-            continue
-        if not os.access(d, os.R_OK | os.X_OK):
-            unreadable.append(str(d))
-            continue
-        present = [name for name in logs if (d / name).is_file()]
-        if not present:
-            empty.append(str(d))
-            continue
-        # `current` may alias an instance; never attach twice to the same source.
-        resolved = d.resolve()
-        if resolved not in seen:
-            seen.add(resolved)
-            sources.append({"dir": str(d), "logs": present})
-    if sources:
-        return {"state": "ok", "dir": sources[0]["dir"],
-                "logs": sorted({name for source in sources for name in source["logs"]}),
-                "sources": sources, "considered": considered, "unreadable": unreadable}
-    if unreadable:
-        return {"state": "unreadable", "dir": unreadable[0], "logs": [],
-                "considered": considered, "unreadable": unreadable}
-    if empty:
-        return {"state": "empty", "dir": empty[0], "logs": [],
-                "considered": considered, "unreadable": []}
-    return {"state": "absent", "dir": "", "logs": [],
-            "considered": considered, "unreadable": []}
-
-
 def detect_zeek(bin_candidates=ZEEK_BIN_CANDIDATES,
                 log_dirs=ZEEK_LOG_DIRS, use_path: bool = True) -> dict:
     """Runtime Zeek status: installed?, logs where?, usable?
@@ -962,73 +926,6 @@ def zeek_state_message(zeek: dict) -> tuple[str, str]:
 
 
 # --- Zeek log formats: TSV (default) and JSON (LogAscii::use_json) ---------
-
-def zeek_fields_from_header(line: str) -> list[str] | None:
-    """Column names from a Zeek TSV `#fields` header line, else None."""
-    if not line.startswith("#fields"):
-        return None
-    parts = line.rstrip("\n").split("\t")
-    return [p for p in parts[1:] if p] or None
-
-
-def zeek_fields_from_file(path, max_header_lines: int = 12) -> list[str] | None:
-    """Prime the column list by reading a Zeek log's header.
-
-    Needed because the tailer starts at EOF: without this, a TSV log that was
-    already open when we attached has no column names and every row is
-    unparseable. Re-read on every (re)open, so log rotation cannot leave us
-    decoding new rows with a stale header.
-    """
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            for _ in range(max_header_lines):
-                line = fh.readline()
-                if not line:
-                    break
-                fields = zeek_fields_from_header(line)
-                if fields:
-                    return fields
-                if not line.startswith("#"):
-                    break
-    except OSError:
-        return None
-    return None
-
-
-def zeek_record(line: str, fields: list[str] | None) -> dict | None:
-    """One Zeek log line -> dict, for both the TSV and JSON log formats.
-
-    Zeek writes TSV by default and JSON when LogAscii::use_json is set, and
-    which one a given deck produces depends on local policy this daemon does
-    not control. Handling only TSV would mean a JSON-configured Zeek is
-    ingested as zero events — silent non-detection again, this time caused by
-    a config file nobody remembered.
-
-    Zeek's unset marker "-" and empty marker "(empty)" become None, so callers
-    test for a value rather than for a sentinel string.
-    """
-    line = (line or "").strip()
-    if not line or line.startswith("#"):
-        return None
-    if line.startswith("{"):
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            return None
-        if not isinstance(rec, dict):
-            return None
-        return {k: (None if v in ("-", "(empty)") else v)
-                for k, v in rec.items()}
-    if not fields:
-        return None
-    parts = line.split("\t")
-    if len(parts) < len(fields):
-        parts += [None] * (len(fields) - len(parts))
-    out: dict = {}
-    for name, value in zip(fields, parts):
-        out[name] = None if value in ("-", "(empty)", "", None) else value
-    return out
-
 
 # --- What a Zeek notice means ----------------------------------------------
 
@@ -1296,9 +1193,16 @@ def tier_plan(tier: str, rules_usable: bool, live_ifaces=None) -> dict:
       canary files on this host, and only this host (DEC-PHASE9-008 opt-in).
 
     Note Suricata is started at Tier 1/2 even with no threat rules. Refusing
-    to start would trade one silence for another; the protocol-anomaly rules
-    and flow records still have value. What must never happen is starting it
-    quietly — hence warn_no_rules, which the caller is required to announce.
+    to start would trade one silence for another. (Until W11-6b this text
+    claimed Debian's protocol-anomaly rules "still have value" in that state.
+    They did not: nothing loaded them, because suricata.yaml names only
+    /var/lib/suricata/rules/suricata.rules and that file did not exist on
+    the image. Since DEC-PHASE13-043 it ships on the image (vendored in the
+    tree, verified at build) and carries both the curated ET-Open subset and
+    the stock *-events rules, so "no rules" now means that file is missing or
+    empty.) What must never happen
+    is starting it quietly — hence warn_no_rules, which the caller is
+    required to announce.
 
     zeek (DEC-PHASE13-033, implementing DEC-PHASE13-004) is True at Tier 1/2
     whenever Suricata would start: one orionx-zeek@<iface> instance per
@@ -2401,6 +2305,20 @@ def capture_status(state_dir: Path = CAPTURE_STATE_DIR) -> list[dict]:
 
 class PostureDaemon:
     def __init__(self, args):
+        # @decision DEC-PHASE12-034
+        # @title The Suricata restart loop is bounded and Orion-X ships its
+        #   own capture config (/etc/suricata/orionx.yaml)
+        # @status accepted
+        # @date 2026-10-01
+        # @rationale v2.2.0-rc5: Debian's unit hardcodes af-packet eth0; on
+        #   a deck with no eth0 suricata 7.0.10 exits 1 immediately and this
+        #   daemon re-issued `systemctl start` every 30 s, flooding the bus
+        #   with one warning and inflating THREAT PRESSURE to 5.1 ELEVATED on
+        #   an idle machine. Recovery attempts are now counted and given up
+        #   on, and the shipped config includes Debian's while overriding the
+        #   interface. This bounded the loop without fixing its cause;
+        #   DEC-PHASE12-038 (suricata_capture.py) did that.
+        # --------------------------------------------------------------------
         # DEC-PHASE12-034: bounded Suricata restart state.
         self._suricata_recovery = {"attempts": 0, "last_attempt": 0.0, "given_up": False}
         self.args = args
@@ -2448,6 +2366,18 @@ class PostureDaemon:
         self.tuned_suppressed = 0
         self._tuning_warned = 0.0
         self._posture_refusal: str | None = None
+        # @decision DEC-PHASE12-051
+        # @title Deck-originated alerts are tagged origin=self (SELF in the
+        #   stream) and do not count toward THREAT PRESSURE
+        # @status accepted
+        # @date 2026-10-05
+        # @rationale v2.2.0-rc6: an alert whose source address is one of
+        #   this deck's own (the archive.ph policy hit on the reference deck)
+        #   read like an intruder and raised the gauge. deck_vitals supplies
+        #   the deck's addresses; the alert detail carries origin=self, the
+        #   Cockpit says "this deck did this", and pressure() ignores it.
+        #   test_tuning.sh covers the pure-library half.
+        # --------------------------------------------------------------------
         # DEC-PHASE12-051: alerts whose SOURCE is this deck are labelled
         # origin=self so the Cockpit says "this deck did this" instead of
         # implying an intruder, and the threat gauge does not count them.
@@ -2478,7 +2408,12 @@ class PostureDaemon:
 
     # --- bus helper ---
     def _alert_detail(self, alert: dict, engine: str, technique: tuple) -> dict:
-        """Evidence for the drill-down, plus origin (DEC-PHASE12-051)."""
+        """Evidence for the drill-down, plus origin (DEC-PHASE12-051).
+
+        `tool`/`tool_conf` come from tool_fingerprint (DEC-PHASE13-040): the
+        Suricata signature text or the Zeek note+msg, only when a known tool
+        is named. Unattributed alerts carry no `tool` key.
+        """
         src = alert.get("src_ip") or ""
         d: dict = {"engine": engine, "src_ip": src, "dest_ip": alert.get("dest_ip") or "",
                    "proto": alert.get("proto") or ""}
@@ -2487,13 +2422,16 @@ class PostureDaemon:
                       "classtype": alert.get("classtype") or "",
                       "src_port": alert.get("src_port"), "dest_port": alert.get("dest_port")})
         else:
-            d.update({"note": alert.get("note") or "", "msg": alert.get("msg") or ""})
+            # parse_zeek_notice carries dest_port (id.resp_p); #127 found the
+            # drill-down and the logquery `port` column lost it here.
+            d.update({"note": alert.get("note") or "", "msg": alert.get("msg") or "",
+                      "dest_port": alert.get("dest_port")})
         if technique and technique[0]:
             d["technique"] = f"{technique[0]} {technique[1]}".strip()
         if src and src in self.deck_addrs:
             d["origin"] = "self"
             d["origin_note"] = "this deck's own traffic; not an intruder"
-        return d
+        return tool_fingerprint.attribute(d)
 
     def _refresh_deck_addrs(self, now: float) -> None:
         if now - self._deck_addrs_at < 30.0:
@@ -2679,9 +2617,10 @@ class PostureDaemon:
         Runs before the first start of a tier, not on every reassert: it
         loads the full ruleset and costs seconds. Returns False only when the
         engine positively rejected the config — "no rules" is a valid config
-        with nothing to match on, which DEC-PHASE12-024's own warning owns,
-        and refusing to start on it would mean a deck that has not fetched
-        ET-Open yet gets no protocol-anomaly detection either.
+        with nothing to match on, which DEC-PHASE12-024's own warning owns;
+        refusing to start on it would turn that loud coverage gap into a
+        silent one. (The image now ships a ruleset, DEC-PHASE13-043, so the
+        state is reachable only if suricata.rules was removed or emptied.)
         """
         verdict = capture.check_config(self.suricata_config,
                                        binary=capture.SURICATA_BIN)

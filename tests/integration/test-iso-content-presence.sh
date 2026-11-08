@@ -1105,6 +1105,20 @@ else
     fail "16e: control_center/app.py present in squashfs" \
          "$CC_APP not found — module package incomplete (issue #66)"
 fi
+# #95 (DEC-PHASE13-049): the launcher's map and the Cockpit's settings drawer
+# ship; the retired Auto-Healing tab does not (no fallback copy on the image).
+for _f in moved.py settings_drawer.py; do
+    if [[ -f "$CC_MODULE_DIR/$_f" ]]; then
+        pass "16e: control_center/$_f present in squashfs (#95)"
+    else
+        fail "16e: control_center/$_f present in squashfs" "#95: stage_application_content incomplete"
+    fi
+done
+if [[ ! -e "$CC_MODULE_DIR/sections/auto_healing.py" ]]; then
+    pass "16e: control_center/sections/auto_healing.py absent (consent is the Workbench's, #95)"
+else
+    fail "16e: control_center/sections/auto_healing.py absent" "a retired tab shipped beside its replacement"
+fi
 
 # ---------------------------------------------------------------------------
 # 16f. W11-2d structural check: def run_app symbol + wrapper import wire
@@ -2305,9 +2319,12 @@ fi
 #   (c) /var/lib/suricata/orionx-README.md skeleton present
 #   (d) /opt/orionx/scripts/orionx-freshen-suricata.sh present + executable + shellcheck-clean
 #   (e) /usr/bin/orionx-freshen-suricata symlink present (created by 0700 hook)
-#   (f) Layer B sentinel: /var/lib/suricata/rules/ NOT present with .rules files
-#       (bundled ruleset deferred to W11-6b)
-#   Layer B (W11-6b) will flip assertion (f) and wire the Nebula tier selector.
+#   (f) W11-6b landed (DEC-PHASE13-043, #125): /var/lib/suricata/rules/suricata.rules
+#       IS present, non-empty, carries ≥1,000 live signatures, and sits beside
+#       orionx-rules.provenance.txt + LICENSE-ET-Open.txt. Until v3.1.5 (f) was
+#       the inverse "Layer B sentinel"; the curated subset is now VENDORED in
+#       includes.chroot and verified by hook 0530 (suricata -T at build time).
+#   The tier wiring lives in orionx-postured (DEC-PHASE12-024), tested elsewhere.
 # ===========================================================================
 section "24. W11-6 Layer A: Suricata IDS — lazy-start + skeleton + freshen script (DEC-PHASE11-008)"
 
@@ -2383,17 +2400,39 @@ else
          "0700-orionx-setup.hook.chroot SCRIPT_MAP must include orionx-freshen-suricata"
 fi
 
-# 24f. Layer B sentinel: /var/lib/suricata/rules/ NOT present with .rules files
-# Layer A intentionally ships NO bundled ruleset; operators fetch post-boot via
-# orionx-freshen-suricata. When W11-6b lands and bundles the ET-Open snapshot,
-# this assertion should be inverted (or removed).
-# || true: find exits non-zero when path absent; that is the desired Layer A state.
-SURICATA_RULES_COUNT="$(find "$SQF/var/lib/suricata/rules" -name '*.rules' 2>/dev/null | wc -l | tr -d ' ' || true)"
-if [[ "$SURICATA_RULES_COUNT" -eq 0 ]]; then
-    pass "24f: /var/lib/suricata/rules/ NOT present with .rules files (Layer B sentinel — deferred to W11-6b)"
+# 24f. W11-6b (DEC-PHASE13-043, #125): the curated ET-Open subset ships.
+# This assertion was the Layer B sentinel ("NO .rules files") until v3.1.5;
+# it is inverted now that suricata.rules is vendored in includes.chroot and
+# verified by hook 0530. An image without it is the shipped defect (an IDS
+# with 0 signatures), so the gate fails it. Count floor 1,000: the subset
+# measured 3,233 on 2026-11-06; a thinner file means a category went missing
+# at refresh time, which the refresh script refuses — second line of defence.
+SURICATA_RULES="$SQF/var/lib/suricata/rules/suricata.rules"
+SURICATA_PROV="$SQF/var/lib/suricata/rules/orionx-rules.provenance.txt"
+if [[ -s "$SURICATA_RULES" ]]; then
+    pass "24f: /var/lib/suricata/rules/suricata.rules present and non-empty ($(wc -c < "$SURICATA_RULES" | tr -d ' ') bytes, W11-6b)"
+    SURICATA_SIGS="$(grep -cE '^[[:space:]]*(alert|drop|pass|reject)[[:space:]]' "$SURICATA_RULES" 2>/dev/null || true)"
+    if [[ "${SURICATA_SIGS:-0}" -ge 1000 ]]; then
+        pass "24f-ii: suricata.rules carries $SURICATA_SIGS live signatures (floor 1,000)"
+    else
+        fail "24f-ii: suricata.rules carries ≥1,000 live signatures" \
+             "counted ${SURICATA_SIGS:-0} — a category is missing or the merge broke; hook 0530 should have refused"
+    fi
 else
-    fail "24f: /var/lib/suricata/rules/ NOT present with .rules files" \
-         "Found $SURICATA_RULES_COUNT .rules file(s) — Layer A should ship no bundled rules. If W11-6b has landed, invert this assertion."
+    fail "24f: /var/lib/suricata/rules/suricata.rules present and non-empty" \
+         "The IDS would run with 0 signatures (the #125 defect). hook 0530-suricata-rules did not run or failed open."
+fi
+if [[ -f "$SURICATA_PROV" ]] && grep -q '^source-sha256: [0-9a-f]\{64\}$' "$SURICATA_PROV" \
+   && grep -q '^signatures: [0-9]\+$' "$SURICATA_PROV" && grep -q '^engine-loaded: [0-9]\+$' "$SURICATA_PROV"; then
+    pass "24f-iii: orionx-rules.provenance.txt present with pin, signature count and engine-loaded count"
+else
+    fail "24f-iii: orionx-rules.provenance.txt present with pin + counts" \
+         "missing or incomplete at /var/lib/suricata/rules/orionx-rules.provenance.txt"
+fi
+if [[ -s "$SQF/var/lib/suricata/rules/LICENSE-ET-Open.txt" ]]; then
+    pass "24f-iv: LICENSE-ET-Open.txt ships beside the rules (BSD notice travels with redistribution)"
+else
+    fail "24f-iv: LICENSE-ET-Open.txt beside the rules" "BSD license requires the notice to accompany the rules"
 fi
 
 # ===========================================================================
@@ -3666,6 +3705,34 @@ then
     pass "41h: shipped links.json offers the Bluetooth installer (Orion Tools Install button)"
 else
     fail "41h: shipped links.json offers the Bluetooth installer"
+fi
+
+# ===========================================================================
+# 42. apt on the live overlay (DEC-PHASE13-051, #121): the read-only evidence
+#     collector ships, and the seeded .bashrc no longer upgrades on `update`.
+# ===========================================================================
+section "42. apt evidence collector shipped; 'update' simulates, never upgrades (DEC-PHASE13-051)"
+
+if [[ -f "$SQF/opt/orionx/optional/apt-evidence.sh" && -x "$SQF/opt/orionx/optional/apt-evidence.sh" ]]; then
+    pass "42a: /opt/orionx/optional/apt-evidence.sh present and executable"
+else
+    fail "42a: apt-evidence.sh present and executable" "operators cannot gather the #121 evidence without it"
+fi
+_42_rc="$SQF/etc/skel/.bashrc"
+if [[ -f "$_42_rc" ]]; then
+    if grep -q '^update() {' "$_42_rc" && grep -q 'apt-get -s upgrade' "$_42_rc"; then
+        pass "42b: baked /etc/skel/.bashrc defines update() with a simulated upgrade"
+    else
+        fail "42b: baked /etc/skel/.bashrc defines update() with a simulated upgrade" "0100 heredoc not applied?"
+    fi
+    if grep -vE '^[[:space:]]*#' "$_42_rc" | grep -qE 'alias update=|^[^#]*sudo apt-get upgrade[^"]*$'; then
+        fail "42c: baked .bashrc carries no silent 'apt-get upgrade'" "$(grep -nE 'alias update=|sudo apt-get upgrade' "$_42_rc" | head -3 | tr '\n' ' ')"
+    else
+        pass "42c: baked .bashrc carries no silent 'apt-get upgrade' (the only one is quoted advice)"
+    fi
+else
+    fail "42b: baked /etc/skel/.bashrc present" "$_42_rc missing from the squashfs"
+    fail "42c: baked .bashrc carries no silent 'apt-get upgrade'" "cannot check — .bashrc missing"
 fi
 
 # ===========================================================================

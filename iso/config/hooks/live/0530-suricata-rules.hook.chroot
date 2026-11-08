@@ -1,0 +1,213 @@
+#!/bin/bash
+# shellcheck shell=bash
+# 0530-suricata-rules.hook.chroot — verify the VENDORED curated ET-Open subset
+# at /var/lib/suricata/rules and prove it loads in the image's own engine
+# (W11-6b, issue #125). No network: the rules are committed files.
+#
+# @decision DEC-PHASE13-043
+# @title Suricata ships a curated ET-Open subset VENDORED into the tree and
+#   refreshed by a reviewed commit, because the upstream URL is a rolling
+#   daily object; the build verifies the vendored files fail-closed
+# @status accepted
+# @category DETECTION
+# @rationale Reported from the v3.1.0 ISO on the HP Pavilion and the Lenovo
+#   (Bay Trail, 2 GB): "Suricata is still failing to start because there are
+#   no initial signatures. Installing the full signature set exhausts the
+#   Lenovo." Traced in the v3.1.0 tree (19bd77e) and present in v3.0.0 too:
+#   Debian's suricata.yaml names exactly one rule file,
+#   /var/lib/suricata/rules/suricata.rules, and nothing on the image created
+#   it. The package list has `suricata` only, no hook fetched rules, and the
+#   stock /etc/suricata/rules/*-events.rules were never in `rule-files:`.
+#   So every Tier 1/2 deck ran an engine with 0 signatures and
+#   orionx-postured published the critical IDS COVERAGE GAP on a loop — read
+#   by the operator as "failing to start". The documented remedy,
+#   orionx-freshen-suricata, installs the FULL feed, which is what exhausted
+#   the Lenovo.
+#
+#   Measured on 2026-11-06 against the Suricata 7.0 ET-Open tarball
+#   (emerging.rules.tar.gz, 5,679,153 bytes, SHA-256 c794e36a…b10e689,
+#   server Last-Modified "Fri, 06 Nov 2026 21:47:10 GMT"):
+#     59 files, 55 MB extracted, 52,854 signatures across 50 .rules files.
+#     emerging-malware.rules alone:            19,392 sigs / 17.8 MB
+#     emerging-web_specific_apps.rules:         6,097 sigs /  5.8 MB
+#     The six categories vendored here:
+#       scan 286 · attack_response 688 · exploit 1,713 · dos 59 ·
+#       shellcode 57 · current_events 62  =  2,865 sigs / 2,620,855 bytes
+#   plus Debian's stock *-events.rules (protocol-anomaly detection, which
+#   orionx-postured's docstring already promised but the image never loaded):
+#   21 files / 383 sigs / 88,490 bytes on trixie's suricata 7.0.10, of which
+#   dnp3-events.rules (7) and modbus-events.rules (8) are EXCLUDED because
+#   Debian's suricata.yaml ships with app-layer detection for those two SCADA
+#   protocols disabled, and the engine then refuses the signatures outright
+#   ("protocol dnp3 cannot be used in a signature") — found by running the
+#   merged file through `suricata -T` in a trixie container, not guessed.
+#   Merged result: 3,233 signatures, 2,707,122 bytes (19 stock files + 6 ET
+#   categories); `suricata -T -v` under this image's orionx.yaml:
+#   "3233 rules successfully loaded, 0 rules failed", exit 0. That is ~6 % of
+#   the feed by signature count and ~5.7 % by bytes, and covers what a deck
+#   sitting on a hostile segment is for — scans, exploit attempts, shellcode,
+#   DoS, attacker-side responses, in-the-wild campaigns — while skipping the
+#   two heavy categories whose value is highest on an egress tap full of
+#   client traffic, which this deck is not.
+#
+#   WHY VENDORED, NOT FETCHED AT BUILD TIME. The first revision of this hook
+#   downloaded the tarball during `lb build` pinned by SHA-256 and failed the
+#   build on mismatch. That pin was a time bomb: rules.emergingthreats.net
+#   serves ONE rolling object per Suricata version (the directory listing has
+#   no dated archives; the object we hashed carried Last-Modified "Fri, 06 Nov
+#   2026 21:47:10 GMT" and is replaced daily), so a fail-closed pin would have
+#   killed every ISO build from the next republish onward, and an unpinned
+#   fetch would have made two builds of one tag differ. The point of a pin is
+#   reproducibility from the tag; the only way to have that against a rolling
+#   source is to vendor the OUTPUT. So, following the go-roast precedent
+#   (DEC-PHASE12-002: a vendored static binary + a provenance file), the
+#   three files ship IN THE TREE:
+#     iso/config/includes.chroot/var/lib/suricata/rules/suricata.rules
+#     iso/config/includes.chroot/var/lib/suricata/rules/orionx-rules.provenance.txt
+#     iso/config/includes.chroot/var/lib/suricata/rules/LICENSE-ET-Open.txt
+#   and `make suricata-rules-refresh` (scripts/suricata-rules-refresh.sh)
+#   re-derives them from a fresh tarball — recording its SHA-256, size and
+#   Last-Modified, proving the result loads in a trixie suricata — for the
+#   maintainer to review and commit. 2.7 MB in-repo is accepted (the roast
+#   binary is 9.6 MB). A refresh is therefore a diff someone read.
+#
+#   Policy this hook enforces, fail-closed (an image whose IDS has no
+#   signatures is exactly the shipped defect, so a green build must not be
+#   able to produce one — the DEC-PHASE10-007 / DEC-PHASE12-116 rule):
+#     1. suricata.rules, the provenance and the license copy must all be
+#        present and non-empty, or the build stops naming the refresh command.
+#     2. The provenance's `signatures:` line must equal a fresh count of the
+#        shipped file: a refresh that forgot the provenance, or a hand edit,
+#        is caught here and in tests/unit/test_suricata_rules_hook.sh.
+#     3. The engine itself must accept the file: `suricata -T -v -c
+#        /etc/suricata/orionx.yaml` must exit 0 AND report a non-zero
+#        "rules successfully loaded" count. Rules it rejects are listed.
+#     4. The build date and the engine's count are appended to the
+#        provenance, so the deck can read what was proven about its rules.
+#   rule-files: is still left to Debian's suricata.yaml (DEC-PHASE12-038);
+#   the file is suricata.rules because that is the one name it loads
+#   (DEC-PHASE12-039). The ET rules (sids 2000000-2799999) are BSD-licensed
+#   and require the notice to travel with redistributions; sids below 3465
+#   are GPLv2 (the old Snort community set); the feed's LICENSE answers the
+#   licensing question MASTER_PLAN deferred to W11-6b. The full feed remains
+#   available post-boot via orionx-freshen-suricata, which replaces this
+#   subset in place and now says what that costs.
+#
+# @decision DEC-PHASE13-044
+# @title Suricata runs `detect: profile: low` with deck-sized memcaps and a
+#   MemoryMax ceiling; the ceiling is provisional until measured on the deck
+# @status accepted
+# @category DETECTION
+# @rationale The 2 GB Lenovo is the floor Orion-X promises to run on
+#   (DEC-PHASE11-003), and Suricata's defaults are sized for a sensor: flow
+#   memcap 128 MB, stream 64 MB + reassembly 256 MB, defrag 32 MB, host
+#   32 MB, detect profile medium. With the full feed that is the 1+ GB RSS
+#   that exhausted the deck; with the subset the defaults are merely
+#   oversized. /etc/suricata/orionx.yaml now redefines the detect, flow,
+#   stream, defrag and host nodes:
+#     detect.profile low (fewer, smaller signature groups: the trade is
+#       detect-engine memory for a little per-packet CPU, right for ~3,200
+#       signatures on an Atom), flow 32 MB, stream 32 MB + reassembly 64 MB,
+#       defrag 16 MB, host 16 MB  =  160 MB of hard memcaps.
+#   Each node is written out in full, not as a one-key patch, because the
+#   YAML loader PRUNES a redefined node before applying the new one
+#   ("Configuration node 'flow' redefined"), so a one-line `flow: {memcap}`
+#   would silently drop hash-size/prealloc/emergency-recovery to their
+#   compiled defaults. Memcaps are hard limits: a saturated memcap drops
+#   flows or segments and counts them in stats, which is an honest, visible
+#   degradation; an OOM-killed engine is not.
+#   suricata.service.d/orionx-memory.conf adds MemoryMax=768M. Sizing, from
+#   VmRSS of suricata 7.0.10 in a debian:trixie-slim container (arm64 Docker
+#   VM on the build Mac, idle af-packet, this orionx.yaml), 2026-11-06:
+#     1 seed rule,   1 worker  :  311 MB   (engine + app-layer baseline)
+#     3,233 rules,   1 worker  :  405 MB   (+94 MB = the detect engine)
+#     3,233 rules,  10 workers :  430 MB   (~2.8 MB per af-packet worker)
+#   Worst case on the deck: 405 MB idle (4 workers ~ +8 MB) + 160 MB if every
+#   memcap saturates + ~95 MB while a reload holds two detect engines
+#   = ~670 MB. 768 MB sits ~100 MB above that and leaves 1.2 GB for the
+#   desktop, Nebula and the rest of the stack on a 2 GB deck. The container
+#   figures are indicative (no traffic, different arch); PROVISIONAL: the
+#   issue requires RSS to be measured on the Lenovo before the figure is
+#   accepted as final. Procedure (owner, on the deck, Tier 1 with traffic):
+#     sudo touch /var/lib/suricata/orionx-enabled && sudo systemctl start suricata
+#     journalctl -u suricata -b | grep -E 'rules successfully loaded|signatures processed'
+#     systemctl show suricata -p MemoryCurrent
+#     for i in $(seq 1 60); do systemctl show suricata -p MemoryCurrent; sleep 10; done
+#   If the 10-minute peak exceeds ~600 MB, lower the memcaps before raising
+#   MemoryMax; if it stays under ~450 MB, MemoryMax can come down to 640M.
+#   Hitting MemoryMax kills the engine; orionx-postured's 30 s reassert sees
+#   the dead unit and announces it (DEC-PHASE12-038), so the failure is loud.
+set -euo pipefail
+
+RULES_DIR="${RULES_DIR:-/var/lib/suricata/rules}"
+SURICATA_CONFIG="${SURICATA_CONFIG:-/etc/suricata/orionx.yaml}"
+TARGET_RULES="suricata.rules"
+PROVENANCE_FILE="orionx-rules.provenance.txt"
+LICENSE_COPY="LICENSE-ET-Open.txt"
+LOG_PREFIX="[0530-suricata-rules]"
+REFRESH_HINT="run 'make suricata-rules-refresh' in the repo and commit the result (DEC-PHASE13-043)"
+
+# Same regex as scripts/suricata-rules-refresh.sh and orionx-freshen-suricata
+# (a unit test asserts the three are identical), so the tools count alike.
+RULE_ACTION_RE='^[[:space:]]*(alert|drop|pass|reject|rejectsrc|rejectdst|rejectboth)[[:space:]]'
+
+# count_signatures <file>: live signature lines; commented-out rules do not count.
+# `grep -c` prints the count AND exits 1 when it is zero, so the status is dropped.
+count_signatures() {
+    [[ -f "$1" ]] || { echo 0; return 0; }
+    local n
+    n="$(grep -cE "$RULE_ACTION_RE" "$1" 2>/dev/null || true)"
+    echo "${n:-0}"
+}
+
+fatal() { echo "$LOG_PREFIX FATAL: $*" >&2; exit 1; }
+
+echo "$LOG_PREFIX === Verifying the vendored ET-Open subset (DEC-PHASE13-043) ==="
+
+# 1. Everything the deck will read must be there.
+command -v suricata >/dev/null 2>&1 || fatal "suricata is not installed in the chroot; the package list is broken."
+[[ -r "$SURICATA_CONFIG" ]] || fatal "$SURICATA_CONFIG missing — includes.chroot not staged before hooks?"
+[[ -s "$RULES_DIR/$TARGET_RULES" ]]   || fatal "$RULES_DIR/$TARGET_RULES missing or empty; the IDS would run with 0 signatures (#125). $REFRESH_HINT"
+[[ -s "$RULES_DIR/$PROVENANCE_FILE" ]] || fatal "$RULES_DIR/$PROVENANCE_FILE missing; $REFRESH_HINT"
+[[ -s "$RULES_DIR/$LICENSE_COPY" ]]    || fatal "$RULES_DIR/$LICENSE_COPY missing; the BSD notice must ship with the rules. $REFRESH_HINT"
+
+# 2. The provenance must describe the file beside it.
+WANT="$(sed -n 's/^signatures: \([0-9][0-9]*\)$/\1/p' "$RULES_DIR/$PROVENANCE_FILE" | head -n1)"
+GOT="$(count_signatures "$RULES_DIR/$TARGET_RULES")"
+[[ -n "$WANT" ]] || fatal "provenance has no 'signatures:' line; $REFRESH_HINT"
+[[ "$GOT" -gt 0 ]] || fatal "$RULES_DIR/$TARGET_RULES has 0 live signatures; $REFRESH_HINT"
+[[ "$GOT" -eq "$WANT" ]] || fatal "provenance says $WANT signatures but $TARGET_RULES has $GOT — refresh forgot the provenance, or the file was edited. $REFRESH_HINT"
+BYTES="$(wc -c < "$RULES_DIR/$TARGET_RULES" | tr -d ' ')"
+echo "$LOG_PREFIX vendored: $GOT signatures, $BYTES bytes (provenance agrees)"
+
+# 3. Ask the engine, not the byte count.
+echo "$LOG_PREFIX suricata -T against $SURICATA_CONFIG ..."
+LOGDIR="$(mktemp -d)"
+trap 'rm -rf "$LOGDIR"' EXIT
+T_RC=0
+# `|| T_RC=$?`, not `; T_RC=$?`: under set -e an assignment from a failing
+# command substitution would abort the script before the diagnosis prints.
+T_OUT="$(suricata -T -v -c "$SURICATA_CONFIG" -l "$LOGDIR" 2>&1)" || T_RC=$?
+LOADED="$(printf '%s\n' "$T_OUT" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) rules successfully loaded.*/\1/p' | tail -n1)"
+FAILED="$(printf '%s\n' "$T_OUT" | sed -n 's/.*[^0-9]\([0-9][0-9]*\) rules failed.*/\1/p' | tail -n1)"
+if [[ "$T_RC" -ne 0 || -z "$LOADED" || "$LOADED" -eq 0 ]]; then
+    echo "$LOG_PREFIX FATAL: suricata -T rc=$T_RC, loaded='${LOADED:-none}'. Engine output (tail):" >&2
+    printf '%s\n' "$T_OUT" | tail -40 | sed 's/^/    /' >&2
+    fatal "the engine does not accept the vendored rules; refusing to produce an image whose IDS is blind. $REFRESH_HINT"
+fi
+if [[ -n "$FAILED" && "$FAILED" -gt 0 ]]; then
+    echo "$LOG_PREFIX WARNING: the engine rejected $FAILED rule(s) (loaded $LOADED). Rejected lines:" >&2
+    printf '%s\n' "$T_OUT" | grep -iE 'error|rejected|failed' | head -20 | sed 's/^/    /' >&2
+fi
+[[ "$LOADED" -eq "$GOT" ]] || echo "$LOG_PREFIX NOTE: engine loaded $LOADED of $GOT counted signatures" >&2
+echo "$LOG_PREFIX engine confirms $LOADED rules loaded"
+
+# 4. Record what was proven, on the image.
+{
+    printf 'baked-on: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'engine-loaded: %s\n' "$LOADED"
+} >> "$RULES_DIR/$PROVENANCE_FILE"
+chmod 0644 "$RULES_DIR/$TARGET_RULES" "$RULES_DIR/$PROVENANCE_FILE" "$RULES_DIR/$LICENSE_COPY"
+echo "$LOG_PREFIX provenance: $RULES_DIR/$PROVENANCE_FILE"
+sed 's/^/    /' "$RULES_DIR/$PROVENANCE_FILE"
+echo "$LOG_PREFIX === done ==="

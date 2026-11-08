@@ -7,6 +7,9 @@ undoing one early, renewing one that should outlast its timer, and auditing the
 chain afterwards.
 
     orionx-heal status              # consent levels + what is in force
+    orionx-heal autonomy            # standing consent, one line per class
+    orionx-heal autonomy block_ip propose    # change it (the ONLY writer, #95)
+    orionx-heal autonomy --all off
     orionx-heal list                # the playbook registry: does / undoes
     orionx-heal pending             # actions awaiting your confirmation
     orionx-heal confirm <id>        # the explicit acknowledgement path
@@ -98,6 +101,46 @@ def cmd_status(args) -> int:
             print(f"  {a.action_id}  {a.playbook:<22} {a.target or '(host)'}"
                   f"   -> orionx-heal confirm {a.action_id}")
     return 0 if ok else 1
+
+
+def _reboot_line() -> str:
+    """The one reboot-truth probe and wording (tuning_lib), as orionx-tune states it."""
+    try:
+        sys.path.insert(0, str(_HERE.parent / "awareness"))
+        import tuning_lib  # noqa: PLC0415
+        return tuning_lib.survives_reboot_line(*tuning_lib.persistence_present())
+    except Exception as exc:  # noqa: BLE001 - said, not hidden
+        return f"survives reboot: unknown ({exc})"
+
+
+def cmd_autonomy(args) -> int:
+    """Show or change standing consent. Writes only through hl.set_autonomy (DEC-PHASE13-049)."""
+    changes: dict[str, str] = {}
+    if args.all:
+        changes = {name: args.all for name in hl.PLAYBOOK_NAMES}
+    if args.action_class or args.level:
+        if not (args.action_class and args.level):
+            print("usage: orionx-heal autonomy CLASS LEVEL   (or --all LEVEL)", file=sys.stderr)
+            return 2
+        changes[args.action_class] = args.level
+    if changes:
+        ok, err = hl.set_autonomy(changes)
+        if not ok:
+            print(f"orionx-heal: consent NOT changed — {err}", file=sys.stderr)
+            return 1
+        for name, lvl in sorted(changes.items()):
+            warn = "   (acts WITHOUT asking)" if lvl == "autonomous" else ""
+            print(f"set {name} = {lvl}{warn}")
+        print(_reboot_line())
+    levels = hl.load_autonomy()
+    print(f"Standing consent: {hl.AUTONOMY_FILE}"
+          + ("" if hl.AUTONOMY_FILE.exists() else "  (absent: every class is off)"))
+    for p in hl.REGISTRY:
+        lvl = hl.level_for(levels, p.name)
+        note = "" if p.name in levels else "  (not set: off)"
+        print(f"  {p.name:<24} {lvl:<11} {p.summary}{note}")
+    print("levels: off · propose (suggest only) · confirm (ask first) · autonomous (act now)")
+    return 0
 
 
 def cmd_pending(args) -> int:
@@ -198,6 +241,12 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("list", help="show the playbook registry").set_defaults(fn=cmd_list)
     sub.add_parser("status", help="consent levels, chain health, actions in force"
                    ).set_defaults(fn=cmd_status)
+    sp = sub.add_parser("autonomy", help="show or set standing consent per action class "
+                        "(writes ~/.config/orionx/autonomy.json as you; never with sudo)")
+    sp.add_argument("action_class", nargs="?", choices=list(hl.PLAYBOOK_NAMES))
+    sp.add_argument("level", nargs="?", choices=list(hl.LEVELS))
+    sp.add_argument("--all", choices=list(hl.LEVELS), help="set every class to this level")
+    sp.set_defaults(fn=cmd_autonomy)
     sub.add_parser("pending", help="actions awaiting confirmation"
                    ).set_defaults(fn=cmd_pending)
     sub.add_parser("verify", help="walk the Merkle audit chain"

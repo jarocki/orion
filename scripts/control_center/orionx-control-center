@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
-orionx-control-center — opens the Orion Cockpit on a tab.
+orionx-control-center — a launcher that says where each control went.
 
 Usage:
-  orionx-control-center [--help] [--version] [--tab KEY]
+  orionx-control-center [--help] [--version] [--where] [--tab KEY]
 
 Symlinked to /usr/bin/orionx-control-center by 0700-orionx-setup.hook.chroot.
-The separate window it used to open is gone (DEC-PHASE12-053); the command
-name is kept so old habits and menu entries still land on the same content.
+The separate window it used to open is gone (DEC-PHASE12-053), and so are its
+controls (#95, DEC-PHASE13-049, control_center/moved.py): KEY is a Cockpit
+tab, or a moved control (posture, rain, theme, dj -> the Cockpit settings
+drawer; healing, warmup, installers -> the Workbench), whose new home it
+opens after saying where it went. It stays one release so old habits land
+somewhere true, then goes.
 --version reports the image's own /etc/orionx-version (UX-40 / P3-1: it
 printed a hard-coded "2.0.0-rc5-w9-2" on 2.2.0).
 
@@ -47,14 +51,31 @@ def image_version(path: str = VERSION_FILE) -> str:
     return f"unknown (no ISO_VERSION in {path})"
 
 
+def _scripts_dir() -> str:
+    # MUST use os.path.realpath (not os.path.abspath): abspath does NOT
+    # resolve symlinks — it returns the symlink path itself. When invoked
+    # as /usr/bin/orionx-control-center (symlink → /opt/orionx/scripts/
+    # control_center/orionx-control-center), abspath gives script_dir=/usr/bin
+    # and scripts_dir=/, putting the wrong directory on sys.path and causing
+    # ModuleNotFoundError: No module named 'control_center' (#66). realpath
+    # resolves the symlink chain to the actual file. (rc8 fix, DEC-PHASE10-017)
+    return os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+
+if _scripts_dir() not in sys.path:
+    sys.path.insert(0, _scripts_dir())
+from control_center import moved  # noqa: E402  (no GTK: --help and --where need no display)
+
+
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="orionx-control-center",
         description=(
-            "Opens the Orion Cockpit on a tab: Network, Mesh, Comms, "
-            "Awareness, Orion Tools, Nebula AI, Auto-Healing. "
-            "(Same as: orionx-cockpit --tab KEY.)"
+            "A launcher. Opens the Orion Cockpit on a tab (network, mesh, comms, "
+            "awareness, tools, nebula), or the new home of a control that moved (#95)."
         ),
+        epilog=moved.where_text(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "--version",
@@ -63,7 +84,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     )
     # DEC-PHASE12-053: the tabs live in the Orion Cockpit; this is a launcher.
     parser.add_argument("--tab", default=None,
-                        help="open the Orion Cockpit on this tab (network, mesh, comms, awareness, tools, nebula, healing)")
+                        help="a Cockpit tab (network, mesh, comms, awareness, tools, nebula) "
+                             "or a moved control from the list below")
+    parser.add_argument("--where", action="store_true", help="print where every moved control lives, then exit")
     return parser.parse_args(argv)
 
 
@@ -76,28 +99,14 @@ def main(argv: list[str] | None = None) -> int:
         Exit code (0 on success).
     """
     args_list = argv if argv is not None else sys.argv[1:]
-    _parse_args(args_list)
+    args = _parse_args(args_list)
+    if args.where:
+        print(moved.where_text())
+        return 0
 
-    # Add the scripts/ directory to sys.path so `control_center` package
-    # is importable when the script is run via the /usr/bin/ symlink.
-    # MUST use os.path.realpath (not os.path.abspath): abspath does NOT
-    # resolve symlinks — it returns the symlink path itself. When invoked
-    # as /usr/bin/orionx-control-center (symlink → /opt/orionx/scripts/
-    # control_center/orionx-control-center), abspath gives script_dir=/usr/bin
-    # and scripts_dir=/, putting the wrong directory on sys.path and causing
-    # ModuleNotFoundError: No module named 'control_center'. realpath resolves
-    # the symlink chain to the actual file, giving script_dir=
-    # /opt/orionx/scripts/control_center and scripts_dir=/opt/orionx/scripts —
-    # exactly where the control_center package lives. See scripts/nebula/nebula
-    # line 53 for the same pattern. (rc8 fix, DEC-PHASE10-017)
-    script_dir = os.path.dirname(os.path.realpath(__file__))
-    scripts_dir = os.path.dirname(script_dir)
-    if scripts_dir not in sys.path:
-        sys.path.insert(0, scripts_dir)
+    from control_center.app import run_app  # noqa: PLC0415  (imports GTK)
 
-    from control_center.app import run_app  # noqa: PLC0415
-
-    return run_app(sys.argv)
+    return run_app(["orionx-control-center"] + list(args_list))
 
 
 if __name__ == "__main__":

@@ -12,6 +12,40 @@
 # surface names, spoken names spelled as pronounced), the tooling compiles,
 # and the media the README embeds exist and agree with their scripts.
 # ---------------------------------------------------------------------------
+# @decision DEC-PHASE12-018
+# @category DOCS
+# @title The guided walkthrough video is recorded from the deck's own
+#   desktop by tools/guided-demo and narrated offline with Piper
+# @status superseded by DEC-PHASE12-064 and DEC-PHASE13-012
+# @date 2026-09-20
+# @rationale v2.2.0-beta: docs/media/orionx-guided-demo-v2.2.0-beta.mp4 (+
+#   poster, WebVTT captions, transcript; embedded in the README) is recorded
+#   from the beta's own desktop and applications in a virtual X session from a
+#   scenes file and narrated offline, so a release re-cuts it with one command
+#   and nothing in it is mocked up. Superseded in HOW by DEC-PHASE12-064 and
+#   DEC-PHASE13-012 (amended): both release videos now come from
+#   tools/guided-demo/cinematic/ and footage of the shipped ISO, which this
+#   suite locks.
+# ----------------------------------------------------------------------------
+# @decision DEC-PHASE13-012
+# @title Keep both videos — the short guided walkthrough and the cinematic
+#   trailer — for v3.0.0 and every release after
+# @status accepted
+# @date 2026-10-18
+# @category DOCS
+# @rationale Preserves the short-form walkthrough alongside the cinematic
+#   trailer. **Amended 2026-10-18 (HOW, code wins):** both are rendered by ONE
+#   pipeline, `tools/guided-demo/cinematic/` (`walkthrough.yaml` +
+#   `trailer.yaml` → `build_trailer.py`, footage from
+#   `record_scenes.py`/`qemu_capture.py` on the shipped ISO). `build_demo.py`
+#   and its container mirror (`build.sh`, `container-setup.sh`,
+#   `session-start.sh`, `fake-ollama.py`, `scenes.yaml`) are removed: they
+#   recorded a re-created session, not the image, and drove the retired
+#   Control Center window (#99). Two recorders would be two authorities for
+#   the same footage. Owner's call against the reviewers' 'delete': the
+#   2½-minute walkthrough and the trailer serve different readers; the
+#   recorder must drive the Cockpit, and scenes.yaml stays its single source.
+# ----------------------------------------------------------------------------
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$(dirname "$SCRIPT_DIR")")"

@@ -416,7 +416,13 @@ bash scripts/release/stage-split-release.sh output/<iso> <tag> --out tmp/release
   - `scripts/release/stage-split-release.sh` — the release asset set (parts, sums, signatures, notes)
   - `scripts/release/ci-local.sh` — the CI gates, run locally
   - `CHANGELOG.md` — single source of truth for release notes
-- **Decisions (see MASTER_PLAN.md → Decision Log):**
+- **Decisions.** From Phase 12 onward the authority is the inline `@decision`
+  block beside the code (`grep -rn '@decision DEC-PHASE12-026' scripts iso
+  tests .github`); MASTER_PLAN.md → Decision Log is a table *derived* from
+  those blocks by `scripts/decisions/decision_log.py` (`make decision-log`
+  regenerates it; `tests/unit/test_decision_log.sh` fails when it drifts;
+  DEC-PHASE13-045). Phases 1-11 remain hand-written rows in the same section.
+  Relevant here:
   - `DEC-PHASE8-002` — release artifact pipeline rationale (Docker-in-CI for
     live-build, DRAFT-mode mandatory)
   - `DEC-PHASE12-026` — GPG signing is hard-fail (the earlier
@@ -540,6 +546,8 @@ Never publish a bare `.part-*` set without `SHA256SUMS`, its `.asc` and
   part at the day's measured speed. `owner-release.sh` defaults to `64m`
   (≈48 parts for a 3.0 GB ISO) and takes `--part-size`; `--restage` re-splits,
   re-signs and clears every asset (starters included) off the draft first.
+  **2026-11-06 (v3.1.4):** 48 parts of 64 MiB at ~2.5 MB/s went up in 27 min,
+  median 26 s and slowest 34 s per part, no reset and no `starter` left behind.
 - **Failed uploads leave a hidden `starter` asset** that blocks every retry of
   the same file name with `400 Bad Request` / `500 Error saving asset`. It is
   NOT shown by `gh release view`; list and delete it with the REST API:

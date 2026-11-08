@@ -1,6 +1,7 @@
 """suricata_capture — make Suricata capture something, and prove that it did.
 
 @decision DEC-PHASE12-038
+@canonical
 @title Suricata gets an Orion-X capture config and an interface heartbeat,
   driven by the existing posture authority
 @status accepted

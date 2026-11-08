@@ -1,6 +1,8 @@
 # Orion-X Zeek protocol analysis, one instance per interface
 #
 # @decision DEC-PHASE13-033
+# @canonical
+# @category DETECTION
 # @title orionx-zeek@.service runs Zeek on each live interface at Tier 1,
 #   started and stopped by orionx-postured beside Suricata (implements
 #   DEC-PHASE13-004)
@@ -60,6 +62,29 @@
 #   -C: ignore bad checksums. NIC offload hands the kernel frames whose
 #   checksums are computed later; without -C Zeek discards them as corrupt
 #   and conn.log stays empty on a perfectly live link.
+#
+#   Decision Log entry as hand-written on 2026-11-01 (merged into this block
+#   by #97, which made the block the authority): Zeek is a managed sensor:
+#   `orionx-zeek@.service` (template on the interface,
+#   `ExecStart=/opt/zeek/bin/zeek -C -i %I
+#   /usr/share/orionx/zeek/orionx.zeek`, `LogsDirectory=zeek/%i`, exactly
+#   `CAP_NET_RAW`, no AF_INET, `MemoryMax=512M`, bounded restart,
+#   `ConditionPathExists` on binary and interface, no `[Install]`);
+#   `orionx-postured`'s `tier_plan()` carries `zeek` (Tier 1/2 when the
+#   measured live set is non-empty) and `plan_actions()` starts one instance
+#   per `capture_ifaces` entry after Suricata and stops departed ones before
+#   it; log discovery expands `/var/log/zeek/<iface>/`; the curated
+#   `orionx.zeek` policy rotates hourly into `./archive` and
+#   `orionx-zeek-prune` caps it at 64 MiB / 24 h. Implements DEC-PHASE13-004
+#   (owner, 2026-10-18). zeek-core shipped since trixie-dev4 and nothing ran
+#   it (#150, Pavilion 2026-10-31): no unit, no `/var/log/zeek`, every
+#   Zeek-fed surface empty. The stock `local` policy phones out per
+#   observation (detect-MHR DNS, reverse DNS per notice) and the deck promises
+#   no unprompted outbound traffic, so the policy is curated and the unit
+#   cannot open an IP socket. One interface authority: the same measured live
+#   set as Suricata (DEC-PHASE12-038). Bounded rotation because the live
+#   overlay is RAM. No seccomp filter yet: unverified against Zeek 9 and a
+#   seccomp kill would be silent non-detection
 
 [Unit]
 Description=Orion-X Zeek protocol analysis on %I

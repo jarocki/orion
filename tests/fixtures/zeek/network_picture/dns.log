@@ -1,0 +1,15 @@
+#separator \x09
+#set_separator	,
+#empty_field	(empty)
+#unset_field	-
+#path	dns
+#open	2026-11-06-10-00-00
+#fields	ts	uid	id.orig_h	id.orig_p	id.resp_h	id.resp_p	proto	trans_id	rtt	query	qclass	qclass_name	qtype	qtype_name	rcode	rcode_name	AA	TC	RD	RA	Z	answers	TTLs	rejected
+#types	time	string	addr	port	addr	port	enum	count	interval	string	count	string	count	string	count	string	bool	bool	bool	bool	count	vector[string]	vector[interval]	bool
+1790658015.000000	Cd1	192.168.4.23	53211	192.168.4.1	53	udp	4242	0.010000	wpad.lan	1	C_INTERNET	1	A	0	NOERROR	F	F	T	F	0	-	-	F
+1790658016.000000	Cd2	192.168.4.44	5353	224.0.0.251	5353	udp	4242	0.010000	_googlecast._tcp.local	1	C_INTERNET	12	PTR	0	NOERROR	F	F	T	F	0	-	-	F
+1790658017.000000	Cd3	192.168.4.44	5355	224.0.0.252	5355	udp	4242	0.010000	FILESERVER	1	C_INTERNET	1	A	0	NOERROR	F	F	T	F	0	-	-	F
+1790658018.000000	Cd4	192.168.4.23	137	192.168.4.255	137	udp	4242	0.010000	WORKGROUP	1	C_INTERNET	1	A	0	NOERROR	F	F	T	F	0	-	-	F
+1790658019.000000	Cd5	192.168.4.88	40000	192.168.4.1	53	udp	4242	0.010000	example.com	1	C_INTERNET	1	A	0	NOERROR	F	F	T	F	0	-	-	F
+1790658021.000000	Cd6	192.168.4.44	5353	224.0.0.251	5353	udp	4242	0.010000	_hap._tcp.local	1	C_INTERNET	12	PTR	0	NOERROR	F	F	T	F	0	-	-	F
+#close	2026-11-06-10-15-00

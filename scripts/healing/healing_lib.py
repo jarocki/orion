@@ -9,6 +9,7 @@ file or talks to Synapse — those live in playbooks.py behind an injectable
 runner, so the reasoning above can be proved in CI on a laptop with no root.
 
 @decision DEC-PHASE12-023
+@canonical
 @title Auto-healing engine: static playbook registry, autonomy-gated, reversible,
   hash-chained
 @status accepted
@@ -31,11 +32,10 @@ runner, so the reasoning above can be proved in CI on a laptop with no root.
 
   2. autonomy.json IS THE SINGLE AUTHORITY, AND IT FAILS CLOSED. Absent,
      unreadable, truncated, not-a-dict, or naming a level we do not recognise
-     all resolve to "off". A corrupt config must never be read as consent. Note
-     this is deliberately stricter than the Control Center's *display* default
-     of "propose": the UI shows propose for a class the operator has never
-     touched, the engine treats it as off. Both are non-acting, and the engine
-     errs downward on purpose.
+     all resolve to "off". A corrupt config must never be read as consent.
+     (Until #95 the Cockpit's grid displayed "propose" for an untouched class
+     and wrote it on open; now the Workbench and `orionx-heal autonomy` show
+     an untouched class as off, which is what this engine does with it.)
 
   3. EVERY ACTION IS REVERSIBLE AND EXPIRES. An automated responder that leaves
      permanent state behind is a self-inflicted outage waiting for the operator
@@ -125,7 +125,7 @@ def operator_config_dir() -> Path:
     return Path.home() / ".config" / "orionx"
 
 
-#: Operator's standing consent. Written by the Control Center Auto-Healing tab.
+#: Operator's standing consent. Written only by save_autonomy() (`orionx-heal autonomy`).
 AUTONOMY_FILE = Path(
     os.environ.get("ORIONX_AUTONOMY_FILE", "")
     or (operator_config_dir() / "autonomy.json")
@@ -227,6 +227,54 @@ def disposition(level: str) -> str:
 def may_act_now(autonomy: dict[str, str], playbook: str) -> bool:
     """True only when the operator pre-approved fully autonomous action."""
     return disposition(level_for(autonomy, playbook)) == ACT_EXECUTE
+
+
+# #95 (DEC-PHASE13-049, recorded in scripts/control_center/moved.py): the
+# Cockpit's Auto-Healing tab was the only writer of autonomy.json and wrote it
+# whenever it was built, so opening a window granted "propose" consent. The
+# grid moved to the Workbench (read-only page + this writer via
+# `orionx-heal autonomy`); the tab and its writer were deleted.
+def save_autonomy(levels: dict[str, str], path: Path | None = None) -> tuple[bool, str]:
+    """THE writer of autonomy.json (DEC-PHASE13-049). Atomic; never raises.
+
+    Only known classes and known levels are written. Returns (True, "") or
+    (False, "<path>: <reason>"). Refuses as root: the file lives in the
+    operator's home and must stay theirs (sudo would leave it root-owned and
+    unwritable for the operator's next change).
+    """
+    p = Path(path) if path is not None else AUTONOMY_FILE
+    clean = {k: v for k, v in levels.items() if k in PLAYBOOK_NAMES and v in LEVEL_RANK}
+    if os.geteuid() == 0 and not os.environ.get("ORIONX_AUTONOMY_FILE"):
+        return False, f"{p}: refusing to write as root; run orionx-heal autonomy as the operator, without sudo"
+    tmp = None
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".autonomy.", suffix=".tmp", dir=str(p.parent))
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(clean, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, p)
+        return True, ""
+    except OSError as exc:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        return False, f"{p}: {exc.strerror or exc}"
+
+
+def set_autonomy(changes: dict[str, str], path: Path | None = None) -> tuple[bool, str]:
+    """Merge `changes` into the current file and save. Unknown names are refused, not dropped."""
+    bad = [f"{k}={v}" for k, v in changes.items() if k not in PLAYBOOK_NAMES or v not in LEVEL_RANK]
+    if bad:
+        return False, (f"unknown class or level: {', '.join(bad)} (classes: {', '.join(PLAYBOOK_NAMES)}; "
+                       f"levels: {', '.join(LEVELS)})")
+    levels = load_autonomy(path)
+    levels.update(changes)
+    return save_autonomy(levels, path)
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +498,33 @@ class Trigger:
     why: str
 
 
+# @decision DEC-PHASE13-042
+# @title block_ip keeps its critical floor; a scan that stays at warning is shown under SOURCES, not proposed
+# @status accepted
+# @rationale #126 (c) asked whether block_ip should also fire on sustained
+#   `warning` scans. No, on the producers' own thresholds:
+#   * scanwatch already turns "sustained" into "critical". Warning is 15
+#     distinct ports in 15 s (30 in 900 s for the slow window); critical is
+#     50 in 15 s (120 in 900 s), and an escalation always bypasses the
+#     re-announce throttle (orionx-scanwatch ScanTracker.observe). The
+#     reference `nmap -Pn -A` against the DROP policy reaches critical in
+#     ~12 s. A source that STAYS at warning is by construction a small or
+#     targeted touch: a LAN neighbour's discovery chatter hitting dropped
+#     ports, a printer, one probe of a handful of services.
+#   * Suricata warning is eve severity 2 (orionx-postured EVE_SEVERITY), where
+#     most ET INFO / ET POLICY signatures land: policy noise, not hostility
+#     attributable to a source.
+#   * Zeek has no trigger, and its only scan notices (Scan::*) are not in
+#     stock Zeek 8.1.1 and map to warning (orionx-postured ZEEK_NOTE_SEVERITY).
+#   * A trigger is level-agnostic: lowering the floor for `propose` lowers it
+#     for `autonomous` too, so a 16-port touch would put a LAN host in the
+#     nftables drop set. A per-level floor would be a second consent axis
+#     beside autonomy.json (DEC-PHASE12-023), which is the thing to avoid.
+#   What the owner was missing was visibility, not a lower bar. The Cockpit's
+#   DEFENSIVE ACTIONS pane now lists warning-level scanners under SOURCES
+#   (pewpew_feed.build_feed, DEC-PHASE13-041), from which
+#   `sudo orionx-heal run block_ip --target <ip>` is one command. Pinned by
+#   tests/unit/test_healing.sh ("warning scan proposes nothing").
 TRIGGERS: tuple[Trigger, ...] = (
     Trigger("block_ip", "firewall", "scan", "critical", extract_ip,
             "a host that swept our ports is scanning us; drop it"),
@@ -912,26 +987,99 @@ def expired_pending(entries: list[dict[str, Any]], now: float,
 #   replay implementation. Instead the ONE replay (replay()/active_actions()/
 #   pending_actions()) is projected by root into a 0644 file, atomically
 #   (temp + rename in the same directory), on every chain append and at least
-#   every 10 s by the daemon loop. Schema (agreed with the Cockpit owner):
+#   every 10 s by the daemon loop. Schema (agreed with the Cockpit owner;
+#   `proposed`, `proposed_window` and `autonomy` added by DEC-PHASE13-041):
 #     {"ts": float, "chain_ok": bool|null,
 #      "in_force": [{"id","action","target","applied_ts","expires_ts"|null}],
 #      "pending":  [{"id","action","target","proposed_ts"}],
+#      "proposed": [{"action","target","ts","count","level","reason","event_id"|null}],
+#      "proposed_window": float,
+#      "autonomy": {<every PLAYBOOK_NAMES entry>: level},
 #      "error": str|null}
 #   chain_ok is null when the chain could not be read (error says why);
 #   false when verification failed (error carries the break). An unreadable
 #   chain yields empty lists AND the error, never silently empty lists.
+#
+# @decision DEC-PHASE13-041
+# @title The healing snapshot carries recent proposals and heald's consent levels; the Cockpit pane reads one authority per block
+# @status accepted
+# @rationale #126: "the Pending pane does not show suggested actions" was
+#   structural. At level `propose` the engine seals KIND_PROPOSED into the
+#   chain and posts a bus notice, but the snapshot had no field for it, so the
+#   pane could not show a suggestion however many were made. The snapshot now
+#   projects them: KIND_PROPOSED records from the last PROPOSED_WINDOW_SECONDS
+#   (30 min), folded to one row per (action, target) carrying the newest ts,
+#   a repeat count and the triggering bus event id, newest first, at most
+#   PROPOSED_MAX rows. A suggestion whose (action, target) is now pending or
+#   in force is left out: it has been overtaken, and listing it twice would
+#   claim two decisions. The consent levels heald read (level_for over every
+#   registry name, so an absent autonomy.json reads "off" for each) ride
+#   along, so the pane can say "every class is off" from the file it already
+#   trusts, instead of reading another uid's ~/.config and guessing.
+#   Attack sources are NOT healing state. The pane's SOURCES block is
+#   pewpew_feed.build_feed over the Cockpit's own bus buffer, the function the
+#   Attack Map renders, so the two cannot disagree (cockpit_lib.attack_sources).
+PROPOSED_WINDOW_SECONDS = 1800.0
+PROPOSED_MAX = 10
+
+
+def recent_proposals(entries: list[dict[str, Any]], live: set[tuple[str, str]],
+                     now: float, window: float = PROPOSED_WINDOW_SECONDS,
+                     limit: int = PROPOSED_MAX) -> list[dict[str, Any]]:
+    """KIND_PROPOSED records inside `window`, folded per (action, target).
+
+    `live` holds the (action, target) pairs that are pending or in force; a
+    proposal for one of those has been overtaken and is left out.
+    """
+    cutoff = now - float(window)
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
+    for e in entries:
+        if str(e.get("kind", "")) != KIND_PROPOSED:
+            continue
+        try:
+            ts = float(e.get("ts", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if ts < cutoff:
+            continue
+        key = (str(e.get("playbook", "")), str(e.get("target", "")))
+        if not key[0] or key in live:
+            continue
+        row = rows.setdefault(key, {"action": key[0], "target": key[1], "ts": ts,
+                                    "count": 0, "level": "", "reason": "",
+                                    "event_id": None})
+        row["count"] += 1
+        if ts >= row["ts"]:
+            row.update(ts=ts, level=str(e.get("level", "")),
+                       reason=str(e.get("reason", ""))[:200],
+                       event_id=str(e["event_id"])[:32] if e.get("event_id") else None)
+    out = sorted(rows.values(), key=lambda r: r["ts"], reverse=True)
+    return out[:max(0, int(limit))]
+
+
 def status_snapshot(path: Path | None = None, now: float | None = None,
-                    extra_error: str | None = None) -> dict[str, Any]:
+                    extra_error: str | None = None,
+                    autonomy: dict[str, str] | None = None) -> dict[str, Any]:
+    """The Cockpit's view of healing state (DEC-PHASE12-085, DEC-PHASE13-041).
+
+    `autonomy` is the consent mapping the caller acts on (Engine.autonomy());
+    None reads it here. Either way every registry class is listed; unset = off.
+    """
     now = time.time() if now is None else now
+    consent = load_autonomy() if autonomy is None else autonomy
+    levels = {name: level_for(consent, name) for name in PLAYBOOK_NAMES}
     entries, err = read_chain_checked(path)
     if err is not None:
         return {"ts": now, "chain_ok": None, "in_force": [], "pending": [],
+                "proposed": [], "proposed_window": PROPOSED_WINDOW_SECONDS,
+                "autonomy": levels,
                 "error": "; ".join(x for x in (err, extra_error) if x)}
     ok, idx, why = verify_chain(entries)
     errors = [] if ok else [f"audit chain broken at record {idx}: {why}"]
     if extra_error:
         errors.append(extra_error)
-    state = replay(entries).values()
+    state = list(replay(entries).values())
+    live = {(a.playbook, a.target) for a in state if a.status in ("active", "pending")}
     return {
         "ts": now,
         "chain_ok": ok,
@@ -942,6 +1090,9 @@ def status_snapshot(path: Path | None = None, now: float | None = None,
         "pending": [{"id": a.action_id, "action": a.playbook, "target": a.target,
                      "proposed_ts": float(a.applied_at)}
                     for a in state if a.status == "pending"],
+        "proposed": recent_proposals(entries, live, now),
+        "proposed_window": PROPOSED_WINDOW_SECONDS,
+        "autonomy": levels,
         "error": "; ".join(errors) or None,
     }
 

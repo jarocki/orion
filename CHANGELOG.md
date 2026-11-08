@@ -7,6 +7,160 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v3.1.5] — 2026-11-07 (backlog release)
+
+The ten open backlog issues, one pull request each (#176–#185), on the v3.1.4
+image that the owner booted on the HP Pavilion on 2026-11-06. Suricata finally
+ships with signatures; the IDS, Zeek and scan events it and its neighbours
+publish now reach every report with their detail and, where it can be told, the
+tool behind them; the deck gains a passive picture of the network it sits on;
+the Cockpit's DEFENSIVE ACTIONS pane says what the engine suggests, who is
+attacking and why it is empty; and the Control Center's last controls each have
+one home with one writer. Four items ship their build-host half and wait on
+numbers only the deck can give (listed under *Needs the deck*). CI builds and
+gates the ISO from the tag, the owner signs (DEC-PHASE13-029). v3.2.0 is the
+first ARM release.
+
+### Added
+
+- **Suricata ships a curated ET-Open ruleset (W11-6b, #125, DEC-PHASE13-043/-044).**
+  `/var/lib/suricata/rules/suricata.rules` holds the ET-Open `scan`,
+  `attack_response`, `exploit`, `dos`, `shellcode` and `current_events`
+  categories plus Debian's protocol-event rules: 3,233 signatures, 2.7 MB. The
+  full feed is 52,854 signatures and 48 MB, and exhausted the 2 GB deck. The set
+  is vendored in the tree and refreshed by `make suricata-rules-refresh` as a
+  reviewed commit, because upstream serves one rolling daily tarball; a
+  build-time pin would fail every build after the next republish. Provenance
+  (upstream SHA-256 and Last-Modified, categories, counts, license) sits beside
+  the rules. Hook `0530-suricata-rules` fails the build unless the provenance
+  count matches the file and `suricata -T` loads it. Suricata runs
+  `detect: profile: low` with 160 MB of memcaps and `MemoryMax=768M`, sized
+  from container RSS (311 / 405 / 430 MB for one rule / the shipped set / ten
+  workers) and provisional until measured on the Lenovo. v3.0.0 through v3.1.4
+  ran with 0 signatures.
+- **Scanning-tool attribution (#128, DEC-PHASE13-040).** `orionx-postured` and
+  `orionx-scanwatch` name the tool behind an alert (`detail.tool`, with
+  `tool_conf` high / medium / low) through one shared fingerprint,
+  `scripts/rain/tool_fingerprint.py`, which reads the patterns logquery already
+  uses for User-Agents (`intel-base.json`) against Suricata signature text, Zeek
+  notices and the firewall scan's port order and rate. The Cockpit event row and
+  drill-down, the Attack Map source list and `orionx-logquery --report ids|scans`
+  show that one field; no match shows nothing, never a guess. Zeek notice events
+  now carry `dest_port`.
+- **Local network picture (#93, DEC-PHASE13-046).** `scripts/awareness/network_picture.py`
+  (one reader, two surfaces): active hosts from `ip neigh` and Zeek `conn.log`,
+  the local-vs-internet split by RFC 1918 classification, the ARP/NDP table with
+  ieee-data OUI vendors (randomised addresses marked), and sightings of WPAD,
+  NetBIOS/SMB, LLMNR, mDNS, LDAP, DHCP, SSDP/UPnP and an IoT heuristic. The
+  Cockpit NETWORK panel shows the headline; the Workbench gains a *This network*
+  page (`orionx-osint --page network`). Every count carries its window and
+  "observed by this deck"; there is no geolocation; without Zeek each Zeek-fed
+  row says which log it needs. Zeek log discovery moved into
+  `scripts/awareness/zeek_logs.py`, shared with `orionx-postured`.
+- **Gateway identity and upstream probes, operator-initiated (#94, DEC-PHASE13-047).**
+  *Ask the gateway* sends one SSDP M-SEARCH on the local segment and reads the
+  IGD's name, maker, model, external IP and link rates, each labelled "reported
+  by the gateway, not measured". *Probe upstream* checks DNS rewriting (system
+  resolver against 1.1.1.1 on fixed canaries and a `.invalid` name), a captive
+  portal and TCP 22/53/80/443/853/8080, through the same `outbound_verdict()`
+  gate as GODSEYE: at Tier 2, with an unknown posture or with no route, the page
+  shows the refusal and nothing is sent. Neither runs on page load or a timer.
+- **Cockpit DEFENSIVE ACTIONS shows suggestions, sources and why it is empty
+  (#126, DEC-PHASE13-041/-042).** heald's `healing-status.json` carries
+  `proposed` (last 30 min, per target, with count and trigger event id) and the
+  `autonomy` levels it acts on. The pane adds SUGGESTED, with the
+  `orionx-heal run` command, and SOURCES, the top four attacking addresses from
+  `pewpew_feed.build_feed` (the Attack Map's own aggregation). When it is empty
+  it says why: heald not publishing, autonomy off for every class, or no event
+  met a trigger. `block_ip` keeps its critical floor; a scan that stays at
+  warning is listed under SOURCES, not proposed. The pane takes 36% of the
+  right column (30% before).
+- **`orionx-logquery` reports on IDS, Zeek and scan events (#127, DEC-PHASE13-039).**
+  The parser dropped a bus event's `detail`, so these events reached the reports
+  with no address, port or signature and fed only `summary`. It now flattens
+  `detail` onto the record (ip, port, proto, signature, sid, technique,
+  detector, tool), follows the broker's `/run/orionx/details/<id>.json`
+  sidecars for oversized detail (inside that directory and under the event's own
+  id only) and derives tier from severity. New `ids` (per signature) and
+  `scans` (per source) reports; `-v` narrates the flattening.
+- **Narration synth time is measured (#96, DEC-PHASE13-050, proposed).** Every
+  piper and espeak-ng render is timed and kept, with every drop-as-stale and its
+  age, in `$XDG_RUNTIME_DIR/orionx/speech-timing.json` (last 20).
+  `orionx-rain --speech-status` adds per-engine last and median synth time and
+  an OK / TIGHT / OVER BUDGET verdict against `TTS_TIMEOUT` and
+  `SPEECH_MAX_AGE_SECONDS`; `--speech-test --all-engines` times both engines on
+  a one-word and a full line. The espeak-ng fallback renders to a WAV and plays
+  through the same path as piper. The mitigation waits for the Bay Trail numbers.
+- **Decision Log derived from the code (#97, DEC-PHASE13-045).** Inline
+  `@decision` blocks are the authority from Phase 12 on;
+  `scripts/decisions/decision_log.py` collects them and `make decision-log`
+  regenerates the fenced table in MASTER_PLAN.md (162 rows: 121 Phase 12 ids
+  the plan never listed, 41 Phase 13). `--check` requires one full block per id
+  (`@canonical` where an id is annotated at several sites) and that every id
+  mentioned anywhere resolves; `test_decision_log.sh` fails when table and
+  blocks disagree, and the generator refuses to date rows from a shallow clone.
+  The lint workflow checks out full history for it.
+
+### Changed
+
+- **The Control Center's controls each have one home (#95, DEC-PHASE13-048/-049).**
+  The Cockpit has a **Settings** drawer on every tab (⚙ Settings, F2,
+  `orionx-cockpit --settings`) with threat posture, R.A.I.N. alerts, Toggle
+  theme and the DJ deck. Auto-healing consent and Nebula warm-up moved to the
+  Workbench's new **Engine** section, which shows what `orionx-heald` reads and
+  hands over the command; `orionx-heal autonomy [CLASS LEVEL | --all LEVEL]` is
+  the only writer of autonomy.json. The Auto-Healing tab is gone, and with it
+  its habit of writing "propose" for every unset class whenever the Cockpit
+  opened: **an unset class is now off until the operator sets it.** The optional
+  installers are only on the Workbench. `orionx-control-center` is a launcher
+  for this release (`--where` lists where everything went) and goes in the
+  next. `test_settings_writers.sh` fails if any `~/.config/orionx` file gains a
+  second writer.
+
+### Fixed
+
+- **`update` no longer upgrades the live overlay silently; `apt-evidence.sh` (#121, DEC-PHASE13-051).**
+  The owner's v3.1.0 report (`apt install brightnessctl` "seemed to mess up
+  other packages") cannot be settled from the tree; brightnessctl depends on
+  libc6 alone. The strongest in-tree suspect was the shipped alias
+  `update='sudo apt-get update && sudo apt-get upgrade'`, which upgraded every
+  post-build package into the RAM overlay under the running desktop. `update`
+  now refreshes the lists and prints `apt-get -s upgrade` with a note on the
+  live overlay. New read-only `/opt/orionx/optional/apt-evidence.sh` bundles the
+  apt and dpkg logs, the `-s` simulations, policy, non-`ii` packages, overlay
+  space, sources and the clock for the issue. User Guide §13 prefers the
+  optional installers (`orionx_apt_install`).
+- `orionx-postured` claimed Debian's protocol-anomaly rules "still have value"
+  with no ET-Open (nothing loaded them), and `orionx-freshen-suricata` claimed
+  `suricata -T` exits 0 with no rules (it exits 1); it now fetches the 7.0 feed
+  and warns before replacing the shipped subset with the full one (#125).
+- `owner-release.sh --restage` refreshes the draft release notes before it
+  deletes and re-uploads assets (PR #174).
+- `tests/unit/test_build_iso.sh` failed whenever the checkout sat exactly on a
+  release tag (v3.1.4 on 2026-11-06): its fake repositories live inside the
+  checkout, so `git describe` returned the tag and DEC-PHASE12-114 refused it
+  for want of release notes. The fake repositories now carry the real
+  CHANGELOG and notes parser; the no-CHANGELOG case (T40.e) removes it.
+- The Cockpit NETWORK headline and split line drew at 10.5 px, below the 11 px
+  floor `test_cockpit_gtk.sh` enforces; caught when that suite started running
+  on the build host (#93).
+
+### Needs the deck
+
+Each ships its build-host half; the issue stays open (or the decision stays
+provisional) until the numbers are in. The procedures are in the PRs.
+
+- **#96** narration: three runs of `orionx-rain --speech-test --all-engines` on
+  the Pavilion and the Bay Trail Lenovo pick the mitigation (DEC-PHASE13-050).
+- **#121** apt: `apt-evidence.sh` tarballs from a fresh boot, after
+  `apt-get update`, and after the install that misbehaved.
+- **#125** Suricata RSS at Tier 1 on the Lenovo confirms or lowers
+  `MemoryMax=768M` (DEC-PHASE13-044).
+- **#93 / #94** engine runtime against the 5 s Cockpit poll, the panel at
+  1366x768, and the gateway card against a real router.
+
+---
+
 ## [v3.1.4] — 2026-11-05 (release tooling patch)
 
 Source-only patch on v3.1.3 carrying what its publication taught the release
@@ -20,6 +174,24 @@ checks on the owner's caches (PR #169) and the docs pointing at the v3.1.3
 ISO (PR #172) are the whole release; the image content is unchanged apart
 from the version literals. CI builds and gates the ISO from the tag, the
 owner signs (DEC-PHASE13-029).
+
+**ISO identity.** SHA-256 `456f29326953eddd4cd573f81ab3c1b02dca7b6722a749aa60a114d9d8a3bbd9`,
+3,161,604,096 bytes (3.16 GB; the same byte count as v3.1.3, a different
+image), built 2026-11-06 by the Release Pipeline (Actions run 42162518380, on
+the pinned `ubuntu-24.04` runner) from `3cd125d`, the tag commit. Baked
+`ISO_VERSION=v3.1.4`. Gates on this image, all in the same CI run: `.sha256`
+sidecar matches; Debian security floors (13 floors, 26 shipped packages at or
+above floor) with the boot kernel (`vmlinuz-6.12.115+deb13.1-amd64`) bound to
+the packaged one; content-presence in release mode
+(`ORIONX_RELEASE_GATE=1 ORIONX_EXPECT_VERSION=v3.1.4`, 428 passed, 0 failed).
+The release workflow has no QEMU step; develop at the same commit passed QEMU
+in run 42162509198 the same hour (three BIOS boots of 161–165 s, one UEFI boot
+of 169 s). Not booted on hardware (planned for v3.2.0). Signed by the owner
+with `4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF` and published 2026-11-06;
+48 parts of 64 MiB plus `SHA256SUMS`, `SHA512SUMS`, their `.asc` signatures
+and `REASSEMBLE.txt` (53 assets, uploaded 05:17–05:44Z with no reset: median
+26 s per part), every asset size verified against the staging directory and
+the signature re-verified on a fresh download by `owner-release.sh verify`.
 
 ### Fixed
 

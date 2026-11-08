@@ -62,6 +62,23 @@ def notify(message: str, level: str = LEVEL_INFO) -> None:
         _notifier(message, level)
 
 
+def emit_event(severity: str, source: str, category: str, message: str) -> None:
+    """Publish onto the Orion-X event bus via the orionx-event CLI (heard via R.A.I.N.). Non-blocking.
+
+    Shared by the Awareness tab (health alerts) and the settings drawer
+    (posture requests), so both publish the same way (#95).
+    """
+    import sys  # noqa: PLC0415
+    try:
+        subprocess.Popen(
+            ["orionx-event", "--severity", severity, "--source", source,
+             "--category", category, message],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        print(f"orionx-cockpit: could not publish to the bus: {exc}", file=sys.stderr)
+
+
 def have(cmd: str) -> bool:
     """True when *cmd* resolves to an executable on PATH."""
     return shutil.which(cmd) is not None

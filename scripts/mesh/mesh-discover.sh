@@ -10,6 +10,17 @@
 #   stop   — kill the listener process
 #   handle — internal: process ONE datagram (spawned by socat per beacon)
 #
+# @decision DEC-PHASE12-099
+# @title The LAN discovery beacon carries only the WireGuard public key, VPN
+#   IP and port; the hostname is no longer broadcast
+# @status accepted
+# @date 2026-10-07
+# @rationale The beacon is plaintext UDP broadcast on 55555. A hostname on
+#   the wire named the deck (and often its operator) to every host on the LAN
+#   for no protocol benefit: peers are identified by key, and the Mesh tab
+#   shows the key fingerprint. test_mesh_discover.sh asserts that nothing but
+#   the three fields leaves the deck.
+# ----------------------------------------------------------------------------
 # The beacon is a JSON payload broadcast on MESH_DISCOVER_PORT (55555)
 # containing the node's WireGuard public key, VPN IP and WG port (no hostname, DEC-PHASE12-099).
 # Listeners parse incoming beacons, filter own beacons, deduplicate against

@@ -3,6 +3,7 @@
 that keeps it from ever masking a R.A.I.N. alert.
 
 @decision DEC-PHASE12-044
+@canonical
 @title Generative techno bed + graphical DJ deck, gated by the R.A.I.N. bus
 @status accepted
 @rationale An operator asked for an optional music track in the spirit of

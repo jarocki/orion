@@ -36,6 +36,19 @@ from urllib.request import Request, urlopen
 GITHUB_REPO = "jarocki/orion"
 RELEASES_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
 _ISO_ASSET_SUFFIXES = (".iso",)
+# @decision DEC-PHASE12-019
+# @title orionx-imager downloads split releases (part-aa, part-ab, …), joins
+#   and verifies them against SHA256SUMS, and resolves pre-releases
+# @status accepted
+# @date 2026-09-20
+# @rationale v2.2.0-beta's --iso-release looked only for a single .iso asset
+#   and `latest` skipped pre-releases, so a split release (GitHub caps assets
+#   at 2 GB; docs/release-process.md §10) could not be fetched at all. Parts
+#   are downloaded in name order and concatenated, and the whole ISO and every
+#   part are checked against SHA256SUMS before anything is written; a tag or
+#   `latest` with pre-releases resolves correctly. Tested with real files and
+#   hashes and no network (test_orionx_imager_downloader.py).
+# ----------------------------------------------------------------------------
 # Split releases: GitHub caps assets at 2 GB, so releases larger than that ship
 # as `<name>.iso.part-aa`, `.part-ab`, … (see docs/release-process.md §10).
 # `cat part-*` in name order reassembles the ISO; SHA256SUMS lists the whole

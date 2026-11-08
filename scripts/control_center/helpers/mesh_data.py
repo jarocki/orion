@@ -136,6 +136,7 @@ def snapshot_age(snap: dict[str, Any] | None, now: float) -> float | None:
 
 
 # @decision DEC-PHASE12-067
+# @canonical
 # @title One mesh verdict, from the root-written snapshot, for every surface
 # @status accepted
 # @rationale UX-15/UX-26, python.md P2-4, system.md P2-4. The panel widget ran

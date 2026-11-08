@@ -12,7 +12,9 @@ CC="$ROOT/scripts/control_center"; CK="$ROOT/scripts/cockpit/orionx-cockpit"
 echo "[tab authority]"
 grep -q '^SECTIONS = \[' "$CC/app.py" && pass "app.SECTIONS is the one tab list" || fail "SECTIONS" "missing"
 grep -q 'class OrionXControlCenter' "$CC/app.py" && fail "no second window class" "OrionXControlCenter still defined" || pass "the Control Center window class is gone (one window)"
-grep -q 'os.execv(exe, \[exe, "--tab", tab\])' "$CC/app.py" && pass "run_app launches the Cockpit on a tab" || fail "launcher" "run_app does not exec orionx-cockpit"
+grep -q 'return moved.launch(' "$CC/app.py" && grep -q 'os.execv(exe, argv_out)' "$CC/moved.py" \
+  && grep -q 'return \[_resolve("orionx-cockpit"), "--tab", tab\], ""' "$CC/moved.py" \
+  && pass "run_app launches the Cockpit on a tab, or a moved control's home (moved.py, #95)" || fail "launcher" "run_app does not exec through moved.launch"
 grep -q '"tools", "Orion Tools"' "$CC/app.py" && pass "IR Tools is Orion Tools" || fail "rename" "label not Orion Tools"
 grep -q 'from control_center import app as CC' "$CK" && grep -q 'CC.append_sections(self.nb)' "$CK" && pass "the Cockpit builds its tabs from app.SECTIONS" || fail "cockpit tabs" "not wired"
 grep -q 'CCUX.set_notifier(self.toast_bar.notify)' "$CK" && pass "sections toast through the Cockpit's toast bar" || fail "toast" "not wired"
@@ -21,7 +23,9 @@ grep -q 'choices=CC.TAB_KEYS' "$CK" && pass "--tab accepts exactly the authority
 HOOK="$ROOT/iso/config/hooks/live/0700-orionx-setup.hook.chroot"
 grep -q 'Exec=/usr/bin/orionx-cockpit --tab network' "$HOOK" && pass "menu entry (written by the 0700 hook) opens the Cockpit tabs" || fail "desktop" "hook Exec not updated"
 [[ -f "$ROOT/iso/config/includes.chroot/usr/share/applications/orionx-control-center.desktop" ]] && fail "one writer for orionx-control-center.desktop" "a static copy exists beside the hook's heredoc — it overwrote the edit in rc7" || pass "one writer for orionx-control-center.desktop (the 0700 hook; no static copy)"
-python3 -c 'import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' "$CC/app.py" "$CK" "$CC/sections/"*.py "$CC/helpers/"*.py "$CC/widgets/"*.py 2>/dev/null && pass "everything parses (ast; no bytecode written)" || fail "compile" "syntax error"
+grep -q 'from control_center import settings_drawer as SD' "$CK" && grep -q 'SD.build_drawer()' "$CK" && grep -q '"--settings"' "$CK" \
+  && pass "the Cockpit carries the settings drawer on every tab, with --settings (behaviour: test_cockpit_gtk.sh)" || fail "settings drawer" "not wired"
+python3 -c 'import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' "$CC/app.py" "$CC/moved.py" "$CC/settings_drawer.py" "$CK" "$CC/sections/"*.py "$CC/helpers/"*.py "$CC/widgets/"*.py 2>/dev/null && pass "everything parses (ast; no bytecode written)" || fail "compile" "syntax error"
 
 echo "[pure helpers]"
 if python3 - "$CC/helpers" "$ROOT/scripts/awareness" <<'PY'
@@ -85,7 +89,6 @@ local = [{"id":"a","name":"A","kind":"command","command":"orionx-a --x","runtime
 od = T.on_deck(local, lambda p: p in ("/opt/a","/opt/cc"))
 ck([i["id"] for i in od] == ["a","cyberchef"], "on_deck keeps only entries whose runtime_path exists")
 ck(T.launch_argv(local[0]) == ("terminal", ["orionx-a","--x"]) and T.launch_argv(local[1]) == ("detached", ["orionx-osint","--page","cyberchef"]), "launch argv per kind")
-ck(T.install_argv({"command":"sudo /opt/orionx/optional/install-x.sh"}) == ["sudo","/opt/orionx/optional/install-x.sh"], "install argv")
 ck(T.load_catalogue(tmp / "none.json") == ([], []), "missing catalogue -> empty")
 pts = S.points([0, 5, 10], 100, 50)
 ck(len(pts) == 3 and pts[0][1] > pts[2][1] and abs(pts[2][0] - 98) < 1e-6, f"spark points: rising series rises, spans width ({pts})")
@@ -96,7 +99,7 @@ ck(V.parse_resolv_conf("# x\nnameserver 192.168.4.1\nnameserver 1.1.1.1\nnameser
 PY
 then pass "mesh/comms/tools/spark/vitals pure helpers"; else fail "pure helper assertions" "see output above"; fi
 
-echo "[Orion Tools: pkg entries, action labels, guided-action argv, network gate (DEC-PHASE12-072)]"
+echo "[Orion Tools: pkg entries, action labels, guided-action argv (DEC-PHASE12-072)]"
 if python3 - "$ROOT" <<'PY'
 import sys, json, tempfile, pathlib, subprocess
 root = pathlib.Path(sys.argv[1]); sys.path.insert(0, str(root/"scripts"))
@@ -131,12 +134,8 @@ ck(sb[1:3] == ["-i", str(td/"logs")] and out.endswith("storyboard-20261007-03000
 r = subprocess.run([sys.executable, str(root/"scripts"/sb[0])] + sb[1:], capture_output=True, text=True, timeout=120)
 ck(r.returncode == 0 and pathlib.Path(out).is_file(), f"storyboard-gen.py accepts it and writes the report (rc={r.returncode}) (UX-04)")
 ck("--disable-server" in T.THEME_ARGV[2] and "toggle-theme.sh --status" in T.THEME_ARGV[2], "theme report then a separate-process terminal (UX-24)")
-h, b = T.network_gate({"default_route": False}, {"known": True, "tier": "0", "label": "Tier 0", "outbound_allowed": True})
-ck("no default route" in h and "no default route" in b, f"no route: said up front, installs disabled ({b})")
-h, b = T.network_gate({"default_route": True, "interface": "wlan0"}, {"known": True, "tier": "2", "label": "Tier 2 · Deception", "outbound_allowed": False})
-ck("wlan0" in h and "Tier 2" in b, f"shields up: installs disabled with the reason ({b})")
-h, b = T.network_gate({"default_route": True, "interface": "wlan0"}, {"known": True, "tier": "0", "label": "Tier 0", "outbound_allowed": True})
-ck(b == "" and "Tier 0" in h, "route + tier 0: installs allowed")
+# #95: the installers (and the network gate only they needed) are the Workbench's.
+ck(not hasattr(T, "install_argv") and not hasattr(T, "network_gate"), "no installer path left in the Cockpit's tool helpers")
 PY
 then pass "Orion Tools helpers"; else fail "Orion Tools helpers" "see output above"; fi
 
@@ -208,7 +207,8 @@ grep -q 'M.read_history()' "$CC/sections/mesh.py" && pass "Mesh tab reads bus hi
 grep -q 'C.client_states(' "$CC/sections/comms.py" && grep -q 'Gtk.Button(label="Install")' "$CC/sections/comms.py" && pass "Comms offers Install for absent clients" || fail "comms install" "missing"
 grep -q '"Next hop", _next_hop' "$CC/sections/awareness.py" && grep -q '"DNS", _dns' "$CC/sections/awareness.py" && grep -qF 'rows["Firewall address"] = _firewall_addr' "$CC/sections/awareness.py" && pass "Awareness rows: firewall address, next hop, DNS" || fail "awareness rows" "missing"
 grep -q 'Spark("packets/s"' "$CC/sections/awareness.py" && pass "Awareness sparklines (packets/cpu/mem/disk)" || fail "sparklines" "missing"
-grep -q 'T.on_deck(local, os.path.exists)' "$CC/sections/ir.py" && grep -q '_OS.optional_state(installable' "$CC/sections/ir.py" && pass "Orion Tools is dynamic: catalogue + the Workbench's probe logic" || fail "tools dynamic" "missing"
+grep -q 'T.on_deck(local, os.path.exists)' "$CC/sections/ir.py" && pass "Orion Tools is dynamic: the Workbench catalogue at runtime" || fail "tools dynamic" "missing"
+! grep -q 'optional_state\|install_argv' "$CC/sections/ir.py" && pass "Orion Tools has no installer copy; the Workbench's Optional section is the one (#95)" || fail "installers" "Orion Tools still carries installers"
 for d in 053 054 055 056 057; do grep -rq "DEC-PHASE12-$d" "$CC" && pass "DEC-PHASE12-$d annotated" || fail "DEC-PHASE12-$d" "not annotated"; done
 echo "==========================================="; echo "Results: $PASS passed, $FAIL failed"; echo "==========================================="
 [[ $FAIL -eq 0 ]]

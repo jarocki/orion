@@ -239,6 +239,7 @@ echo "NOTE: Autopsy requires manual installation. See docs/INSTALL_AUTOPSY.md"
 echo "=== Installing ollama (Nebula AI runtime daemon — DEC-PHASE10-007) ==="
 
 # @decision DEC-PHASE13-036
+# @category NEBULA
 # @title Ollama stays pinned at 0.30.7 for v3.1.3; the pin is cross-verified
 #   against the release's sha256sum.txt and carries a review-by date the unit
 #   suite enforces; the 0.40.x upgrade is a store-layout migration (#163)
@@ -265,6 +266,25 @@ echo "=== Installing ollama (Nebula AI runtime daemon — DEC-PHASE10-007) ==="
 #   ollama-linux-amd64.tar.zst in the v0.30.7 release's sha256sum.txt) and a
 #   review-by date; tests/unit/test_external_tools_hook.sh fails once that
 #   date has passed, so the question is re-asked, not forgotten.
+#
+#   Decision Log entry as hand-written on 2026-11-01 (merged into this block
+#   by #97, which made the block the authority): Ollama stays pinned at 0.30.7
+#   for v3.1.3: the pin is cross-verified against the v0.30.7 release's
+#   `sha256sum.txt`, carries `OLLAMA_PIN_REVIEW_BY=2027-01-31` that
+#   `test_external_tools_hook.sh` enforces, and `OLLAMA_NO_CLOUD=1` is set on
+#   `nebula-runtime.service` and the 0510 build server; the 0.40.x upgrade is
+#   a tracked store-layout migration (#163, v3.2.0). Measured 2026-11-01
+#   (#153) against v0.40.13 in an amd64 trixie container with the shipped Qwen
+#   store, offline: compatible at the API (tags/show/chat/generate; every
+#   field the deck reads present) but `ollama create` writes `manifests-v2/`
+#   only, so `store.py consolidate` and the 0510 check fail — an upgrade is a
+#   migration, not a bump; footprint unchanged (RSS with model loaded
+#   2,193,016 KB vs 2,197,204 KB; both disable mmap on CPU by default; sse42
+#   backend in both; installed 65.9 → 78.8 MB); security: eight 2026 GHSAs,
+#   none network-reachable on the deck (loopback, `IPAddressDeny=any`,
+#   AppArmor, read-only `/usr`), the pull-path CVEs need egress the unit
+#   cannot make. A review-by date the suite enforces makes the next evaluation
+#   mechanical, not remembered
 OLLAMA_VERSION="0.30.7"
 OLLAMA_PIN_REVIEW_BY="2027-01-31"
 OLLAMA_TGZ_URL="https://github.com/ollama/ollama/releases/download/v${OLLAMA_VERSION}/ollama-linux-amd64.tar.zst"

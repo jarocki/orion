@@ -487,6 +487,7 @@ step_setup_wifi() {
 # Step 2c: clock — timezone, RTC convention, network time
 #
 # @decision DEC-PHASE13-032
+# @category BOOT
 # @title The wizard owns the deck's clock: timezone and RTC convention are
 #   operator answers; network time sync is installed but opt-in
 # @status accepted
@@ -512,6 +513,27 @@ step_setup_wifi() {
 #        on timeout/blank is NO for the same reason: an unattended boot must
 #        not phone out.
 #   Every prompt keeps the 30 s input timeout (DEC-PHASE12-106).
+#
+#   Decision Log entry as hand-written on 2026-11-01 (merged into this block
+#   by #97, which made the block the authority): The first-boot wizard owns
+#   the deck's clock: a timezone prompt (`Area/City`, validated against
+#   `/usr/share/zoneinfo`, applied with `timedatectl set-timezone`, fallback
+#   `/etc/localtime` + `/etc/timezone`), a hardware-clock-convention prompt
+#   (`timedatectl set-local-rtc 1 --adjust-system-clock` on a yes), and an
+#   opt-in network-time prompt (`timedatectl set-ntp true` on a yes);
+#   `systemd-timesyncd` is installed but disabled at boot by the 0620 hook
+#   (never masked); CLI `--timezone`, `--rtc-local`, `--ntp`; blank/timeout
+#   answers change nothing. Pavilion report #148: the RTC keeps local time
+#   (Windows convention), the live system read it as UTC, apt rejected every
+#   Release file as "not valid yet"; the image had no NTP client and no
+#   timezone. live-config's `utc=no` (1120-util-linux) only rewrites
+#   `/etc/adjtime` late in userspace, after the kernel has read the RTC, so a
+#   boot-menu variant cannot fix the running clock; `set-local-rtc
+#   --adjust-system-clock` does, offline. Network time is opt-in because the
+#   User Guide promises the image makes no outbound connection on its own
+#   (DEC-PHASE12-104 family); installing the client while disabling it keeps
+#   `timedatectl set-ntp true` one command away. Prompts use `[yY]` matching,
+#   not `${var,,}`, so the dry-run suite also runs under macOS bash 3.2
 # ---------------------------------------------------------------------------
 
 _current_timezone() {

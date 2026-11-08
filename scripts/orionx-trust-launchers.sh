@@ -5,6 +5,8 @@
 # XFCE 4.20 opens them on the first double-click (#149, DEC-PHASE13-034)
 #
 # @decision DEC-PHASE13-034
+# @canonical
+# @category UX
 # @title The Desktop launchers are marked trusted per user at every XFCE
 #   session start, by setting the gvfs checksum attribute xfdesktop/Thunar
 #   require; the image cannot pre-seed it
@@ -51,6 +53,25 @@
 #   ORIONX_DESKTOP_DIR   Desktop directory (default: $XDG_DESKTOP_DIR or ~/Desktop)
 #   ORIONX_GIO_BIN       gio binary (default: gio on PATH)
 #   ORIONX_LAUNCHER_REFERENCE_DIR  Test-only shipped reference directory
+#
+#   Decision Log entry as hand-written on 2026-11-01 (merged into this block
+#   by #97, which made the block the authority): The Desktop's shipped
+#   `.desktop` launchers are marked trusted per user at every XFCE session
+#   start: `orionx-trust-launchers.sh` (XDG autostart
+#   `orionx-trust-launchers.desktop`, also on PATH) sets the gvfs attribute
+#   `metadata::xfce-exe-checksum` to the file's SHA-256 with `gio set`, keeps
+#   `+x`, writes only on a difference, skips symlinks and non-launchers;
+#   `--check` is the verdict (exit 1 when untrusted). Pavilion #149: every
+#   desktop icon asked "untrusted application launcher" once. xfdesktop 4.20
+#   delegates launching to Thunar, which trusts a launcher only when
+#   libxfce4util's `xfce_g_file_is_trusted` finds that attribute equal to the
+#   content hash; the attribute is per-user gvfs metadata that does not exist
+#   before live-config creates the account, so neither `/etc/skel` nor a build
+#   hook can carry it, and the 0700 hook's `install -m 0755` was necessary but
+#   not sufficient. Trusting exactly the shipped files by content hash keeps
+#   the dialog for anything dropped on the Desktop later. Headless xfdesktop
+#   is not testable; the stub-gio suite proves the write, the v3.2.0 boot
+#   proves the dialog is gone
 
 set -euo pipefail
 

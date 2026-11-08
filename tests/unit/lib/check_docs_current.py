@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 """Operator docs describe the current release and the current UI.
 
+@decision DEC-PHASE12-131
+@title Operator docs are checked against the current release and UI by a
+  test, not by review
+@status accepted
+@date 2026-10-07
+@rationale QA: shipped docs still presented the current image as a beta/rc,
+  pointed at surfaces that no longer existed and quoted commands that could
+  not work as written. check_docs_current.py and check_toc_anchors.py (run by
+  test_operator_surfaces.sh) fail on text that presents the current image as a
+  beta/rc, sends the operator to a retired surface or gives a command that
+  cannot run; historical references (the beta shipped, the rc builds existed)
+  are allowed.
+
 Used by tests/unit/test_operator_surfaces.sh (DEC-PHASE12-131). Prints
 "OK ..." or one "FAIL file:line: ..." per problem.
 
@@ -25,6 +38,9 @@ RULES = [
     (re.compile(r"Control Center(?:'s)? (?:→|\*\*|IR Tools)|◈ ?COCKPIT|IR Tools tab"),
      "navigates through a retired surface (the Control Center is the Cockpit's tabs)"),
     (re.compile(r"Investigation surface\b(?! /)"), "uses the retired name for the Orion Workbench"),
+    (re.compile(r"on the \*\*Auto-Healing\*\* tab|the Auto-Healing tab|Awareness tab → (?:Audible|Threat)|"
+                r"[Cc]lick \*\*Warm up model\*\*|Toggle Theme\*\* in the Cockpit's Orion Tools"),
+     "sends the operator to a control that moved in v3.1.5 (#95: Cockpit Settings drawer / Workbench Engine)"),
     (re.compile(r"(?<!sudo )(?<![\w-])orionx-mesh (?:status|peers|join|leave)\b"),
      "runs orionx-mesh without sudo (it refuses to run without root)"),
     (re.compile(r"(?<!sudo )(?<![\w/.-])orionx-diag(?: --(?:json|category))?\s*(?:$|#|>)", re.M),

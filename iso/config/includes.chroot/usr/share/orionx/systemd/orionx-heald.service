@@ -34,8 +34,8 @@ ExecStart=/opt/orionx/scripts/healing/orionx-heald
 Restart=on-failure
 RestartSec=5s
 User=root
-# The autonomy grid is written by the Control Center running as the desktop
-# user, so the root daemon must be pointed at THAT file, not /root/.config.
+# autonomy.json is written by `orionx-heal autonomy` running as the desktop
+# user (#95), so the root daemon must be pointed at THAT file, not /root/.config.
 # live-config.username=orionx-operator (iso/auto/config) is the single
 # source for this name; healing_lib falls back to the first uid>=1000 if
 # the account is ever renamed.

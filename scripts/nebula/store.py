@@ -18,6 +18,7 @@ Exit codes:
     2 — usage error
 
 @decision DEC-PHASE12-016
+@canonical
 @title Ship the model once: the ollama blob store is the single copy; integrity binds to the live layer
 @status accepted
 @rationale DEC-PHASE11-021 kept the source GGUF next to ollama's store on the

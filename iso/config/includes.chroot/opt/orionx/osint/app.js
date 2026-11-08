@@ -232,6 +232,65 @@ function installCard(item){
   return c;
 }
 
+/* ---- engine settings (#95, DEC-PHASE13-049) -----------------------------
+ * The autonomy grid and the Nebula warm-up moved here from the Cockpit. The
+ * page shows what the engine reads (an unset class is off) and hands over the
+ * command; the write is `orionx-heal autonomy`, run by the operator. */
+function consentCard(cls){
+  var c = el("div", "card engine");
+  var top = el("div", "top");
+  top.appendChild(el("h3", null, cls.id));
+  top.appendChild(el("span", "badge " + (cls.level === "autonomous" ? "caution" : "install"),
+                     cls.level + (cls.set ? "" : " (not set)")));
+  c.appendChild(top);
+  c.appendChild(el("p", null, cls.summary));
+  var cmd = "orionx-heal autonomy " + cls.id + " ";
+  c.appendChild(el("div", "cmd", cmd + "<off|propose|confirm|autonomous>"));
+  var foot = el("div", "foot");
+  ((S.status.engine.autonomy || {}).levels || []).forEach(function(lvl){
+    var b = copyButton(cmd + lvl, lvl);
+    if (lvl === cls.level) b.className += " current";
+    foot.appendChild(b);
+  });
+  c.appendChild(foot);
+  return c;
+}
+
+function warmupCard(w){
+  var c = el("div", "card engine");
+  var top = el("div", "top");
+  top.appendChild(el("h3", null, "Nebula warm-up"));
+  top.appendChild(el("span", "badge " + (w.enabled_at_boot ? "installed" : "install"),
+                     w.enabled_at_boot ? "at every boot" : "on demand"));
+  c.appendChild(top);
+  c.appendChild(el("p", null, "Loads the model into memory so the first prompt is fast. " +
+    "The first run can take minutes and holds about 4.5 GB of RAM. " +
+    (w.last_run ? "Last run logged " + new Date(w.last_run * 1000).toLocaleString() + " (" + w.log + ")."
+                : "No run logged yet (" + w.log + ").")));
+  c.appendChild(el("div", "cmd", w.now));
+  var foot = el("div", "foot");
+  foot.appendChild(copyButton(w.now, "copy: now"));
+  foot.appendChild(copyButton(w.enabled_at_boot ? w.disable : w.enable,
+                              w.enabled_at_boot ? "copy: stop at boot" : "copy: every boot"));
+  c.appendChild(foot);
+  return c;
+}
+
+function renderEngine(){
+  var g = document.getElementById("grid-engine");
+  clear(g);
+  var e = S.status && S.status.engine;
+  if (!e) {
+    g.appendChild(el("p", "empty", "Engine settings unavailable: this page could not read the deck's " +
+                     "status. In a terminal: orionx-heal autonomy"));
+    return;
+  }
+  (e.autonomy.classes || []).filter(function(cls){
+    return matches(cls.id + " " + cls.summary + " " + cls.level + " autonomy consent healing");
+  }).forEach(function(cls){ g.appendChild(consentCard(cls)); });
+  if (matches("nebula warm-up warmup model " + e.warmup.now)) g.appendChild(warmupCard(e.warmup));
+}
+
 function onlineCard(item){
   var allowed = S.status.outbound.allowed;
   var c = el("div", "card online" + (allowed ? "" : " blocked"));
@@ -324,6 +383,8 @@ function render(){
     (L.installable || []).filter(function(i){
       return matches(i.name + " " + i.blurb + " " + i.command);
     }), installCard, "Nothing matches that filter.");
+
+  renderEngine();
 
   var online = (L.online || []).filter(function(o){
     return (S.filter === "all" || o.category === S.filter) &&

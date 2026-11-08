@@ -67,6 +67,20 @@ if release:
 
 try:
     import markdown
+    # @decision DEC-PHASE12-009
+    # @title The User Guide is rendered with pymdownx.superfences, not stock
+    #   fenced_code
+    # @status accepted
+    # @date 2026-09-14
+    # @rationale The Guide nests ~128 code fences inside list items. Stock
+    #   python-markdown (fenced_code, also pulled in by "extra") only honours
+    #   fences at column 0, so those blocks rendered as inline "<code>bash
+    #   lsblk …" garbage (audit 2026-09-14). superfences renders them as real
+    #   Pygments-highlighted <pre> blocks and the list resumes with start=N.
+    #   superfences must not be combined with fenced_code, so "extra"'s
+    #   components are listed explicitly minus fenced_code; proven in a trixie
+    #   container (python3-markdown + python3-pymdownx 10.13).
+    # ------------------------------------------------------------------------
     # DEC-PHASE12-009: the User Guide nests ~128 code fences inside list items.
     # Stock python-markdown (fenced_code, also pulled in by "extra") only honours
     # fences at column 0, so those blocks rendered as inline "<code>bash lsblk …"

@@ -117,10 +117,17 @@ export PATH="$DOCKER_SHIM_DIR:$PATH"
 make_fake_repo() {
     local root="$1"
     mkdir -p "$root/iso"
-    mkdir -p "$root/scripts"
+    mkdir -p "$root/scripts/release"
     mkdir -p "$root/tmp"
     # Copy the real build script into the fake repo
     cp "$BUILD_SCRIPT" "$root/scripts/build-iso.sh"
+    # The fake repo sits inside this checkout, so build-iso.sh's `git describe`
+    # sees the real tags. When HEAD is exactly a release tag (v3.1.4 on
+    # 2026-11-06), DEC-PHASE12-114 refuses a release version without its notes;
+    # give the fake repo the real CHANGELOG and parser so it behaves like the
+    # checkout wherever HEAD is.
+    cp "$REPO_ROOT/CHANGELOG.md" "$root/CHANGELOG.md"
+    cp "$REPO_ROOT/scripts/release/extract-release-notes.sh" "$root/scripts/release/"
 }
 
 # Helper: build a fake repo root WITHOUT iso/ (missing)
@@ -1510,7 +1517,7 @@ done
 printf '# Changelog\n\n## [v9.2.0]\n\n## [v9.1.0]\n\n- x\n' > "$_t40/CHANGELOG.md"
 _lib 'require_release_changelog v9.2.0 "'"$_t40"'"' >/dev/null 2>&1 \
     && fail "T40.d: an EMPTY section was accepted" || pass "T40.d: an empty section is refused"
-FAKE_REPO_REL="$SCRATCH/repo_rel"; make_fake_repo "$FAKE_REPO_REL"
+FAKE_REPO_REL="$SCRATCH/repo_rel"; make_fake_repo "$FAKE_REPO_REL"; rm -f "$FAKE_REPO_REL/CHANGELOG.md"
 _t40_out="$( (cd "$FAKE_REPO_REL" && ORIONX_VERSION=v3.0.0 bash scripts/build-iso.sh --dry-run) 2>&1 )" \
     && fail "T40.e: --dry-run of v3.0.0 with no CHANGELOG passed" || pass "T40.e: build-iso.sh refuses v3.0.0 without its CHANGELOG section"
 contains "T40.f: refusal says why" "DEC-PHASE12-114" "$_t40_out"
