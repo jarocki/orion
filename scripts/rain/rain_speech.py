@@ -51,6 +51,7 @@ and nothing in this module pretends otherwise. The split is:
 
 from __future__ import annotations
 
+import array
 import json
 import os
 import re
@@ -554,7 +555,6 @@ PIPER_VOICE_PATHS = (
     "/usr/share/orionx/voices/" + VOICE_BASENAME,
     "/opt/orionx/voices/" + VOICE_BASENAME,
 )
-SPEECH_SCRATCH = Path("/run/orionx/speech")
 SPEECH_SOURCE = "rain"          # the daemon must never narrate its own events
 
 # Sentinel for "use the module default" in Narrator, distinct from None.
@@ -804,25 +804,99 @@ def probe_synthesis(backend: str | None = None, line: str = PROBE_LINE,
             pass
 
 
+# @decision DEC-PHASE13-052
+# @title Narration scratch WAVs live in the session's own runtime directory
+#   ($XDG_RUNTIME_DIR/orionx/speech, 0700), resolved at call time like the
+#   timing history; no silent fallback to the shared system tempdir
+# @status accepted
+# @date 2026-11-15
+# @category RAIN
+# @rationale #191. The old constant /run/orionx/speech sits under the
+#   0755 root:root /run/orionx (DEC-PHASE11-022), so the desktop-user daemon
+#   could never create it and every rendered alert line fell through to
+#   tempfile's default -- a shared, possibly disk-backed /tmp -- without a
+#   word. The per-session tmpfs is private to the user and already holds
+#   speech-timing.json, so one resolution rule serves both. If the directory
+#   cannot be made, the caller says so (piper degrades to espeak-ng with that
+#   reason) instead of quietly writing audio elsewhere.
+def speech_scratch_dir() -> Path:
+    """Where rendered narration WAVs are written. ONE resolution rule.
+
+    ORIONX_SPEECH_SCRATCH (tests) > $XDG_RUNTIME_DIR/orionx/speech (per-user
+    tmpfs) > ~/.cache/orionx/speech (no session manager). Never the shared
+    system tempdir. Resolved at call time, like speech_state_path().
+    """
+    override = os.environ.get("ORIONX_SPEECH_SCRATCH", "")
+    if override:
+        return Path(override)
+    run = os.environ.get("XDG_RUNTIME_DIR", "")
+    if run:
+        return Path(run) / "orionx" / "speech"
+    return Path.home() / ".cache" / "orionx" / "speech"
+
+
 def _scratch_wav() -> str | None:
+    """A fresh WAV path in speech_scratch_dir(), or None if it cannot be made."""
     try:
-        SPEECH_SCRATCH.mkdir(parents=True, exist_ok=True)
-        scratch = str(SPEECH_SCRATCH)
-    except OSError:
-        scratch = None
-    try:
-        with tempfile.NamedTemporaryFile(suffix=".wav", dir=scratch,
+        scratch = speech_scratch_dir()
+        scratch.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(suffix=".wav", dir=str(scratch),
                                          delete=False) as fh:
             return fh.name
-    except OSError:
+    except (OSError, RuntimeError, KeyError):
         return None
 
 
+def _scale_wav(wav: str, vol: float) -> bool:
+    """Scale a 16-bit PCM WAV's samples by `vol` (0..1) in place. False if it cannot.
+
+    aplay has no volume option, so on the ALSA-only path the volume has to be
+    in the samples themselves. piper and espeak-ng both write 16-bit PCM.
+    """
+    if vol >= 1.0:
+        return True
+    try:
+        with wave.open(wav, "rb") as r:
+            params = r.getparams()
+            frames = r.readframes(params.nframes)
+        if params.sampwidth != 2 or params.comptype != "NONE":
+            return False
+        pcm = array.array("h")
+        pcm.frombytes(frames)
+        if sys.byteorder != "little":
+            pcm.byteswap()
+        for i, s in enumerate(pcm):
+            pcm[i] = int(s * vol)
+        if sys.byteorder != "little":
+            pcm.byteswap()
+        with wave.open(wav, "wb") as w:
+            w.setparams(params)
+            w.writeframes(pcm.tobytes())
+        return True
+    except (OSError, EOFError, wave.Error):
+        return False
+
+
+# @decision DEC-PHASE13-053
+# @title Narration volume holds on the ALSA-only playback path: the rendered
+#   WAV is scaled in software before aplay, and a WAV that cannot be scaled
+#   is not played
+# @status accepted
+# @date 2026-11-15
+# @category RAIN
+# @rationale Codex review of #178: rendering espeak-ng to a WAV (#96) moved
+#   its volume out of `-a` and into the player, and aplay has none, so with
+#   no paplay a configured volume -- including 0, muted -- was ignored and a
+#   muted deck could start talking. piper had the same gap from the start.
+#   One playback path for both engines means one fix here; failing closed
+#   (not played) keeps a muted narration muted.
 def _play_wav(wav: str, vol: float, timeout: float) -> bool:
     if shutil.which("paplay"):
         return rain_lib._run(["paplay", f"--volume={int(vol * 65536)}", wav],
                              timeout=timeout)
     if shutil.which("aplay"):
+        if not _scale_wav(wav, vol):
+            return False
         return rain_lib._run(["aplay", "-q", wav], timeout=timeout)
     return False
 
@@ -909,7 +983,7 @@ def speak_measured(text: str, cfg: dict[str, Any] | None = None,
         else:
             wav = _scratch_wav()
             if wav is None:
-                why = f"cannot write a scratch WAV under {SPEECH_SCRATCH}"
+                why = f"cannot write a scratch WAV under {speech_scratch_dir()}"
             else:
                 try:
                     t0 = time.monotonic()
@@ -1173,8 +1247,12 @@ def timing_verdict(median_s: float | None) -> dict[str, Any]:
     inside_tts_timeout  median <= TTS_TIMEOUT (a render that long is killed)
     inside_max_age      median <= SPEECH_MAX_AGE_SECONDS (dropped as stale)
     tight               inside both, but a model answer that uses its whole
-                        SPEECH_TIMEOUT plus this render would miss the shelf
-                        life -- the "sometimes silent" zone of #96.
+                        SPEECH_TIMEOUT plus this render outlasts the shelf
+                        life. Age is checked only at dequeue (pump_one), so
+                        the slow line itself is still spoken, late; what it
+                        costs is the events queued behind it, which age while
+                        it renders and are dropped as stale when dequeued --
+                        the "sometimes silent" zone of #96.
     verdict             "NO DATA" | "OK" | "TIGHT" | "OVER BUDGET"
     """
     if median_s is None:

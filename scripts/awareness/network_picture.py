@@ -160,10 +160,39 @@ def fmt_window(seconds: float) -> str:
     return f"{s} s"
 
 
-def classify_ip(addr: str | None) -> str:
+# @decision DEC-PHASE13-054
+# @title A directed broadcast is known from the deck's own subnets, never from
+#   a last octet of 255
+# @status accepted
+# @date 2026-11-15
+# @category AWARENESS
+# @rationale Codex review of #186: `int(ip) & 0xFF == 0xFF` called every
+#   x.x.x.255 a broadcast, so on anything wider than a /24 a real host such
+#   as 10.0.0.255 on 10.0.0.0/16 vanished from the census, and traffic to a
+#   public unicast address ending in .255 was counted as local. Only the
+#   interface prefix establishes a directed broadcast, and the deck already
+#   reads its prefixes (`ip -j addr`) for self_ips, so the broadcast set
+#   comes from the same read. 255.255.255.255 is always the limited broadcast.
+def directed_broadcasts(cidrs) -> frozenset[str]:
+    """IPv4 directed-broadcast addresses of the given interface CIDRs. Pure.
+    /31 and /32 have none (RFC 3021); anything unparseable is skipped."""
+    out: set[str] = set()
+    for c in cidrs or ():
+        try:
+            net = ipaddress.ip_interface(str(c).strip()).network
+        except ValueError:
+            continue
+        if net.version == 4 and net.prefixlen < 31:
+            out.add(str(net.broadcast_address))
+    return frozenset(out)
+
+
+def classify_ip(addr: str | None, broadcasts: frozenset[str] = frozenset()) -> str:
     """'local' | 'internet' | 'multicast' | 'invalid'. RFC 1918 / ULA / link-local /
     loopback / unspecified are local; multicast and broadcast stay on the segment
-    and are their own class so host counting can skip them. No geolocation."""
+    and are their own class so host counting can skip them. `broadcasts` is the
+    directed-broadcast set from directed_broadcasts(); without it only
+    255.255.255.255 is treated as a broadcast. No geolocation."""
     if not addr:
         return "invalid"
     try:
@@ -174,8 +203,8 @@ def classify_ip(addr: str | None) -> str:
         return "invalid"        # 0.0.0.0 / :: (a DHCP DISCOVER's source) names no host
     if ip.is_multicast:
         return "multicast"
-    if ip.version == 4 and (ip == ipaddress.IPv4Address("255.255.255.255") or int(ip) & 0xFF == 0xFF):
-        return "multicast"      # directed/limited broadcast: segment-local, not a host
+    if ip.version == 4 and (ip == ipaddress.IPv4Address("255.255.255.255") or str(ip) in broadcasts):
+        return "multicast"      # limited, or directed for one of the deck's subnets: not a host
     if ip.is_private or ip.is_link_local or ip.is_loopback or ip.is_reserved:
         return "local"
     return "internet"
@@ -469,14 +498,14 @@ def _pkts_of(rec: dict) -> int:
     return total
 
 
-def local_internet_split(conn: list[dict]) -> dict[str, Any]:
+def local_internet_split(conn: list[dict], broadcasts: frozenset[str] = frozenset()) -> dict[str, Any]:
     """RFC 1918 classification of Zeek conn records: a connection with either
     end on the internet is 'internet'; everything else (private, link-local,
     multicast, broadcast) stayed on the segment. Pure."""
     acc = {"local": {"conns": 0, "bytes": 0, "pkts": 0},
            "internet": {"conns": 0, "bytes": 0, "pkts": 0}}
     for rec in conn:
-        o, r = classify_ip(rec.get("id.orig_h")), classify_ip(rec.get("id.resp_h"))
+        o, r = classify_ip(rec.get("id.orig_h"), broadcasts), classify_ip(rec.get("id.resp_h"), broadcasts)
         if o == "invalid" and r == "invalid":
             continue
         cls = "internet" if "internet" in (o, r) else "local"
@@ -671,7 +700,8 @@ def iot_heuristics(arp_rows: list[dict], dns: list[dict], have_dns: bool,
     return out
 
 
-def host_census(neigh: list[dict], conn: list[dict], self_ips: set[str]) -> dict[str, Any]:
+def host_census(neigh: list[dict], conn: list[dict], self_ips: set[str],
+                broadcasts: frozenset[str] = frozenset()) -> dict[str, Any]:
     """Distinct hosts: live neighbour entries keyed by MAC (a v4 and a v6
     neighbour with one MAC is one host) plus local unicast addresses seen in
     conn.log that the neighbour table does not already explain. Pure, capped."""
@@ -689,7 +719,7 @@ def host_census(neigh: list[dict], conn: list[dict], self_ips: set[str]) -> dict
     for rec in conn:
         for side in ("id.orig_h", "id.resp_h"):
             ip = rec.get(side)
-            if not ip or ip in self_ips or classify_ip(ip) != "local":
+            if not ip or ip in self_ips or classify_ip(ip, broadcasts) != "local":
                 continue
             key = ip_to_key.get(ip, ip)
             if key not in hosts:
@@ -767,9 +797,12 @@ def collect(window: float = WINDOW_SECONDS, now: float | None = None,
 
     # Self: the deck's own addresses are never counted as hosts.
     self_ips: set[str] = set()
+    self_cidrs: list[str] = []
     for it in deck_vitals.parse_ip_addr(_safe(run, ["ip", "-j", "addr"])):
         for cidr in (it.get("ipv4") or []) + (it.get("ipv6") or []):
             self_ips.add(cidr.split("/")[0])
+            self_cidrs.append(cidr)
+    broadcasts = directed_broadcasts(self_cidrs)
 
     # Neighbour table.
     neigh_text = _safe(run, ["ip", "neigh", "show"])
@@ -837,12 +870,12 @@ def collect(window: float = WINDOW_SECONDS, now: float | None = None,
         reasons.append("zeek: " + zeek["reason"])
     out["zeek"] = zeek
 
-    out["hosts"] = host_census(neigh, recs["conn.log"], self_ips)
+    out["hosts"] = host_census(neigh, recs["conn.log"], self_ips, broadcasts)
     out["hosts"].update({"window_seconds": window, "label": OBSERVED_LABEL,
                          "sources": ["ip neigh"] + (["conn.log"] if have["conn.log"] else []),
                          "neigh_note": "neighbour-table entries age by the kernel's cache rules, not by this "
                                        "window; only the Zeek-fed hosts are bounded to it"})
-    split = local_internet_split(recs["conn.log"]) if have["conn.log"] else {
+    split = local_internet_split(recs["conn.log"], broadcasts) if have["conn.log"] else {
         "available": False, "basis": None, "local": None, "internet": None, "local_pct": None,
         "internet_pct": None, "conns": 0, "reason": "needs Zeek conn.log"}
     split.update({"window_seconds": window, "label": OBSERVED_LABEL})
