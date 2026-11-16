@@ -624,7 +624,7 @@ rl.CONFIG_FILE.write_text(json.dumps({"enabled": True, "min_severity": "warning"
 sys.path.insert(0, str(root / "scripts/rain"))
 import rain_speech as rs                                            # noqa: E402
 rs.PIPER_VOICE_PATHS = (str(fb / "voices/en_US-lessac-medium.onnx"),)
-rs.SPEECH_SCRATCH = fb / "scratch"
+os.environ["ORIONX_SPEECH_SCRATCH"] = str(fb / "scratch")
 log = fb / "stub.log"
 ok = True
 def check(cond, label):
@@ -775,7 +775,7 @@ sys.modules["rain_lib"] = rl
 rl.CONFIG_FILE = fb / "rain.json"
 sys.path.insert(0, str(root / "scripts/rain"))
 import rain_speech as rs                                            # noqa: E402
-rs.SPEECH_SCRATCH = fb / "scratch"
+os.environ["ORIONX_SPEECH_SCRATCH"] = str(fb / "scratch")
 log = fb / "stub.log"
 ok = True
 def check(cond, label):
@@ -1212,6 +1212,125 @@ done < <(grep -hoE "(Fix|Check with|Natural voice): [a-z/][^\"']*" "$_ROOT/scrip
          | sed -E 's/^[^:]+: //' | sort -u)
 if [ -z "$_bad" ]; then pass "every remedy R.A.I.N. prints names a command the image ships"
 else fail "R.A.I.N. remedy names a missing command" "$_bad"; fi
+
+section "The TIGHT consequence describes the real stale check (dequeue only; Codex on #178)"
+RAIN_CLI="$REPO_ROOT/scripts/rain/orionx-rain"
+if grep -q 'That line is still spoken' "$RAIN_CLI" && grep -q 'at dequeue' "$RAIN_CLI" \
+   && ! grep -q 'the line is dropped as stale' "$RAIN_CLI"; then
+    pass "--speech-status says the slow line is spoken late and later events are dropped at dequeue"
+else
+    fail "TIGHT consequence text" "still claims a post-synthesis drop"
+fi
+if python3 - "$RS" <<'TIGHTPY'
+import re, sys
+src = open(sys.argv[1]).read()
+body = src[src.index("def pump_one"):src.index("def _run(self)")]
+# age is computed once, before narrate(); narrate() itself never checks it
+sys.exit(0 if body.count("SPEECH_MAX_AGE_SECONDS") == 1 and body.index("SPEECH_MAX_AGE_SECONDS") < body.index("self.narrate(") else 1)
+TIGHTPY
+then pass "pump_one checks age once, before narrate() (what the text now describes)"
+else fail "pump_one stale check" "moved; update the --speech-status consequence text"; fi
+
+section "Scratch WAVs stay in the session's own directory; volume holds on aplay (#191, DEC-PHASE13-052/053)"
+# Real player stubs on PATH; shutil.which is pinned so the test chooses the
+# ALSA-only path even on a host that has paplay. The aplay stub copies the WAV
+# it was handed, so what is asserted is the audio that would reach the speaker.
+mkdir -p "$WORK/alsa/bin" "$WORK/alsa/home" "$WORK/alsa/run"
+cat > "$WORK/alsa/bin/aplay" <<'STUBEOF'
+#!/usr/bin/env bash
+for a in "$@"; do f="$a"; done
+cp "$f" "$STUB_COPY"
+echo "aplay $*" >> "$STUB_LOG"
+exit 0
+STUBEOF
+cat > "$WORK/alsa/bin/espeak-ng" <<'STUBEOF'
+#!/usr/bin/env bash
+echo "espeak-ng $*" >> "$STUB_LOG"
+out=""
+while [[ $# -gt 0 ]]; do case "$1" in -w) out="$2"; shift 2 ;; --) break ;; *) shift ;; esac; done
+[[ -n "$out" ]] && python3 -c '
+import sys, wave, array
+a = array.array("h", [1000] * 22050)
+with wave.open(sys.argv[1], "wb") as w:
+    w.setnchannels(1); w.setsampwidth(2); w.setframerate(22050); w.writeframes(a.tobytes())' "$out"
+exit 0
+STUBEOF
+chmod +x "$WORK/alsa/bin/"*
+if STUB_LOG="$WORK/alsa/stub.log" STUB_COPY="$WORK/alsa/played.wav" PATH="$WORK/alsa/bin:$PATH" \
+   HOME="$WORK/alsa/home" python3 - "$REPO_ROOT" "$WORK/alsa" <<'PY'
+import array, glob, os, shutil, stat, sys, tempfile, wave
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+root, d = Path(sys.argv[1]), Path(sys.argv[2])
+rl = SourceFileLoader("rain_lib", str(root / "scripts/rain/rain_lib.py")).load_module()
+sys.modules["rain_lib"] = rl
+sys.path.insert(0, str(root / "scripts/rain"))
+import rain_speech as rs                                            # noqa: E402
+ok = True
+def check(cond, label):
+    global ok
+    print(("  ok   " if cond else "  BAD  ") + label)
+    ok = ok and bool(cond)
+def samples(path):
+    with wave.open(str(path), "rb") as r:
+        a = array.array("h"); a.frombytes(r.readframes(r.getnframes()))
+    return a
+
+# 1. One resolution rule: override > $XDG_RUNTIME_DIR/orionx/speech > ~/.cache/orionx/speech.
+for k in ("ORIONX_SPEECH_SCRATCH", "XDG_RUNTIME_DIR"):
+    os.environ.pop(k, None)
+check(rs.speech_scratch_dir() == d / "home/.cache/orionx/speech", f"no session dir -> ~/.cache/orionx/speech ({rs.speech_scratch_dir()})")
+os.environ["XDG_RUNTIME_DIR"] = str(d / "run")
+check(rs.speech_scratch_dir() == d / "run/orionx/speech", f"session dir -> $XDG_RUNTIME_DIR/orionx/speech ({rs.speech_scratch_dir()})")
+check(not hasattr(rs, "SPEECH_SCRATCH"), "the unwritable /run/orionx/speech constant is gone")
+wav = rs._scratch_wav()
+check(wav is not None and Path(wav).parent == d / "run/orionx/speech", f"a scratch WAV lands in the session dir -> {wav}")
+mode = stat.S_IMODE(os.stat(d / "run/orionx/speech").st_mode)
+check(mode == 0o700, f"the scratch dir is private (0700) -> {oct(mode)}")
+if wav:
+    os.unlink(wav)
+
+# 2. Unwritable scratch: said out loud, and nothing is written to the shared tempdir.
+(d / "afile").write_text("x")
+os.environ["ORIONX_SPEECH_SCRATCH"] = str(d / "afile/speech")
+before = set(glob.glob(os.path.join(tempfile.gettempdir(), "*.wav")))
+check(rs._scratch_wav() is None, "a scratch dir that cannot be made -> None, no fallback path")
+os.environ["ORIONX_PIPER_VOICE"] = str(d / "v.onnx")
+(d / "v.onnx").write_text(""); (d / "v.onnx.json").write_text("{}")
+rs.PIPER_VOICE_PATHS = (str(d / "v.onnx"),)
+spoken, why, _s = rs.speak_measured("Port scan from 192.168.4.77.", {"volume": 0.8}, backend="piper")
+check(why is not None and "cannot write a scratch WAV under" in why and str(d / "afile/speech") in why,
+      f"piper's degradation names the scratch dir -> {why!r}")
+after = set(glob.glob(os.path.join(tempfile.gettempdir(), "*.wav")))
+check(after == before, f"no WAV appeared in the system tempdir -> {sorted(after - before)}")
+os.environ["ORIONX_SPEECH_SCRATCH"] = str(d / "scratch")
+
+# 3. _scale_wav: samples scaled in place; 0 is silence; non-16-bit refuses.
+p = d / "t.wav"
+def mk(width=2, value=1000):
+    with wave.open(str(p), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(width); w.setframerate(8000)
+        w.writeframes((array.array("h", [value] * 800).tobytes()) if width == 2 else bytes([200]) * 800)
+mk(); check(rs._scale_wav(str(p), 0.5) and set(samples(p)) == {500}, "volume 0.5 halves every sample")
+mk(); check(rs._scale_wav(str(p), 0.0) and set(samples(p)) == {0}, "volume 0 renders silence")
+mk(); check(rs._scale_wav(str(p), 1.0) and set(samples(p)) == {1000}, "volume 1.0 leaves the WAV untouched")
+mk(width=1); check(rs._scale_wav(str(p), 0.5) is False, "an 8-bit WAV is refused, not played at mixer level")
+
+# 4. ALSA only: espeak-ng's rendered WAV reaches aplay at the configured volume.
+real_which = shutil.which
+shutil.which = lambda n, *a, **k: None if n == "paplay" else real_which(n, *a, **k)
+log, copy = d / "stub.log", d / "played.wav"
+for vol, want in ((0.0, {0}), (0.5, {500})):
+    log.write_text(""); copy.unlink(missing_ok=True)
+    spoken, why, _s = rs.speak_measured("Port scan from 192.168.4.77.", {"volume": vol}, backend="espeak-ng")
+    ran = log.read_text().splitlines()
+    check(spoken and any(l.startswith("aplay") for l in ran) and copy.exists() and set(samples(copy)) == want,
+          f"aplay-only, volume {vol}: the played audio is scaled -> {sorted(set(samples(copy)))[:3] if copy.exists() else 'not played'}")
+shutil.which = real_which
+check(not list((d / "scratch").glob("*.wav")), "scratch WAVs are removed after playback")
+sys.exit(0 if ok else 1)
+PY
+then pass "#191 scratch dir and ALSA volume"; else fail "#191 scratch dir and ALSA volume" "see BAD lines above"; fi
 
 printf "  Results: ${GREEN}%s passed${NC}, ${RED}%s failed${NC}\n" "$PASS" "$FAIL"
 printf "===========================================\n"

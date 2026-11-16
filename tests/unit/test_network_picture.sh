@@ -61,9 +61,21 @@ ck(NP.is_random_mac("02:11:22:33:44:55") and not NP.is_random_mac("b8:27:eb:11:2
 # --- classification: RFC 1918 and friends, never geolocation ---
 for ip, want in (("192.168.4.9", "local"), ("10.0.0.1", "local"), ("172.16.5.5", "local"), ("fd00::1", "local"),
                  ("169.254.1.1", "local"), ("fe80::1", "local"), ("93.184.216.34", "internet"), ("2606:4700::1111", "internet"),
-                 ("224.0.0.251", "multicast"), ("255.255.255.255", "multicast"), ("192.168.4.255", "multicast"),
+                 ("224.0.0.251", "multicast"), ("255.255.255.255", "multicast"), ("192.168.4.255", "local"), ("10.0.0.255", "local"),
                  ("0.0.0.0", "invalid"), ("not-an-ip", "invalid"), (None, "invalid")):
     ck(NP.classify_ip(ip) == want, f"classify {ip} -> {want}")
+
+# --- directed broadcast only from the deck's own subnets (DEC-PHASE13-054, Codex on #186) ---
+B = NP.directed_broadcasts(["192.168.4.57/24", "10.0.0.9/16", "172.16.0.2/31", "fe80::1/64", "junk"])
+ck(B == frozenset({"192.168.4.255", "10.0.255.255"}), f"broadcasts from interface prefixes; /31 and v6 have none ({sorted(B)})")
+ck(NP.classify_ip("192.168.4.255", B) == "multicast" and NP.classify_ip("10.0.255.255", B) == "multicast", "a subnet's broadcast is segment-local, not a host")
+ck(NP.classify_ip("10.0.0.255", B) == "local", "10.0.0.255 on 10.0.0.0/16 is a host")
+ck(NP.classify_ip("93.184.216.255", B) == "internet", "a public address ending .255 is internet, not local")
+hc = NP.host_census([], [{"id.orig_h": "10.0.0.9", "id.resp_h": "10.0.0.255"},
+                         {"id.orig_h": "10.0.0.9", "id.resp_h": "10.0.255.255"}], {"10.0.0.9"}, B)
+ck(hc["count"] == 1 and hc["zeek_only"] == 1, f"census keeps 10.0.0.255 and drops the /16 broadcast (count {hc['count']})")
+sp = NP.local_internet_split([{"id.orig_h": "10.0.0.9", "id.resp_h": "93.184.216.255", "orig_bytes": 10, "resp_bytes": 0}], B)
+ck(sp["internet"]["conns"] == 1 and sp["local"]["conns"] == 0, "traffic to a public .255 address counts as internet")
 
 # --- OUI registries: txt, csv, nmap ---
 t = NP.parse_oui_txt(open(FX / "oui" / "oui.txt", encoding="utf-8"))

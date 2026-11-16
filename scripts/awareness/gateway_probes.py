@@ -740,16 +740,34 @@ def _dns_rows(system_q: Callable[[str], dict], direct_q: Callable[..., dict]) ->
     nx = {"name": canary, "system": sys_nx.get("answers"), "system_rcode": sys_nx.get("rcode_name"),
           "system_error": sys_nx.get("error"), "direct": dir_nx.get("answers"),
           "direct_rcode": dir_nx.get("rcode_name"), "direct_error": dir_nx.get("error")}
+    # @decision DEC-PHASE13-055
+    # @title The NXDOMAIN canary is judged on BOTH resolver answers: a direct
+    #   answer for a name that cannot exist is interception, reported as a finding
+    # @status accepted
+    # @date 2026-11-15
+    # @category AWARENESS
+    # @rationale Codex review of #186: the direct response was collected but
+    #   never checked, so an interceptor that synthesises answers for
+    #   nonexistent names on the direct path, while the local resolver and the
+    #   three real canaries looked clean, was reported "no filtering seen".
+    #   The direct path is the one an on-path interceptor rewrites, so it gets
+    #   the same test as the system path, and each answered path is its own
+    #   finding.
+    nx_findings = []
     if sys_nx.get("answers"):
-        nx["verdict"] = "NXDOMAIN rewriting: the local resolver answered a name that cannot exist"
+        nx_findings.append("NXDOMAIN rewriting: the local resolver answered a name that cannot exist")
+    if dir_nx.get("answers"):
+        nx_findings.append("NXDOMAIN interception: something answered as the direct resolver "
+                           "for a name that cannot exist")
+    if nx_findings:
+        nx["verdict"] = "; ".join(nx_findings)
     elif sys_nx.get("error"):
         nx["verdict"] = "failed: %s" % sys_nx["error"]
     else:
         nx["verdict"] = "clean (NXDOMAIN as it must be)"
     flags = [r["system_verdict"] for r in rows if r["system_verdict"] != "clean"]
     flags += [r["direct_verdict"] for r in rows if r["direct_verdict"].startswith("intercepted")]
-    if nx["verdict"].startswith("NXDOMAIN rewriting"):
-        flags.append(nx["verdict"])
+    flags += nx_findings
     if flags:
         verdict = "filtering or rewriting seen (%d finding%s)" % (len(flags), "" if len(flags) == 1 else "s")
     elif direct_dead == len(rows):

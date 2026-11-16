@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Narration audio no longer lands in the shared `/tmp` (#191, DEC-PHASE13-052).**
+  Rendered WAVs went to `/run/orionx/speech`, which the desktop-user daemon
+  can never create (`/run/orionx` is 0755 root), so every line fell through to
+  the system tempdir without a word. Scratch now lives in
+  `$XDG_RUNTIME_DIR/orionx/speech` (0700, per-session tmpfs, next to
+  `speech-timing.json`), falling back to `~/.cache/orionx/speech`, never the
+  shared tempdir. If it cannot be made, piper degrades to espeak-ng with that
+  reason, and `orionx-rain --speech-status` prints the scratch path and whether
+  it is writable.
+- **Volume and mute hold when only `aplay` is present (DEC-PHASE13-053; Codex
+  review of #178).** aplay has no volume option, and since #96 renders espeak-ng
+  to a WAV too, a configured volume, including 0, was ignored on ALSA-only
+  boxes. The rendered WAV is now scaled in software before aplay plays it.
+  piper had the same gap from the start. A WAV that cannot be scaled (not
+  16-bit PCM) is not played.
+- **`--speech-status` TIGHT consequence matches the code (Codex review of
+  #178).** Age is checked only at dequeue, so a slow line is still spoken,
+  late; the cost is the events queued behind it, which are dropped as stale.
+  The old text claimed the slow line itself was dropped.
+- **Network picture: a directed broadcast comes from the deck's own subnets
+  (DEC-PHASE13-054; Codex review of #186).** Every `x.x.x.255` was treated as
+  a broadcast, so on networks wider than a /24 real hosts (e.g. `10.0.0.255`
+  on a /16) vanished from the host count, and traffic to public addresses
+  ending in `.255` counted as local. Broadcasts are now derived from the
+  interface prefixes in `ip -j addr`.
+- **Gateway probes: the NXDOMAIN canary checks the direct resolver too
+  (DEC-PHASE13-055; Codex review of #186).** A direct answer for a name that
+  cannot exist was collected but never judged, so an on-path interceptor that
+  synthesises nonexistent names was reported as "no filtering seen". Each
+  answered path is now its own finding.
+
+---
+
 ## [v3.1.5] — 2026-11-07 (backlog release)
 
 The ten open backlog issues, one pull request each (#176–#185), on the v3.1.4

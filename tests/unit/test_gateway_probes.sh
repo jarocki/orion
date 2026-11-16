@@ -182,6 +182,32 @@ ck(not names & {"OUTBOUND_BLOCKED_TIERS", "read_posture", "POSTURE_STATUS", "tie
 PY
 then pass "Part B refused on every blocked tier with the posture named; unknown/no-route refused; gate reused, not copied"; else fail "Part B gate" "see output above"; fi
 
+echo "[DNS canary: an answer for a nonexistent name on EITHER path is a finding (DEC-PHASE13-055, Codex on #186)]"
+if python3 -I - "$AW" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import gateway_probes as GP
+def ck(c, m):
+    print(("  ok   " if c else "  FAIL ") + m)
+    if not c: raise SystemExit(1)
+exp = {n: list(a) for n, a in GP.DNS_CANARIES}
+def honest(name):
+    return {"rcode_name": "NOERROR", "answers": exp[name]} if name in exp else {"rcode_name": "NXDOMAIN", "answers": []}
+def synth(name):
+    return honest(name) if name in exp else {"rcode_name": "NOERROR", "answers": ["198.51.100.7"]}
+clean = GP._dns_rows(honest, lambda n, s: honest(n))
+ck(clean["verdict"].startswith("no filtering seen") and clean["nxdomain"]["verdict"].startswith("clean"), f"honest resolvers -> {clean['verdict']!r}")
+d = GP._dns_rows(honest, lambda n, s: synth(n))
+ck("NXDOMAIN interception" in d["nxdomain"]["verdict"] and d["verdict"].startswith("filtering or rewriting seen (1 finding)"),
+   f"direct path synthesises a nonexistent name, system clean -> {d['nxdomain']['verdict']!r} / {d['verdict']!r}")
+s = GP._dns_rows(synth, lambda n, s: honest(n))
+ck(s["nxdomain"]["verdict"].startswith("NXDOMAIN rewriting") and "interception" not in s["nxdomain"]["verdict"], "system path only -> rewriting, not interception")
+b = GP._dns_rows(synth, lambda n, s: synth(n))
+ck("NXDOMAIN rewriting" in b["nxdomain"]["verdict"] and "NXDOMAIN interception" in b["nxdomain"]["verdict"]
+   and b["verdict"].startswith("filtering or rewriting seen (2 findings)"), f"both paths -> two findings ({b['verdict']!r})")
+PY
+then pass "NXDOMAIN canary judged on both resolver answers"; else fail "NXDOMAIN canary" "see output above"; fi
+
 echo "[Part A never runs automatically: no transmit on import, collect(), or any page GET]"
 if python3 -I - "$AW" "$SRV" "$WEB" "$ROOT/tests/fixtures/oui/oui.txt" <<'PY'
 import sys, socket, threading, http.client, ast, json, os

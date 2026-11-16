@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import signal
 import sys
@@ -300,6 +301,19 @@ def speech_status() -> int:
     print(f"  bounds        : timeout {mod.SPEECH_TIMEOUT}s, queue "
           f"{mod.SPEECH_QUEUE_MAX}, min gap {mod.SPEECH_MIN_GAP_SECONDS}s, "
           f"max age {mod.SPEECH_MAX_AGE_SECONDS}s")
+    probe = mod._scratch_wav()          # the same call a narration makes (#191)
+    if probe is not None:
+        try:
+            os.unlink(probe)
+        except OSError:
+            pass
+        print(f"  scratch       : {mod.speech_scratch_dir()}  (writable)")
+    else:
+        print(f"  scratch       : {mod.speech_scratch_dir()}  NOT WRITABLE")
+        print("                  Consequence: piper cannot render; lines fall to")
+        print("                  espeak-ng spoken directly, unmeasured.")
+        print("                  Cause: $XDG_RUNTIME_DIR (or ~/.cache without a session)")
+        print("                  is not writable by this user.")
     _print_timing(mod, stats, backend)
     return 0
 
@@ -336,7 +350,10 @@ def _print_timing(mod, stats, backend) -> None:
               f"{mod.SPEECH_MAX_AGE_SECONDS:.1f}s shelf life)")
         if s["tight"]:
             print("                  Consequence: a slow Nebula answer plus this render")
-            print("                  misses the shelf life; the line is dropped as stale.")
+            print("                  outlasts the shelf life. That line is still spoken,")
+            print("                  late; events queued behind it age meanwhile and are")
+            print("                  dropped as stale when dequeued (age is checked only")
+            print("                  at dequeue).")
     mx = s["stale_max_age_s"]
     recent = s["stale_recent"][-3:]
     ages = ", ".join(f"{r.get('age_s', 0):.1f}s" for r in recent if isinstance(r, dict))
