@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition User Guide
 
-Source version: **<!--orionx:release-->v3.1.5<!--/orionx:release-->** — Debian 13 "trixie", Python 3.13, Linux 6.12. On the deck, the rendered guide shows the exact build from `/etc/orionx-version`. The latest published ISO is v3.1.5 (CI-built and gated from the tag, signed by the owner, 2026-11-15); v3.1.4 is the latest one also booted on hardware (an HP Pavilion, 2026-11-06).
+Source version: **<!--orionx:release-->v3.1.6<!--/orionx:release-->** — Debian 13 "trixie", Python 3.13, Linux 6.12. On the deck, the rendered guide shows the exact build from `/etc/orionx-version`. The latest published ISO is v3.1.5 (CI-built and gated from the tag, signed by the owner, 2026-11-15); v3.1.4 is the latest one also booted on hardware (an HP Pavilion, 2026-11-06).
 
 ## Table of Contents
 
@@ -2200,4 +2200,4 @@ Ctrl+E                         # Export packet dissections
 
 ---
 
-This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.1.5<!--/orionx:release--> source (Debian 13 "trixie"); the latest published ISO is v3.1.5, built and gated by CI from the tag and signed by the owner, and v3.1.4 is the latest ISO that also passed a hardware boot (an HP Pavilion, 2026-11-06) (CHANGELOG, *ISO identity*). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.
+This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.1.6<!--/orionx:release--> source (Debian 13 "trixie"); the latest published ISO is v3.1.5, built and gated by CI from the tag and signed by the owner, and v3.1.4 is the latest ISO that also passed a hardware boot (an HP Pavilion, 2026-11-06) (CHANGELOG, *ISO identity*). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.
