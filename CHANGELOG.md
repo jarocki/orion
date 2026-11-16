@@ -159,6 +159,26 @@ provisional) until the numbers are in. The procedures are in the PRs.
 - **#93 / #94** engine runtime against the 5 s Cockpit poll, the panel at
   1366x768, and the gateway card against a real router.
 
+**ISO identity.** SHA-256 `caa73ccd21bd47ad0d820eaa3a42a1c8b187cbc6f1f82d56d67bee683f162a85`,
+3,161,604,096 bytes (3.16 GB; the same byte count as v3.1.3 and v3.1.4, a
+different image), built 2026-11-08 by the Release Pipeline (Actions run
+42528762240, on the pinned `ubuntu-24.04` runner) from `ea24d5f`, the tag
+commit. Baked `ISO_VERSION=v3.1.5`. Gates on this image, all in the same CI
+run: `.sha256` sidecar matches; Debian security floors (13 floors, 26 shipped
+packages at or above floor) with the boot kernel (`vmlinuz-6.12.116+deb13-amd64`)
+bound to the packaged one; content-presence in release mode
+(`ORIONX_RELEASE_GATE=1 ORIONX_EXPECT_VERSION=v3.1.5`, 437 passed, 0 failed).
+The release workflow has no QEMU step; develop at the same commit passed QEMU
+in run 42452179070 (three BIOS boots of 161–163 s, one UEFI boot of 169 s).
+Not booted on hardware yet; the deck checks are #188, #96 and #121. The first
+staging attempt (2026-11-08) died on a gpg passphrase timeout (#193) and was
+redone. Signed by the owner with `4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF` and
+published 2026-11-15; 48 parts of 64 MiB plus `SHA256SUMS`, `SHA512SUMS`,
+their `.asc` signatures and `REASSEMBLE.txt` (53 assets, uploaded
+19:13–19:47Z, median 26 s per part, one part needed a second try), every asset size
+verified against the staging directory and the signature re-verified on a
+fresh download by `owner-release.sh verify`.
+
 ---
 
 ## [v3.1.4] — 2026-11-05 (release tooling patch)
