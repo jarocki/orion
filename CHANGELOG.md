@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [v3.1.6] — 2026-11-15 (Codex findings patch)
+
+A patch on v3.1.5 for one filed bug (#191) and four findings from the Codex
+reviews of #178 and #186 (PR #195). Two are on the deck's voice: narration
+audio no longer leaks into the shared `/tmp`, and a configured volume or mute
+now holds on decks that only have `aplay`. Two are on the passive network
+picture and gateway probes, which drew wrong conclusions on networks wider
+than a /24 and on resolvers that answer names that cannot exist. One is a
+status line that described the code wrongly. CI builds and gates the ISO
+from the tag, the owner signs (DEC-PHASE13-029).
+
+*Needs the deck:* real `aplay` playback at volume 0 and 0.5, and piper's
+scratch directory under a desktop session, are covered by stubbed tests
+only.
 
 ### Fixed
 
