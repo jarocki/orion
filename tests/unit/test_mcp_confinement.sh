@@ -35,6 +35,7 @@ CLI="$REPO_ROOT/scripts/nebula/nebula"
 
 TMP="$REPO_ROOT/tmp/mcp-confinement-$$"
 mkdir -p "$TMP"
+# shellcheck disable=SC2329  # run by the EXIT trap (ShellCheck 0.11 misses trap use when a script ends in exit)
 cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
@@ -441,6 +442,7 @@ NEBULA_MCP_SOCKET_GROUP="$(id -gn)" \
 SRV_PID=$!
 for _ in $(seq 1 50); do [[ -S "$SOCK" ]] && break; sleep 0.1; done
 if [[ -S "$SOCK" ]]; then pass "server created the unix socket"; else fail "server created the unix socket" "$(cat "$TMP/server.out")"; fi
+# shellcheck disable=SC2012  # the mode string ls prints is the portable form (stat differs on macOS)
 PERMS="$(ls -l "$SOCK" 2>/dev/null | cut -c1-10)"
 # DEC-PHASE12-033: the socket is world-rw and the 0770 runtime directory
 # is the gate. The old 0660+chgrp pair could not work — chown is syscall 92,

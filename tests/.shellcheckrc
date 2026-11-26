@@ -1,0 +1,12 @@
+# ShellCheck settings for tests/ only (#12). scripts/ keeps the defaults.
+#
+# SC2015 "A && B || C is not if-then-else": the suites' assertion idiom is
+#   `check && pass "…" || fail "…"`. Every pass/fail/tpass/tfail helper here
+#   ends in an assignment or printf and returns 0, so exactly one runs; if one
+#   ever returned non-zero, the result would be an extra FAIL (loud), never a
+#   hidden one. Real if/else logic is written as if/else (test_build_iso.sh
+#   _mkiso was the one exception and was rewritten).
+# SC2016 "expressions don't expand in single quotes": the suites grep the
+#   shipped scripts for literal text such as '"$STORE_PY" consolidate' and
+#   write stub scripts with printf '...$1...'. Single quotes are the point.
+disable=SC2015,SC2016

@@ -51,6 +51,7 @@ mk_image() {  # complete synthetic image at $1
     for k in forensics pivotglass re comms; do f "/usr/share/orionx/pip/$k.txt"; done
 }
 run_lib() {  # $1 = image root; prints the gate's PASS/FAIL lines; sets RP_FAIL
+    # shellcheck disable=SC2034,SC2329  # SQF, pass and fail are used by the sourced gate library
     ( PASS=0; FAIL=0; SQF="$1"
       pass() { PASS=$((PASS+1)); echo "PASS: $1"; }
       fail() { FAIL=$((FAIL+1)); echo "FAIL: $1 :: ${2:-}"; }

@@ -510,6 +510,7 @@ teardown
 # Restore the production helper and external wg command after this section's
 # in-process mocks; later tests exercise the real candidate approval path.
 unset -f wg
+# shellcheck source=/dev/null
 source "$MESH_LIB"
 echo ""
 
@@ -622,6 +623,7 @@ assert_eq "rate limit: a second beacon from one sender within the interval is dr
 
 # Candidate and per-sender state are both hard-bounded and expire.
 rm -f "$MESH_PSK_FILE" "$MESH_CANDIDATE_FILE"; : > "$WG_CALLS"
+# shellcheck disable=SC2034  # read by the sourced mesh library
 MESH_CANDIDATE_MAX=3 MESH_CANDIDATE_TTL=5
 mesh_candidate_record "$KEY_B" 10.0.99.40 192.168.7.40 51820 100
 mesh_candidate_record "$KEY_C" 10.0.99.41 192.168.7.41 51820 101
@@ -637,6 +639,7 @@ mesh_candidates_prune 109
 assert_eq "expired candidates are removed" "0" "$(wc -l < "$MESH_CANDIDATE_FILE" | tr -d ' ')"
 
 rm -rf "$MESH_RATE_DIR"; mkdir -p "$MESH_RATE_DIR"
+# shellcheck disable=SC2034  # read by the sourced mesh library
 MESH_RATE_MAX_SENDERS=3 MESH_RATE_STATE_TTL=5 MESH_BEACON_MIN_INTERVAL=5
 PATH="$STUB:$PATH" mesh_beacon_rate_allow 192.0.2.1 100
 PATH="$STUB:$PATH" mesh_beacon_rate_allow 192.0.2.2 100

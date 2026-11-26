@@ -116,9 +116,8 @@ CLEANENV=(env -u R2_ACCOUNT_ID -u R2_ACCESS_KEY_ID -u R2_SECRET_ACCESS_KEY
           -u R2_BUCKET -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY
           -u S3_BUCKET -u HOME NO_COLOR=1
           "ORIONX_LOGQUERY_INTEL_DIR=$ORIONX_LOGQUERY_INTEL_DIR")
-OUT="$("${CLEANENV[@]}" python3 "$LQ" --path "$WORK/evidence/access.log" \
-        --report sources --format csv 2>"$WORK/err.txt")"
-if [[ $? -eq 0 ]] && echo "$OUT" | grep -q '198.51.100.7'; then
+if OUT="$("${CLEANENV[@]}" python3 "$LQ" --path "$WORK/evidence/access.log" \
+        --report sources --format csv 2>"$WORK/err.txt")" && echo "$OUT" | grep -q '198.51.100.7'; then
     pass "local file reports with zero credentials and no HOME"
 else fail "local file reports with zero credentials" "$(cat "$WORK/err.txt")"; fi
 
@@ -218,8 +217,7 @@ PY
 STATUS="$(python3 "$LQ" --intel-status 2>&1)"
 if echo "$STATUS" | grep -q 'STALE'; then pass "--intel-status reports a 95-day cache as STALE"
 else fail "--intel-status reports STALE" "$STATUS"; fi
-python3 "$LQ" --intel-status >/dev/null 2>&1
-if [[ $? -ne 0 ]]; then pass "--intel-status exits non-zero when intel is degraded"
+if ! python3 "$LQ" --intel-status >/dev/null 2>&1; then pass "--intel-status exits non-zero when intel is degraded"
 else fail "--intel-status exits non-zero when degraded" "a script must be able to detect this"; fi
 
 RUN="$(python3 "$LQ" --path "$WORK/evidence/access.log" --report threats 2>&1 >/dev/null)"

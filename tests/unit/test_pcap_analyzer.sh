@@ -112,13 +112,13 @@ section "Python syntax clean"
 
 if command -v python3 >/dev/null 2>&1; then
     if PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/orionx-pycache" python3 -m py_compile "$TOOL" 2>&1; then
-        pass "PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/orionx-pycache" python3 -m py_compile passes clean"
+        pass "py_compile passes clean"
     else
-        fail "PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/orionx-pycache" python3 -m py_compile passes clean" \
+        fail "py_compile passes clean" \
              "Syntax error in pcap-analyzer.py"
     fi
 else
-    skip "PYTHONPYCACHEPREFIX="${TMPDIR:-/tmp}/orionx-pycache" python3 -m py_compile" "python3 not on PATH"
+    skip "py_compile" "python3 not on PATH"
 fi
 
 # ast.parse round-trip (strict parse, not just compile)

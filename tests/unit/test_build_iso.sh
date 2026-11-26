@@ -367,7 +367,6 @@ echo ""
 echo "[T14] Makefile iso-build depends on test-unit (F-W71-002)"
 MAKEFILE="$REPO_ROOT/Makefile"
 if [[ -f "$MAKEFILE" ]]; then
-    MAKEFILE_CONTENT="$(cat "$MAKEFILE")"
     # The iso-build target line must list test-unit as a prerequisite
     if grep -q '^iso-build:.*test-unit' "$MAKEFILE"; then
         pass "Makefile iso-build target has test-unit prerequisite"
@@ -1440,7 +1439,7 @@ _lib() {  # run a snippet with the build-iso.sh library loaded
 _mkiso() {  # <dir> <version> [content]
     local n="orionx-phoenix-edition-$2.iso"
     printf '%s' "${3:-iso-$2}" > "$1/$n"
-    (cd "$1" && { command -v sha256sum >/dev/null && sha256sum "$n" || shasum -a 256 "$n"; } > "$n.sha256")
+    (cd "$1" && if command -v sha256sum >/dev/null; then sha256sum "$n"; else shasum -a 256 "$n"; fi > "$n.sha256")
 }
 
 echo "[T38] publish_built_iso: exact name, success only, verified (DEC-PHASE12-111)"
@@ -1457,9 +1456,10 @@ fi
     || fail "T38.b: failed build copied: $(ls "$_t38/dst")"
 _t38_out="$(_lib 'publish_built_iso "'"$_t38/src"'" "'"$_t38/dst"'" v9.0.0-rc2 0' 2>&1)" \
     && pass "T38.c: successful build publishes" || fail "T38.c: publish failed: $_t38_out"
-[[ "$(ls "$_t38/dst" | tr '\n' ' ')" == "orionx-phoenix-edition-v9.0.0-rc2.iso orionx-phoenix-edition-v9.0.0-rc2.iso.sha256 " ]] \
+_names() { local f; for f in "$1"/*; do [[ -e "$f" ]] && printf '%s ' "${f##*/}"; done; }
+[[ "$(_names "$_t38/dst")" == "orionx-phoenix-edition-v9.0.0-rc2.iso orionx-phoenix-edition-v9.0.0-rc2.iso.sha256 " ]] \
     && pass "T38.d: only this version's ISO + sidecar reach the host (stale rc1/rc6 stay behind)" \
-    || fail "T38.d: host got: $(ls "$_t38/dst" | tr '\n' ' ')"
+    || fail "T38.d: host got: $(_names "$_t38/dst")"
 rm -f "$_t38/dst"/*
 printf 'tampered' > "$_t38/src/orionx-phoenix-edition-v9.0.0-rc1.iso"
 _lib 'publish_built_iso "'"$_t38/src"'" "'"$_t38/dst"'" v9.0.0-rc1 0' >/dev/null 2>&1 \

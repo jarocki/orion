@@ -82,7 +82,9 @@ PROBE="$TMP/probe.sh"
 { echo 'set -u'; grep -E '^SYNAPSE_VENV=' "$S"; sed -n '/^synapse_present() {/,/^}/p' "$S"; } > "$PROBE"
 if grep -q '^synapse_present() {' "$PROBE"; then
     mkdir -p "$TMP/venv/bin"; printf '#!/bin/sh\n' > "$TMP/venv/bin/synapse_homeserver"; chmod +x "$TMP/venv/bin/synapse_homeserver"
+    # shellcheck source=/dev/null disable=SC2034  # SYNAPSE_VENV is read by the sourced probe
     ( PATH=/usr/bin:/bin; . "$PROBE"; SYNAPSE_VENV="$TMP/venv"; synapse_present ) && pass "synapse_present finds the venv binary (not only PATH)" || fail "synapse probe" "venv binary not detected"
+    # shellcheck source=/dev/null disable=SC2034
     ( PATH=/usr/bin:/bin; . "$PROBE"; SYNAPSE_VENV="$TMP/novenv"; synapse_present ) && fail "synapse probe" "reported present with no venv and nothing on PATH" || pass "synapse_present is false with no venv and nothing on PATH"
 else
     fail "synapse probe" "synapse_present() not found in setup-matrix.sh"

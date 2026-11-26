@@ -42,11 +42,13 @@ for f in "$U"/*.service; do
             esac
         done
     done < <(grep -E '^(StateDirectory|RuntimeDirectory|LogsDirectory)=' "$f")
-    for p in $(grep -E '^ReadWritePaths=' "$f" | cut -d= -f2-); do
-        [[ "$p" == -* ]] && continue
-        [[ "$own$PKG_DIRS$TMPDIRS" == *" $p "* ]] && continue
-        BAD+=" $(basename "$f"):$p"
-    done
+    while read -ra rw; do
+        for p in "${rw[@]}"; do
+            [[ "$p" == -* ]] && continue
+            [[ "$own$PKG_DIRS$TMPDIRS" == *" $p "* ]] && continue
+            BAD+=" $(basename "$f"):$p"
+        done
+    done < <(grep -E '^ReadWritePaths=' "$f" | cut -d= -f2-)
 done
 if [[ -z "$BAD" ]]; then pass "no unit names a path nothing creates (would be 226/NAMESPACE)"; else fail "ReadWritePaths with no creator" "$BAD"; fi
 

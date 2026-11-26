@@ -272,7 +272,7 @@ _plan_green="$(_toggle pure --plan green 2>/dev/null)"
 if [[ -z "$(ls -A "$SCRATCH/pure" 2>/dev/null)" ]]; then
     pass "--plan writes nothing (pure function of the theme name)"
 else
-    fail "--plan is pure" "it created files in HOME: $(ls -A "$SCRATCH/pure" | tr '\n' ' ')"
+    fail "--plan is pure" "it created files in HOME: $(find "$SCRATCH/pure" -mindepth 1 | tr '\n' ' ')"
 fi
 if [[ -n "$_plan_dark" && -n "$_plan_green" && "$_plan_dark" != "$_plan_green" ]]; then
     pass "--plan dark and --plan green describe different desired states"
