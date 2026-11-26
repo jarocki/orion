@@ -2674,7 +2674,8 @@ fi
 # 26c. All 5 new installer stubs present + executable + source the library
 # ---------------------------------------------------------------------------
 echo "  [26c] Verifying 5 new installer stubs present, executable, and sourcing library"
-for stub in install-ghidra.sh install-element.sh install-floss.sh install-trid.sh install-gomuks.sh; do
+# install-gomuks.sh was removed (DEC-PHASE13-003, #206).
+for stub in install-ghidra.sh install-element.sh install-floss.sh install-trid.sh; do
     STUB_SRC="$OPTIONAL_SRC/$stub"
     STUB_SQF="$OPTIONAL_SQF/$stub"
 

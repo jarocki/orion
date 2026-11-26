@@ -84,7 +84,10 @@ orionx_log_info "Downloading TrID definitions (triddefs.zip)..."
 #   for this file only: it must be a zip of exactly one entry, triddefs.trd,
 #   under 64 MB unpacked, fetched over TLS from mark0.net. The hash actually
 #   received is logged and kept in DEFS-SHA256 (the version orionx-optional
-#   reports), so an install can be traced to the exact file.
+#   reports), so an install can be traced to the exact file. This supersedes
+#   DEC-PHASE13-005 (2026-10-18: keep TrID pins fail-closed, add --print-pin),
+#   which the owner replaced on 2026-11-26 by approving this approach; the
+#   conflict was found afterwards and is recorded here.
 local_def="$(mktemp)"
 if ! wget -q -O "$local_def" "$TRID_DEF_URL"; then
     rm -f "$local_def"; orionx_log_error "Download failed: $TRID_DEF_URL"; exit 1

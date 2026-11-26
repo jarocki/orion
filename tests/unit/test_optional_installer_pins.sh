@@ -41,7 +41,7 @@ run 'orionx_wget_extract https://x/a.tar.gz "'"$S"'/dest"' >/dev/null 2>&1 \
     && fail "wget_extract without pin" "extracted" || pass "orionx_wget_extract requires a pin"
 [[ ! -d "$S/dest" ]] && pass "nothing extracted without a pin" || fail "extract" "dest created"
 
-for f in install-floss.sh install-trid.sh install-ghidra.sh install-gomuks.sh; do
+for f in install-floss.sh install-trid.sh install-ghidra.sh; do
     grep -qE '^[[:space:]]*(wget -q -O|wget -qO)' "$OPT/$f" && fail "$f" "raw wget of an executable remains" || pass "$f: no unverified wget"
 done
 # TRID_DEF_SHA256 is gone on purpose (DEC-PHASE13-059): the definitions are data at an
@@ -49,7 +49,7 @@ done
 for v in FLOSS_SHA256 TRID_BIN_SHA256 GHIDRA_ZIP_SHA256; do
     grep -qE "^$v=\"[0-9a-f]{64}\"" "$OPT"/install-*.sh && pass "$v pinned (64 hex)" || fail "$v" "not pinned"
 done
-grep -q '^GOMUKS_SHA256=""' "$OPT/install-gomuks.sh" && pass "gomuks has no pin (dead upstream URL) and therefore refuses" || fail "gomuks pin state" "unexpected"
+[[ ! -e "$OPT/install-gomuks.sh" ]] && pass "gomuks installer removed (DEC-PHASE13-003, #206)" || fail "gomuks" "install-gomuks.sh still ships"
 
 # Element key: run the installer's own key check block with stub gpg.
 blk="$(sed -n '/^ELEMENT_KEY_URL=/,/^orionx_log_info "Element signing key fingerprint verified/p' "$OPT/install-element.sh")"

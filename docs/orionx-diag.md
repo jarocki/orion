@@ -122,8 +122,8 @@ Verifies files and directories that must exist in the live filesystem:
   rulesets themselves are fetched post-boot by `orionx-freshen-yara`)
 - `/var/lib/suricata/orionx-README.md`
 - Optional installer library `/opt/orionx/optional/lib/orionx-installer-common.sh`
-- All 6 optional installers present and executable
-  (`install-{clamav,ghidra,element,floss,trid,gomuks}.sh`)
+- Every optional installer present and executable
+  (`install-{bluetooth,clamav,duckdb,element,floss,geoip,ghidra,piper-voice,trid,zeek}.sh`)
 - GTK theme `/usr/share/themes/Orion-X-Cyberdeck/`
 - Plymouth theme `/usr/share/plymouth/themes/orionx-phoenix/`
 

@@ -43,9 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `openjdk-21-jdk`. TrID's definitions pin had gone stale because upstream
   replaces `triddefs.zip` in place; the definitions are now checked for shape
   (one `triddefs.trd`, under 64 MB) and their hash logged, while the TrID
-  program stays pinned (DEC-PHASE13-059). gomuks still refuses: its old URL is
-  gone and the replacement is an owner decision, so the catalogue marks it
-  blocked with that reason instead of offering an install that fails.
+  program stays pinned (DEC-PHASE13-059). gomuks is removed (DEC-PHASE13-003 of
+  2026-10-18, recorded but never carried out; reconfirmed 2026-11-26, #206):
+  its legacy terminal client is built on the deprecated libolm and the
+  current one needs a separate backend. Element (GUI) and matrix-commander
+  (CLI, in the image) are the Matrix clients.
 
 ---
 

@@ -100,7 +100,7 @@ OPT_STATUS = {
         _opt("ghidra", "malware", "failed", reason="installer exited 100: E: Unable to locate package openjdk-17-jdk"),
         _opt("element", "comms", "not_installed", can_install=False,
              install_reason="needs network: packages.element.io does not resolve"),
-        _opt("gomuks", "comms", "not_installed", can_install=False, install_reason="blocked: owner decision"),
+        _opt("signal", "comms", "not_installed", can_install=False, install_reason="blocked: owner decision"),
         _opt("bluetooth", "deck", "not_installed"),
     ],
     "summary": {"active": 1, "installed": 1, "degraded": 1, "failed": 1, "working": 1, "not_installed": 4},
@@ -541,14 +541,14 @@ ck([h.split("  ")[0] for h in heads] == ["NETWORK & HUNTING", "MALWARE ANALYSIS"
    f"four groups in catalogue order ({heads})")
 words = {tid: w["name"].get_text().split("  ")[-1] for tid, w in P.tiles.items()}
 ck(words == {"zeek": "ACTIVE", "geoip": "INSTALLED", "duckdb": "NOT INSTALLED", "clamav": "DEGRADED",
-             "floss": "INSTALLING 3/5", "ghidra": "FAILED", "element": "NOT INSTALLED", "gomuks": "NOT INSTALLED",
+             "floss": "INSTALLING 3/5", "ghidra": "FAILED", "element": "NOT INSTALLED", "signal": "NOT INSTALLED",
              "bluetooth": "NOT INSTALLED"}, f"state words ({words})")
 btn = {tid: (w["button"].get_label(), w["button"].get_sensitive()) for tid, w in P.tiles.items()}
 ck(btn["zeek"] == ("Uninstall", False) and btn["geoip"] == ("Uninstall", True) and btn["duckdb"] == ("Install", True)
    and btn["ghidra"] == ("Retry", True) and btn["element"] == ("Install", False) and btn["floss"] == ("Details", True),
    f"one button per state, enabled only when it can act ({btn})")
 ck("41 days old" in P.tiles["clamav"]["line"].get_text() and "shipped with the image" in P.tiles["zeek"]["line"].get_text()
-   and "blocked: owner decision" in P.tiles["gomuks"]["line"].get_text(), "each tile says why, in one line")
+   and "blocked: owner decision" in P.tiles["signal"]["line"].get_text(), "each tile says why, in one line")
 ck("some download sources do not resolve" in P.net.get_text() and P.summary.get_text() == "9 optional · 2 ready · 1 attention · 1 failed · 1 working",
    f"header: {P.net.get_text()!r} / {P.summary.get_text()!r}")
 pump(0.3)

@@ -198,9 +198,6 @@ def build_section() -> Gtk.Widget:
                     argv = C.desktop_exec(mc_desktop) or ["matrix-commander", "--help"]
                     b.connect("clicked", lambda _w, a=argv: ux.launch_in_terminal(
                         a, needs=a[0], friendly="Matrix chat (CLI)", title="Orion-X Matrix Comms"))
-                elif c["id"] == "gomuks":
-                    b.connect("clicked", lambda _w: ux.launch_in_terminal(
-                        ["gomuks"], needs="gomuks", friendly="gomuks", title="gomuks"))
                 else:
                     b.connect("clicked", lambda _w: ux.launch_detached(["element-desktop"], needs="element-desktop", friendly="Element"))
             else:

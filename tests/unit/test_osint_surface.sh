@@ -939,7 +939,7 @@ check("deck" in st and "hostname" in st["deck"] and "cpu_pct" in st["deck"] and 
 _ls, _lc, _lb = get("/links.json")
 links = json.loads(_lb)
 _ids = [i["id"] for i in links["installable"]]
-check(all(k in _ids for k in ("piper-voice", "element", "gomuks")), "every optional installer is offered (piper-voice, element, gomuks added)")
+check(all(k in _ids for k in ("piper-voice", "element")) and "gomuks" not in _ids, "every optional installer is offered; gomuks is not (DEC-PHASE13-003)")
 check(all(("probe" in i) for i in links["installable"]), "every optional entry declares its installed-probe")
 check(all(i["probe"] for i in links["installable"] if i["id"] != "geoip"), "every probe is non-empty except geoip (answered by the server's own state)")
 check("optional" in st and set(st["optional"]) == set(_ids), "status.optional answers for exactly the offered installers (DEC-PHASE12-052)")
