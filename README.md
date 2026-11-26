@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition — Cyberdeck for the Good Guys
 
-**Source version:** v3.1.6 (Codex-findings patch on v3.1.5: narration audio stays out of the shared `/tmp` (#191), volume and mute hold on `aplay`-only decks, the network picture takes directed broadcasts from the deck's own subnets, and the gateway DNS canary judges the direct resolver too; includes v3.0.1 through v3.1.5). **Latest ISO:** [v3.1.5](https://github.com/jarocki/orion/releases/tag/v3.1.5) — CI-built and gated from the tag, signed by the owner (2026-11-15), not yet booted on hardware; previous: [v3.1.4](https://github.com/jarocki/orion/releases/tag/v3.1.4) (2026-11-06, booted on an HP Pavilion 2026-11-06), [v3.1.3](https://github.com/jarocki/orion/releases/tag/v3.1.3) (2026-11-05, also not booted on hardware), [v3.1.2](https://github.com/jarocki/orion/releases/tag/v3.1.2) (2026-10-31, also not booted on hardware), [v3.1.0](https://github.com/jarocki/orion/releases/tag/v3.1.0) (booted on an HP Pavilion 2026-10-26) and [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0).
+**Source version:** v3.1.6 (Codex-findings patch on v3.1.5: narration audio stays out of the shared `/tmp` (#191), volume and mute hold on `aplay`-only decks, the network picture takes directed broadcasts from the deck's own subnets, and the gateway DNS canary judges the direct resolver too; includes v3.0.1 through v3.1.5). **Latest ISO:** [v3.1.6](https://github.com/jarocki/orion/releases/tag/v3.1.6) — CI-built and gated from the tag, signed by the owner (2026-11-19), not yet booted on hardware; previous: [v3.1.5](https://github.com/jarocki/orion/releases/tag/v3.1.5) (2026-11-15, also not booted on hardware), [v3.1.4](https://github.com/jarocki/orion/releases/tag/v3.1.4) (2026-11-06, booted on an HP Pavilion 2026-11-06), [v3.1.3](https://github.com/jarocki/orion/releases/tag/v3.1.3) (2026-11-05, also not booted on hardware), [v3.1.2](https://github.com/jarocki/orion/releases/tag/v3.1.2) (2026-10-31, also not booted on hardware), [v3.1.0](https://github.com/jarocki/orion/releases/tag/v3.1.0) (booted on an HP Pavilion 2026-10-26) and [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0).
 **Base:** Debian 13 "trixie" live (kernel 6.12, Python 3.13, XFCE 4.20) | **Runtime:** Qwen2.5-3B-Instruct (Apache-2.0)
 **Previous line:** v2.1.0-bullseye-rain (final Debian 11 build, kept as a known-good fallback)
 
@@ -182,19 +182,19 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 
 ### 1. Get the ISO
 
-**Latest ISO, v3.1.5 (3.16 GB):** GitHub caps release assets
+**Latest ISO, v3.1.6 (3.16 GB):** GitHub caps release assets
 at 2 GB per file, and every Debian 13 build so far has been about 3.1 GB, so
-the ISO is published as signed `.part-*` files (64 MiB each, forty-eight for v3.1.5 and v3.1.4; releases before v3.1.4 used 190 MiB parts) plus `SHA256SUMS`/`SHA512SUMS`
+the ISO is published as signed `.part-*` files (64 MiB each, forty-eight for v3.1.6, v3.1.5 and v3.1.4; releases before v3.1.4 used 190 MiB parts) plus `SHA256SUMS`/`SHA512SUMS`
 and `REASSEMBLE.txt` on the
-[release page](https://github.com/jarocki/orion/releases/tag/v3.1.5).
+[release page](https://github.com/jarocki/orion/releases/tag/v3.1.6).
 Download all of them into one directory, then:
 
 ```bash
-cat orionx-phoenix-edition-v3.1.5.iso.part-* > orionx-phoenix-edition-v3.1.5.iso
+cat orionx-phoenix-edition-v3.1.6.iso.part-* > orionx-phoenix-edition-v3.1.6.iso
 shasum -a 256 -c SHA256SUMS      # Linux: sha256sum -c SHA256SUMS
 ```
 
-The v3.1.5 ISO hashes to `caa73ccd21bd47ad0d820eaa3a42a1c8b187cbc6f1f82d56d67bee683f162a85` (3,161,604,096 bytes).
+The v3.1.6 ISO hashes to `37f84f91361f4c34b07bbf64dc9f621bf97e9db719b9e8088cf6897d26fa1532` (3,161,604,096 bytes).
 
 **Verify the signature before you boot it.** Every release is signed with:
 

@@ -551,6 +551,9 @@ Never publish a bare `.part-*` set without `SHA256SUMS`, its `.asc` and
   **2026-11-15 (v3.1.5):** 48 parts of 64 MiB went up in 35 min (19:13–19:47Z),
   median 26 s and slowest 75 s per upload; one part (`part-ah`) needed a second try,
   and no `starter` was left behind.
+  **2026-11-19 (v3.1.6):** 48 parts of 64 MiB plus 5 files went up in 30 min
+  (03:14–03:43Z), median 28 s and slowest 39 s per upload; none needed a second
+  try. Staging first died on a gpg passphrase timeout (#193) and was redone.
 - **Failed uploads leave a hidden `starter` asset** that blocks every retry of
   the same file name with `400 Bad Request` / `500 Error saving asset`. It is
   NOT shown by `gh release view`; list and delete it with the REST API:
