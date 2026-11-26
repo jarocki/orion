@@ -45,6 +45,7 @@ import shutil
 import socket
 import stat
 import subprocess
+import sys
 import time
 import uuid
 import wave
@@ -376,6 +377,72 @@ def ensure_bus_key(path: Path | str | None = None) -> tuple[bytes | None, str | 
 
 def sign_event(event: dict[str, Any], key: bytes) -> str:
     return hmac.new(key, _canonical_event(event), hashlib.sha256).hexdigest()
+
+
+# @decision DEC-PHASE13-065
+# @category SECURITY
+# @title Rejected bus events are counted by reason and logged at most once per reason per interval
+# @status accepted
+# @rationale #189. heald and postured correctly drop unsigned, forged, stale and
+#   replayed bus events (DEC-PHASE12-084: the spool is mode 0666), but silently,
+#   so "nothing happened" and "something was refused" looked the same. Each
+#   daemon now keeps a RejectCounter: an in-memory count per reason, published
+#   with the status it already writes on its own schedule (heald's status file,
+#   postured's status JSON; `orionx-heal status` prints heald's), and a journal
+#   line per reason at most once per REJECT_LOG_INTERVAL with the count since
+#   the last line. A rejection itself causes no write and no subprocess, so a
+#   flood of local writes can neither fill the journal nor make a root daemon
+#   do more work (the amplification heald's handle_event refuses).
+REJECT_REASONS = ("unsigned", "bad_signature", "stale", "replay", "no_key")
+REJECT_LOG_INTERVAL = 300.0
+
+
+def rejection_reason(why: str) -> str:
+    """Map an attestation refusal (Engine.attested's text, or verify_event) to a reason key."""
+    w = (why or "").lower()
+    if "unsigned" in w:
+        return "unsigned"
+    if "does not verify" in w or "forged" in w:
+        return "bad_signature"
+    if "replayed" in w:
+        return "replay"
+    if " old " in f" {w} " or "timestamp" in w or "replay window" in w:
+        return "stale"
+    return "no_key"
+
+
+class RejectCounter:
+    """Rejected bus events by reason; rate-limited evidence, never per-event work."""
+
+    def __init__(self, who: str, interval: float = REJECT_LOG_INTERVAL, log=None) -> None:
+        self.who, self.interval = who, float(interval)
+        self.counts: dict[str, int] = {}
+        self._unlogged: dict[str, int] = {}
+        self._logged_at: dict[str, float] = {}
+        self.first: float | None = None
+        self.last: float | None = None
+        self._log = log or (lambda line: print(line, file=sys.stderr, flush=True))
+
+    def add(self, reason: str, now: float | None = None) -> bool:
+        """Count one rejection; returns True when this call wrote the (rate-limited) log line."""
+        now = time.time() if now is None else now
+        reason = reason if reason in REJECT_REASONS else "no_key"
+        self.counts[reason] = self.counts.get(reason, 0) + 1
+        self._unlogged[reason] = self._unlogged.get(reason, 0) + 1
+        self.first = now if self.first is None else self.first
+        self.last = now
+        if now - self._logged_at.get(reason, float("-inf")) < self.interval:
+            return False
+        n = self._unlogged.pop(reason)
+        self._logged_at[reason] = now
+        self._log(f"{self.who}: rejected {n} bus event(s) as {reason} "
+                  f"(total {self.counts[reason]}); the bus is world-writable and only "
+                  f"root-signed, fresh, unreplayed events are acted on (#189)")
+        return True
+
+    def snapshot(self) -> dict[str, Any]:
+        return {"total": sum(self.counts.values()), "by_reason": dict(self.counts),
+                "first": self.first, "last": self.last}
 
 
 def verify_event(event: dict[str, Any], key: bytes | None) -> bool:

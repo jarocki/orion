@@ -82,6 +82,24 @@ def cmd_list(args) -> int:
     return 0
 
 
+def _print_rejections(path=None) -> None:
+    """#189: what orionx-heald refused, from the status it publishes (this process has no counts)."""
+    import json  # noqa: PLC0415
+    try:
+        st = json.loads(Path(path or hl.HEALING_STATUS_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        print("\nRejected bus events: unknown (orionx-heald has not published a status)")
+        return
+    rej = st.get("rejected_events") or {}
+    if not rej.get("total"):
+        print("\nRejected bus events: none since orionx-heald started")
+        return
+    parts = ", ".join(f"{k} {v}" for k, v in sorted((rej.get("by_reason") or {}).items()))
+    when = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(rej["last"])) if rej.get("last") else "?"
+    print(f"\nRejected bus events: {rej['total']} ({parts}); last {when}. Only root-signed, fresh, "
+          "unreplayed events are acted on; these were not.")
+
+
 def cmd_status(args) -> int:
     e = _engine(args)
     autonomy = e.autonomy()
@@ -107,6 +125,7 @@ def cmd_status(args) -> int:
     for a in sorted(active, key=lambda x: x.applied_at):
         print(f"  {a.action_id}  {a.playbook:<22} {a.target or '(host)':<20} "
               f"{hl.describe_remaining(a, now)}")
+    _print_rejections()
     pend = hl.pending_actions(entries)
     if pend:
         print(f"\nAwaiting confirmation ({len(pend)}):")

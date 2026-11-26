@@ -461,6 +461,10 @@ orionx-heal autonomy --all off
 
 A class you never set is **off** — that is what the engine does with it. (Before v3.1.5, opening the Cockpit quietly wrote *propose* for every unset class; nothing writes consent for you now.) Each change says whether it survives a reboot.
 
+**What can propose a block.** `block_ip` is proposed only by *critical* events: a sustained port sweep (the firewall's scan detector), a Suricata signature attributed to a source, a nucleotide exploit-template match and, since v3.2.0, a Zeek notice whose source is the remote attacker (SSH or FTP password guessing, SQL injection from the attacker's side, Heartbleed). Zeek notes where the source may be this deck or a victim (SQL injection *victim*, intel hits) never propose a block.
+
+**Refused bus events.** Any local process can write to the event bus, so `orionx-heald` acts only on events a root producer signed, recently, and only once. Everything else is dropped and counted: `orionx-heal status` ends with *Rejected bus events: N (unsigned …, bad_signature …, stale …, replay …)*, `orionx-postured`'s status carries the same counts, and the journal gets at most one line per reason every five minutes, so a flood of forged lines cannot fill it.
+
 ## 5. Networking
 
 ### Connecting to Local Networks

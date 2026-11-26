@@ -1121,7 +1121,9 @@ check(rl.read_bus_key(lnk)[0] is None, "a symlinked key is refused")
 
 # ---- the status projection (contract with the Cockpit) ------------------
 # #126 (DEC-PHASE13-041): proposals, their window and heald's consent levels joined the schema.
-SCHEMA = {"ts", "chain_ok", "in_force", "pending", "proposed", "proposed_window", "autonomy", "error"}
+# #189 (DEC-PHASE13-065): heald's rejected-bus-event counts joined it.
+SCHEMA = {"ts", "chain_ok", "in_force", "pending", "proposed", "proposed_window", "autonomy", "error",
+          "rejected_events"}
 e = make({"block_ip": "confirm"})
 check(e.handle_event(sign(scan("203.0.113.40"))) == "pending", "signed confirm-level event parks")
 st = json.loads(e.status_file.read_text())
