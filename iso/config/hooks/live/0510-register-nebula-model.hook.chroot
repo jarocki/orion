@@ -109,6 +109,8 @@ export HOME="${HOME:-/root}"
 # DEC-PHASE13-036: the build chroot has a network; the temporary server must
 # not use it for anything but this import.
 export OLLAMA_NO_CLOUD=1
+# DEC-PHASE13-068: store.py consolidate is the one thing that removes blobs.
+export OLLAMA_NOPRUNE=1
 
 # --- Start a throwaway server ----------------------------------------------
 # `ollama create` is a client command; it needs a server on OLLAMA_HOST.
@@ -176,8 +178,12 @@ if ! "$OLLAMA_BIN" list | grep -q -- "$(printf '%s' "$MODEL_TAG" | cut -d: -f1)"
     "$OLLAMA_BIN" list >&2 || true
     exit 1
 fi
-if [ ! -d "${MODELS_DIR}/blobs" ] || [ ! -d "${MODELS_DIR}/manifests" ]; then
-    echo "${LOG_PREFIX} FATAL: ollama store not materialised under ${MODELS_DIR} (blobs/ + manifests/ expected)." >&2
+# Ollama 0.40 writes manifests-v2/ (a symlink per tag to a manifest blob)
+# and leaves manifests/ empty; 0.30 wrote manifests/ files (#163). Either is
+# a store; store.py consolidate below reads both and refuses anything else.
+if [ ! -d "${MODELS_DIR}/blobs" ] || \
+   [ -z "$(find "${MODELS_DIR}/manifests-v2" "${MODELS_DIR}/manifests" \( -type f -o -type l \) 2>/dev/null | head -1)" ]; then
+    echo "${LOG_PREFIX} FATAL: ollama store not materialised under ${MODELS_DIR} (blobs/ + a manifest under manifests-v2/ or manifests/ expected)." >&2
     ls -la "$MODELS_DIR" >&2 || true
     exit 1
 fi

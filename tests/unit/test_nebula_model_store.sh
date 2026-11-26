@@ -103,6 +103,47 @@ PY
 python3 "$STORE_PY" consolidate --models-dir "$S6" --source-gguf "$S6/Qwen.gguf" >/dev/null 2>&1; RC=$?
 [[ $RC -eq 1 && -f "$S6/Qwen.gguf" ]] && pass "manifest size ≠ file size → refuse" || fail "size mismatch" "rc=$RC"
 
+# Ollama 0.40 layout (#163, measured on 0.40.17): manifests/ is empty; each
+# tag under manifests-v2/ is a RELATIVE symlink to a manifest blob in blobs/.
+make_store_v2() {
+    local d="$1" mf mfhash
+    make_store "$d"
+    mf="$d/manifests/registry.ollama.ai/library/qwen2.5/3b-instruct-q4_K_M"
+    mfhash="$(shasum -a 256 "$mf" | awk '{print $1}')"
+    mv "$mf" "$d/blobs/sha256-$mfhash"
+    rm -rf "$d/manifests"; mkdir -p "$d/manifests" "$d/manifests-v2/ollama.com/library/qwen2.5" "$d/metadata"
+    ln -s "../../../../blobs/sha256-$mfhash" "$d/manifests-v2/ollama.com/library/qwen2.5/3b-instruct-q4_K_M"
+    printf '{}' > "$d/metadata/sha256-$LIVE.json"
+    MFB="$mfhash"
+}
+TAG2="manifests-v2/ollama.com/library/qwen2.5/3b-instruct-q4_K_M"
+
+section "consolidate: ollama 0.40 layout (manifests-v2 symlink -> manifest blob)"
+V="$SCRATCH/v2"; make_store_v2 "$V"
+OUT="$(python3 "$STORE_PY" consolidate --models-dir "$V" --source-gguf "$V/Qwen.gguf" 2>&1)"; RC=$?
+[[ $RC -eq 0 ]] && pass "v2: exit 0" || fail "v2: exit 0" "rc=$RC: $OUT"
+[[ -f "$V/blobs/sha256-$MFB" ]] && pass "v2: the manifest blob is kept (no layer references it; only the tag link does)" || fail "v2: manifest blob" "deleted as an orphan — the store is broken"
+[[ -L "$V/$TAG2" && -f "$V/$TAG2" ]] && pass "v2: the tag link is intact and still resolves" || fail "v2: tag link" "missing or dangling"
+[[ -f "$V/blobs/sha256-$LIVE" && -f "$V/blobs/sha256-$CFG" && ! -e "$V/blobs/sha256-$ORPHAN" && ! -e "$V/Qwen.gguf" ]] \
+    && pass "v2: model + config kept, orphan and source GGUF removed" || fail "v2: blobs" "$(ls "$V/blobs")"
+FIRST="$(grep -v '^#' "$V/MANIFEST.sha256" | head -1)"
+[[ "$FIRST" == "$LIVE  blobs/sha256-$LIVE" ]] && pass "v2: MANIFEST.sha256 first line = model layer" || fail "v2: manifest line 1" "$FIRST"
+grep -q "^$MFB  blobs/sha256-$MFB$" "$V/MANIFEST.sha256" && [[ "$(grep -c -v '^#' "$V/MANIFEST.sha256")" == "3" ]] \
+    && pass "v2: MANIFEST.sha256 lists model, config and the manifest blob (boot verifies which layers are used)" || fail "v2: manifest lines" "$(cat "$V/MANIFEST.sha256")"
+PYTHONPATH="$REPO_ROOT/scripts" python3 "$INTEGRITY_PY" --models-dir "$V" --manifest "$V/MANIFEST.sha256" --status-file "$SCRATCH/v2.status" >/dev/null 2>&1; RC=$?
+[[ $RC -eq 0 ]] && grep -q 'NEBULA_INTEGRITY=OK' "$SCRATCH/v2.status" && pass "v2: integrity.py verifies the consolidated store" || fail "v2: integrity" "rc=$RC $(cat "$SCRATCH/v2.status" 2>/dev/null)"
+[[ -f "$V/metadata/sha256-$LIVE.json" ]] && pass "v2: ollama's metadata/ is left alone" || fail "v2: metadata" "removed"
+
+refuses_v2() {  # <label> ; store in $V already mangled
+    python3 "$STORE_PY" consolidate --models-dir "$V" --source-gguf "$V/Qwen.gguf" >/dev/null 2>"$SCRATCH/v2err"; RC=$?
+    if [[ $RC -eq 1 && -f "$V/Qwen.gguf" && -f "$V/blobs/sha256-$ORPHAN" ]]; then pass "v2: $1 -> refuse, nothing deleted"
+    else fail "v2: $1" "rc=$RC $(cat "$SCRATCH/v2err")"; fi
+}
+make_store_v2 "$V"; ln -sfn "/etc/hosts" "$V/$TAG2"; refuses_v2 "a tag link leaving the store"
+make_store_v2 "$V"; ln -sfn "../../../../blobs/sha256-$(printf '0%.0s' $(seq 64))" "$V/$TAG2"; refuses_v2 "a dangling tag link"
+make_store_v2 "$V"; printf ' ' >> "$V/blobs/sha256-$MFB"; refuses_v2 "a manifest blob that no longer hashes to its name"
+make_store_v2 "$V"; rm -rf "$V/manifests-v2"; refuses_v2 "manifests/ empty and no manifests-v2/"
+
 section "0510 hook wiring"
 grep -q 'python3 "\$STORE_PY" consolidate --models-dir "\$MODELS_DIR" --source-gguf "\$GGUF"' "$HOOK" && pass "0510 runs store.py consolidate with --source-gguf" || fail "hook call" "missing"
 grep -q 'STORE_PY="/opt/orionx/scripts/nebula/store.py"' "$HOOK" && pass "0510 uses the staged /opt/orionx/scripts copy (single authority = scripts/)" || fail "hook path" "wrong"
@@ -111,6 +152,7 @@ grep -q 'FATAL: source GGUF still present after consolidation' "$HOOK" && pass "
 awk '/^cleanup$/{c=NR} /STORE_PY.*consolidate/{s=NR} END{exit !(c && s && c<s)}' "$HOOK" && pass "0510 stops the throwaway ollama server BEFORE deleting blobs" || fail "hook ordering" "server not stopped first"
 ! grep -q "retained on purpose" "$HOOK" && pass "stale 'GGUF retained on purpose' note removed" || fail "stale note" "present"
 grep -q "DEC-PHASE12-016" "$HOOK" && pass "DEC-PHASE12-016 annotated in 0510" || fail "hook annotation" "missing"
+grep -q 'find "${MODELS_DIR}/manifests-v2" "${MODELS_DIR}/manifests"' "$HOOK" && pass "0510 accepts a manifest under manifests-v2/ or manifests/ (#163)" || fail "hook layout check" "still requires manifests/"
 
 printf "\n===========================================\n"
 printf "  Results: ${GREEN}%d passed${NC}, ${RED}%d failed${NC}\n" "$PASS" "$FAIL"
