@@ -51,7 +51,10 @@ MOVED: dict[str, tuple[str, str, list[str], str]] = {
     "healing": ("Auto-healing consent (the autonomy grid)", "Orion Workbench → Engine",
                 ["orionx-osint"], "orionx-heal autonomy CLASS LEVEL"),
     "warmup": ("Nebula warm-up", "Orion Workbench → Engine", ["orionx-osint"], "nebula warmup"),
-    "installers": ("Optional installers", "Orion Workbench → Optional", ["orionx-osint"], ""),
+    # #199 (DEC-PHASE13-060): back in the Cockpit, installing and removing in place;
+    # the Workbench's Optional section is a read-only mirror (#200).
+    "installers": ("Optional tools: status, install, uninstall", "Orion Cockpit → Orion Tools",
+                   ["orionx-cockpit", "--tab", "tools"], "orionx-optional status"),
 }
 
 

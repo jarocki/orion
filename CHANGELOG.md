@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The catalogue (links.json) is the one list both the Cockpit and the
   Workbench read; its commands now read `sudo orionx-optional install <id>`.
 
+- **The Cockpit installs and removes optional tools in place (#199,
+  DEC-PHASE13-060).** The Orion Tools tab opens with the optional tools in
+  their four groups: per tool a light, one state word, one line of reason and
+  the one button its state allows (Install, Uninstall, Retry, Details). Actions
+  run `pkexec orionx-optional` in the background; a progress bar and the
+  installer's live output fill the detail panel, and the helper's bus events
+  reach R.A.I.N. and LIVE. Uninstall asks first; a dismissed password prompt
+  changes nothing and is logged as info. `--focus ID` opens one tool. The
+  Workbench's Optional section stays a read-only mirror.
+
 ### Fixed
 
 - **Three optional installers could not install on Debian 13 (#197).** Ghidra

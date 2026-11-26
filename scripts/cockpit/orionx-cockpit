@@ -1053,7 +1053,12 @@ def main(argv=None) -> int:
                     help="open on this tab (DEC-PHASE12-053): " + ", ".join(CC.TAB_KEYS))
     ap.add_argument("--settings", action="store_true",
                     help="open with the settings drawer out: threat posture, R.A.I.N., theme, DJ deck (#95)")
+    ap.add_argument("--focus", metavar="ID", default=None,
+                    help="with --tab tools: select this optional tool (the Workbench's Manage in Cockpit, #200)")
     args = ap.parse_args(argv)
+    if args.focus:
+        from control_center.sections import optional as _OPT  # noqa: PLC0415
+        _OPT.FOCUS = args.focus
     try:
         win = Cockpit(fullscreen=args.fullscreen, demo=args.demo, tab=args.tab, settings=args.settings)
     except Exception as exc:  # no display, etc.

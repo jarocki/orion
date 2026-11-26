@@ -277,7 +277,8 @@ out, note = M.target_argv("network")
 assert out[0].endswith("orionx-cockpit") and out[1:] == ["--tab", "network"] and note == "", (out, note)
 assert set(M.MOVED) == {"posture", "rain", "theme", "dj", "healing", "warmup", "installers"}, sorted(M.MOVED)
 assert all(M.MOVED[k][1].startswith("Orion Cockpit → Settings") for k in ("posture", "rain", "theme", "dj"))
-assert all(M.MOVED[k][1].startswith("Orion Workbench") for k in ("healing", "warmup", "installers"))
+assert all(M.MOVED[k][1].startswith("Orion Workbench") for k in ("healing", "warmup"))
+assert M.MOVED["installers"][1:3] == ("Orion Cockpit → Orion Tools", ["orionx-cockpit", "--tab", "tools"])  # #199
 print("ok")
 PY
 then

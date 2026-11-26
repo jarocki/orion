@@ -1740,6 +1740,17 @@ Cockpit hear it: a start, then success or failure with the reason. A download
 whose SHA-256 pin or repository signing key does not match is refused and
 reported as **critical**, because that is what tampering looks like.
 
+**In the Cockpit** (Orion Tools tab, top), the same tools appear grouped, one
+tile each: a light and one word for its state (green ACTIVE or INSTALLED, amber
+DEGRADED or a pulsing INSTALLING n/5, red FAILED, dark NOT INSTALLED), one line
+saying why (the failing health check, the error, *needs network*, *shipped with
+the image*), and the one button that state allows: **Install**, **Uninstall**,
+**Retry** or **Details**. polkit asks for the admin password the first time and
+remembers it for about five minutes. The panel on the right shows the selected
+tool, a progress bar and the installer's live output while it runs. Uninstall
+asks first and says how much it will remove. Cancelling the password prompt
+changes nothing. `orionx-cockpit --tab tools --focus <id>` opens it on one tool.
+
 The Orion Workbench's **Optional** section lists every tool with whether it is
 installed on this deck and the command to run.
 

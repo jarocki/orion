@@ -114,8 +114,9 @@ class Status(unittest.TestCase):
         s = status(TOOL, exists=lambda p: p == "/opt/demo/bin/demo")
         self.assertEqual((s["state"], s["can_uninstall"]), ("installed", False))
         self.assertIn("shipped with the image", s["uninstall_reason"])
-        s = status(TOOL, exists=lambda p: True, record={"apt": [], "pip": [], "paths": ["/opt/demo"]})
+        s = status(TOOL, exists=lambda p: True, record={"apt": ["a", "b"], "pip": [], "paths": ["/opt/demo"]})
         self.assertTrue(s["can_uninstall"])
+        self.assertEqual(s["record"], {"apt": 2, "pip": 0, "paths": 1})  # what Uninstall would remove
 
     def test_health_failure_is_degraded_with_reason(self):
         s = status(TOOL, exists=lambda p: True, run=lambda argv: 3)

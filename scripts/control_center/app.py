@@ -130,6 +130,9 @@ button.orionx-tool:hover {
     border-color: #ff6a13; color: #ffffff;
     box-shadow: 0 0 10px rgba(255,106,19,0.5), inset 0 0 6px rgba(255,106,19,0.15);
 }
+button.orionx-tool:disabled { color: #5b6470; border-color: rgba(140,153,168,0.18); background: rgba(14,16,20,0.80); }
+/* --- optional tools: the live installer log (#199) --- */
+textview.orionx-log, textview.orionx-log text { background-color: #07090c; color: #9fb0c0; }
 /* --- toasts --- */
 .orionx-toast { padding: 8px 12px; border-radius: 5px; font-family: monospace; }
 .orionx-toast.ok    { background-color: rgba(52,255,158,0.16);  color: #34ff9e; box-shadow: 0 0 8px rgba(52,255,158,0.25); }
