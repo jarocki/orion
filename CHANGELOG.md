@@ -61,6 +61,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   publishes each crossing once (warning, critical, back to normal) with 5
   points of hysteresis, so the alarm reaches R.A.I.N. and the stream with the
   Cockpit closed. The Awareness tab colours by the same table.
+- **LIVE says where things are heading (#202, DEC-PHASE13-064).** A deck
+  verdict on every tab (NOMINAL, BUSY, WATCH, DEGRADED, UNDER ATTACK, with
+  why); a TASKS strip across LIVE only while work runs (optional-tool
+  installs and removals, read from their live state files); THREAT PRESSURE
+  shows its 15-minute change, DEFENSIVE ACTIONS the active and new attack
+  sources, NETWORK the hosts first seen in the last 15 minutes or a changed
+  default gateway. The network census now names its hosts so new ones can be
+  told apart.
 
 ### Fixed
 

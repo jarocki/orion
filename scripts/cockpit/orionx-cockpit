@@ -200,8 +200,17 @@ class Cockpit(Gtk.Window):
         self._live_lay: dict = {}      # panel rects as last drawn (#124 click targets)
         self._shown: list = []         # events as last drawn, so keys and clicks agree
         self.t0 = time.time()
+        # #202 (DEC-PHASE13-064): direction, work in progress, and one verdict.
+        self.trend_p = L.Trend()
+        self.first_seen: dict = {}
+        self.hosts_seen: dict = {}
+        self.gw_state: dict = {}
+        self.tasks: list = []
+        self.glance: dict = {"src": {"active": 0, "new": 0, "top": None},
+                             "net": {"new_hosts": [], "gateway_change": None}, "p_delta": None}
 
         GLib.timeout_add(FPS_MS, self._tick)
+        GLib.timeout_add(int(L.TREND_STEP * 1000), self._sample_trends)
         GLib.timeout_add(POLL_EVENTS_MS, self._poll_events)
         GLib.timeout_add(POLL_NET_MS, self._poll_net)
         self._sys_poller = Poller(self.header, POLL_SYS_MS, self._collect_sys, self._apply_sys)
@@ -298,13 +307,29 @@ class Cockpit(Gtk.Window):
         self.header.queue_draw()
 
     def _collect_vitals(self, _visible: bool) -> dict:
-        return V.collect(self._cpu_prev)
+        return {"vitals": V.collect(self._cpu_prev), "tasks": L.read_task_states()}
 
-    def _apply_vitals(self, v: dict | None, err) -> None:
-        if err is None and v:
+    def _apply_vitals(self, d: dict | None, err) -> None:
+        if err is None and d:
+            v = d["vitals"]
             self._cpu_prev = v.get("cpu_sample")
             self.vitals = v
+            self.tasks = L.tasks_from(d["tasks"], time.time())
             self.header.queue_draw()
+
+    def _sample_trends(self) -> bool:
+        """Every TREND_STEP s, on the main loop: pressure, sources and the network, for direction."""
+        now = time.time()
+        self.trend_p.add(now, self.pressure_target)
+        src = L.source_counts((self.sources or {}).get("all") or [], self.first_seen, now)
+        keys = ((self.net_picture or {}).get("hosts") or {}).get("keys") or []
+        net = L.network_changes(set(keys), self.hosts_seen, (self.vitals or {}).get("gateway"), self.gw_state, now)
+        self.glance = {"src": src, "net": net, "p_delta": self.trend_p.delta()}
+        return True
+
+    def verdict(self) -> tuple:
+        return L.deck_verdict(self.pressure_target, V.resource_levels(self.vitals or {}), self.glance["src"],
+                              self.tasks, self.glance["p_delta"])
 
     def _tick_header(self) -> bool:
         if self.header.get_mapped():
@@ -474,7 +499,7 @@ class Cockpit(Gtk.Window):
         W = da.get_allocated_width()
         H = da.get_allocated_height()
         self._background(cr, W, H, self._origin(da), sweep=True)
-        lay = L.live_layout(W, H)
+        lay = L.live_layout(W, H, tasks_h=L.TASKS_H if self.tasks else 0)
         self._live_lay = lay           # clicks resolve against what was drawn (#124)
         # Every panel is clipped to its own rectangle (UX-17): nothing a panel
         # draws can land on its neighbour or below the window.
@@ -488,6 +513,14 @@ class Cockpit(Gtk.Window):
             cr.rectangle(x - 2, y - 2, w + 4, h + 4)
             cr.clip()
             fn(cr, x, y, w, h)
+            cr.restore()
+
+        if "tasks" in lay:
+            x, y, w, h = lay["tasks"]
+            cr.save()
+            cr.rectangle(x - 2, y - 2, w + 4, h + 4)
+            cr.clip()
+            self._tasks_strip(cr, x, y, w, h)
             cr.restore()
 
         if self.flash > 0.0:  # visual twin of the R.A.I.N. cue
@@ -665,9 +698,25 @@ class Cockpit(Gtk.Window):
             col = L.RED
         bw = 300 if badge_state != "ok" else 220
         bx = W - 16 - 180 - bw - 16
+        # #202: the deck verdict, on every tab, left of the posture badge.
+        word, detail, vcol = self.verdict()
+        vw = max(150.0, min(420.0, bx - 16 - (22 + 118 + 150) - 120))
+        vx = bx - 12 - vw
+        hot = word in ("UNDER ATTACK", "DEGRADED")
+        self._rrect(cr, vx, 14, vw, 30, 6)
+        cr.set_source_rgba(*vcol, 0.16 if not hot else (0.10 + 0.14 * (int(time.time() * 2) % 2)))
+        cr.fill_preserve()
+        cr.set_source_rgba(*vcol, 0.85)
+        cr.set_line_width(1.2 if hot else 1.0)
+        cr.stroke()
+        self._text(cr, vx + 10, 34, word, 12, vcol, bold=True, glow=0.6)
+        if detail:
+            self._font(cr, 12, bold=True)
+            ww = cr.text_extents(word).x_advance
+            self._text(cr, vx + 10 + ww + 12, 34, detail, 11, (0.85, 0.85, 0.85), max_w=vw - (ww + 32))
         if who:
             # UX-18: measured and ellipsised so it can never overdraw the badge.
-            self._text(cr, 22 + 118 + 150, 38, who, 13, L.DIM, max_w=bx - 8 - (22 + 118 + 150))
+            self._text(cr, 22 + 118 + 150, 38, who, 13, L.DIM, max_w=vx - 8 - (22 + 118 + 150))
         self._rrect(cr, bx, 14, bw, 30, 6)
         cr.set_source_rgba(*col, 0.12)
         cr.fill_preserve()
@@ -677,6 +726,30 @@ class Cockpit(Gtk.Window):
         self._text(cr, bx + bw / 2, 34, label, 12, col, bold=True, align="center", glow=0.8)
         # clock
         self._text(cr, W - 22, 38, time.strftime("%a %d %b  %H:%M:%S"), 15, L.DIM, align="right")
+
+    # --- tasks (#202): only while something runs ---
+    def _tasks_strip(self, cr, x, y, w, h):
+        self._rrect(cr, x, y, w, h, 4)
+        cr.set_source_rgba(*L.CYAN, 0.06)
+        cr.fill_preserve()
+        cr.set_source_rgba(*L.CYAN, 0.45)
+        cr.set_line_width(1.0)
+        cr.stroke()
+        self._text(cr, x + 10, y + 22, f"TASKS {len(self.tasks)}", 12, L.CYAN, bold=True)
+        slot_x = x + 100
+        n = max(1, min(3, len(self.tasks)))
+        sw = (w - 110) / n
+        for i, tk in enumerate(self.tasks[:3]):
+            sx = slot_x + i * sw
+            self._text(cr, sx, y + 14, tk["name"], 11, (0.9, 0.9, 0.9), bold=True, max_w=sw * 0.45)
+            self._text(cr, sx + sw - 12, y + 14, f"{tk['n']}/{tk['m']} {tk['step']}", 11, L.DIM,
+                       align="right", max_w=sw * 0.5)
+            self._rrect(cr, sx, y + 21, sw - 12, 6, 3)
+            cr.set_source_rgba(*L.DIM, 0.25)
+            cr.fill()
+            self._rrect(cr, sx, y + 21, max(2.0, (sw - 12) * min(1.0, tk["frac"])), 6, 3)
+            cr.set_source_rgba(*L.AMBER, 0.9)
+            cr.fill()
 
     # --- event stream ---
     def _events_panel(self, cr, x, y, w, h):
@@ -749,6 +822,13 @@ class Cockpit(Gtk.Window):
         and the recent attack sources the Attack Map shows.
         """
         cx, cy, cw, ch = self._panel(cr, x, y, w, h, "DEFENSIVE ACTIONS")
+        src = self.glance["src"]
+        if src["active"]:
+            stxt = f"{src['active']} active source{'s' if src['active'] != 1 else ''}"
+            if src["new"]:
+                stxt += f" · {src['new']} new ↑"
+            self._text(cr, cx + cw, y + 20, stxt, 11, L.RED if src["new"] else L.AMBER, bold=bool(src["new"]),
+                       align="right", max_w=cw - 170)
         cr.save()
         cr.rectangle(cx, cy, cw, ch)
         cr.clip()
@@ -995,6 +1075,11 @@ class Cockpit(Gtk.Window):
         self._text(cr, cxm, cym - 10, f"{int(round(p))}", 34, col, bold=True, align="center", glow=1.0)
         band = "CALM" if p < 25 else "ELEVATED" if p < 60 else "HOSTILE"
         self._text(cr, cxm, cym + 14, band, 12, col, bold=True, align="center")
+        trend = L.trend_text(self.glance["p_delta"], dead=2.0)
+        if trend:
+            d = self.glance["p_delta"] or 0.0
+            tcol = L.RED if d > 10 else L.AMBER if d > 2 else L.GREEN if d < -2 else L.DIM
+            self._text(cr, cx0 + cw, y + 20, trend, 11, tcol, bold=True, align="right", max_w=cw - 170)
         self._text(cr, cxm, cy0 + ch - 4, "severity-weighted · 60s half-life · click: Attack Map", 11, L.DIM, align="center", max_w=cw)
 
     # --- network sparkline ---
@@ -1005,8 +1090,15 @@ class Cockpit(Gtk.Window):
         # shows — so the two surfaces cannot disagree. The headline sits on the
         # title row (right of "NETWORK"); the split sits between the two rates.
         summ = (self.net_picture or {}).get("summary") or {}
-        self._text(cr, cx + cw, y + 20, summ.get("headline") or "network picture: reading…", 11,
-                   L.DIM, align="right", max_w=cw - 80)
+        ch_ = self.glance["net"]
+        change = ch_["gateway_change"] or (f"{len(ch_['new_hosts'])} new host{'s' if len(ch_['new_hosts']) != 1 else ''} ↑"
+                                            if ch_["new_hosts"] else "")
+        if change:   # #202: a change outranks the census line
+            self._text(cr, cx + cw, y + 20, change, 11, L.RED if ch_["gateway_change"] else L.AMBER, bold=True,
+                       align="right", max_w=cw - 80)
+        else:
+            self._text(cr, cx + cw, y + 20, summ.get("headline") or "network picture: reading…", 11,
+                       L.DIM, align="right", max_w=cw - 80)
         graph_h = ch - 22
         vmax = max(max(self.rates.rx_hist), max(self.rates.tx_hist), 1024.0)
         for hist, col in ((self.rates.rx_hist, L.CYAN), (self.rates.tx_hist, L.EMBER)):

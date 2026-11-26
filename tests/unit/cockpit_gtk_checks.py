@@ -430,6 +430,35 @@ ck(sys_texts and all(d[1] <= sy + sh - 4 for d in sys_texts), f"SYSTEMS words si
 ck(all(d[3] >= 11 or d[3] == 0 for d in drawn), f"no text below 11 px (min {min(d[3] for d in drawn)})")
 fitted = [d for d in drawn if d[4] is not None]
 ck(fitted and all(d[2] <= d[4] + 0.5 for d in fitted), f"every fitted string fits its width ({len(fitted)} strings)")
+
+print("[LIVE at a glance: TASKS strip, deck verdict, trends fit the 1366 px deck (#202)]")
+saved = (cw.tasks, cw.glance, cw.pressure_target, cw.drill, list(drawn))
+cw.tasks = [{"name": "install zeek", "step": "apt-get install zeek-core and a very long installer line", "n": 3, "m": 5,
+             "frac": 0.6, "age": 40}] * 3
+cw.glance = {"src": {"active": 12, "new": 5, "top": "203.0.113.44"},
+             "net": {"new_hosts": ["a", "b"], "gateway_change": "gateway 192.168.4.1 \u2192 10.99.99.1"}, "p_delta": 31.0}
+cw.pressure_target = 88.0
+drawn.clear()
+cw._text = rec_text
+err = None
+try:
+    cw.drill = False
+    cw._draw(cw.da, cairo.Context(surf))
+    cw._header(cairo.Context(surf), 1366, CK.L.HEADER_H - 1)
+except Exception as exc:  # noqa: BLE001
+    err = exc
+cw._text = orig_text
+texts = [d[5] for d in drawn]
+ck(err is None and "TASKS 3" in texts, f"the TASKS strip is drawn while work runs ({err})")
+ck("UNDER ATTACK" in texts and any(str(s).startswith("threat 88 (+31)") for s in texts), "the header verdict says UNDER ATTACK and why")
+ck("\u2191 +31 in 15 min" in texts and "12 active sources \u00b7 5 new \u2191" in texts
+   and "gateway 192.168.4.1 \u2192 10.99.99.1" in texts, "pressure trend, new sources and the gateway change are drawn")
+fitted = [d for d in drawn if d[4] is not None]
+ck(all(d[2] <= d[4] + 0.5 for d in fitted), f"every string still fits its width with the strip and verdict ({len(fitted)} strings)")
+tl = CK.L.live_layout(W, H, tasks_h=CK.L.TASKS_H)
+ck(tl["systems"][3] >= CK.L.SYSTEMS_MIN_H and tl["systems"][1] + tl["systems"][3] <= H, "panels still fit under the strip")
+cw.tasks, cw.glance, cw.pressure_target, cw.drill, _drawn = saved
+drawn[:] = _drawn          # the checks below read the first render's strings
 who = [d for d in drawn if d[5].startswith("incident-")]
 ck(who and who[0][5].endswith("…") and who[0][0] + who[0][2] < W - 16 - 180 - 300 - 16, "long hostname ellipsised before the posture badge")
 stream = [d for d in drawn[:n_first] if d[5].startswith("ET SCAN")]

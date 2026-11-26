@@ -732,8 +732,10 @@ def host_census(neigh: list[dict], conn: list[dict], self_ips: set[str],
             hosts[key]["sources"].add("conn.log")
     n_neigh = sum(1 for h in hosts.values() if "ip neigh" in h["sources"])
     n_zeek_only = sum(1 for h in hosts.values() if h["sources"] == {"conn.log"})
+    # "keys" (#202): which hosts, so the Cockpit can say "1 new host" rather than
+    # only a count; one MAC (or address) per host, capped like the rest.
     return {"count": len(hosts), "from_neigh": n_neigh, "zeek_only": n_zeek_only,
-            "truncated": truncated, "cap": MAX_HOSTS}
+            "truncated": truncated, "cap": MAX_HOSTS, "keys": sorted(hosts)[:MAX_HOSTS]}
 
 
 # ---------------------------------------------------------------- thin readers
