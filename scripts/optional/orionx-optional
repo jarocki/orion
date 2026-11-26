@@ -1,0 +1,438 @@
+#!/usr/bin/python3 -I
+"""orionx-optional — status, install and uninstall of the deck's optional tools (#197).
+
+    orionx-optional status [--json] [ID ...]     no root needed
+    orionx-optional install ID                    root (pkexec from the Cockpit, or sudo)
+    orionx-optional uninstall ID                  root
+
+The catalogue is /opt/orionx/osint/links.json (`groups`, `installable`).
+Install runs the tool's own installer, verifies it and records exactly what
+it added in /var/lib/orionx/optional/ID.json; uninstall removes only what a
+record lists. Output for a caller: `PROGRESS n/m step`, `| <installer line>`,
+and a final `RESULT ok|failed <message>`. Every action publishes start and
+end events on the bus (source optional, category tooling). One action runs at
+a time. Live state: /run/orionx/optional/ID.json; logs:
+/var/log/orionx/optional/. Logic and its rationale: optional_lib.py
+(DEC-PHASE13-057); the polkit action: org.orionx.optional.manage
+(DEC-PHASE13-058).
+
+Exit status: 0 ok, 1 action failed, 2 usage or catalogue error, 3 busy,
+4 needs root.
+"""
+from __future__ import annotations
+
+import fcntl
+import json
+import os
+import pwd
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+
+# Root-owned sibling module; -I keeps PYTHON* variables and the user's site out.
+# As root, import it only from a directory and file no one else can write.
+_here = Path(__file__).resolve().parent
+if os.geteuid() == 0:
+    for _p in (_here, _here / "optional_lib.py"):
+        _st = os.lstat(_p)
+        if _st.st_uid != 0 or _st.st_mode & 0o022:
+            sys.exit(f"orionx-optional: refusing to run as root: {_p} is not root-owned and private")
+sys.path.insert(0, str(_here))
+import optional_lib as O  # noqa: E402
+
+SAFE_PATH = "/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/sbin:/usr/local/bin"
+INSTALL_TIMEOUT = 45 * 60
+
+
+def paths() -> O.Paths:
+    """Fixed system paths as root; test fixtures may override them only as a user."""
+    if os.geteuid() == 0 or not os.environ.get("ORIONX_OPTIONAL_ROOT"):
+        return O.SYSTEM
+    r = Path(os.environ["ORIONX_OPTIONAL_ROOT"])
+    return O.Paths(r / "links.json", r / "run", r / "lib", r / "log")
+
+
+def run_rc(argv: list[str], timeout: float = 5) -> int:
+    try:
+        return subprocess.run(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              stdin=subprocess.DEVNULL, timeout=timeout, check=False).returncode
+    except (OSError, subprocess.SubprocessError):
+        return 127
+
+
+def run_out(argv: list[str], timeout: float = 10) -> tuple[int, str]:
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                           timeout=timeout, check=False)
+        return r.returncode, r.stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, str(exc)
+
+
+def has_module(name: str) -> bool:
+    return run_rc([sys.executable, "-c", f"import {name}"]) == 0 if name.isidentifier() else False
+
+
+def mtime(p: str) -> float | None:
+    try:
+        return os.stat(p).st_mtime
+    except OSError:
+        return None
+
+
+def unit_active(pattern: str) -> bool:
+    rc, out = run_out(["systemctl", "list-units", "--state=active", "--plain", "--no-legend", pattern])
+    return rc == 0 and bool(out.strip())
+
+
+def version_of(t: dict) -> str:
+    v = t.get("version")
+    if isinstance(v, str):
+        return v
+    if isinstance(v, dict) and v.get("file"):
+        try:
+            return Path(v["file"]).read_text(encoding="utf-8", errors="replace").strip().splitlines()[0][:60]
+        except (OSError, IndexError):
+            return ""
+    if isinstance(v, list) and v:
+        rc, out = run_out([str(a) for a in v], timeout=5)
+        line = (out or "").strip().splitlines()
+        return line[0][:60] if rc == 0 and line else ""
+    return ""
+
+
+def has_route() -> bool:
+    for f, col in (("/proc/net/route", 1), ("/proc/net/ipv6_route", 0)):
+        try:
+            for line in Path(f).read_text().splitlines()[(1 if col else 0):]:
+                parts = line.split()
+                if col and len(parts) > 1 and parts[1] == "00000000":
+                    return True
+                if not col and len(parts) > 1 and parts[0] == "0" * 32 and parts[1] == "00":
+                    return True
+        except OSError:
+            continue
+    return False
+
+
+def net_state(hosts: list[str]) -> dict[str, str]:
+    """host -> 'ok' or why not. One DNS lookup per host, in parallel."""
+    if not has_route():
+        return {h: "no network route (air-gapped)" for h in hosts}
+    res: dict[str, str] = {}
+
+    def look(h: str) -> None:
+        res[h] = "ok" if run_rc(["getent", "hosts", h], timeout=3) == 0 else f"{h} does not resolve"
+    threads = [threading.Thread(target=look, args=(h,)) for h in set(hosts)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join(5)
+    return {h: res.get(h, f"{h}: lookup timed out") for h in hosts}
+
+
+def read_json(p: Path) -> dict | None:
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def write_json(p: Path, data: dict) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, p)
+
+
+# --- status ------------------------------------------------------------------
+
+def cmd_status(args: list[str]) -> int:
+    as_json = "--json" in args
+    ids = [a for a in args if a != "--json"]
+    P = paths()
+    try:
+        groups, tools = O.load_catalogue(P.catalogue)
+        chosen = [O.find_tool(tools, i) for i in ids] if ids else tools
+    except O.CatalogueError as exc:
+        print(f"orionx-optional: {exc}", file=sys.stderr)
+        return 2
+    net = net_state([t["needs_host"] for t in chosen])
+    now = time.time()
+    st = [O.tool_status(t, record=read_json(P.record_dir / f"{t['id']}.json"),
+                        live=read_json(P.state_dir / f"{t['id']}.json"), net=net[t["needs_host"]],
+                        exists=os.path.exists, has_module=has_module, run=run_rc, mtime=mtime,
+                        unit_active=unit_active, version_of=version_of, now=now) for t in chosen]
+    if as_json:
+        print(json.dumps({"groups": groups, "tools": st, "summary": O.summary(st), "checked": int(now)}))
+        return 0
+    names = {g["id"]: g["name"] for g in groups}
+    for g in groups:
+        rows = [s for s in st if s["group"] == g["id"]]
+        if not rows:
+            continue
+        print(names[g["id"]])
+        for s in rows:
+            word = s["state"].replace("_", " ").upper()
+            extra = s["reason"] or s["version"] or s["install_reason"]
+            print(f"  {s['id']:<12} {word:<14} {extra}")
+    return 0
+
+
+# --- actions (root) ------------------------------------------------------------
+
+class Action:
+    def __init__(self, P: O.Paths, t: dict, action: str):
+        self.P, self.t, self.action = P, t, action
+        self.start = time.time()
+        P.log_dir.mkdir(parents=True, exist_ok=True)
+        self.log_path = P.log_dir / f"{t['id']}-{action}-{O.now_stamp(self.start)}.log"
+        self.log = open(self.log_path, "w", encoding="utf-8", buffering=1)  # noqa: SIM115
+        os.chmod(self.log_path, 0o644)
+        self.n = 0
+        self.who = invoker()
+
+    def say(self, line: str) -> None:
+        print(line, flush=True)
+        self.log.write(line + "\n")
+
+    def step(self, label: str, line: str = "") -> None:
+        self.n += 1
+        self.say(O.progress_line(self.action, self.n, label))
+        self.state("running", step=label, line=line)
+
+    def state(self, state: str, **kw) -> None:
+        write_json(self.P.state_dir / f"{self.t['id']}.json",
+                   {"action": self.action, "state": state, "pid": os.getpid(), "n": self.n,
+                    "m": len(O.STEPS[self.action]), "started": int(self.start), "log": str(self.log_path),
+                    **kw})
+
+    def emit(self, phase: str, **kw) -> None:
+        sev, msg, detail = O.event_for(self.t, self.action, phase, log=str(self.log_path), who=self.who, **kw)
+        rc = run_rc(["orionx-event", "--severity", sev, "--source", "optional", "--category", "tooling",
+                     "--detail", json.dumps(detail), msg], timeout=10)
+        if rc != 0:
+            self.say(f"(could not publish to the event bus: orionx-event exit {rc})")
+
+    def finish(self, ok: bool, message: str, version: str = "") -> int:
+        secs = time.time() - self.start
+        self.log.flush()
+        integrity = (not ok) and O.installer_error(installer_lines(self.log_path))[1]
+        self.state("ok" if ok else "failed", step="done", reason="" if ok else message,
+                   finished=int(time.time()), integrity=integrity)
+        self.emit("end", ok=ok, reason=message, version=version, seconds=secs, integrity=integrity)
+        self.say(f"RESULT {'ok' if ok else 'failed'} {message}")
+        self.log.close()
+        return 0 if ok else 1
+
+
+def invoker() -> str:
+    for var in ("PKEXEC_UID", "SUDO_UID"):
+        if os.environ.get(var, "").isdigit():
+            try:
+                return pwd.getpwuid(int(os.environ[var])).pw_name
+            except KeyError:
+                return f"uid {os.environ[var]}"
+    return "root"
+
+
+def stream(a: Action, argv: list[str], env: dict) -> int:
+    """Run argv, copying each output line to the caller and the log as '| line'."""
+    try:
+        p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                             text=True, errors="replace", env=env, cwd="/")
+    except OSError as exc:
+        a.say(f"| cannot run {argv[0]}: {exc}")
+        return 127
+    last = time.time()
+    timed_out = []
+    watchdog = threading.Timer(max(1.0, INSTALL_TIMEOUT - (time.time() - a.start)),
+                               lambda: (timed_out.append(1), p.kill()))
+    watchdog.daemon = True
+    watchdog.start()
+    assert p.stdout is not None
+    for line in p.stdout:
+        line = line.rstrip("\n")
+        a.say("| " + line)
+        if line.strip() and time.time() - last > 1:
+            a.state("running", step=O.STEPS[a.action][a.n - 1], line=line[:120])
+            last = time.time()
+    rc = p.wait()
+    watchdog.cancel()
+    if timed_out:
+        a.say(f"| ERROR: timed out after {INSTALL_TIMEOUT // 60} min and was stopped")
+    return rc
+
+
+def installer_lines(log_path: Path) -> list[str]:
+    try:
+        return [ln[2:] for ln in log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+                if ln.startswith("| ")]
+    except OSError:
+        return []
+
+
+def last_error(log_path: Path) -> str:
+    return O.installer_error(installer_lines(log_path))[0]
+
+
+def snapshot(t: dict) -> tuple[set, set, set]:
+    _rc, d = run_out(["dpkg-query", "-W", "-f=${Package}:${Architecture} ${db:Status-Status}\\n"], timeout=60)
+    pkgs = O.parse_dpkg_installed(d)
+    pips: set = set()
+    if t.get("pip"):
+        _rc, j = run_out(["python3", "-m", "pip", "list", "--format=json", "--disable-pip-version-check"], timeout=60)
+        pips = O.parse_pip_list(j)
+    present = {p for p in (t.get("owns") or []) if os.path.lexists(p)}
+    return pkgs, pips, present
+
+
+def do_install(a: Action, env: dict) -> int:
+    t, P = a.t, a.P
+    a.step("preflight")
+    if O.probe_hit(t["probe"], os.path.exists, has_module):
+        return a.finish(True, f"{t['name']} is already installed; nothing to do", version_of(t))
+    if t.get("blocked"):
+        return a.finish(False, f"blocked: {t['blocked']}")
+    net = net_state([t["needs_host"]])[t["needs_host"]]
+    if net != "ok":
+        return a.finish(False, f"needs network: {net}")
+    a.step("snapshot")
+    b_pkgs, b_pip, b_present = snapshot(t)
+    a.step("run installer")
+    rc = stream(a, ["bash", t["runtime_path"]], env)
+    a.step("verify")
+    hit = O.probe_hit(t["probe"], os.path.exists, has_module)
+    bad = "" if not hit else O.check_health(t.get("health") or [], run=run_rc, exists=os.path.exists,
+                                            mtime=mtime, unit_active=unit_active, now=time.time())
+    a.step("record")
+    f_pkgs, f_pip, f_present = snapshot(t)
+    ok = rc == 0 and bool(hit) and not bad
+    ver = version_of(t) if hit else ""
+    rec = O.make_record(t, before_pkgs=b_pkgs, after_pkgs=f_pkgs, before_pip=b_pip, after_pip=f_pip,
+                        created=sorted(f_present - b_present), version=ver, ok=ok, now=time.time())
+    if not O.record_is_empty(rec) or ok:
+        write_json(P.record_dir / f"{t['id']}.json", rec)
+        a.say(f"recorded: {len(rec['apt'])} packages, {len(rec['pip'])} pip packages, {len(rec['paths'])} paths")
+    if ok:
+        return a.finish(True, f"{t['name']} installed", ver)
+    why = (f"installer exited {rc}: {last_error(a.log_path)}" if rc != 0
+           else bad or f"installer finished but nothing at {', '.join(t['probe'])}")
+    if not O.record_is_empty(rec):
+        why += " (what it added is recorded; Uninstall removes it)"
+    return a.finish(False, why)
+
+
+def do_uninstall(a: Action, env: dict) -> int:
+    t, P = a.t, a.P
+    a.step("preflight")
+    rpath = P.record_dir / f"{t['id']}.json"
+    rec = read_json(rpath)
+    if rec is None:
+        return a.finish(False, "no install record: it was shipped with the image or installed outside "
+                               "orionx-optional, so nothing can be removed safely")
+    paths_ok = [p for p in rec.get("paths", []) if p in (t.get("owns") or []) and O.removable(p)]
+    a.step("plan")
+    apt = [p for p in rec.get("apt", []) if isinstance(p, str) and p]
+    if apt:
+        rc, sim = run_out(["apt-get", "-s", "purge", *apt], timeout=120)
+        if rc != 0:
+            return a.finish(False, f"apt-get -s purge failed (exit {rc}); nothing removed")
+        extra = O.collateral(O.parse_apt_simulation(sim), apt)
+        if extra:
+            return a.finish(False, "refused: removing it would also remove " + ", ".join(extra[:8])
+                            + ("…" if len(extra) > 8 else "") + "; nothing removed")
+    a.say(f"plan: {len(apt)} packages, {len(rec.get('pip', []))} pip packages, {len(paths_ok)} paths")
+    a.step("stop services")
+    if t.get("units"):
+        _rc, listed = run_out(["systemctl", "list-units", "--all", "--plain", "--no-legend"], timeout=20)
+        for u in O.units_matching(t["units"], listed):
+            stream(a, ["systemctl", "disable", "--now", u], env)
+    a.step("remove")
+    if rec.get("pip"):
+        rc = stream(a, ["python3", "-m", "pip", "uninstall", "-y", "--break-system-packages", *rec["pip"]], env)
+        if rc != 0:
+            return a.finish(False, f"pip uninstall exited {rc}: {last_error(a.log_path)}")
+    if apt:
+        rc = stream(a, ["apt-get", "purge", "-y", *apt], dict(env, DEBIAN_FRONTEND="noninteractive"))
+        if rc != 0:
+            return a.finish(False, f"apt-get purge exited {rc}: {last_error(a.log_path)}")
+    for p in paths_ok:
+        try:
+            if os.path.islink(p) or os.path.isfile(p):
+                os.unlink(p)
+            elif os.path.isdir(p):
+                shutil.rmtree(p)
+            a.say(f"| removed {p}")
+        except OSError as exc:
+            return a.finish(False, f"cannot remove {p}: {exc}")
+    a.step("verify")
+    if O.probe_hit(t["probe"], os.path.exists, has_module) and rec.get("complete", True):
+        return a.finish(False, f"still present after removal: {', '.join(t['probe'])}")
+    rpath.unlink(missing_ok=True)
+    return a.finish(True, f"{t['name']} uninstalled")
+
+
+def cmd_action(action: str, args: list[str]) -> int:
+    if len(args) != 1:
+        print(f"usage: orionx-optional {action} ID", file=sys.stderr)
+        return 2
+    if os.geteuid() != 0:
+        print(f"orionx-optional {action} needs root: pkexec or sudo orionx-optional {action} {args[0]}",
+              file=sys.stderr)
+        return 4
+    os.umask(0o022)
+    P = paths()
+    for f in (P.catalogue,):
+        why = O.trusted_file(f)
+        if why:
+            print(f"orionx-optional: refusing to act as root: {why}", file=sys.stderr)
+            return 2
+    try:
+        _groups, tools = O.load_catalogue(P.catalogue)
+        t = O.find_tool(tools, args[0])
+    except O.CatalogueError as exc:
+        print(f"orionx-optional: {exc}", file=sys.stderr)
+        return 2
+    why = O.trusted_file(Path(t["runtime_path"]))
+    if why:
+        print(f"orionx-optional: refusing to run the installer as root: {why}", file=sys.stderr)
+        return 2
+    P.state_dir.mkdir(parents=True, exist_ok=True)
+    lock = open(P.lock, "w")  # noqa: SIM115
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print("RESULT failed another optional-tool action is running; try again when it finishes")
+        return 3
+    env = {"PATH": SAFE_PATH, "LANG": os.environ.get("LANG", "C.UTF-8"), "HOME": "/root",
+           "DEBIAN_FRONTEND": "noninteractive"}
+    a = Action(P, t, action)
+    a.emit("start")
+    try:
+        return do_install(a, env) if action == "install" else do_uninstall(a, env)
+    except Exception as exc:  # noqa: BLE001 - every failure must reach the bus and the state file
+        return a.finish(False, f"internal error: {type(exc).__name__}: {exc}")
+
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0 if argv else 2
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "status":
+        return cmd_status(rest)
+    if cmd in O.ACTIONS:
+        return cmd_action(cmd, rest)
+    print(f"orionx-optional: unknown command {cmd!r} (status, install, uninstall)", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    os.environ["PATH"] = SAFE_PATH if os.geteuid() == 0 else os.environ.get("PATH", SAFE_PATH)
+    sys.exit(main(sys.argv[1:]))

@@ -123,21 +123,10 @@ orionx_zeek_version() {
     "$ZEEK_BIN" --version 2>/dev/null | head -1
 }
 
-# ---------------------------------------------------------------------------
-# orionx_zeek_emit <severity> <message…> — best-effort bus event.
-# The running orionx-postured discovers Zeek on its own poll, so this is
-# narration, not signalling. Never fail the install because the bus is absent.
-# ---------------------------------------------------------------------------
-orionx_zeek_emit() {
-    local sev="$1"; shift
-    command -v orionx-event >/dev/null 2>&1 || return 0
-    # source=installer / category=tooling deliberately: the Control Center's
-    # scans-count widget counts any event whose source is suricata/zeek/
-    # nucleotide or whose category is ids/scan/recon/probe. An install
-    # notification is not a detection and must not inflate that gauge.
-    orionx-event --severity "$sev" --source installer --category tooling "$*" \
-        >/dev/null 2>&1 || true
-}
+# Bus events for this install are published by orionx-optional, the one
+# writer for optional-tool events (#197, DEC-PHASE13-057): start, then success
+# or failure with this installer's first ERROR line as the reason; a line
+# containing MISMATCH (key fingerprint or SHA-256) makes the failure critical.
 
 # ---------------------------------------------------------------------------
 # Idempotence gate — checked BEFORE the root/network preflight, so `--check`
@@ -188,7 +177,6 @@ orionx_log_info "Fetching the OBS signing key..."
 if ! wget -q -O "$key_armored" "$ZEEK_REPO_KEY_URL"; then
     orionx_log_error "Could not download $ZEEK_REPO_KEY_URL"
     orionx_log_error "Zeek NOT installed. Nothing was changed."
-    orionx_zeek_emit warning "Zeek install FAILED — could not fetch the OBS signing key. Zeek remains absent; Suricata and orionx-scanwatch are unaffected."
     exit 1
 fi
 
@@ -210,7 +198,6 @@ if [[ "$actual_fpr" != "$ZEEK_REPO_KEY_FPR" ]]; then
     orionx_log_error "Either upstream rotated the key (check the OBS project page"
     orionx_log_error "and update ZEEK_REPO_KEY_FPR in this script) or this download"
     orionx_log_error "was tampered with. Do not work around this by deleting the check."
-    orionx_zeek_emit critical "Zeek install REFUSED — OBS repo signing key fingerprint mismatch (expected ${ZEEK_REPO_KEY_FPR}, got ${actual_fpr:-none}). No apt source was written."
     exit 1
 fi
 orionx_log_info "Signing key fingerprint verified: $actual_fpr"
@@ -242,7 +229,6 @@ if ! orionx_apt_install zeek-core; then
     rm -f "$ZEEK_SOURCE_LIST" "$ZEEK_KEYRING"
     apt-get update >/dev/null 2>&1 || true
     orionx_log_error "Rolled back the apt source and keyring so later updates still work."
-    orionx_zeek_emit warning "Zeek install FAILED — apt could not install zeek-core. The apt source was rolled back; Zeek remains absent."
     exit 1
 fi
 
@@ -254,7 +240,6 @@ if ! orionx_zeek_installed; then
     orionx_log_error "This is the failure mode this check exists for: a package"
     orionx_log_error "that unpacked into an unusable state would otherwise be"
     orionx_log_error "reported as a successful install."
-    orionx_zeek_emit critical "Zeek install BROKEN — apt succeeded but ${ZEEK_BIN} does not execute. Zeek ingest will stay dark."
     exit 1
 fi
 
@@ -281,4 +266,3 @@ orionx_log_info "  sudo orionx-capture start <iface>        # bounded PCAP captu
 orionx_log_info "  sudo systemctl start orionx-zeek@<iface>  # live analysis, managed"
 orionx_log_info "  zeek -r capture.pcap                     # offline analysis"
 
-orionx_zeek_emit notice "Zeek installed post-boot: ${ZEEK_VERSION_STR}. orionx-postured will pick it up on its next poll — no reboot, no rebuild."

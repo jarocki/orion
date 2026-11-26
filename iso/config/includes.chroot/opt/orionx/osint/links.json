@@ -5,6 +5,24 @@
   "note": "Hand-maintained. tests/unit/test_osint_surface.sh is the gate: it fails if a local entry points at something that does not ship.",
   "online_verified": "2026-10-03",
   "online_method": "Every URL below was fetched with curl -L and returned HTTP 200 at its final effective address on 2026-10-03. Nothing that returned 403, 404, 000 or an unexpected redirect was kept. The list is deliberately shorter than it could be.",
+  "groups": [
+    {
+      "id": "network",
+      "name": "Network & hunting"
+    },
+    {
+      "id": "malware",
+      "name": "Malware analysis"
+    },
+    {
+      "id": "comms",
+      "name": "Team comms"
+    },
+    {
+      "id": "deck",
+      "name": "Deck: voice & peripherals"
+    }
+  ],
   "local": [
     {
       "id": "cyberchef",
@@ -245,110 +263,318 @@
     {
       "id": "geoip",
       "name": "GeoIP country + ASN labels",
-      "command": "sudo /opt/orionx/optional/install-geoip.sh",
+      "group": "network",
+      "command": "sudo orionx-optional install geoip",
       "runtime_path": "/opt/orionx/optional/install-geoip.sh",
       "blurb": "DB-IP Lite (CC BY 4.0). Adds country and ASN LABELS to the attack map's sources. It does not add coordinates and the map still places nothing. ~10 MB, monthly data.",
-      "probe": []
+      "probe": [
+        "/var/lib/orionx/geoip/dbip-country-lite.mmdb"
+      ],
+      "needs_host": "download.db-ip.com",
+      "size": "~22 MB",
+      "owns": [
+        "/var/lib/orionx/geoip"
+      ],
+      "version": {
+        "file": "/var/lib/orionx/geoip/dbip-country-lite.mmdb.month"
+      },
+      "health": [
+        {
+          "fresh": "/var/lib/orionx/geoip/dbip-country-lite.mmdb",
+          "max_days": 62,
+          "what": "country database"
+        }
+      ]
     },
     {
       "id": "zeek",
       "name": "Zeek network security monitor",
-      "command": "sudo /opt/orionx/optional/install-zeek.sh",
+      "group": "network",
+      "command": "sudo orionx-optional install zeek",
       "runtime_path": "/opt/orionx/optional/install-zeek.sh",
       "blurb": "Protocol-level logging and notices; orionx-postured ingests its notice/weird/conn logs into the bus the map reads.",
       "probe": [
         "/opt/zeek/bin/zeek"
-      ]
+      ],
+      "needs_host": "download.opensuse.org",
+      "size": "~180 MB",
+      "owns": [
+        "/etc/apt/sources.list.d/orionx-zeek.list",
+        "/usr/share/keyrings/orionx-zeek-obs-archive-keyring.gpg",
+        "/usr/bin/zeek",
+        "/usr/bin/zeek-cut"
+      ],
+      "units": [
+        "orionx-zeek@*.service"
+      ],
+      "version": [
+        "/opt/zeek/bin/zeek",
+        "--version"
+      ],
+      "health": [
+        {
+          "run": [
+            "/opt/zeek/bin/zeek",
+            "--version"
+          ],
+          "what": "zeek runs"
+        }
+      ],
+      "active": {
+        "units": [
+          "orionx-zeek@*.service"
+        ]
+      }
     },
     {
       "id": "ghidra",
       "name": "Ghidra",
-      "command": "sudo /opt/orionx/optional/install-ghidra.sh",
+      "group": "malware",
+      "command": "sudo orionx-optional install ghidra",
       "runtime_path": "/opt/orionx/optional/install-ghidra.sh",
       "blurb": "NSA's reverse-engineering suite. Deferred off the base image for size (DEC-PHASE11-004).",
       "probe": [
         "/opt/ghidra"
+      ],
+      "needs_host": "github.com",
+      "size": "~420 MB + JDK 21",
+      "owns": [
+        "/opt/ghidra",
+        "/usr/local/bin/ghidra"
+      ],
+      "version": "11.0.1",
+      "health": [
+        {
+          "run": [
+            "/usr/bin/java",
+            "-version"
+          ],
+          "what": "Java runtime"
+        }
       ]
     },
     {
       "id": "floss",
       "name": "FLOSS",
-      "command": "sudo /opt/orionx/optional/install-floss.sh",
+      "group": "malware",
+      "command": "sudo orionx-optional install floss",
       "runtime_path": "/opt/orionx/optional/install-floss.sh",
       "blurb": "Mandiant's obfuscated-string extractor — the strings a packed sample does not hand you.",
       "probe": [
         "/opt/orionx/floss"
+      ],
+      "needs_host": "github.com",
+      "size": "~15 MB",
+      "owns": [
+        "/opt/orionx/floss",
+        "/usr/local/bin/floss"
+      ],
+      "version": [
+        "/opt/orionx/floss/floss",
+        "--version"
+      ],
+      "health": [
+        {
+          "run": [
+            "/opt/orionx/floss/floss",
+            "--version"
+          ],
+          "what": "floss runs"
+        }
       ]
     },
     {
       "id": "trid",
       "name": "TrID",
-      "command": "sudo /opt/orionx/optional/install-trid.sh",
+      "group": "malware",
+      "command": "sudo orionx-optional install trid",
       "runtime_path": "/opt/orionx/optional/install-trid.sh",
       "blurb": "File-type identification by signature when `file` shrugs.",
       "probe": [
         "/opt/orionx/trid"
+      ],
+      "needs_host": "mark0.net",
+      "size": "~5 MB",
+      "owns": [
+        "/opt/orionx/trid",
+        "/usr/local/bin/trid"
+      ],
+      "version": {
+        "file": "/opt/orionx/trid/DEFS-SHA256"
+      },
+      "health": [
+        {
+          "exists": "/opt/orionx/trid/triddefs.trd",
+          "what": "TrID definitions"
+        }
       ]
     },
     {
       "id": "clamav",
       "name": "ClamAV",
-      "command": "sudo /opt/orionx/optional/install-clamav.sh",
+      "group": "malware",
+      "command": "sudo orionx-optional install clamav",
       "runtime_path": "/opt/orionx/optional/install-clamav.sh",
       "blurb": "Signature scanning. Off the base image at -350 MB (DEC-PHASE11-009).",
       "probe": [
         "/usr/bin/clamscan"
-      ]
+      ],
+      "needs_host": "deb.debian.org",
+      "size": "~250 MB",
+      "units": [
+        "clamav-freshclam.service"
+      ],
+      "version": [
+        "/usr/bin/clamscan",
+        "--version"
+      ],
+      "health": [
+        {
+          "fresh": "/var/lib/clamav/daily.c[lv]d",
+          "max_days": 14,
+          "what": "virus signatures"
+        }
+      ],
+      "active": {
+        "units": [
+          "clamav-freshclam.service"
+        ]
+      }
     },
     {
       "id": "duckdb",
       "name": "DuckDB",
-      "command": "sudo /opt/orionx/optional/install-duckdb.sh",
+      "group": "network",
+      "command": "sudo orionx-optional install duckdb",
       "runtime_path": "/opt/orionx/optional/install-duckdb.sh",
       "blurb": "Columnar acceleration for orionx-logquery on very large captures. Not required.",
       "probe": [
         "python:duckdb"
+      ],
+      "needs_host": "pypi.org",
+      "size": "~50 MB",
+      "pip": true,
+      "version": [
+        "/usr/bin/python3",
+        "-c",
+        "import duckdb; print(duckdb.__version__)"
+      ],
+      "health": [
+        {
+          "run": [
+            "/usr/bin/python3",
+            "-c",
+            "import duckdb"
+          ],
+          "what": "duckdb imports"
+        }
       ]
     },
     {
       "id": "piper-voice",
       "name": "Piper natural voice for R.A.I.N. narration",
-      "command": "sudo /opt/orionx/optional/install-piper-voice.sh",
+      "group": "deck",
+      "command": "sudo orionx-optional install piper-voice",
       "runtime_path": "/opt/orionx/optional/install-piper-voice.sh",
       "blurb": "espeak-ng speaks today (robotic, zero added bytes). This adds en_US-lessac-medium — a 63 MB voice model plus onnxruntime, SHA-256-pinned; the installer synthesises real audio and checks the WAV before it declares success. R.A.I.N. discovers it by itself; nothing to configure. On a small CPU synthesis takes seconds: narration is bounded and never delays the alert tone. Turn narration on with `orionx-rain --speech on`.",
       "probe": [
         "/usr/share/orionx/voices/en_US-lessac-medium.onnx"
+      ],
+      "needs_host": "huggingface.co",
+      "size": "~180 MB",
+      "pip": true,
+      "owns": [
+        "/usr/share/orionx/voices/en_US-lessac-medium.onnx",
+        "/usr/share/orionx/voices/en_US-lessac-medium.onnx.json"
+      ],
+      "version": "en_US lessac medium",
+      "health": [
+        {
+          "exists": "/usr/local/bin/piper",
+          "what": "piper on PATH"
+        }
       ]
     },
     {
       "id": "element",
       "name": "Element desktop (Matrix client)",
-      "command": "sudo /opt/orionx/optional/install-element.sh",
+      "group": "comms",
+      "command": "sudo orionx-optional install element",
       "runtime_path": "/opt/orionx/optional/install-element.sh",
       "blurb": "Encrypted team communications over Matrix. Adds Element's repository and installs element-desktop; a Synapse server for the team is `sudo setup-matrix.sh --mode server`.",
       "probe": [
         "/usr/bin/element-desktop"
+      ],
+      "needs_host": "packages.element.io",
+      "size": "~200 MB",
+      "owns": [
+        "/etc/apt/sources.list.d/element-io.list",
+        "/usr/share/keyrings/element-io-archive-keyring.gpg"
+      ],
+      "version": [
+        "/usr/bin/dpkg-query",
+        "-W",
+        "-f=${Version}",
+        "element-desktop"
       ]
     },
     {
       "id": "gomuks",
       "name": "gomuks (Matrix client, terminal)",
-      "command": "sudo /opt/orionx/optional/install-gomuks.sh",
+      "group": "comms",
+      "command": "sudo orionx-optional install gomuks",
       "runtime_path": "/opt/orionx/optional/install-gomuks.sh",
       "blurb": "A terminal Matrix client for a deck without a desktop session, or over SSH.",
       "probe": [
         "/usr/local/bin/gomuks"
-      ]
+      ],
+      "needs_host": "github.com",
+      "size": "~21 MB",
+      "owns": [
+        "/usr/local/bin/gomuks",
+        "/usr/share/applications/gomuks.desktop"
+      ],
+      "version": "",
+      "health": [
+        {
+          "exists": "/usr/local/bin/gomuks",
+          "what": "gomuks binary"
+        }
+      ],
+      "blocked": "no pinned download: the old URL is gone and choosing the replacement (legacy v0.3.1 or the current gomuks-terminal) is an owner decision"
     },
     {
       "id": "bluetooth",
       "name": "Bluetooth support (mouse, keyboard, headset)",
-      "command": "sudo /opt/orionx/optional/install-bluetooth.sh",
+      "group": "deck",
+      "command": "sudo orionx-optional install bluetooth",
       "runtime_path": "/opt/orionx/optional/install-bluetooth.sh",
       "blurb": "bluez + blueman, no reboot. The image ships no Bluetooth userspace by default (fewer radios on); this turns the radio on, starts bluetooth.service and opens Blueman for pairing. ~7 MB, installed from a cache on the ISO when there is no network. Off again: sudo rfkill block bluetooth.",
       "probe": [
         "/usr/bin/blueman-manager"
-      ]
+      ],
+      "needs_host": "deb.debian.org",
+      "size": "~10 MB",
+      "units": [
+        "bluetooth.service"
+      ],
+      "version": [
+        "/usr/bin/dpkg-query",
+        "-W",
+        "-f=bluez ${Version}",
+        "bluez"
+      ],
+      "health": [
+        {
+          "unit": "bluetooth.service",
+          "what": "bluetooth service"
+        }
+      ],
+      "active": {
+        "units": [
+          "bluetooth.service"
+        ]
+      }
     }
   ],
   "online": [

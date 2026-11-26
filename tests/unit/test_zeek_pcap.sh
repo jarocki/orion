@@ -115,7 +115,7 @@ ck(z["usable"] is False, "absent Zeek is not usable")
 ck(z["log_state"] == "absent", f"log state 'absent' -> {z['log_state']}")
 sev, msg = m.zeek_state_message(z)
 ck("NOT installed" in msg, "absence is stated plainly, not implied")
-ck("install-zeek.sh" in msg, "absence message names the remedy")
+ck("orionx-optional install zeek" in msg, "absence message names the remedy")
 ck("no rebuild or restart" in msg.lower() or "next cycle" in msg,
    "absence message says no rebuild is needed")
 ck(sev in ("notice", "warning"), f"absence is announced, never silent ({sev})")

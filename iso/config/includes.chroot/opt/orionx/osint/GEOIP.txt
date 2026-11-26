@@ -8,7 +8,7 @@ No GeoIP database ships on this ISO. The map therefore places NOTHING on a
 world outline, because it cannot. Every public source it shows is labelled
 UNLOCATED, and it says why, every time. If you want country and ASN labels:
 
-    sudo /opt/orionx/optional/install-geoip.sh
+    sudo orionx-optional install geoip
 
 Even then the map does not gain coordinates. See "What the installer adds".
 
@@ -67,7 +67,7 @@ not guessed at. They sit in the UNLOCATED sector with that word on them.
 
 What the installer adds
 -----------------------
-    sudo /opt/orionx/optional/install-geoip.sh
+    sudo orionx-optional install geoip
 
 Fetches two DB-IP Lite databases into /var/lib/orionx/geoip/ and installs
 python3-maxminddb if it is missing:

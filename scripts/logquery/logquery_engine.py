@@ -185,7 +185,7 @@ class DuckdbEngine(Engine):
         except ImportError as exc:
             raise EngineUnavailable(
                 "the duckdb engine was requested but duckdb is not installed",
-                "install it with: sudo /opt/orionx/optional/install-duckdb.sh\n"
+                "install it with: sudo orionx-optional install duckdb\n"
                 "  or just drop the flag — the default sqlite engine is in the "
                 "Python standard library and runs every report here.") from exc
         conn = duckdb.connect()

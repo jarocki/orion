@@ -908,7 +908,7 @@ def zeek_state_message(zeek: dict) -> tuple[str, str]:
                 "Zeek is NOT installed on this deck, so there is no protocol "
                 "analysis or connection record layer. Suricata and "
                 "orionx-scanwatch are unaffected. Install it with: sudo "
-                "/opt/orionx/optional/install-zeek.sh — no rebuild or restart "
+                "orionx-optional install zeek — no rebuild or restart "
                 "is needed, this daemon picks it up on its next cycle.")
     if zeek["log_state"] == "empty":
         return ("notice",

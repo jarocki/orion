@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  @decision DEC-PHASE13-058
+  @category SECURITY
+  @title The Cockpit installs and removes optional tools through one pinned polkit action, with the password remembered for about five minutes
+  @status accepted
+  @rationale #198. The Cockpit runs as the desktop user; orionx-optional needs
+    root. pkexec 126, polkitd 126 and the mate-polkit agent are in the image
+    (live/filesystem.packages of v3.1.6), and the agent autostarts under XFCE
+    (NotShowIn=GNOME;KDE;). The owner allowed a cached password only if simple
+    and secure (2026-11-25): auth_admin_keep is polkit's own cache, one word
+    here and no code of ours; it lasts about five minutes and covers only this
+    action, for the process that authenticated, in the active local session.
+    Inactive and remote sessions get no. exec.path pins the one program, and
+    the helper accepts only `install|uninstall ID` with ID from the catalogue,
+    so this action cannot run anything else. Recorded, not changed here: the
+    live account also has NOPASSWD sudo (live-config default), so this prompt
+    confirms the operator's intent rather than separating privilege; #203 is
+    that decision.
+-->
+<policyconfig>
+  <vendor>Orion-X Phoenix Edition</vendor>
+  <action id="org.orionx.optional.manage">
+    <description>Install or remove an Orion-X optional tool</description>
+    <message>Authentication is required to install or remove an optional tool</message>
+    <icon_name>system-software-install</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/opt/orionx/scripts/optional/orionx-optional</annotate>
+  </action>
+</policyconfig>

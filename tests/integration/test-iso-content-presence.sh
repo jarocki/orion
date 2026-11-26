@@ -3736,6 +3736,58 @@ else
 fi
 
 # ===========================================================================
+# 43. Optional tools have one manager (DEC-PHASE13-057/058, #197/#198): the
+#     helper, its library and the polkit action ship; the helper is on PATH;
+#     the files root runs are root-owned and not group/other-writable (read
+#     from the image's own metadata, since the extracted tree belongs to the
+#     runner); the catalogue groups every tool.
+# ===========================================================================
+section "43. orionx-optional + polkit action shipped, root-owned (DEC-PHASE13-057/058)"
+
+_43_h="$SQF/opt/orionx/scripts/optional/orionx-optional"
+if [[ -f "$_43_h" && -x "$_43_h" && -f "$SQF/opt/orionx/scripts/optional/optional_lib.py" ]]; then
+    pass "43a: orionx-optional and optional_lib.py present, helper executable"
+else
+    fail "43a: orionx-optional and optional_lib.py present, helper executable" "missing from /opt/orionx/scripts/optional"
+fi
+if [[ "$(readlink "$SQF/usr/bin/orionx-optional" 2>/dev/null)" == "/opt/orionx/scripts/optional/orionx-optional" ]]; then
+    pass "43b: /usr/bin/orionx-optional -> /opt/orionx/scripts/optional/orionx-optional"
+else
+    fail "43b: /usr/bin/orionx-optional symlink" "got '$(readlink "$SQF/usr/bin/orionx-optional" 2>/dev/null)'"
+fi
+_43_pol="$SQF/usr/share/polkit-1/actions/org.orionx.optional.policy"
+if [[ -f "$_43_pol" ]] && grep -q '<allow_active>auth_admin_keep</allow_active>' "$_43_pol" \
+   && grep -q '>/opt/orionx/scripts/optional/orionx-optional</annotate>' "$_43_pol"; then
+    pass "43c: polkit action org.orionx.optional.manage pins the helper path, auth_admin_keep"
+else
+    fail "43c: polkit action shipped and pinned" "$_43_pol missing or not pinned"
+fi
+if command -v unsquashfs >/dev/null 2>&1; then
+    _43_lls="$(unsquashfs -lls "$WORK/squashfs.img" 'opt/orionx/scripts/optional/*' 'opt/orionx/scripts/optional' \
+               'opt/orionx/osint/links.json' 'opt/orionx/optional/install-*.sh' 2>/dev/null | grep 'squashfs-root/' || true)"
+    _43_bad="$(printf '%s\n' "$_43_lls" | awk '$2 !~ /^root\// || substr($1,6,1)=="w" || substr($1,9,1)=="w"' || true)"
+    if [[ -n "$_43_lls" && -z "$_43_bad" ]]; then
+        pass "43d: helper, library, catalogue and installers are root-owned and not group/other-writable"
+    else
+        fail "43d: files root runs are root-owned and private" "${_43_bad:-no listing}"
+    fi
+else
+    skip "43d: ownership of the files root runs" "unsquashfs not installed"
+fi
+if python3 - "$SQF/opt/orionx/osint/links.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+gids = {g["id"] for g in d["groups"]}
+assert len(gids) == 4 and all(i["group"] in gids for i in d["installable"])
+assert all(i["command"] == "sudo orionx-optional install " + i["id"] for i in d["installable"])
+PY
+then
+    pass "43e: baked links.json groups every optional tool and points it at orionx-optional"
+else
+    fail "43e: baked links.json groups every optional tool" "groups/command fields missing or wrong"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

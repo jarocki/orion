@@ -134,6 +134,10 @@ declare -A SCRIPT_MAP=(
     ["orionx-rain"]="/opt/orionx/scripts/rain/orionx-rain"
     # Orion Cockpit — live visualisation dashboard (DEC-PHASE12-007)
     ["orionx-cockpit"]="/opt/orionx/scripts/cockpit/orionx-cockpit"
+    # #197 (DEC-PHASE13-057): optional tools — status as the user; install and
+    # uninstall as root (pkexec from the Cockpit uses the real path, which the
+    # polkit action org.orionx.optional.manage pins; sudo from a terminal).
+    ["orionx-optional"]="/opt/orionx/scripts/optional/orionx-optional"
     # zeek installs under /opt/zeek (OpenSUSE Debian_13 repo, DEC-PHASE12-003),
     # which is not on PATH. The loop below skips absent sources, so this stays
     # safe when the zeek repo soft-fails. Verified present in trixie-dev4.

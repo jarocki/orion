@@ -134,13 +134,13 @@ d = json.load(open(sys.argv[1]))
 e = [i for i in d["installable"] if i["id"] == "bluetooth"]
 assert len(e) == 1, "no bluetooth entry"
 e = e[0]
-assert e["command"] == "sudo /opt/orionx/optional/install-bluetooth.sh"
+assert e["command"] == "sudo orionx-optional install bluetooth"  # #197: one helper
 assert e["runtime_path"] == "/opt/orionx/optional/install-bluetooth.sh"
 assert e["probe"] == ["/usr/bin/blueman-manager"]
 assert "radio" in e["blurb"]
 PY
 grep -q '`install-bluetooth.sh`' "$REPO_ROOT/README.md" && pass "README lists the installer" || fail "README row"
-grep -q '`install-bluetooth.sh`' "$REPO_ROOT/docs/User_Guide.md" && pass "User Guide §15 lists the installer" || fail "User Guide row"
+grep -q 'Bluetooth (`bluetooth`)' "$REPO_ROOT/docs/User_Guide.md" && pass "User Guide §15 lists the installer" || fail "User Guide row"
 
 printf "\n  Results: ${GREEN}%d passed${NC}, ${RED}%d failed${NC}\n" "$PASS" "$FAIL"
 [[ $FAIL -eq 0 ]]
