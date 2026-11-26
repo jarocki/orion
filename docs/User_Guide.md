@@ -1762,6 +1762,8 @@ Cockpit on that tool.
 
 The same directory holds one diagnostic, not an installer: `sudo /opt/orionx/optional/apt-evidence.sh` collects what apt did and would do on this deck (`/var/log/apt/history.log` and `term.log`, `apt-get -s install` and `apt-get -s upgrade` simulations, `apt-cache policy`, packages not in the `ii` state, the overlay's free space, the sources) into `~/orionx-apt-evidence-<date>.tar.gz`. It changes nothing — every apt call it makes is a simulation — and prints the tarball path last. Run it when a package install behaved unexpectedly and attach the tarball to the issue.
 
+A second diagnostic, `sudo /opt/orionx/optional/deck-check.sh`, is the hardware boot test in one command: it records the versions, boot timing, the session checks the CI boot makes, the Nebula model answering one question (this loads the model for a few minutes), AppArmor denials, the narration timing test (it speaks three times; `--no-audio` skips it), the Cockpit's sources, Suricata memory, the log reports and the apt evidence, into `~/orionx-deck-check-<date>.tar.gz`. It installs, starts, stops and deletes nothing. `CHECK-BY-EYE.txt` in the bundle lists what only a person can check.
+
 ## 16. Troubleshooting
 
 ### Boot Issues

@@ -3668,6 +3668,11 @@ if [[ -f "$SQF/opt/orionx/optional/apt-evidence.sh" && -x "$SQF/opt/orionx/optio
 else
     fail "42a: apt-evidence.sh present and executable" "operators cannot gather the #121 evidence without it"
 fi
+if [[ -x "$SQF/opt/orionx/optional/deck-check.sh" ]]; then
+    pass "42d: /opt/orionx/optional/deck-check.sh present and executable (the hardware boot test)"
+else
+    fail "42d: deck-check.sh present and executable" "the v3.2.0 boot test has no collector"
+fi
 _42_rc="$SQF/etc/skel/.bashrc"
 if [[ -f "$_42_rc" ]]; then
     if grep -q '^update() {' "$_42_rc" && grep -q 'apt-get -s upgrade' "$_42_rc"; then
@@ -3714,7 +3719,7 @@ else
 fi
 if command -v unsquashfs >/dev/null 2>&1; then
     _43_lls="$(unsquashfs -lls "$WORK/squashfs.img" 'opt/orionx/scripts/optional/*' 'opt/orionx/scripts/optional' \
-               'opt/orionx/osint/links.json' 'opt/orionx/optional/install-*.sh' 2>/dev/null | grep 'squashfs-root/' || true)"
+               'opt/orionx/osint/links.json' 'opt/orionx/optional/install-*.sh' 'opt/orionx/optional/deck-check.sh' 2>/dev/null | grep 'squashfs-root/' || true)"
     _43_bad="$(printf '%s\n' "$_43_lls" | awk '$2 !~ /^root\// || substr($1,6,1)=="w" || substr($1,9,1)=="w"' || true)"
     if [[ -n "$_43_lls" && -z "$_43_bad" ]]; then
         pass "43d: helper, library, catalogue and installers are root-owned and not group/other-writable"
