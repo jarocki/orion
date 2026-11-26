@@ -206,30 +206,78 @@ function recipeCard(rec){
   return c;
 }
 
-function installCard(item){
-  // DEC-PHASE12-052: the badge is EVIDENCE from /api/status.json (the
-  // installer's own idempotence probe), never an assumption.
-  var st = (S.status && S.status.optional && S.status.optional[item.id]) || null;
-  var installed = !!(st && st.known && st.installed);
-  var c = el("div", "card install" + (installed ? " installed" : ""));
+/* ---- optional tools (#200, DEC-PHASE13-061) -----------------------------
+ * A read-only mirror of `orionx-optional status` (the same answer the
+ * Cockpit's Orion Tools tab shows). Installing and removing happen in the
+ * Cockpit; the one action here opens it on the tool. */
+var OPT_BADGE = {active: ["installed", "active"], installed: ["installed", "installed"],
+                 degraded: ["install", "degraded"], working: ["install", "working"],
+                 failed: ["caution", "failed"], not_installed: ["cat", "not installed"]};
+
+function optWhy(t){
+  if (t.state === "working" && t.progress)
+    return (t.progress.action === "install" ? "installing " : "removing ") +
+           t.progress.n + "/" + t.progress.m + ": " + (t.progress.line || t.progress.step || "");
+  if (t.reason) return t.reason;
+  if (t.state === "not_installed") return t.install_reason || t.size || "";
+  var v = t.version || "";
+  if (!t.can_uninstall && t.uninstall_reason) v += (v ? " · " : "") + "shipped with the image";
+  return v;
+}
+
+function manageButton(t){
+  var b = el("button", "btn copy", "Manage in Cockpit");
+  b.type = "button";
+  b.addEventListener("click", function(){
+    b.disabled = true; b.textContent = "opening…";
+    fetch("api/optional/open", {method: "POST", cache: "no-store",
+          headers: {"X-Orionx-Operator": "1", "Content-Type": "application/json"},
+          body: JSON.stringify({id: t.id})})
+      .then(function(r){ return r.json().then(function(j){ return [r.ok, j]; }); })
+      .then(function(rj){
+        b.textContent = rj[0] ? "opened in the Cockpit" : ("not opened: " + (rj[1].detail || rj[1].error));
+      }, function(){ b.textContent = "not opened: the Workbench server did not answer"; })
+      .then(function(){ setTimeout(function(){ b.disabled = false; b.textContent = "Manage in Cockpit"; }, 2500); });
+  });
+  return b;
+}
+
+function optCard(t){
+  var look = OPT_BADGE[t.state] || ["cat", t.state];
+  var ok = t.state === "active" || t.state === "installed";
+  var c = el("div", "card install" + (ok ? " installed" : ""));
   var top = el("div", "top");
-  top.appendChild(el("h3", null, item.name));
-  if (installed) top.appendChild(el("span", "badge installed", "installed"));
-  else if (st && st.known) top.appendChild(el("span", "badge install", "not installed"));
-  else top.appendChild(el("span", "badge install", "installable"));
+  top.appendChild(el("h3", null, t.name));
+  top.appendChild(el("span", "badge " + look[0], look[1]));
   c.appendChild(top);
-  c.appendChild(el("p", null, item.blurb));
-  if (installed && st.evidence) {
-    var ev = el("p", "why");
-    ev.appendChild(document.createTextNode("present: " + st.evidence + " — the command below re-runs the installer"));
-    c.appendChild(ev);
-  }
-  c.appendChild(el("div", "cmd", item.command));
+  if (t.blurb) c.appendChild(el("p", null, t.blurb));
+  var why = optWhy(t);
+  if (why) c.appendChild(el("p", "why", why));
   var foot = el("div", "foot");
-  foot.appendChild(copyButton(item.command));
-  foot.appendChild(el("span", "badge cat", "needs network"));
+  foot.appendChild(manageButton(t));
+  if (t.size) foot.appendChild(el("span", "badge cat", t.size));
   c.appendChild(foot);
   return c;
+}
+
+function renderOptional(){
+  var host = document.getElementById("grid-install");
+  clear(host);
+  var opt = (S.status && S.status.optional) || {};
+  if (opt.error || !opt.tools) {
+    host.appendChild(el("p", "why", "Optional-tool state is unavailable: " + (opt.error || "no answer yet")));
+    return;
+  }
+  var shown = 0;
+  (opt.groups || []).forEach(function(g){
+    var tools = opt.tools.filter(function(t){
+      return t.group === g.id && matches(t.name + " " + (t.blurb || "") + " " + g.name);
+    });
+    if (!tools.length) return;
+    host.appendChild(el("h3", "opt-group", g.name));
+    tools.forEach(function(t){ host.appendChild(optCard(t)); shown++; });
+  });
+  if (!shown) host.appendChild(el("p", "why", "Nothing matches that filter."));
 }
 
 /* ---- engine settings (#95, DEC-PHASE13-049) -----------------------------
@@ -379,10 +427,7 @@ function render(){
       return matches(r.name + " " + r.why + " " + r.group + " " + r.recipe);
     }), recipeCard, "Nothing matches that filter.");
 
-  fill("grid-install",
-    (L.installable || []).filter(function(i){
-      return matches(i.name + " " + i.blurb + " " + i.command);
-    }), installCard, "Nothing matches that filter.");
+  renderOptional();
 
   renderEngine();
 

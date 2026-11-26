@@ -878,7 +878,13 @@ REBASE
 E2E_PORT=$(( 8900 + ($$ % 90) ))
 # #95: the Workbench shows the consent heald reads; one class set, the rest absent.
 printf '{"block_ip": "confirm"}\n' > "$TMP/autonomy.json"
+# #200: status.optional is orionx-optional's own answer (fixture catalogue), and
+# "Manage in Cockpit" only launches the Cockpit (a stub that records its argv).
+mkdir -p "$TMP/optroot" "$TMP/obin"
+cp "$WEB/links.json" "$TMP/optroot/links.json"
+printf '#!/bin/sh\necho "$*" >> "%s/cockpit-args"\n' "$TMP" > "$TMP/obin/orionx-cockpit"; chmod +x "$TMP/obin/orionx-cockpit"
 (
+  PATH="$TMP/obin:$PATH" ORIONX_OPTIONAL_ROOT="$TMP/optroot" \
   ORIONX_AUTONOMY_FILE="$TMP/autonomy.json" ORIONX_WARMUP_WANTS="$TMP/no-such-wants" \
   ORIONX_EVENT_LOG="$TMP/live-bus.jsonl" \
   ORIONX_POSTURE_STATUS="$TMP/posture.json" \
@@ -942,8 +948,11 @@ _ids = [i["id"] for i in links["installable"]]
 check(all(k in _ids for k in ("piper-voice", "element")) and "gomuks" not in _ids, "every optional installer is offered; gomuks is not (DEC-PHASE13-003)")
 check(all(("probe" in i) for i in links["installable"]), "every optional entry declares its installed-probe")
 check(all(i["probe"] for i in links["installable"] if i["id"] != "geoip"), "every probe is non-empty except geoip (answered by the server's own state)")
-check("optional" in st and set(st["optional"]) == set(_ids), "status.optional answers for exactly the offered installers (DEC-PHASE12-052)")
-check(all(st["optional"][k]["known"] for k in _ids), "every answer is from evidence, none 'unknown'")
+_opt = st.get("optional") or {}
+check("error" not in _opt and [t["id"] for t in _opt.get("tools", [])] == _ids,
+      "status.optional is orionx-optional's answer for exactly the offered tools (DEC-PHASE13-061) %s" % _opt.get("error", ""))
+check(len(_opt.get("groups", [])) == 4 and all(t["state"] and t["group"] for t in _opt.get("tools", [])),
+      "every tool has a state and one of the four groups")
 eng = st.get("engine") or {}
 _cls = {c["id"]: c for c in (eng.get("autonomy") or {}).get("classes", [])}
 check(list(_cls) == ["block_ip", "kill_process", "quarantine_file", "isolate_node", "rotate_mesh_keys",
@@ -1015,6 +1024,20 @@ st_, j = post("/api/network/outbound")
 check(st_ == 403 and j["error"] == "not-operator-initiated", "a POST without the button's header is 403")
 st_, j = post("/api/status.json", {"X-Orionx-Operator": "1"})
 check(st_ == 405, "no other route accepts POST")
+def post_json(path, payload, headers):
+    req = urllib.request.Request(base + path, data=json.dumps(payload).encode(), method="POST",
+                                 headers=dict(headers, **{"Content-Type": "application/json"}))
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+st_, j = post_json("/api/optional/open", {"id": "zeek"}, {})
+check(st_ == 403 and j["error"] == "not-operator-initiated", "#200: opening the Cockpit needs the button's header")
+st_, j = post_json("/api/optional/open", {"id": "../../bin/sh"}, {"X-Orionx-Operator": "1"})
+check(st_ == 400 and j["error"] == "unknown-tool", "#200: an id outside the catalogue is refused")
+st_, j = post_json("/api/optional/open", {"id": "zeek"}, {"X-Orionx-Operator": "1"})
+check(st_ == 200 and j == {"ok": True, "opened": "zeek"}, "#200: Manage in Cockpit opens the Cockpit on that tool")
 sys.exit(0 if ok else 1)
 PY
 then pass "all three pages, both APIs and the vendored assets serve over loopback"
@@ -1136,26 +1159,43 @@ if python3 -c "import ast,sys; [ast.parse(open(p,encoding='utf-8').read()) for p
     pass "python sources parse"
 else fail "python sources parse"; fi
 
-# DEC-PHASE12-052: optional_state() is pure — installed only from evidence.
+# DEC-PHASE13-061 (#200): the mirror caches the helper's answer, reports its
+# failures, and the open route launches only the Cockpit, only for catalogue ids.
 if python3 - "$SRC" <<'PY'
-import sys
+import json, sys
+from types import SimpleNamespace
 sys.path.insert(0, sys.argv[1]); import osint_server as O
 def ck(c, m):
     print(("  ok   " if c else "  FAIL ") + m)
     if not c: raise SystemExit(1)
-ents = [{"id":"zeek","probe":["/opt/zeek/bin/zeek"]},{"id":"duckdb","probe":["python:duckdb"]},
-        {"id":"geoip","probe":[]},{"id":"mystery","probe":[]}]
-present = {"/opt/zeek/bin/zeek"}
-res = O.optional_state(ents, geoip_available=False, exists=lambda p: p in present, find_spec=lambda m: object() if m == "duckdb" else None)
-ck(res["zeek"]["installed"] and res["zeek"]["evidence"] == "/opt/zeek/bin/zeek", "path probe -> installed with the path as evidence")
-ck(res["duckdb"]["installed"] and res["duckdb"]["evidence"] == "python:duckdb", "python-module probe -> installed")
-ck(res["geoip"]["installed"] is False and res["geoip"]["known"], "geoip answered from the server's own state")
-ck(res["mystery"]["known"] is False and res["mystery"]["installed"] is False, "no probe -> unknown, never claimed installed")
-res2 = O.optional_state(ents, geoip_available=True, exists=lambda p: False, find_spec=lambda m: None)
-ck(not res2["zeek"]["installed"] and res2["zeek"]["evidence"].startswith("none of:"), "absent -> not installed, says what was looked for")
-ck(res2["geoip"]["installed"], "geoip available -> installed")
+calls = []
+def run(argv, **k):
+    calls.append(argv)
+    return SimpleNamespace(returncode=0, stdout=json.dumps({"groups": [], "tools": [{"id": "zeek"}]}), stderr="")
+clock = [1000.0]
+O._OPT_CACHE.update(at=0.0, data=None)
+a = O.optional_status(run=run, now=lambda: clock[0])
+b = O.optional_status(run=run, now=lambda: clock[0] + 5)
+ck(a == b and len(calls) == 1 and calls[0][-2:] == ["status", "--json"], "one helper call per 15 s, cached between")
+clock[0] += 20
+O.optional_status(run=run, now=lambda: clock[0])
+ck(len(calls) == 2, "after 15 s it asks again")
+O._OPT_CACHE.update(at=0.0, data=None)
+bad = O.optional_status(run=lambda argv, **k: SimpleNamespace(returncode=2, stdout="", stderr="catalogue invalid"),
+                        now=lambda: 0.0)
+ck("exited 2: catalogue invalid" in bad["error"], "a failing helper is reported, not hidden")
+O._OPT_CACHE.update(at=0.0, data=None)
+spawned = []
+O.shutil.which = lambda n: "/usr/bin/" + n
+code, body = O.open_cockpit("zeek", ["zeek", "geoip"], popen=lambda argv, **k: spawned.append((argv, k)))
+ck(code == 200 and spawned[0][0] == ["/usr/bin/orionx-cockpit", "--tab", "tools", "--focus", "zeek"]
+   and spawned[0][1].get("start_new_session"), "opens the Cockpit on the tool, detached")
+code, body = O.open_cockpit("rm -rf /", ["zeek"], popen=lambda argv, **k: spawned.append(argv))
+ck(code == 400 and len(spawned) == 1, "an id outside the catalogue launches nothing")
+O.shutil.which = lambda n: None
+ck(O.open_cockpit("zeek", ["zeek"])[0] == 503, "no orionx-cockpit -> 503 with the reason")
 PY
-then pass "optional_state is pure and evidence-based"; else fail "optional_state" "see output above"; fi
+then pass "optional mirror and open route (DEC-PHASE13-061)"; else fail "optional mirror" "see output above"; fi
 
 section "#94: both POST endpoints end to end against fakes, every blocked tier refused"
 # DEC-PHASE13-047. In-process server; gateway_probes' transmitters replaced by

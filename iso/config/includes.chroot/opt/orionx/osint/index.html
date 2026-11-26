@@ -142,6 +142,7 @@ section > p.lede{margin:0 0 14px;color:var(--dim);font-size:.86rem;max-width:78c
 /* local cards read as "this works now" */
 .card.local{border-left:3px solid var(--go)}
 .card.install{border-left:3px solid var(--warn)}
+.opt-group{grid-column:1/-1;margin:10px 0 0;color:var(--cool);font-size:.85rem;letter-spacing:.08em;text-transform:uppercase}
 .card.engine{border-left:3px solid var(--warn)}
 .card.engine .btn.copy.current{border-color:var(--go);color:var(--go)}
 .card.online{border-left:3px solid var(--cool)}
@@ -215,9 +216,11 @@ footer a{color:var(--dim)}
 <section id="sec-install">
   <h2>Optional &middot; install when you need it</h2>
   <p class="lede">Deliberately off the base image, for size or licence. Each
-  needs a network and one command, and each card says whether it is already
-  on this deck &mdash; from the installer's own evidence, not a guess. Nothing
-  on this deck degrades if you never run any of them.</p>
+  card shows the tool's state on this deck as <code>orionx-optional</code>
+  reports it: installed, active, degraded with the reason, failed, or not
+  installed and why. Installing and removing happen in the Cockpit's
+  <b>Orion Tools</b> tab; <i>Manage in Cockpit</i> opens it on that tool.
+  Nothing on this deck degrades if you never install any of them.</p>
   <div class="grid" id="grid-install"></div>
 </section>
 
