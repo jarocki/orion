@@ -97,12 +97,12 @@ def cmd_warmup(_args: argparse.Namespace) -> int:
     """Trigger a 1-token inference warm-up.  Imports warmup.py lazily."""
     _ensure_package_on_path()
     try:
-        from nebula.warmup import run_warmup  # noqa: PLC0415
+        from nebula.warmup import warm_and_publish  # noqa: PLC0415  (#201: outcome on the bus)
     except ImportError as exc:
         print(f"ERROR: cannot import nebula.warmup: {exc}", file=sys.stderr)
         return 1
 
-    success = run_warmup()
+    success = warm_and_publish()
     if success:
         print("Warm-up complete.")
         return 0

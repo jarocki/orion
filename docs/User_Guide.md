@@ -444,13 +444,13 @@ v3.1.5 gave every control one home, chosen by what it changes (#95): the **Cockp
 | R.A.I.N. alerts (tone, voice, narration, volume, test) | Cockpit → Awareness | Cockpit → **Settings** | `~/.config/orionx/rain.json` (also `orionx-rain --speech on\|off`) |
 | Toggle Theme | Cockpit → Orion Tools | Cockpit → **Settings** → Display | the desktop theme (`toggle-theme.sh`) |
 | DJ deck | Applications menu only | Cockpit → **Settings** (and the menu) | `~/.config/orionx/music.json` (the deck itself) |
-| Auto-healing consent (the autonomy grid) | Cockpit → Auto-Healing tab | Workbench → **Engine**; in a terminal `orionx-heal autonomy` | `~/.config/orionx/autonomy.json` |
-| Nebula warm-up | Cockpit → Nebula AI (**Warm up model**) | Workbench → **Engine**; in a terminal `nebula warmup` | nothing (the boot-time switch is `sudo systemctl enable --now nebula-warmup.service`) |
+| Auto-healing consent (the autonomy grid) | Cockpit → Auto-Healing tab | Cockpit → **Settings → Engine** since v3.2.0 (#201); the Workbench's **Engine** cards mirror it; in a terminal `orionx-heal autonomy` | `~/.config/orionx/autonomy.json` (only through `orionx-heal autonomy`) |
+| Nebula warm-up | Cockpit → Nebula AI (**Warm up model**) | Cockpit → **Settings → Engine** since v3.2.0 (#201): **Warm up now** and an **at boot** switch; in a terminal `nebula warmup` | nothing (the boot-time switch is `systemctl enable nebula-warmup.service`) |
 | Optional installers | Cockpit → Orion Tools and the Workbench | Cockpit → **Orion Tools** since v3.2.0 (#199); the Workbench's **Optional** section mirrors it read-only | `orionx-optional` (one install record per tool) |
 
 `orionx-control-center` still exists for this release as a launcher: `orionx-control-center --where` prints this map, and `orionx-control-center --tab healing` (or `posture`, `rain`, `theme`, `dj`, `warmup`, `installers`) says where the control went and opens its new home. Tab keys (`network`, `mesh`, …) open the Cockpit as before.
 
-**Auto-healing consent.** The Workbench's **Engine** section lists every action class (block_ip, kill_process, quarantine_file, isolate_node, rotate_mesh_keys, revoke_matrix_session) with the level `orionx-heald` will use, and a copy button per level for the command that sets it. The page itself changes nothing; paste the command into the Workbench terminal (as yourself, without `sudo`):
+**Auto-healing consent.** The Cockpit's **Settings** drawer (F2, on every tab) has an **Engine** group: one selector per action class (block_ip, kill_process, quarantine_file, isolate_node, rotate_mesh_keys, revoke_matrix_session) showing the level `orionx-heald` will use. Change it there; choosing *autonomous* asks first. Each change runs `orionx-heal autonomy`, the one writer, and is announced on the event bus (a class turned *autonomous* is a warning). The Workbench's **Engine** cards show the same levels read-only, with **Change in Cockpit**. From a terminal (as yourself, without `sudo`):
 
 ```bash
 orionx-heal autonomy                     # every class, its level, and whether you set it
@@ -769,7 +769,7 @@ Keys: **F11** toggles fullscreen on any tab. The other keys act on the **LIVE** 
 
 Applications → **Orion** → **Orion Workbench** (or `orionx-osint`; it used to be called the Investigation Surface) serves a launcher page on 127.0.0.1 (port 8787, walking forward if busy) that groups the deck's own tools with two vendored web tools: **CyberChef 11.5.0** (local; its 74 files are checksum-verified when the image is built; 23 incident-response recipes) and the **Orion-X Attack Map**, which draws what *this* deck has seen on the event bus. No GeoIP database ships, so sources that cannot be located are drawn in a labelled PUBLIC UNLOCATED sector, and the page says on every render that bearing and distance are layout, not location. The page also links `orionx-logquery`, Pivotglass, nucleotide, the analyzers, `orionx-capture`, the Cockpit, `storyboard-gen.py`, `orionx-diag`, `orionx-freshen-intel` and GODSEYE. Everything under *ON THIS DECK* works with no network. The strip under the title shows the deck's hostname, address, gateway, CPU, memory and disk — the same numbers as the Cockpit's DECK band, read from the same module, so the two can never disagree. `orionx-osint --check` reports what is present.
 
-The **Engine** section holds the settings of the deck's own tools: one card per auto-healing action class with the level `orionx-heald` will use (an unset class is *off*) and a copy button per level for `orionx-heal autonomy CLASS LEVEL`, and a **Nebula warm-up** card that says whether the warm-up runs at every boot, when it last ran, and hands over `nebula warmup` or the `systemctl` line that turns the boot-time warm-up on or off. The page reads; the commands, run in the Workbench terminal, write (see [Where the Control Center's controls went](#where-the-control-centers-controls-went)).
+The **Engine** section shows the settings of the deck's own tools, read-only: one card per auto-healing action class with the level `orionx-heald` will use (an unset class is *off*), and a **Nebula warm-up** card that says whether the warm-up runs at every boot and when it last ran. **Change in Cockpit** opens the Cockpit's Settings drawer, whose **Engine** group changes them (see [Where the Control Center's controls went](#where-the-control-centers-controls-went)).
 #### This network (passive picture)
 
 Workbench → **This network** (or `orionx-osint --page network`) shows what this deck has *passively* observed on the segment it is plugged into: the active host count, the local-vs-internet split of the traffic it heard, the neighbour (ARP/NDP) table with the hardware vendor from the IEEE OUI registry, and whether WPAD, NetBIOS/SMB, LLMNR, mDNS, LDAP, DHCP, SSDP/UPnP or IoT-looking chatter is present. The Cockpit's **NETWORK** panel carries the same two headline lines; both read `scripts/awareness/network_picture.py`, so they cannot disagree.
@@ -798,7 +798,7 @@ Nebula is Orion-X's on-device assistant: ollama serving **Qwen2.5-3B-Instruct** 
 
 ### Using Nebula
 
-From the Cockpit's **Nebula AI** tab: check runtime and integrity status, chat in the **Ask Nebula** pane, and see the MCP tools it can call. To preload the model, use the Workbench's **Engine** section or run `nebula warmup` (to do it at every boot: `sudo systemctl enable --now nebula-warmup.service`). Good first questions: "What does this tshark output mean?" (paste it), or "Summarise ~/Analysis/pcaps/synthetic-sample.pcap" (Nebula calls `pcap_analyze` for you).
+From the Cockpit's **Nebula AI** tab: check runtime and integrity status, chat in the **Ask Nebula** pane, and see the MCP tools it can call. To preload the model, press **Warm up now** in the Cockpit's Settings drawer (F2 → Engine), or run `nebula warmup`; the **at boot** switch beside it does it at every boot. Each run's outcome is announced on the event bus. Good first questions: "What does this tshark output mean?" (paste it), or "Summarise ~/Analysis/pcaps/synthetic-sample.pcap" (Nebula calls `pcap_analyze` for you).
 
 Start, stop or restart the runtime from a terminal:
 
@@ -1968,7 +1968,7 @@ For problems with Matrix communication:
      ```
 
 2. **Nebula not responding, or the Nebula light is red/amber**
-   - Before your first question the model is not loaded yet — that is normal. Run `nebula warmup` (also on the Workbench's **Engine** section) and allow a few minutes on a 4 GB machine.
+   - Before your first question the model is not loaded yet — that is normal. Run `nebula warmup` (or **Warm up now** in the Cockpit's Settings → Engine) and allow a few minutes on a 4 GB machine.
    - Check the runtime:
      ```bash
      nebula status

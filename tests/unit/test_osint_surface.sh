@@ -1038,6 +1038,10 @@ st_, j = post_json("/api/optional/open", {"id": "../../bin/sh"}, {"X-Orionx-Oper
 check(st_ == 400 and j["error"] == "unknown-tool", "#200: an id outside the catalogue is refused")
 st_, j = post_json("/api/optional/open", {"id": "zeek"}, {"X-Orionx-Operator": "1"})
 check(st_ == 200 and j == {"ok": True, "opened": "zeek"}, "#200: Manage in Cockpit opens the Cockpit on that tool")
+st_, j = post_json("/api/cockpit/settings", {}, {})
+check(st_ == 403, "#201: opening the Cockpit's Settings needs the button's header too")
+st_, j = post_json("/api/cockpit/settings", {}, {"X-Orionx-Operator": "1"})
+check(st_ == 200 and j == {"ok": True, "opened": "settings"}, "#201: Change in Cockpit opens the Settings drawer")
 sys.exit(0 if ok else 1)
 PY
 then pass "all three pages, both APIs and the vendored assets serve over loopback"

@@ -42,6 +42,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Cockpit** button. That button's POST only opens `orionx-cockpit --tab tools
   --focus ID` as the operator, behind the probes' guards (loopback, operator
   header, catalogue id); the page still never installs anything.
+- **Auto-healing consent and Nebula warm-up are Cockpit controls (#201,
+  DEC-PHASE13-062).** The Settings drawer (F2) has an **Engine** group: one
+  selector per action class (choosing *autonomous* asks first), **Warm up now**
+  and an **at boot** switch. Each runs its one writer as the operator
+  (`orionx-heal autonomy`, `nebula warmup`, `systemctl enable|disable
+  nebula-warmup.service` behind systemd's own polkit prompt). Every change is
+  on the event bus: `orionx-heal autonomy` now publishes each consent change
+  (warning when a class becomes autonomous), and every warm-up publishes its
+  outcome, from any surface including the boot unit. The Workbench's Engine
+  cards drop their copy-a-command buttons for **Change in Cockpit**.
 
 ### Fixed
 
