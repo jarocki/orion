@@ -26,6 +26,10 @@
 #   /usr/share/orionx/systemd/ as the canonical staging path per project
 #   convention, but the /lib/systemd/system/ copy is the operative one.
 Description=Orion-X Performance Measurement (W7-5)
+# DEC-PHASE13-067: "after the boot transaction" is the point, and it is late
+# under emulation: multi-user.target waits for nebula-integrity-check, which
+# hashes the 1.93 GB model (253 s under TCG on 2026-11-26). The host-side
+# waits are sized to that; do not shorten them without measuring.
 After=multi-user.target
 Wants=multi-user.target
 # DEC-PHASE12-109 (system P2-2): a CI probe. It runs only in a VM (the QEMU

@@ -217,10 +217,13 @@ jobs:
       # --post-boot-script attach point declared in DEC-PHASE7-022. Runs
       # after the BIOS+UEFI boot test so the ISO artefact is already proven
       # to boot before we spend 900s verifying runtime state.
-      # timeout-minutes is set on the job (60min); this step uses --timeout 900
-      # which matches the BIOS+UEFI step and fits within the job budget.
-      - name: Run W7-4-B runtime verification (mesh + Matrix + AppArmor)
-        continue-on-error: true
+      # DEC-PHASE13-067 (#40, #78): a gate again. The probe starts only when
+      # multi-user.target is reached, which waits for the model integrity hash
+      # (253 s under TCG locally; the runner is slower), then waits up to 300 s
+      # for the autologin desktop. Until 2026-11-26 the 120 s wait ended first,
+      # every run reported "ORIONX_VERIFY_BEGIN not found", and
+      # continue-on-error kept the job green. The job budget is 90 min.
+      - name: Run W7-4-B runtime verification (mesh, Matrix, AppArmor, Zeek, desktop session)
         run: |
           OVMF_FLAG=""
           if [[ -n "${{ steps.ovmf.outputs.ovmf_path }}" ]]; then
@@ -231,7 +234,7 @@ jobs:
             ${OVMF_FLAG}
         env:
           QEMU_TIMEOUT: "900"
-          VERIFY_WAIT: "120"
+          VERIFY_WAIT: "1200"
 
       # W7-5: Run in-guest performance benchmark (boot <90s, ISO <4GiB, idle RAM <1GiB).
       # Boots the ISO a third time in BIOS mode and waits for the
@@ -240,13 +243,11 @@ jobs:
       # point declared in DEC-PHASE7-022. Runs after W7-4-B so the ISO is
       # already proven to boot before we spend 900s on performance measurement.
       #
-      # continue-on-error: true mirrors W7-4-B-exit (DEC-PHASE7-041).
-      # The ISO size assertion (host-side, deterministic) is the de facto
-      # gate; boot_time/idle_ram in-guest measurements remain as diagnostic
-      # captures (tracked under issue #40 for reliability improvements).
+      # DEC-PHASE13-067 (#40): a gate. ISO size and idle RAM are judged; boot
+      # time is judged under KVM and recorded under TCG, where it times the
+      # runner. The wait covers the integrity hash as for W7-4-B.
       # See DEC-PHASE7-035 for the sentinel-channel design.
       - name: Run W7-5 performance benchmark (boot/ISO/RAM thresholds)
-        continue-on-error: true
         run: |
           OVMF_FLAG=""
           if [[ -n "${{ steps.ovmf.outputs.ovmf_path }}" ]]; then
@@ -257,7 +258,7 @@ jobs:
             ${OVMF_FLAG}
         env:
           QEMU_TIMEOUT: "900"
-          PERF_WAIT: "90"
+          PERF_WAIT: "1200"
 
       # W7-6: Run host-side failure-resilience config inspection.
       # Reads each of the 8 Orion-X systemd unit files from iso/config/includes.chroot/usr/share/orionx/systemd/ and

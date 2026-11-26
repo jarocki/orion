@@ -3738,6 +3738,38 @@ else
 fi
 
 # ===========================================================================
+# 44. The CI probes (DEC-PHASE13-067, #40/#78): the session/runtime and perf
+#     probes ship with the library both source (without it each dies on its
+#     first line and the QEMU gate reports only "BEGIN not found"), and both
+#     units are enabled for the boot the harness watches.
+# ===========================================================================
+section "44. CI probes shipped with their library, enabled (DEC-PHASE13-067)"
+
+_44_d="$SQF/usr/lib/orionx"
+_44_miss=""
+[[ -f "$_44_d/probe-lib.sh" ]] || _44_miss+=" probe-lib.sh"
+for _p in runtime-verify.sh perf-measure.sh; do [[ -x "$_44_d/$_p" ]] || _44_miss+=" $_p(not executable or absent)"; done
+if [[ -z "$_44_miss" ]]; then
+    pass "44a: probe-lib.sh, runtime-verify.sh and perf-measure.sh present, probes executable"
+else
+    fail "44a: CI probes present" "/usr/lib/orionx:$_44_miss"
+fi
+if grep -q 'desktop_session' "$_44_d/runtime-verify.sh" 2>/dev/null && grep -q 'no_screen_locker' "$_44_d/runtime-verify.sh" 2>/dev/null; then
+    pass "44b: runtime-verify.sh checks the desktop session and the screen locker (#78)"
+else
+    fail "44b: runtime-verify.sh session checks" "desktop_session/no_screen_locker not in the image's probe"
+fi
+_44_miss=""
+for _u in orionx-runtime-verify.service orionx-perf-measure.service; do
+    [[ -L "$SQF/etc/systemd/system/multi-user.target.wants/$_u" ]] || _44_miss+=" $_u"
+done
+if [[ -z "$_44_miss" ]]; then
+    pass "44c: both probe units enabled in multi-user.target.wants"
+else
+    fail "44c: probe units enabled" "not enabled:$_44_miss"
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

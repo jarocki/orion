@@ -4,8 +4,9 @@ set -euo pipefail
 #
 # Orion-X Phoenix Edition — In-Guest Runtime Verification (W7-4-B)
 #
-# Runs 5 in-guest assertions to verify that the mesh (WireGuard), Matrix
-# (Synapse), and AppArmor subsystems are operational after boot. Results are
+# Runs in-guest assertions over the mesh (WireGuard, opt-in), Matrix
+# (Synapse), AppArmor, the Zeek install path and the graphical session
+# (graphical.target, the autologin desktop, no screen locker). Results are
 # emitted as ORIONX_VERIFY_* sentinel lines to /dev/ttyS0 so that the
 # host-side QEMU harness (scripts/qemu-boot-test.sh --post-boot-script)
 # can parse them without SSH, QEMU monitor sockets, or qemu-guest-agent.
@@ -37,16 +38,9 @@ set -euo pipefail
 #   the same channel for verification sentinels avoids a second side-channel.
 #   This decision supersedes any SSH/socket-based verification approach.
 
-SERIAL_DEV="/dev/ttyS0"
-
-# ---------------------------------------------------------------------------
-# Sentinel emitter — writes to serial console and stdout
-# ---------------------------------------------------------------------------
-emit() {
-    local line="$1"
-    echo "${line}" | tee -a "${SERIAL_DEV}" >/dev/null 2>&1 || echo "${line}"
-    echo "${line}"
-}
+# emit, probe_user, wait_desktop: the shared probe helpers (DEC-PHASE13-067).
+# shellcheck source=/dev/null
+. "${ORIONX_PROBE_LIB:-/usr/lib/orionx/probe-lib.sh}"
 
 # ---------------------------------------------------------------------------
 # Overall PASS/FAIL accumulator
@@ -58,42 +52,42 @@ mark_fail() {
 }
 
 # ---------------------------------------------------------------------------
-# Assertion: mesh_iface_up
-#
-# Checks that the WireGuard interface wg0 exists AND is in UP or UNKNOWN
-# state. WireGuard point-to-point interfaces report UNKNOWN when no peers
-# are configured yet — that is expected at first boot. The mesh-discover
-# service or orionx-firewall service creates the interface; the interface
-# existing confirms those services ran.
+# Mesh assertions: the mesh is opt-in. A stock deck has no wg0 until the
+# operator joins one, and the mesh units are written for that: each carries
+# ConditionPathExists=/sys/class/net/wg0 and is skipped, not failed. The
+# earlier checks demanded wg0 and an active beacon on every image, so the
+# first boot that delivered them (v3.1.6, 2026-11-26) reported FAIL for a
+# correctly built deck. Without wg0 the checks now prove the units stood down
+# cleanly; with wg0 they prove the mesh is up.
 # ---------------------------------------------------------------------------
+mesh_joined() { [[ -e "${ORIONX_PROBE_SYSFS_NET:-/sys/class/net}/wg0" ]]; }
+
 assert_mesh_iface_up() {
-    local verdict="FAIL"
-    if ip link show wg0 >/dev/null 2>&1; then
+    local verdict="FAIL" note=""
+    if ! mesh_joined; then
+        verdict="PASS"; note=" (no wg0: mesh not joined, opt-in)"
+    elif ip link show wg0 >/dev/null 2>&1; then
         local state
         state="$(ip link show wg0 | grep -oE 'state [A-Z]+' | awk '{print $2}' || true)"
+        # A point-to-point WireGuard link with no peers reports UNKNOWN.
         if [[ "${state}" == "UP" || "${state}" == "UNKNOWN" ]]; then
             verdict="PASS"
         fi
     fi
-    emit "ORIONX_VERIFY: mesh_iface_up=${verdict}"
+    emit "ORIONX_VERIFY: mesh_iface_up=${verdict}${note}"
     [[ "${verdict}" == "PASS" ]] || mark_fail
 }
 
-# ---------------------------------------------------------------------------
-# Assertion: mesh_beacon_active
-#
-# Checks that orionx-mesh-beacon.service is active or activating.
-# 'activating' is acceptable on slow boots — the beacon may still be
-# running ExecStartPre commands when we poll.
-# ---------------------------------------------------------------------------
 assert_mesh_beacon_active() {
-    local verdict="FAIL"
-    local svc_state
+    local verdict="FAIL" svc_state
     svc_state="$(systemctl is-active orionx-mesh-beacon.service 2>/dev/null || true)"
-    if [[ "${svc_state}" == "active" || "${svc_state}" == "activating" ]]; then
+    if ! mesh_joined; then
+        # Skipped by its condition reads inactive; only a failure is wrong.
+        [[ "${svc_state}" != "failed" ]] && verdict="PASS"
+    elif [[ "${svc_state}" == "active" || "${svc_state}" == "activating" ]]; then
         verdict="PASS"
     fi
-    emit "ORIONX_VERIFY: mesh_beacon_active=${verdict}"
+    emit "ORIONX_VERIFY: mesh_beacon_active=${verdict} (${svc_state:-unknown})"
     [[ "${verdict}" == "PASS" ]] || mark_fail
 }
 
@@ -171,6 +165,50 @@ assert_apparmor_enforcing() {
 }
 
 # ---------------------------------------------------------------------------
+# Session assertions (#78): the gate used to stop at the serial login prompt,
+# which appears before LightDM does anything. Defects in the graphical
+# session (the rc5 screen locker, #76; an autologin that never opens) passed
+# it and were found on hardware. These read the session itself.
+# ---------------------------------------------------------------------------
+SESSION_WAIT="${ORIONX_PROBE_SESSION_WAIT:-300}"
+LOCKERS="light-locker xfce4-screensaver xscreensaver"
+
+assert_graphical_target() {
+    local verdict="FAIL" state
+    state="$(systemctl is-active graphical.target 2>/dev/null || true)"
+    [[ "${state}" == "active" ]] && verdict="PASS"
+    emit "ORIONX_VERIFY: graphical_target=${verdict} (${state:-unknown})"
+    [[ "${verdict}" == "PASS" ]] || mark_fail
+}
+
+assert_desktop_session() {
+    local verdict="FAIL" user note
+    user="$(probe_user)"
+    note="no xfce4-session for ${user} after ${SESSION_WAIT}s"
+    if wait_desktop "${user}" "${SESSION_WAIT}"; then
+        verdict="PASS"; note="xfce4-session running for ${user}"
+    fi
+    emit "ORIONX_VERIFY: desktop_session=${verdict} (${note})"
+    [[ "${verdict}" == "PASS" ]] || mark_fail
+}
+
+assert_no_screen_locker() {
+    # Read after the session is up: a locker starts from the session's
+    # autostart. A package that is merely installed fails too, because a
+    # Recommends: can bring it back and it then starts on the next login.
+    local verdict="PASS" found="" pkg
+    for pkg in ${LOCKERS}; do
+        if pgrep -x "${pkg}" >/dev/null 2>&1; then found+=" ${pkg}(running)"; fi
+        if dpkg-query -W -f='${Status}' "${pkg}" 2>/dev/null | grep -q 'install ok installed'; then
+            found+=" ${pkg}(installed)"
+        fi
+    done
+    [[ -z "${found}" ]] || verdict="FAIL"
+    emit "ORIONX_VERIFY: no_screen_locker=${verdict}${found:+ (found:${found})}"
+    [[ "${verdict}" == "PASS" ]] || mark_fail
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 emit "ORIONX_VERIFY_BEGIN"
@@ -200,6 +238,9 @@ assert_mesh_discover_enabled
 assert_matrix_synapse_state
 assert_apparmor_enforcing
 assert_zeek_unit_staged
+assert_graphical_target
+assert_desktop_session
+assert_no_screen_locker
 
 emit "ORIONX_VERIFY_END: overall=${OVERALL}"
 

@@ -24,6 +24,10 @@
 #   convention, but the /lib/systemd/system/ copy is the operative one.
 #   See DEC-PHASE7-W7-4-B-INSTALL-001 for the decision record.
 Description=Orion-X Runtime Verification (W7-4-B)
+# DEC-PHASE13-067: "after the boot transaction" is the point, and it is late
+# under emulation: multi-user.target waits for nebula-integrity-check, which
+# hashes the 1.93 GB model (253 s under TCG on 2026-11-26). The host-side
+# waits are sized to that; do not shorten them without measuring.
 After=multi-user.target
 Wants=multi-user.target
 # DEC-PHASE12-109 (system P2-2): a CI probe. It runs only in a VM (the QEMU

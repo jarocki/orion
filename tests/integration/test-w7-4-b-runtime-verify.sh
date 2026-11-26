@@ -31,7 +31,7 @@
 # Environment:
 #   ISO          Override ISO path (default: harness default)
 #   QEMU_TIMEOUT Override QEMU boot timeout in seconds (default: 900)
-#   VERIFY_WAIT  Seconds to wait for ORIONX_VERIFY_END after boot (default: 120)
+#   VERIFY_WAIT  Seconds to wait for ORIONX_VERIFY_END after boot (default: 1200; the probe starts only when multi-user.target is reached, which waits for the model integrity hash: 253 s under TCG, DEC-PHASE13-067)
 
 # IMPORTANT: NO set -e — we must always reach the result-parsing section
 # even if the harness exits non-zero. Individual errors are tracked via
@@ -42,7 +42,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 QEMU_TIMEOUT="${QEMU_TIMEOUT:-900}"
-VERIFY_WAIT="${VERIFY_WAIT:-120}"
+VERIFY_WAIT="${VERIFY_WAIT:-1200}"
 
 # ---------------------------------------------------------------------------
 # Color helpers (only when stdout is a terminal)
@@ -115,7 +115,7 @@ set -uo pipefail
 
 RUN_ID="${1:-unknown}"
 SERIAL_LOG="${2:-}"
-VERIFY_WAIT="${VERIFY_WAIT:-120}"
+VERIFY_WAIT="${VERIFY_WAIT:-1200}"
 
 echo "[w7-4-b-helper] run_id=${RUN_ID} serial_log=${SERIAL_LOG}"
 
@@ -223,6 +223,9 @@ for serial_log in "${SERIAL_LOGS[@]}"; do
         "matrix_synapse_state"
         "apparmor_enforcing"
         "zeek_unit_staged"
+        "graphical_target"
+        "desktop_session"
+        "no_screen_locker"
     )
 
     assertion_failures=()
