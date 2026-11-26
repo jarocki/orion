@@ -902,6 +902,9 @@ class Cockpit(Gtk.Window):
         elif v.get("interfaces") is not None:
             parts.append("no default route")
         parts.append("up " + V.fmt_uptime(v.get("uptime_s")))
+        bat = v.get("battery")
+        if bat:
+            parts.append(f"bat {bat['pct']:.0f}%" + ("" if bat.get("status") == "Discharging" else " AC"))
         line = "  \u00b7  ".join(parts)
         self._text(cr, cx, cy + 16, line, 11.5, (0.9, 0.9, 0.9), max_w=cw)
         # three bars: CPU, MEM, DISK — each labelled with the number, not just a colour
@@ -922,17 +925,26 @@ class Cockpit(Gtk.Window):
         ]
         bw = (cw - 24) / 3.0
         by = cy + 46
-        for i, (name, pct, label) in enumerate(bars):
+        # #202 (DEC-PHASE13-063): colour and tick marks from the one threshold
+        # table postured alarms on; a red bar flashes (~1 Hz) so it is seen.
+        blink = int(time.time() * 2) % 2 == 0
+        for i, ((name, pct, label), key) in enumerate(zip(bars, ("cpu", "mem", "disk"))):
             bx = cx + i * (bw + 12)
-            col = L.DIM if pct is None else (L.RED if pct >= 90 else L.AMBER if pct >= 75 else L.GREEN)
-            self._text(cr, bx, by, name, 11, L.DIM, bold=True)
-            self._text(cr, bx + 40, by, label, 11, (0.85, 0.85, 0.85), max_w=bw - 40)
+            level = V.grade(key, pct)
+            col = {"red": L.RED, "amber": L.AMBER, "ok": L.GREEN}.get(level, L.DIM)
+            self._text(cr, bx, by, name, 11, col if level in ("amber", "red") else L.DIM, bold=True)
+            self._text(cr, bx + 40, by, label, 11, col if level == "red" else (0.85, 0.85, 0.85), max_w=bw - 40)
             self._rrect(cr, bx, by + 8, bw, 8, 3)
             cr.set_source_rgba(*L.DIM, 0.25)
             cr.fill()
             if pct is not None:
                 self._rrect(cr, bx, by + 8, max(2.0, bw * min(100.0, pct) / 100.0), 8, 3)
-                cr.set_source_rgba(*col, 0.85)
+                cr.set_source_rgba(*col, 0.85 if (level != "red" or blink) else 0.35)
+                cr.fill()
+            for line_pct, tick in zip(V.THRESHOLDS[key], (L.AMBER, L.RED)):
+                tx = bx + bw * line_pct / 100.0
+                cr.set_source_rgba(*tick, 0.9)
+                cr.rectangle(tx - 0.75, by + 5, 1.5, 14)
                 cr.fill()
 
     # --- threat gauge ---
