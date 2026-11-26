@@ -123,6 +123,7 @@ check "reports the virtualisation" "$OUT" "ORIONX_PERF: virt=qemu"
 check "reports when multi-user.target was reached" "$OUT" "ORIONX_PERF: multi_user_seconds=319"
 check "boot time is the desktop session's start" "$OUT" "ORIONX_PERF: boot_time_seconds=296"
 check "idle RAM is MemTotal - MemAvailable" "$OUT" "ORIONX_PERF: idle_ram_bytes=$(( (4002436 - 3287720) * 1024 ))"
+check "where the RAM went is reported with it (meminfo breakdown)" "$OUT" "ORIONX_PERF: mem_detail_kb=MemTotal=4002436 MemFree=100 MemAvailable=3287720"
 check "the guest reports and does not judge" "$OUT" "ORIONX_PERF_END: overall=REPORTED"
 if grep -qE 'THRESHOLD|-lt [0-9]{2}' "$LIB/perf-measure.sh"; then fail "perf-measure.sh holds no thresholds" "found one"; else pass "perf-measure.sh holds no thresholds (the host test is the authority)"; fi
 rm -f "$S/session.orionx-operator"; OUT="$(perf)"
