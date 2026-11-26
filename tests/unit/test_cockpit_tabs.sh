@@ -12,20 +12,19 @@ CC="$ROOT/scripts/control_center"; CK="$ROOT/scripts/cockpit/orionx-cockpit"
 echo "[tab authority]"
 grep -q '^SECTIONS = \[' "$CC/app.py" && pass "app.SECTIONS is the one tab list" || fail "SECTIONS" "missing"
 grep -q 'class OrionXControlCenter' "$CC/app.py" && fail "no second window class" "OrionXControlCenter still defined" || pass "the Control Center window class is gone (one window)"
-grep -q 'return moved.launch(' "$CC/app.py" && grep -q 'os.execv(exe, argv_out)' "$CC/moved.py" \
-  && grep -q 'return \[_resolve("orionx-cockpit"), "--tab", tab\], ""' "$CC/moved.py" \
-  && pass "run_app launches the Cockpit on a tab, or a moved control's home (moved.py, #95)" || fail "launcher" "run_app does not exec through moved.launch"
+[[ ! -e "$CC/moved.py" && ! -e "$CC/orionx-control-center" ]] && ! grep -q '^def run_app' "$CC/app.py" \
+  && pass "no launcher: orionx-control-center, moved.py and run_app are gone (#192)" || fail "launcher" "a #192 removal came back"
 grep -q '"tools", "Orion Tools"' "$CC/app.py" && pass "IR Tools is Orion Tools" || fail "rename" "label not Orion Tools"
 grep -q 'from control_center import app as CC' "$CK" && grep -q 'CC.append_sections(self.nb)' "$CK" && pass "the Cockpit builds its tabs from app.SECTIONS" || fail "cockpit tabs" "not wired"
 grep -q 'CCUX.set_notifier(self.toast_bar.notify)' "$CK" && pass "sections toast through the Cockpit's toast bar" || fail "toast" "not wired"
 grep -q 'if not on_live:' "$CK" && pass "LIVE keys do not fire on GTK tabs (behaviour: test_cockpit_gtk.sh)" || fail "key routing" "missing"
 grep -q 'choices=CC.TAB_KEYS' "$CK" && pass "--tab accepts exactly the authority's keys" || fail "--tab" "missing"
 HOOK="$ROOT/iso/config/hooks/live/0700-orionx-setup.hook.chroot"
-grep -q 'Exec=/usr/bin/orionx-cockpit --tab network' "$HOOK" && pass "menu entry (written by the 0700 hook) opens the Cockpit tabs" || fail "desktop" "hook Exec not updated"
+! grep -q 'orionx-control-center.desktop << ' "$HOOK" && pass "no Control Center menu entry (#192)" || fail "desktop" "the hook writes orionx-control-center.desktop again"
 [[ -f "$ROOT/iso/config/includes.chroot/usr/share/applications/orionx-control-center.desktop" ]] && fail "one writer for orionx-control-center.desktop" "a static copy exists beside the hook's heredoc — it overwrote the edit in rc7" || pass "one writer for orionx-control-center.desktop (the 0700 hook; no static copy)"
 grep -q 'from control_center import settings_drawer as SD' "$CK" && grep -q 'SD.build_drawer()' "$CK" && grep -q '"--settings"' "$CK" \
   && pass "the Cockpit carries the settings drawer on every tab, with --settings (behaviour: test_cockpit_gtk.sh)" || fail "settings drawer" "not wired"
-python3 -c 'import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' "$CC/app.py" "$CC/moved.py" "$CC/settings_drawer.py" "$CK" "$CC/sections/"*.py "$CC/helpers/"*.py "$CC/widgets/"*.py 2>/dev/null && pass "everything parses (ast; no bytecode written)" || fail "compile" "syntax error"
+python3 -c 'import ast,sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' "$CC/app.py" "$CC/settings_drawer.py" "$CK" "$CC/sections/"*.py "$CC/helpers/"*.py "$CC/widgets/"*.py 2>/dev/null && pass "everything parses (ast; no bytecode written)" || fail "compile" "syntax error"
 
 echo "[pure helpers]"
 if python3 - "$CC/helpers" "$ROOT/scripts/awareness" <<'PY'

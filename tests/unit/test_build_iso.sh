@@ -671,19 +671,9 @@ echo ""
 # stage_application_content rsyncs scripts/ — the entry script must exist
 # in the source tree so it gets staged into the ISO automatically.
 # ---------------------------------------------------------------------------
-echo "[T24] scripts/control_center/orionx-control-center exists and is executable (W9-2)"
+echo "[T24] the orionx-control-center launcher is gone (#192)"
 CC_ENTRY="$REPO_ROOT/scripts/control_center/orionx-control-center"
-run_test "scripts/control_center/orionx-control-center exists" "[[ -f '$CC_ENTRY' ]]"
-run_test "scripts/control_center/orionx-control-center is executable" "[[ -x '$CC_ENTRY' ]]"
-if [[ -f "$CC_ENTRY" ]]; then
-    CC_SHEBANG="$(head -n1 "$CC_ENTRY")"
-    if [[ "$CC_SHEBANG" == "#!/usr/bin/env python3" ]]; then
-        pass "scripts/control_center/orionx-control-center shebang is #!/usr/bin/env python3"
-    else
-        fail "scripts/control_center/orionx-control-center shebang is #!/usr/bin/env python3" \
-             "Got: $CC_SHEBANG"
-    fi
-fi
+run_test "scripts/control_center/orionx-control-center removed (#192)" "[[ ! -e '$CC_ENTRY' ]]"
 echo ""
 
 # ---------------------------------------------------------------------------

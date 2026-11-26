@@ -70,7 +70,6 @@ declare -A SCRIPT_MAP=(
     # Launches directly as a GTK window (no xfce4-terminal wrapper needed).
     # Phase 10 slices (W10-1 through W10-6) plug into its placeholder sections.
     # @decision DEC-PHASE10-005: Control Center ships ahead of Nebula AI runtime.
-    ["orionx-control-center"]="/opt/orionx/scripts/control_center/orionx-control-center"
     # W10-1: Nebula AI CLI dispatcher — single PATH entry for the nebula tool.
     # @decision DEC-PHASE10-008: scripts/nebula/ is the single source tree for
     # Nebula control-plane Python; the nebula dispatcher is the operator entrypoint.
@@ -255,15 +254,9 @@ DESKTOP_EOF
 #   longer six copies of the Phoenix PNG. tests/unit/test_operator_surfaces.sh
 #   parses every shipped entry: unique Name, no retired surface names, Exec
 #   resolves, --tab matches the Name, icon SVG parses.
-cat > /usr/share/applications/orionx-control-center.desktop << 'DESKTOP_EOF'
-[Desktop Entry]
-Type=Application
-Name=Orion Cockpit — Network tab
-Comment=Open the Orion Cockpit on its Network tab; Mesh, Comms, Awareness, Orion Tools and Nebula AI are in the strip on the left, Settings at the top right
-Exec=/usr/bin/orionx-cockpit --tab network
-Icon=orionx-cockpit
-Categories=X-Orion;
-DESKTOP_EOF
+# #192 (2026-11-26): orionx-control-center.desktop ("Orion Cockpit — Network tab")
+# and the orionx-control-center launcher are gone; the Orion Cockpit entry
+# below opens the Cockpit, whose tab strip reaches every tab.
 
 # Orion Cockpit — live "see and hear" visualisation of cyber activity (event
 # stream, threat gauge, network sparkline, mesh/system status). GTK+Cairo app,

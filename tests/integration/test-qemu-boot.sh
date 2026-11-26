@@ -406,7 +406,6 @@ else
         fi
     else
         _w112_t6_skip "No BOOT_IMAGE= line found in serial logs under $QEMU_ARTIFACTS_DIR"
-        echo "         SKIP: orionx-control-center --help — requires live guest session (issue #66)"
         # Write a note artifact for W11-10
         echo "SKIP: /proc/cmdline capture unavailable — no serial log with BOOT_IMAGE= found at $(date -u +"%Y-%m-%dT%H:%M:%SZ")" > "$CMDLINE_CAPTURE"
     fi

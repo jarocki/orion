@@ -158,39 +158,17 @@ echo "--- rc5 W9-2 static checks: orionx-control-center hook wiring ---"
 echo ""
 
 if [[ -f "$HOOK_0700" ]]; then
-    # (a) .desktop launcher present: /usr/share/applications/orionx-control-center.desktop
-    if grep -q "orionx-control-center.desktop" "$HOOK_0700"; then
-        pass "W9-2: 0700 hook creates /usr/share/applications/orionx-control-center.desktop"
+    # (a-d) #192: the hook no longer creates the launcher, its link or its entry
+    if ! grep -v '^\s*#' "$HOOK_0700" | grep -q "orionx-control-center"; then
+        pass "#192: 0700 hook creates no orionx-control-center link or .desktop"
     else
-        fail "W9-2: 0700 hook creates /usr/share/applications/orionx-control-center.desktop"
+        fail "#192: 0700 hook still wires orionx-control-center" "remove it from SCRIPT_MAP and the desktop entries"
     fi
-
-    # (b) .desktop Exec line is NOT lxterminal (DEC-PHASE9-006 invariant).
-    #     Filter comment lines first to avoid false-positives from @decision
-    #     documentation that mentions lxterminal for historical context.
     LXTERM_CONTROL="$(grep -v '^\s*#' "$HOOK_0700" | grep -c "lxterminal" || true)"
     if [[ "$LXTERM_CONTROL" -eq 0 ]]; then
-        pass "W9-2: orionx-control-center .desktop does NOT use lxterminal (DEC-PHASE9-006)"
+        pass "DEC-PHASE9-006: no functional lxterminal in the 0700 hook"
     else
-        fail "W9-2: orionx-control-center .desktop does NOT use lxterminal" \
-             "Found $LXTERM_CONTROL functional lxterminal reference(s) — DEC-PHASE9-006 violated"
-    fi
-
-    # (c) Exec line for orionx-control-center.desktop uses absolute path
-    # DEC-PHASE12-053: the entry opens the Orion Cockpit on a tab (still a direct GTK binary).
-    if grep -q "Exec=/usr/bin/orionx-cockpit --tab network" "$HOOK_0700" 2>/dev/null; then
-        pass "W9-2: orionx-control-center.desktop Exec opens the Cockpit tabs directly (DEC-PHASE12-053, DEC-PHASE9-006)"
-    else
-        fail "W9-2: orionx-control-center.desktop Exec=/usr/bin/orionx-cockpit --tab network" \
-             "0700 hook must emit the Cockpit-tab Exec in the .desktop block (the tabs live in the Cockpit now)"
-    fi
-
-    # (d) /usr/bin/orionx-control-center symlink entry present in SCRIPT_MAP
-    if grep -q '"orionx-control-center"' "$HOOK_0700" 2>/dev/null; then
-        pass "W9-2: orionx-control-center present in SCRIPT_MAP symlink loop"
-    else
-        fail "W9-2: orionx-control-center present in SCRIPT_MAP symlink loop" \
-             "0700 hook SCRIPT_MAP must include orionx-control-center → /opt/orionx/scripts/control_center/"
+        fail "DEC-PHASE9-006: no functional lxterminal in the 0700 hook" "Found $LXTERM_CONTROL"
     fi
 
     # (e) .desktop file staged in includes.chroot (source-tree presence check)

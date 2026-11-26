@@ -31,8 +31,8 @@
 # Production sequence:
 #   1. stage_application_content rsyncs scripts/ → includes.chroot/opt/orionx/scripts/
 #   2. live-build copies includes.chroot/ into the chroot filesystem
-#   3. 0700-orionx-setup.hook.chroot symlinks orionx-control-center → /usr/bin/
-#   4. Operator clicks .desktop → /usr/bin/orionx-control-center executes → GTK window
+#   3. orionx-cockpit imports control_center.app (SECTIONS) and builds its tabs
+#   (#192 removed the orionx-control-center launcher; the Cockpit is the window)
 #
 # Usage: bash tests/unit/test_control_center.sh
 
@@ -73,29 +73,14 @@ section() { echo ""; echo "--- $1 ---"; }
 echo "=== W9-2: Control Center — Structural Unit Tests ==="
 
 # ===========================================================================
-# 1. Entry script presence, permissions, shebang
+# 1. #192: the orionx-control-center launcher is gone
 # ===========================================================================
-section "Entry script: orionx-control-center"
+section "No launcher: orionx-control-center and moved.py are gone (#192)"
 
-if [[ -f "$ENTRY" ]]; then
-    pass "orionx-control-center exists"
+if [[ ! -e "$ENTRY" && ! -e "$CC_DIR/moved.py" ]]; then
+    pass "orionx-control-center and moved.py removed"
 else
-    fail "orionx-control-center exists" "Not found: $ENTRY"
-    echo "FATAL: entry script missing — cannot continue."
-    exit 1
-fi
-
-if [[ -x "$ENTRY" ]]; then
-    pass "orionx-control-center is executable"
-else
-    fail "orionx-control-center is executable" "Run: chmod +x $ENTRY"
-fi
-
-SHEBANG="$(head -n1 "$ENTRY")"
-if [[ "$SHEBANG" == "#!/usr/bin/env python3" ]]; then
-    pass "shebang is #!/usr/bin/env python3"
-else
-    fail "shebang is #!/usr/bin/env python3" "Got: $SHEBANG"
+    fail "launcher removed" "orionx-control-center or moved.py is back"
 fi
 
 # ===========================================================================
@@ -106,11 +91,6 @@ section "Python syntax check (ast.parse — writes no bytecode into scripts/)"
 # release-tests F-23: py_compile ignores PYTHONDONTWRITEBYTECODE and left
 # __pycache__ in the tree that build-iso stages into the image.
 _parse() { python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$1"; }
-if _parse "$ENTRY" 2>&1; then
-    pass "syntax: orionx-control-center"
-else
-    fail "syntax: orionx-control-center"
-fi
 
 while IFS= read -r -d '' pyfile; do
     relpath="${pyfile#"$REPO_ROOT/"}"
@@ -142,48 +122,21 @@ check_annotations() {
     fi
 }
 
-check_annotations "$ENTRY"
 while IFS= read -r -d '' pyfile; do
     check_annotations "$pyfile"
 done < <(find "$CC_DIR" -name "*.py" -print0 | sort -z)
 
 # ===========================================================================
-# 4. --help exits 0
+# 4. (#192: the launcher's --help/--version went with it)
 # ===========================================================================
-section "--help exits 0"
-
-if python3 "$ENTRY" --help >/dev/null 2>&1; then
-    pass "orionx-control-center --help exits 0"
-else
-    fail "orionx-control-center --help exits 0"
-fi
-
-section "--version is the image's, --help uses no retired names (UX-40, P3-1)"
-_VF="$(mktemp "$REPO_ROOT/tmp/orionx-version.XXXXXX")"
-printf 'ISO_VERSION=v2.2.0-rc9\nGIT_HEAD_SHA=abc\n' > "$_VF"
-if [[ "$(ORIONX_VERSION_FILE="$_VF" python3 "$ENTRY" --version 2>&1)" == "orionx-control-center v2.2.0-rc9" ]]; then
-    pass "--version reads ISO_VERSION from /etc/orionx-version"
-else
-    fail "--version reads ISO_VERSION" "got: $(ORIONX_VERSION_FILE="$_VF" python3 "$ENTRY" --version 2>&1)"
-fi
-if ORIONX_VERSION_FILE=/nonexistent python3 "$ENTRY" --version 2>&1 | grep -q "unknown (/nonexistent"; then
-    pass "--version without a manifest says unknown and why"
-else
-    fail "--version without a manifest" "no honest unknown"
-fi
-rm -f "$_VF"
-if python3 "$ENTRY" --help 2>&1 | grep -qiE "control center|IR Tools|investigation surface"; then
-    fail "--help free of retired names" "$(python3 "$ENTRY" --help 2>&1 | grep -iE 'control center|IR Tools|investigation surface')"
-else
-    pass "--help free of retired names"
-fi
+section "no retired names in user-visible strings (UX-40, P3-1)"
 # Every string an operator can see (all non-docstring string constants in the
 # Cockpit and its tabs) avoids the retired names. Docstrings and comments are
 # internal history and may keep them.
 if python3 - "$REPO_ROOT" <<'PY'
 import ast, pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
-files = sorted((root/"scripts/control_center").rglob("*.py")) + [root/"scripts/control_center/orionx-control-center",
+files = sorted((root/"scripts/control_center").rglob("*.py")) + [
          root/"scripts/cockpit/orionx-cockpit", root/"scripts/cockpit/cockpit_lib.py"]
 bad = []
 rx = re.compile(r"control center|\bIR Tools\b|investigation surface|situational awareness", re.I)
@@ -258,38 +211,6 @@ if [[ ! -e "$SECTIONS_DIR/auto_healing.py" ]] && ! grep -rq 'auto_healing' "$CC_
     pass "no Auto-Healing tab module and nothing imports one (consent is the Workbench's)"
 else
     fail "Auto-Healing tab removed" "auto_healing.py or a reference to it is still in scripts/control_center or scripts/cockpit"
-fi
-
-section "orionx-control-center is a launcher that says where each control went (#95)"
-if WHERE="$(python3 "$ENTRY" --where 2>&1)" \
-   && python3 - "$REPO_ROOT/scripts" "$WHERE" <<'PY'
-import sys
-sys.path.insert(0, sys.argv[1])
-from control_center import moved as M
-where = sys.argv[2]
-missing = [k for k in M.MOVED if f"  {k} " not in where.replace(f"  {k}\t", f"  {k} ")]
-assert not missing, f"--where does not list {missing}"
-for key, (_what, home, argv, _cmd) in M.MOVED.items():
-    out, note = M.target_argv(key)
-    assert out[0].endswith(argv[0]) or out[0].endswith("osint_server.py"), (key, out)
-    assert out[1:] == argv[1:] and home in note and "moved to" in note, (key, out, note)
-out, note = M.target_argv("network")
-assert out[0].endswith("orionx-cockpit") and out[1:] == ["--tab", "network"] and note == "", (out, note)
-assert set(M.MOVED) == {"posture", "rain", "theme", "dj", "healing", "warmup", "installers"}, sorted(M.MOVED)
-assert all(M.MOVED[k][1].startswith("Orion Cockpit → Settings") for k in ("posture", "rain", "theme", "dj"))
-assert all(M.MOVED[k][1] == "Orion Cockpit → Settings → Engine" for k in ("healing", "warmup"))  # #201
-assert M.MOVED["installers"][1:3] == ("Orion Cockpit → Orion Tools", ["orionx-cockpit", "--tab", "tools"])  # #199
-print("ok")
-PY
-then
-    pass "--where lists every moved control; --tab KEY routes each to its home with a note; tabs still open the Cockpit"
-else
-    fail "launcher map" "see output above"
-fi
-if python3 "$ENTRY" --help 2>&1 | grep -q "Orion Cockpit → Settings → Engine"; then
-    pass "--help carries the where-it-went map (no display needed)"
-else
-    fail "--help map" "$(python3 "$ENTRY" --help 2>&1 | tail -3)"
 fi
 
 # ===========================================================================
@@ -375,7 +296,7 @@ fi
 # 11. Compound-interaction: production sequence coherence
 #     Verify that the package is wired consistently end-to-end:
 #     a) app.py imports all 6 sections (the Auto-Healing tab went with #95)
-#     b) orionx-control-center calls main() which calls run_app()
+#     b) (#192: the launcher entry point is gone)
 #     c) helpers package is importable from sections (relative imports)
 #     d) widgets directory exists with 4 scripts
 # ===========================================================================
@@ -396,12 +317,6 @@ else
     fail "app.py has 'from .sections import' line"
 fi
 
-# b) entry script calls main()
-if grep -q "main(" "$ENTRY" 2>/dev/null; then
-    pass "orionx-control-center calls main()"
-else
-    fail "orionx-control-center calls main()"
-fi
 
 # c) helpers __init__.py exists (importable package marker)
 if [[ -f "$CC_DIR/helpers/__init__.py" ]]; then

@@ -563,19 +563,11 @@ fi
 # ===========================================================================
 section "14. W9-2: Control Center — GTK app + GTK/genmon packages staged"
 
-# (a) Entry script staged and executable
-if [[ -f "$SQF/opt/orionx/scripts/control_center/orionx-control-center" ]]; then
-    pass "/opt/orionx/scripts/control_center/orionx-control-center staged"
+# (a) #192: the orionx-control-center launcher is gone (the Cockpit is the window)
+if [[ ! -e "$SQF/opt/orionx/scripts/control_center/orionx-control-center" ]]; then
+    pass "orionx-control-center launcher not shipped (#192)"
 else
-    fail "/opt/orionx/scripts/control_center/orionx-control-center staged" \
-         "stage_application_content must rsync scripts/control_center/ into the ISO"
-fi
-
-if [[ -x "$SQF/opt/orionx/scripts/control_center/orionx-control-center" ]]; then
-    pass "/opt/orionx/scripts/control_center/orionx-control-center is executable"
-else
-    fail "/opt/orionx/scripts/control_center/orionx-control-center is executable" \
-         "0700 hook sets chmod 755 on scripts/ files — check hook execution"
+    fail "orionx-control-center launcher not shipped" "scripts/control_center/orionx-control-center is back"
 fi
 
 # (b) Python module present (app.py + at least one section file)
@@ -593,46 +585,16 @@ else
          "control_center/sections/ not fully staged — check rsync in stage_application_content"
 fi
 
-# (c) /usr/bin/orionx-control-center symlink present (created by 0700 hook)
-if [[ -L "$SQF/usr/bin/orionx-control-center" ]]; then
-    pass "/usr/bin/orionx-control-center symlink present (0700 hook)"
-elif [[ -f "$SQF/usr/bin/orionx-control-center" ]]; then
-    pass "/usr/bin/orionx-control-center present (as regular file, 0700 hook)"
+# (c, d) #192: neither the /usr/bin link nor the menu entry ships
+if [[ ! -e "$SQF/usr/bin/orionx-control-center" && ! -L "$SQF/usr/bin/orionx-control-center" \
+      && ! -e "$SQF/usr/share/applications/orionx-control-center.desktop" ]]; then
+    pass "no /usr/bin/orionx-control-center and no orionx-control-center.desktop (#192)"
 else
-    fail "/usr/bin/orionx-control-center symlink present" \
-         "0700-orionx-setup.hook.chroot SCRIPT_MAP must include orionx-control-center"
+    fail "orionx-control-center link and menu entry removed" "one of them is back in the image"
 fi
 
-# (d) .desktop launcher present
-if [[ -f "$SQF/usr/share/applications/orionx-control-center.desktop" ]]; then
-    pass "/usr/share/applications/orionx-control-center.desktop present"
-else
-    fail "/usr/share/applications/orionx-control-center.desktop present" \
-         "0700 hook must create /usr/share/applications/orionx-control-center.desktop"
-fi
-
-# (e) .desktop Exec line must point to /usr/bin/orionx-control-center
-#     (DEC-PHASE9-006 invariant: no lxterminal, direct GTK executable)
-CONTROL_DESKTOP="$SQF/usr/share/applications/orionx-control-center.desktop"
-if [[ -f "$CONTROL_DESKTOP" ]]; then
-    # DEC-PHASE12-053: the entry opens the Orion Cockpit on a tab — still a direct GTK exec.
-    if grep -qE "^Exec=/usr/bin/orionx-cockpit --tab network" "$CONTROL_DESKTOP" 2>/dev/null; then
-        pass ".desktop Exec line opens the Cockpit tabs directly (DEC-PHASE12-053, DEC-PHASE9-006)"
-    else
-        fail ".desktop Exec line is Exec=/usr/bin/orionx-cockpit --tab network" \
-             "Check the 0700 hook's orionx-control-center.desktop block — must be the direct Cockpit exec (no terminal wrapper)"
-    fi
-    # DEC-PHASE9-006: no lxterminal in the Exec line
-    # || true: DEC-PHASE9-014 — grep exits 1 on no-match; under pipefail this kills
-    # the script before the count is tested. Zero matches is the desired state.
-    LXTERM_IN_DESKTOP="$(grep -c "lxterminal" "$CONTROL_DESKTOP" 2>/dev/null || true)"
-    if [[ "$LXTERM_IN_DESKTOP" -eq 0 ]]; then
-        pass ".desktop has zero lxterminal references (DEC-PHASE9-006 invariant)"
-    else
-        fail ".desktop has zero lxterminal references" \
-             "Found $LXTERM_IN_DESKTOP lxterminal reference(s) — violates DEC-PHASE9-006"
-    fi
-fi
+# (e) #192: the entry is gone, so its Exec line is no longer checked here;
+#     (c, d) above assert it stays gone.
 
 # (f) GTK / GI / genmon packages installed in chroot dpkg
 #     Same dpkg/status + binary-fallback pattern as section 8. DEC-PHASE9-014
@@ -1072,17 +1034,10 @@ CC_MODULE_DIR="$SQF/opt/orionx/scripts/control_center"
 CC_INIT="$CC_MODULE_DIR/__init__.py"
 CC_APP="$CC_MODULE_DIR/app.py"
 
-if [[ -L "$CC_WRAPPER" ]]; then
-    CC_WRAPPER_TARGET="$(readlink "$CC_WRAPPER" 2>/dev/null || :)"
-    if [[ "$CC_WRAPPER_TARGET" == "/opt/orionx/scripts/control_center/orionx-control-center" ]]; then
-        pass "16e: /usr/bin/orionx-control-center symlink present in squashfs (issue #66)"
-    else
-        fail "16e: /usr/bin/orionx-control-center symlink target correct" \
-             "Got target: $CC_WRAPPER_TARGET"
-    fi
+if [[ ! -e "$CC_WRAPPER" && ! -L "$CC_WRAPPER" ]]; then
+    pass "16e: no /usr/bin/orionx-control-center (#192: the Cockpit is the window)"
 else
-    fail "16e: /usr/bin/orionx-control-center symlink present in squashfs" \
-         "Symlink not found at $CC_WRAPPER — 0700-orionx-setup.hook.chroot did not create it (issue #66)"
+    fail "16e: /usr/bin/orionx-control-center removed" "#192 removal undone"
 fi
 
 if [[ -d "$CC_MODULE_DIR" ]]; then
@@ -1105,9 +1060,9 @@ else
     fail "16e: control_center/app.py present in squashfs" \
          "$CC_APP not found — module package incomplete (issue #66)"
 fi
-# #95 (DEC-PHASE13-049): the launcher's map and the Cockpit's settings drawer
-# ship; the retired Auto-Healing tab does not (no fallback copy on the image).
-for _f in moved.py settings_drawer.py; do
+# #95: the Cockpit's settings drawer ships; the retired Auto-Healing tab does
+# not (no fallback copy on the image). moved.py went with the launcher (#192).
+for _f in settings_drawer.py; do
     if [[ -f "$CC_MODULE_DIR/$_f" ]]; then
         pass "16e: control_center/$_f present in squashfs (#95)"
     else
@@ -1138,27 +1093,22 @@ fi
 #
 # The actual module-import at runtime is exercised by the first-boot service on
 # hardware and in the QEMU T6 integration test (DEC-PHASE11-012).
-echo "  [16f] W11-2d structural: def run_app in app.py + wrapper imports run_app"
+echo "  [16f] structural: the Cockpit imports its tab authority from control_center.app"
 
 CC_SCRIPTS_PARENT="$SQF/opt/orionx/scripts"
 if [[ -d "$CC_SCRIPTS_PARENT" ]]; then
     APP_PY="$CC_SCRIPTS_PARENT/control_center/app.py"
-    WRAPPER="$CC_SCRIPTS_PARENT/control_center/orionx-control-center"
-
-    # Structural check 1: run_app symbol defined in app.py
-    if [[ -f "$APP_PY" ]] && grep -qE "^def run_app\b" "$APP_PY"; then
-        pass "16f: control_center.app.run_app symbol defined in squashfs (issue #66 module completeness)"
+    COCKPIT="$CC_SCRIPTS_PARENT/cockpit/orionx-cockpit"
+    # #192: run_app (the launcher's entry point) is gone; SECTIONS is the tab list.
+    if [[ -f "$APP_PY" ]] && grep -qE "^SECTIONS = \[" "$APP_PY" && ! grep -qE "^def run_app\b" "$APP_PY"; then
+        pass "16f: control_center.app defines SECTIONS and no launcher entry point (#192)"
     else
-        fail "16f: control_center.app.run_app symbol defined in squashfs" \
-             "run_app function not found in $APP_PY (issue #66 — module tree incomplete)"
+        fail "16f: control_center.app defines SECTIONS, no run_app" "check $APP_PY"
     fi
-
-    # Structural check 2: wrapper imports run_app from control_center.app
-    if [[ -f "$WRAPPER" ]] && grep -qE "from control_center\.app import run_app" "$WRAPPER"; then
-        pass "16f: wrapper imports run_app from control_center.app (issue #66 wire cohesion)"
+    if [[ -f "$COCKPIT" ]] && grep -qE "from control_center import app as CC" "$COCKPIT"; then
+        pass "16f: orionx-cockpit imports control_center.app (the tab authority)"
     else
-        fail "16f: wrapper imports run_app from control_center.app" \
-             "Import statement not found in $WRAPPER (issue #66 — wire missing)"
+        fail "16f: orionx-cockpit imports control_center.app" "wire missing in $COCKPIT"
     fi
 else
     fail "16f: /opt/orionx/scripts/ present in squashfs" \

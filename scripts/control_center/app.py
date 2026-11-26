@@ -3,8 +3,9 @@ Orion-X Control Center — GTK Application + main window.
 
 Tab authority for the Orion Cockpit (DEC-PHASE12-053):
   LIVE (Cockpit), Network, Mesh, Comms, Awareness, Orion Tools, Nebula AI
-plus the settings drawer (settings_drawer.py) and MOVED, the map of where each
-control of the old Control Center lives now (#95, DEC-PHASE13-049).
+plus the settings drawer (settings_drawer.py). The orionx-control-center
+launcher and its map of moved controls (moved.py) were removed in #192; the
+where-it-went table lives in the User Guide.
 
 The window carries three "works like magic" affordances added in W11-15:
   - a HeaderBar with the operator-facing tagline ("Designed for your 3am self"),
@@ -58,8 +59,8 @@ The window carries three "works like magic" affordances added in W11-15:
   with overlapping concerns was the drift. So: SECTIONS below is the single
   list of tabs; the Cockpit builds its notebook from it (LIVE first, then
   these); the CSS, tab labels and toast bar live here and are imported by the
-  Cockpit; and `orionx-control-center` is a launcher that opens the Cockpit on
-  a tab. There is no second window class to drift against.
+  Cockpit. There is no second window class to drift against, and since #192
+  no launcher either: the Orion Cockpit menu entry opens it.
 """
 from __future__ import annotations
 
@@ -73,7 +74,6 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk  # type: ignore[import]  # noqa: E402
 
-from . import moved  # noqa: E402  (MOVED: where each old Control Center control lives, #95)
 from .helpers import style  # noqa: E402
 from .sections import awareness, comms, ir, mesh, nebula, network  # noqa: E402
 
@@ -264,8 +264,3 @@ class ToastBar(Gtk.Revealer):
         self.set_reveal_child(False)
         self._timer = 0
         return False
-
-
-def run_app(argv: list[str] | None = None) -> int:
-    """Entry point for `orionx-control-center`: a launcher, nothing more (DEC-PHASE13-049, moved.py)."""
-    return moved.launch(list(argv if argv is not None else sys.argv)[1:], TAB_KEYS, SECTIONS[0][0])

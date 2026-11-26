@@ -496,6 +496,34 @@ def load_installable(root: Path) -> list[dict]:
 #   without it.
 #   Superseded 2026-11-26 by DEC-PHASE13-061 (#200): the state now comes from
 #   orionx-optional, and optional_state() is gone.
+# @decision DEC-PHASE13-049
+# @title The Control Center is a launcher that names where each control went; its controls moved, nothing stays as a fallback
+# @status accepted
+# @rationale #95, under DEC-PHASE13-048. Its window went in DEC-PHASE12-053, but
+#   its sections stayed as Cockpit tabs and kept being the only writers of
+#   several settings, with tool controls among them. Each control now has one
+#   home: posture, R.A.I.N., the theme and the DJ deck in the Cockpit settings
+#   drawer; the autonomy grid and Nebula warm-up in the Workbench's Engine
+#   section; the optional installers in the Workbench's Optional section, which
+#   already had them. The Workbench page stays read-only and hands over the
+#   command (orionx-heal autonomy, nebula warmup): a loopback page that could
+#   grant "autonomous" to kill_process is a target for any tab that reaches
+#   127.0.0.1, and a terminal is where the Workbench already runs things. The
+#   superseded code went in the same change: the Auto-Healing tab (which also
+#   wrote "propose" for every unset class whenever the Cockpit was built, so
+#   opening a window granted consent), the Awareness tab's posture and R.A.I.N.
+#   block, the Nebula tab's warm-up button and the Orion Tools tab's installer
+#   grid and theme button. Keeping any of them "as a fallback" would leave two
+#   writers for one file, which is the bug this exists to remove.
+#   `orionx-control-center` stays one release, as a launcher: `--tab KEY`
+#   opens a tab, or a moved control's new home after saying where it went;
+#   `--where` prints MOVED. Then it can go with its menu entry.
+#
+#   Moved here 2026-11-26 from control_center/moved.py when the orionx-control-center
+#   launcher was removed (#192). Its rule for this loopback page stands;
+#   the controls it moved to the Workbench returned to the Cockpit in
+#   #199-#201 (DEC-PHASE13-060..062), and the page mirrors them read-only.
+
 # @decision DEC-PHASE13-061
 # @category OSINT
 # @title The Workbench mirrors orionx-optional read-only and hands management to the Cockpit

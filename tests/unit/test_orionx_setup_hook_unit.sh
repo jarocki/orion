@@ -147,9 +147,9 @@ else
 fi
 
 # ===========================================================================
-# 4. PATH symlinks for all 10 Orion-X scripts (W9-2: +orionx-control-center)
+# 4. PATH symlinks for the Orion-X scripts (orionx-control-center retired, #192)
 # ===========================================================================
-section "PATH symlinks for all 10 scripts (W9-2: orionx-control-center added)"
+section "PATH symlinks for the core scripts"
 
 EXPECTED_SCRIPTS=(
     "orionx-mesh"
@@ -161,7 +161,6 @@ EXPECTED_SCRIPTS=(
     "run-lynis.sh"
     "download-samples.sh"
     "pcap-analyzer.py"
-    "orionx-control-center"
 )
 
 for script in "${EXPECTED_SCRIPTS[@]}"; do
@@ -189,12 +188,11 @@ else
          "SCRIPT_MAP entry missing or wrong target for pcap-analyzer.py"
 fi
 
-# W9-2: orionx-control-center maps to the correct target path (10th entry)
-if [[ "$HOOK_CONTENT" == *'["orionx-control-center"]="/opt/orionx/scripts/control_center/orionx-control-center"'* ]]; then
-    pass "orionx-control-center maps to /opt/orionx/scripts/control_center/orionx-control-center (W9-2)"
+# #192: the orionx-control-center launcher is gone from SCRIPT_MAP
+if [[ "$HOOK_CONTENT" != *'["orionx-control-center"]='* ]]; then
+    pass "orionx-control-center is not in SCRIPT_MAP (#192)"
 else
-    fail "orionx-control-center maps to /opt/orionx/scripts/control_center/orionx-control-center" \
-         "W9-2: SCRIPT_MAP entry missing or wrong target for orionx-control-center"
+    fail "orionx-control-center is not in SCRIPT_MAP" "#192 removed the launcher"
 fi
 
 # Verify /usr/bin/ is the symlink target directory
@@ -209,10 +207,9 @@ fi
 # Count lines matching the SCRIPT_MAP key=value pattern: ["name"]="path"
 SCRIPT_MAP_ENTRIES="$(grep -c '^\s*\["[^"]*"\]="[^"]*"' "$HOOK_FILE" 2>/dev/null || true)"
 if [[ "$SCRIPT_MAP_ENTRIES" -ge 10 ]]; then
-    pass "SCRIPT_MAP has >= 10 entries (W9-2: orionx-control-center is 10th entry)"
+    pass "SCRIPT_MAP has >= 10 entries"
 else
-    fail "SCRIPT_MAP has >= 10 entries" \
-         "Found only $SCRIPT_MAP_ENTRIES — W9-2 requires orionx-control-center as the 10th entry"
+    fail "SCRIPT_MAP has >= 10 entries" "Found only $SCRIPT_MAP_ENTRIES"
 fi
 
 # ===========================================================================
@@ -272,30 +269,11 @@ else
          "Found $LXTERM_FUNC_COUNT functional reference(s) — remove all non-comment lxterminal (not installed)"
 fi
 
-# W9-2: orionx-control-center.desktop created by the hook
-if [[ "$HOOK_CONTENT" == *"orionx-control-center.desktop"* ]]; then
-    pass "W9-2: orionx-control-center.desktop .desktop launcher present in hook"
+# #192: the Control Center menu entry is gone (the Orion Cockpit entry opens the Cockpit)
+if [[ "$(grep -v '^\s*#' "$HOOK_FILE" | grep -c "orionx-control-center" || true)" -eq 0 ]]; then
+    pass "#192: the hook writes no orionx-control-center entry or link"
 else
-    fail "W9-2: orionx-control-center.desktop .desktop launcher present in hook" \
-         "The 0700 hook must create /usr/share/applications/orionx-control-center.desktop"
-fi
-
-# W9-2 / DEC-PHASE12-053: the Control Center entry opens the Orion Cockpit on a tab —
-# still the direct GTK binary (NO lxterminal / terminal wrapper, DEC-PHASE9-006).
-if grep -q "Exec=/usr/bin/orionx-cockpit --tab network" "$HOOK_FILE" 2>/dev/null; then
-    pass "W9-2: Control Center .desktop Exec opens the Cockpit tabs directly (DEC-PHASE12-053, DEC-PHASE9-006)"
-else
-    fail "W9-2: Control Center .desktop Exec=/usr/bin/orionx-cockpit --tab network" \
-         "the tabs live in the Cockpit now; Exec must be the direct GTK binary, not a terminal wrapper"
-fi
-
-# W9-2: Control Center .desktop must NOT contain lxterminal in any Exec line
-# (functional check — DEC-PHASE9-006 invariant)
-if ! grep -v '^\s*#' "$HOOK_FILE" | grep "orionx-control-center" | grep -q "lxterminal"; then
-    pass "W9-2: orionx-control-center .desktop does NOT use lxterminal (DEC-PHASE9-006)"
-else
-    fail "W9-2: orionx-control-center .desktop does NOT use lxterminal" \
-         "Found lxterminal in functional orionx-control-center lines — must be direct GTK Exec"
+    fail "#192: the hook still writes orionx-control-center" "remove the entry and the SCRIPT_MAP line"
 fi
 
 # rc4: one-click mesh launcher present (DEC-PHASE9-001)
@@ -469,13 +447,7 @@ else
          "nebula-mcp and nebula-chat symlinks are W10-3+ scope, not W10-1"
 fi
 
-# (c) The existing /usr/bin/orionx-control-center symlink is preserved verbatim
-if [[ "$HOOK_CONTENT" == *'["orionx-control-center"]="/opt/orionx/scripts/control_center/orionx-control-center"'* ]]; then
-    pass "W10-1: orionx-control-center symlink preserved verbatim (W9-2 invariant)"
-else
-    fail "W10-1: orionx-control-center symlink preserved" \
-         "W9-2's orionx-control-center entry was modified — must be preserved exactly"
-fi
+# (c) W9-2's orionx-control-center symlink was retired in #192 (asserted above).
 
 # (d) SCRIPT_MAP now has >= 11 entries (10 from W9-2 + nebula from W10-1)
 SCRIPT_MAP_ENTRIES_W10="$(grep -c '^\s*\["[^"]*"\]="[^"]*"' "$HOOK_FILE" 2>/dev/null || true)"
