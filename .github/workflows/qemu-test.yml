@@ -236,7 +236,7 @@ jobs:
           QEMU_TIMEOUT: "900"
           VERIFY_WAIT: "1200"
 
-      # W7-5: Run in-guest performance benchmark (boot <90s, ISO <4GiB, idle RAM <1GiB).
+      # W7-5: Run in-guest performance benchmark (boot <90s, ISO <4GiB, idle RAM <1.25GiB, DEC-PHASE13-069).
       # Boots the ISO a third time in BIOS mode and waits for the
       # orionx-perf-measure.service sentinels on /dev/ttyS0. Measures ISO
       # size host-side via du -b. Uses the same --post-boot-script attach

@@ -133,6 +133,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   size read 0 bytes (and passed) where `du -b` does not exist; a unit test
   meant to stop W7-5 becoming continue-on-error looked below the key it
   sought. The content gate checks the probes ship (section 44).
+  Idle RAM is read only once the desktop has finished starting: the panel,
+  its plugin processes, xfdesktop and nm-applet all running, and two
+  readings 15 s apart within 16 MB. The earlier fixed 20 s delay read
+  731 MB on a fast runner (panel plugins not yet started) and 1,084–1,145 MB
+  on slow ones; the host test now refuses to judge a reading taken before
+  the desktop was ready or while RAM was still growing. Measured honestly,
+  the 2 GiB test VM uses about 1.1 GB at idle, so the budget is 1.25 GiB,
+  up from 1 GiB (DEC-PHASE13-069); #218 tracks bringing it back down.
 - **`make lint` now runs ShellCheck over `tests/` too (#12).** It covered
   only `scripts/`; 112 test scripts were never checked. Turning it on found
   two checks that could not fail: "no partial file left behind" (capture

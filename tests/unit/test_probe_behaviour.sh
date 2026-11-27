@@ -43,9 +43,21 @@ exit 3
 EOF
 cat > "$B/pgrep" <<'EOF'
 #!/bin/bash
-# pgrep -u <user> -x xfce4-session | pgrep -x <name>
-if [[ "$1" == "-u" ]]; then [[ -f "$S/session.$2" ]]; exit; fi
+# pgrep -u <user> -x xfce4-session | pgrep -u <user> -x <desktop proc> | pgrep -x <name>
+if [[ "$1" == "-u" ]]; then
+    [[ "${*: -1}" == xfce4-session ]] && { [[ -f "$S/session.$2" ]]; exit; }
+    [[ -f "$S/proc.$2.${*: -1}" ]]; exit
+fi
 [[ -f "$S/running.$2" ]]
+EOF
+# sleep: really sleeps; with $S/grow, each call also takes 50000 kB more
+# (MemAvailable shrinks), so "RAM still growing" is a real path.
+cat > "$B/sleep" <<'EOF'
+#!/bin/bash
+/bin/sleep "$1"
+if [[ -f "$S/grow" ]]; then
+    awk '/^MemAvailable:/ {$2 = $2 - 50000} {print}' "$S/../meminfo" > "$S/../meminfo.new" && mv "$S/../meminfo.new" "$S/../meminfo"
+fi
 EOF
 cat > "$B/dpkg-query" <<'EOF'
 #!/bin/bash
@@ -68,6 +80,7 @@ reset_state() {
     echo enabled > "$S/is-enabled.orionx-mesh-discover.timer"
     echo active > "$S/is-active.graphical.target"
     touch "$S/session.orionx-operator"
+    for p in xfce4-panel wrapper-2.0 xfdesktop nm-applet; do touch "$S/proc.orionx-operator.$p"; done
 }
 
 verify() {
@@ -113,7 +126,8 @@ echo "[perf-measure.sh]"
 perf() {
     S="$S" PATH="$B:$PATH" ORIONX_PROBE_LIB="$LIB/probe-lib.sh" ORIONX_PROBE_CMDLINE="$T/cmdline" \
         ORIONX_PROBE_MEMINFO="$T/meminfo" ORIONX_PROBE_SESSION_WAIT=1 ORIONX_PROBE_POLL=0.2 \
-        ORIONX_PROBE_SETTLE=0 bash "$LIB/perf-measure.sh" 2>&1
+        ORIONX_PROBE_READY_WAIT=1 ORIONX_PROBE_STABLE_WAIT=1 ORIONX_PROBE_STABLE_STEP=0.2 \
+        bash "$LIB/perf-measure.sh" 2>&1
 }
 reset_state; echo qemu > "$S/virt"
 echo 319201873 > "$S/mono.multi-user.target"; echo 296931446 > "$S/mono.user@1000.service"
@@ -125,9 +139,20 @@ check "boot time is the desktop session's start" "$OUT" "ORIONX_PERF: boot_time_
 check "idle RAM is MemTotal - MemAvailable" "$OUT" "ORIONX_PERF: idle_ram_bytes=$(( (4002436 - 3287720) * 1024 ))"
 check "where the RAM went is reported with it (meminfo breakdown)" "$OUT" "ORIONX_PERF: mem_detail_kb=MemTotal=4002436 MemFree=100 MemAvailable=3287720"
 check "the guest reports and does not judge" "$OUT" "ORIONX_PERF_END: overall=REPORTED"
+check "every desktop process running: desktop_ready=yes" "$OUT" "ORIONX_PERF: desktop_ready=yes (xfce4-panel wrapper-2.0 xfdesktop nm-applet running after"
+check "unchanging RAM: ram_settled=yes" "$OUT" "ORIONX_PERF: ram_settled=yes (changed 0 kB in 0.2s"
+# #216's false pass (DEC-PHASE13-069): the panel plugins had not started yet.
+rm -f "$S/proc.orionx-operator.wrapper-2.0"; OUT="$(perf)"
+check "panel plugins not yet running: desktop_ready=no, naming them" "$OUT" "ORIONX_PERF: desktop_ready=no (not running after 1s: wrapper-2.0)"
+touch "$S/proc.orionx-operator.wrapper-2.0" "$S/grow"; OUT="$(perf)"
+check "RAM growing 50000 kB per reading: ram_settled=no" "$OUT" "ORIONX_PERF: ram_settled=no (still changing more than 16384 kB per 0.2s after 1s)"
+check "... and the RAM read is the grown one" "$OUT" "ORIONX_PERF: idle_ram_bytes="
+rm -f "$S/grow"
+printf 'MemTotal:        4002436 kB\nMemFree:  100 kB\nMemAvailable:    3287720 kB\n' > "$T/meminfo"
 if grep -qE 'THRESHOLD|-lt [0-9]{2}' "$LIB/perf-measure.sh"; then fail "perf-measure.sh holds no thresholds" "found one"; else pass "perf-measure.sh holds no thresholds (the host test is the authority)"; fi
 rm -f "$S/session.orionx-operator"; OUT="$(perf)"
 check "no desktop: boot time says why it is missing" "$OUT" "boot_time_seconds=none (no desktop session for orionx-operator after 1s)"
+check "no desktop: desktop_ready=no" "$OUT" "ORIONX_PERF: desktop_ready=no (no desktop session)"
 
 # ---------------------------------------------------------------------------
 # Host-side tests against a fake harness. The fake "boots" $FIXTURE: it writes
@@ -153,18 +178,37 @@ host() {  # <test file> <fixture> -> output; exit code in $RC
 
 echo "[test-w7-5-performance.sh, fake harness]"
 crlf "[  319.9] noise" ORIONX_PERF_BEGIN "ORIONX_PERF: virt=qemu" "ORIONX_PERF: multi_user_seconds=319" \
-     "ORIONX_PERF: boot_time_seconds=296" "ORIONX_PERF: idle_ram_bytes=731873280" "ORIONX_PERF_END: overall=REPORTED" > "$T/tcg.log"
+     "ORIONX_PERF: boot_time_seconds=296" "ORIONX_PERF: desktop_ready=yes (xfce4-panel wrapper-2.0 xfdesktop nm-applet running after 40s)" \
+     "ORIONX_PERF: ram_settled=yes (changed 812 kB in 15s, after 15s)" \
+     "ORIONX_PERF: idle_ram_bytes=1145085952" "ORIONX_PERF_END: overall=REPORTED" > "$T/tcg.log"
 host test-w7-5-performance.sh "$T/tcg.log"
 check "TCG: boot time recorded, not judged" "$OUT" "boot_time_seconds=296 recorded (TCG emulation: not judged against 90s)"
-check "values are read through the tty's \\r" "$OUT" "idle_ram_bytes=731873280 < 1073741824 (1 GiB) [PASS]"
+check "values are read through the tty's \\r; #217's settled 1,145 MB is within 1.25 GiB" "$OUT" "idle_ram_bytes=1145085952 < 1342177280 (1.25 GiB) [PASS]"
 if grep -q '^\[FAIL\]' <<<"$OUT"; then fail "TCG fixture: no failures" "$(grep '^\[FAIL\]' <<<"$OUT")"; else pass "TCG fixture: no failures"; fi
 check "the ISO is measured (1024-byte fixture)" "$OUT" "iso_size_bytes=1024 < 4294967296 (4 GiB) [PASS]"
 crlf ORIONX_PERF_BEGIN "ORIONX_PERF: virt=kvm" "ORIONX_PERF: boot_time_seconds=120" \
-     "ORIONX_PERF: idle_ram_bytes=1200000000" "ORIONX_PERF_END: overall=REPORTED" > "$T/kvm.log"
+     "ORIONX_PERF: desktop_ready=yes (x)" "ORIONX_PERF: ram_settled=yes (x)" \
+     "ORIONX_PERF: idle_ram_bytes=1400000000" "ORIONX_PERF_END: overall=REPORTED" > "$T/kvm.log"
 host test-w7-5-performance.sh "$T/kvm.log"
 check "KVM: a slow boot is judged and fails" "$OUT" "boot_time_seconds=120 >= 90s threshold"
-check "RAM over 1 GiB fails" "$OUT" "idle_ram_bytes=1200000000 >= 1073741824 (1 GiB) threshold"
+check "RAM over 1.25 GiB fails" "$OUT" "idle_ram_bytes=1400000000 >= 1342177280 (1.25 GiB) threshold"
 if [[ $RC -ne 0 ]]; then pass "... and the test exits non-zero ($RC)"; else fail "KVM fixture exits non-zero" "rc=$RC"; fi
+# A low reading of a half-started desktop (#216's 731 MB) must not pass.
+crlf ORIONX_PERF_BEGIN "ORIONX_PERF: virt=qemu" "ORIONX_PERF: boot_time_seconds=302" \
+     "ORIONX_PERF: desktop_ready=no (not running after 300s: wrapper-2.0)" "ORIONX_PERF: ram_settled=yes (x)" \
+     "ORIONX_PERF: idle_ram_bytes=731459584" "ORIONX_PERF_END: overall=REPORTED" > "$T/early.log"
+host test-w7-5-performance.sh "$T/early.log"
+check "read before the desktop finished starting: not judged, fails" "$OUT" "idle_ram_bytes=731459584 not judged: read before the desktop finished starting"
+if [[ $RC -ne 0 ]]; then pass "... and the test exits non-zero"; else fail "early fixture exits non-zero" "rc=$RC"; fi
+crlf ORIONX_PERF_BEGIN "ORIONX_PERF: virt=qemu" "ORIONX_PERF: boot_time_seconds=302" "ORIONX_PERF: desktop_ready=yes (x)" \
+     "ORIONX_PERF: ram_settled=no (still changing more than 16384 kB per 15s after 180s)" \
+     "ORIONX_PERF: idle_ram_bytes=900000000" "ORIONX_PERF_END: overall=REPORTED" > "$T/growing.log"
+host test-w7-5-performance.sh "$T/growing.log"
+check "RAM still growing: not judged, fails" "$OUT" "idle_ram_bytes=900000000 not judged: RAM was still growing"
+crlf ORIONX_PERF_BEGIN "ORIONX_PERF: virt=qemu" "ORIONX_PERF: boot_time_seconds=302" \
+     "ORIONX_PERF: idle_ram_bytes=900000000" "ORIONX_PERF_END: overall=REPORTED" > "$T/oldprobe.log"
+host test-w7-5-performance.sh "$T/oldprobe.log"
+check "a probe that does not say the desktop was ready is not judged" "$OUT" "desktop_ready=missing"
 crlf ORIONX_PERF_BEGIN "ORIONX_PERF: virt=qemu" "ORIONX_PERF: boot_time_seconds=none (no desktop session for orionx-operator after 300s)" \
      "ORIONX_PERF: idle_ram_bytes=700000000" "ORIONX_PERF_END: overall=REPORTED" > "$T/nodesk.log"
 host test-w7-5-performance.sh "$T/nodesk.log"
