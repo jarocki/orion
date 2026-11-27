@@ -721,11 +721,14 @@ else
 fi
 
 # Tag pinned in iso/config/nebula-model-manifest.json ("ollama_model_tag": "qwen2.5:3b-instruct-q4_K_M");
-# ollama lays it out as manifests/registry.ollama.ai/library/<name>/<tag>. (34k re-derives it from the JSON.)
-if [[ -f "$NEBULA_MODELS_DIR/manifests/registry.ollama.ai/library/qwen2.5/3b-instruct-q4_K_M" ]]; then
-    pass "ollama manifest registry.ollama.ai/library/qwen2.5/3b-instruct-q4_K_M present (hook 0510 registration)"
+# Ollama 0.40 lays it out as manifests-v2/ollama.com/library/<name>/<tag> (a
+# link to a manifest blob); 0.30 used manifests/registry.ollama.ai/... Either
+# registers the tag (DEC-PHASE13-068). 34k re-derives the tag from the JSON.
+_tag_files="$(find "$NEBULA_MODELS_DIR/manifests-v2" "$NEBULA_MODELS_DIR/manifests" \( -type f -o -type l \) -path '*/library/qwen2.5/3b-instruct-q4_K_M' 2>/dev/null)"
+if [[ -n "$_tag_files" ]]; then
+    pass "ollama manifest for qwen2.5/3b-instruct-q4_K_M present (hook 0510 registration): ${_tag_files#"$NEBULA_MODELS_DIR/"}"
 else
-    fail "ollama manifest registry.ollama.ai/library/qwen2.5/3b-instruct-q4_K_M present" \
+    fail "ollama manifest for qwen2.5/3b-instruct-q4_K_M present" \
          "Tag not registered — \`ollama create\` in hook 0510 did not run or used a different tag"
 fi
 
@@ -3265,7 +3268,7 @@ if [[ -z "$_want_tag" ]]; then
                   "$REPO_ROOT/iso/config/nebula-model-manifest.json" 2>/dev/null | head -1)"
 fi
 _tag_name="${_want_tag%%:*}"
-if [[ -n "$_tag_name" ]] && find "$SQF/opt/orionx/nebula/models/manifests" -type f -path "*${_tag_name}*" 2>/dev/null | grep -q .; then
+if [[ -n "$_tag_name" ]] && find "$SQF/opt/orionx/nebula/models/manifests-v2" "$SQF/opt/orionx/nebula/models/manifests" \( -type f -o -type l \) -path "*${_tag_name}*" 2>/dev/null | grep -q .; then
     pass "34k: ollama manifest exists for the manifest-declared tag ($_want_tag)"
 else
     fail "34k: ollama manifest exists for the manifest-declared tag ($_want_tag)" \

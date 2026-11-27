@@ -170,7 +170,8 @@ MULTI_USER_WANTS="$SQF/etc/systemd/system/multi-user.target.wants"
 #    blobs AND the source GGUF, (3) rewrites MANIFEST.sha256 to list the live
 #    blob(s), model layer first. So the shipped image has:
 #      /opt/orionx/nebula/models/blobs/sha256-<hex64>       (exactly ONE >1 GB blob)
-#      /opt/orionx/nebula/models/manifests/registry.ollama.ai/library/qwen2.5/3b-instruct-q4_K_M
+#      /opt/orionx/nebula/models/manifests-v2/ollama.com/library/qwen2.5/3b-instruct-q4_K_M
+#        (Ollama 0.40: a link to a manifest blob; 0.30 used manifests/registry.ollama.ai/...)
 #      /opt/orionx/nebula/models/MANIFEST.sha256   lines: "<hex64>  blobs/sha256-<hex64>"
 #    and NO bare Qwen2.5-3B-Instruct-Q4_K_M.gguf.
 #
@@ -190,7 +191,10 @@ section "Model store layout (DEC-PHASE12-016)"
 BLOBS_DIR="$MODELS_DIR/blobs"
 # Tag is pinned in iso/config/nebula-model-manifest.json ("ollama_model_tag":
 # "qwen2.5:3b-instruct-q4_K_M"); ollama lays it out as library/<name>/<tag>.
-OLLAMA_MANIFEST="$MODELS_DIR/manifests/registry.ollama.ai/library/qwen2.5/3b-instruct-q4_K_M"
+# Ollama 0.40: manifests-v2/ollama.com/... (a link to a manifest blob); 0.30:
+# manifests/registry.ollama.ai/... (DEC-PHASE13-068). Take whichever exists.
+OLLAMA_MANIFEST="$MODELS_DIR/manifests-v2/ollama.com/library/qwen2.5/3b-instruct-q4_K_M"
+[[ -e "$OLLAMA_MANIFEST" ]] || OLLAMA_MANIFEST="$MODELS_DIR/manifests/registry.ollama.ai/library/qwen2.5/3b-instruct-q4_K_M"
 SOURCE_GGUF="$MODELS_DIR/Qwen2.5-3B-Instruct-Q4_K_M.gguf"
 
 # (a) exactly one blob larger than 1 GB (the Q4_K_M model layer is ~1.93 GB;
