@@ -8,10 +8,15 @@
 # service via /dev/ttyS0. Parses the serial log and asserts all three
 # performance metrics are within thresholds.
 #
-# Metrics checked:
-#   boot_time_seconds  < 90          (in-guest, via systemd-analyze)
+# Metrics checked (this file is the one authority for the thresholds,
+# DEC-PHASE13-067; the guest only reports):
+#   boot_time_seconds  < 90          (in-guest: start of the desktop session;
+#                                     judged under KVM or on hardware, recorded
+#                                     under TCG emulation, where it times the runner)
 #   iso_size_bytes     < 4294967296  (host-side, via du -b)
-#   idle_ram_bytes     < 1073741824  (in-guest, via /proc/meminfo)
+#   idle_ram_bytes     < 1342177280  (1.25 GiB; in-guest, via /proc/meminfo,
+#                                     judged only when the guest reports
+#                                     desktop_ready=yes and ram_settled=yes)
 #
 # @decision DEC-PHASE7-W7-5-001
 # @title In-guest performance measurement via serial-console sentinels (W7-5)
@@ -37,7 +42,7 @@
 # Environment:
 #   ISO           Override ISO path (default: harness default)
 #   QEMU_TIMEOUT  Override QEMU boot timeout in seconds (default: 900)
-#   PERF_WAIT     Seconds to wait for ORIONX_PERF_END after boot (default: 90)
+#   PERF_WAIT     Seconds to wait for ORIONX_PERF_END after boot (default: 1200; see DEC-PHASE13-067)
 
 # IMPORTANT: NO set -e — we must always reach the result-parsing section
 # even if the harness exits non-zero. Individual errors are tracked via
@@ -48,12 +53,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 QEMU_TIMEOUT="${QEMU_TIMEOUT:-900}"
-PERF_WAIT="${PERF_WAIT:-90}"
+PERF_WAIT="${PERF_WAIT:-1200}"
 
 # Thresholds
 BOOT_TIME_THRESHOLD=90
 ISO_SIZE_THRESHOLD=4294967296      # 4 GiB
-IDLE_RAM_THRESHOLD=1073741824      # 1 GiB
+# Budget per DEC-PHASE13-069 (recorded in perf-measure.sh, with the measurement).
+# Idle RAM budget 1.25 GiB, up from Phase 7's 1 GiB. Once the probe read a
+# fully started desktop, the 2 GiB test VM used 1,084-1,145 MB at idle
+# (2026-11-27, #215/#217); every earlier pass had read a half-started one.
+# The owner chose a modest raise over trimming the desktop before v3.2.0;
+# trimming (panel plugin processes, nm-applet) is #218.
+IDLE_RAM_THRESHOLD=1342177280      # 1.25 GiB
 
 # ---------------------------------------------------------------------------
 # Color helpers (only when stdout is a terminal)
@@ -128,10 +139,14 @@ fi
 
 ISO_SIZE_BYTES=0
 if [[ -n "${ISO_PATH}" && -f "${ISO_PATH}" ]]; then
-    ISO_SIZE_BYTES="$(du -b "${ISO_PATH}" 2>/dev/null | awk '{print $1}' || echo "0")"
+    # wc -c, not du -b: macOS du has no -b, and its failure read as 0 bytes,
+    # which passed "< 4 GiB". An ISO that could not be measured fails.
+    ISO_SIZE_BYTES="$(wc -c < "${ISO_PATH}" 2>/dev/null | tr -d ' ' || true)"
     log_info "ISO: ${ISO_PATH}"
     log_info "ORIONX_PERF: iso_size_bytes=${ISO_SIZE_BYTES}"
-    if [[ "${ISO_SIZE_BYTES}" -lt "${ISO_SIZE_THRESHOLD}" ]] 2>/dev/null; then
+    if [[ ! "${ISO_SIZE_BYTES}" =~ ^[0-9]+$ || "${ISO_SIZE_BYTES}" -eq 0 ]]; then
+        fail "iso_size_bytes could not be measured" "ISO file: ${ISO_PATH}"
+    elif [[ "${ISO_SIZE_BYTES}" -lt "${ISO_SIZE_THRESHOLD}" ]]; then
         pass "iso_size_bytes=${ISO_SIZE_BYTES} < ${ISO_SIZE_THRESHOLD} (4 GiB) [PASS]"
     else
         fail "iso_size_bytes=${ISO_SIZE_BYTES} >= ${ISO_SIZE_THRESHOLD} (4 GiB) threshold" \
@@ -162,7 +177,7 @@ set -uo pipefail
 
 RUN_ID="${1:-unknown}"
 SERIAL_LOG="${2:-}"
-PERF_WAIT="${PERF_WAIT:-90}"
+PERF_WAIT="${PERF_WAIT:-1200}"
 
 echo "[w7-5-helper] run_id=${RUN_ID} serial_log=${SERIAL_LOG}"
 
@@ -251,48 +266,46 @@ for serial_log in "${SERIAL_LOGS[@]}"; do
     fi
     pass "ORIONX_PERF_END: present in $(basename "${serial_log}")"
 
-    # Parse boot_time_seconds
-    boot_line="$(grep "ORIONX_PERF: boot_time_seconds=" "${serial_log}" 2>/dev/null | tail -1 || true)"
-    if [[ -z "${boot_line}" ]]; then
+    # Serial lines end in \r\n (the tty adds the \r); read values without it.
+    perf_value() { grep "ORIONX_PERF: $1=" "${serial_log}" 2>/dev/null | tail -1 | tr -d '\r' | sed "s/.*ORIONX_PERF: $1=//"; }
+    virt="$(perf_value virt)"
+    log_info "guest virtualisation: ${virt:-unknown}; multi-user.target at $(perf_value multi_user_seconds)s"
+
+    boot_val="$(perf_value boot_time_seconds)"
+    if [[ -z "${boot_val}" ]]; then
         fail "boot_time_seconds sentinel missing from $(basename "${serial_log}")"
+    elif [[ ! "${boot_val}" =~ ^[0-9]+$ ]]; then
+        fail "boot_time_seconds not measured" "${boot_val}"
+    elif [[ "${virt}" == "qemu" ]]; then
+        pass "boot_time_seconds=${boot_val} recorded (TCG emulation: not judged against ${BOOT_TIME_THRESHOLD}s)"
+    elif [[ "${boot_val}" -lt "${BOOT_TIME_THRESHOLD}" ]]; then
+        pass "boot_time_seconds=${boot_val} < ${BOOT_TIME_THRESHOLD}s [PASS]"
     else
-        boot_val="$(echo "${boot_line}" | grep -oE '[0-9]+$' || echo "")"
-        if [[ -z "${boot_val}" ]]; then
-            fail "boot_time_seconds value unparseable: ${boot_line}"
-        elif [[ "${boot_val}" -lt "${BOOT_TIME_THRESHOLD}" ]] 2>/dev/null; then
-            pass "boot_time_seconds=${boot_val} < ${BOOT_TIME_THRESHOLD}s [PASS]"
-        else
-            fail "boot_time_seconds=${boot_val} >= ${BOOT_TIME_THRESHOLD}s threshold" \
-                 "line: ${boot_line}"
-        fi
+        fail "boot_time_seconds=${boot_val} >= ${BOOT_TIME_THRESHOLD}s threshold" "virt=${virt}"
     fi
 
-    # Parse idle_ram_bytes
-    ram_line="$(grep "ORIONX_PERF: idle_ram_bytes=" "${serial_log}" 2>/dev/null | tail -1 || true)"
-    if [[ -z "${ram_line}" ]]; then
+    # A reading of a half-started desktop is not idle RAM (DEC-PHASE13-069):
+    # it is judged only when the guest saw every desktop process running and
+    # RAM no longer growing.
+    ready_val="$(perf_value desktop_ready)"
+    settled_val="$(perf_value ram_settled)"
+    ram_val="$(perf_value idle_ram_bytes)"
+    if [[ -z "${ram_val}" ]]; then
         fail "idle_ram_bytes sentinel missing from $(basename "${serial_log}")"
+    elif [[ ! "${ram_val}" =~ ^[0-9]+$ ]]; then
+        fail "idle_ram_bytes not measured" "${ram_val}"
+    elif [[ "${ready_val}" != yes* ]]; then
+        fail "idle_ram_bytes=${ram_val} not judged: read before the desktop finished starting" "desktop_ready=${ready_val:-missing}"
+    elif [[ "${settled_val}" != yes* ]]; then
+        fail "idle_ram_bytes=${ram_val} not judged: RAM was still growing" "ram_settled=${settled_val:-missing}"
+    elif [[ "${ram_val}" -lt "${IDLE_RAM_THRESHOLD}" ]]; then
+        pass "idle_ram_bytes=${ram_val} < ${IDLE_RAM_THRESHOLD} (1.25 GiB) [PASS] (desktop_ready=${ready_val}; ram_settled=${settled_val})"
     else
-        ram_val="$(echo "${ram_line}" | grep -oE '[0-9]+$' || echo "")"
-        if [[ -z "${ram_val}" ]]; then
-            fail "idle_ram_bytes value unparseable: ${ram_line}"
-        elif [[ "${ram_val}" -lt "${IDLE_RAM_THRESHOLD}" ]] 2>/dev/null; then
-            pass "idle_ram_bytes=${ram_val} < ${IDLE_RAM_THRESHOLD} (1 GiB) [PASS]"
-        else
-            fail "idle_ram_bytes=${ram_val} >= ${IDLE_RAM_THRESHOLD} (1 GiB) threshold" \
-                 "line: ${ram_line}"
-        fi
+        fail "idle_ram_bytes=${ram_val} >= ${IDLE_RAM_THRESHOLD} (1.25 GiB) threshold"
     fi
 
-    # Parse overall verdict from END line
-    end_line="$(grep "ORIONX_PERF_END:" "${serial_log}" 2>/dev/null | tail -1 || true)"
-    if echo "${end_line}" | grep -qiF "overall=PASS"; then
-        pass "overall sentinel: PASS in $(basename "${serial_log}")"
-        ((PERF_OVERALL_PASS+=1))
-    else
-        fail "overall sentinel: not PASS in $(basename "${serial_log}")" \
-             "end line: ${end_line}"
-        ((PERF_OVERALL_FAIL+=1))
-    fi
+    # The verdict is this file's: the guest reports, it does not judge.
+    if [[ ${FAIL} -eq 0 ]]; then ((PERF_OVERALL_PASS+=1)); else ((PERF_OVERALL_FAIL+=1)); fi
 
     # Dump full sentinel block for diagnostics
     echo ""

@@ -97,6 +97,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   victim (SQL injection victim, intel hits) never do, nor does the deck's own
   traffic. The critical floor is unchanged. Zeek notices already carried
   `dest_port` (fixed in #127); a test now pins it.
+- **The QEMU job's in-guest checks run again, and now check the desktop
+  (#40, #78, DEC-PHASE13-067).** No QEMU run since the model moved into the image had
+  received a line from the runtime-verify or performance probes: both start
+  after multi-user.target, which waits for the model integrity hash (253 s
+  under emulation), and the harness stopped waiting 90–120 s after the login
+  prompt. Both steps were continue-on-error, so the job stayed green. The
+  waits now cover the hash, both steps are gates, and the runtime probe
+  checks what an operator sees: graphical.target reached, the autologin
+  desktop session running, and no screen locker running or installed (the
+  rc5 regression, #76). Its mesh checks follow the opt-in design (no wg0 on a
+  stock deck is correct; only a failed mesh unit fails), where they had
+  failed every correctly built image. The performance probe reports and the
+  host test judges: boot time (now the start of the desktop session) is held
+  to 90 s under KVM and recorded under emulation, where it times the runner.
+  Also fixed in the host tests: values were parsed with `[0-9]+$` against
+  serial lines ending in `\r`, so no value could ever have parsed; the ISO
+  size read 0 bytes (and passed) where `du -b` does not exist; a unit test
+  meant to stop W7-5 becoming continue-on-error looked below the key it
+  sought. The content gate checks the probes ship (section 44).
+  Idle RAM is read only once the desktop has finished starting: the panel,
+  its plugin processes, xfdesktop and nm-applet all running, and two
+  readings 15 s apart within 16 MB. The earlier fixed 20 s delay read
+  731 MB on a fast runner (panel plugins not yet started) and 1,084–1,145 MB
+  on slow ones; the host test now refuses to judge a reading taken before
+  the desktop was ready or while RAM was still growing. Measured honestly,
+  the 2 GiB test VM uses about 1.1 GB at idle, so the budget is 1.25 GiB,
+  up from 1 GiB (DEC-PHASE13-069); #218 tracks bringing it back down.
 - **`make lint` now runs ShellCheck over `tests/` too (#12).** It covered
   only `scripts/`; 112 test scripts were never checked. Turning it on found
   two checks that could not fail: "no partial file left behind" (capture

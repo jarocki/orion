@@ -163,26 +163,49 @@ fi
 if [[ "${PERF_CONTENT}" == *"ORIONX_PERF_END: overall="* ]]; then
     pass "emits ORIONX_PERF_END: overall= sentinel"
 else
-    fail "emits ORIONX_PERF_END: overall= sentinel" "format must be 'ORIONX_PERF_END: overall=PASS|FAIL'"
+    fail "emits ORIONX_PERF_END: overall= sentinel" "format must be 'ORIONX_PERF_END: overall=REPORTED'"
 fi
 
-# Serial device reference
-if [[ "${PERF_CONTENT}" == *"/dev/ttyS0"* ]]; then
-    pass "references /dev/ttyS0 as serial channel"
+# Delivery: the probe prints to stdout through the shared emitter; the unit's
+# StandardOutput=tty / TTYPath=/dev/ttyS0 (checked below) puts it on the
+# serial log (DEC-PHASE13-067).
+if [[ "${PERF_CONTENT}" == *'/usr/lib/orionx/probe-lib.sh'* ]]; then
+    pass "sources the shared probe library (emit, desktop wait)"
 else
-    fail "references /dev/ttyS0 as serial channel" "sentinel output target missing"
+    fail "sources the shared probe library" "probe-lib.sh not sourced"
 fi
 
 # ===========================================================================
 # 4. perf-measure.sh: per-assertion timeout wraps (W7-4-B lesson)
 # ===========================================================================
-section "perf-measure.sh: per-assertion timeout pattern"
+section "perf-measure.sh: every wait is bounded"
 
-if [[ "${PERF_CONTENT}" == *"timeout 10"* ]]; then
-    pass "uses 'timeout 10' per-assertion wrap (prevents hang)"
+# The one wait is for the desktop session, bounded by SESSION_WAIT; systemctl
+# queries go through probe-lib's active_since_boot (timeout 10).
+if [[ "${PERF_CONTENT}" == *'wait_desktop "${USER_NAME}" "${SESSION_WAIT}"'* \
+      && "${PERF_CONTENT}" == *'SESSION_WAIT="${ORIONX_PROBE_SESSION_WAIT:-300}"'* ]]; then
+    pass "the desktop wait is bounded (SESSION_WAIT, default 300 s)"
 else
-    fail "uses 'timeout 10' per-assertion wrap" \
-         "each measurement must be wrapped in 'timeout 10' per W7-4-B lesson"
+    fail "the desktop wait is bounded" "wait_desktop must take SESSION_WAIT"
+fi
+
+# DEC-PHASE13-069: the waits for the desktop's processes and for RAM to stop
+# growing are bounded too, and the probe says whether each condition held.
+for knob in 'READY_WAIT="${ORIONX_PROBE_READY_WAIT:-300}"' 'STABLE_WAIT="${ORIONX_PROBE_STABLE_WAIT:-180}"' \
+            'SECONDS - start < READY_WAIT' 'SECONDS - start < STABLE_WAIT'; do
+    if [[ "${PERF_CONTENT}" == *"${knob}"* ]]; then pass "bounded: ${knob}"; else fail "bounded: ${knob}" "not in perf-measure.sh"; fi
+done
+for field in desktop_ready ram_settled; do
+    if [[ "${PERF_CONTENT}" == *"ORIONX_PERF: ${field}=yes"* && "${PERF_CONTENT}" == *"ORIONX_PERF: ${field}=no"* ]]; then
+        pass "reports ${field} either way"
+    else
+        fail "reports ${field}" "both ${field}=yes and ${field}=no must be emitted"
+    fi
+done
+if [[ "${PERF_CONTENT}" == *PROBE_SETTLE* ]]; then
+    fail "the fixed settle delay is gone" "ORIONX_PROBE_SETTLE still referenced"
+else
+    pass "the fixed settle delay is gone (it read RAM at a time set by the runner's speed)"
 fi
 
 # ===========================================================================
@@ -395,11 +418,17 @@ if [[ -f "${CI_WORKFLOW}" ]]; then
              "W7-5 CI step not wired in .github/workflows/qemu-test.yml"
     fi
 
-    # W7-5 step must NOT have continue-on-error: true (it's the active gate)
-    # We check by looking for "continue-on-error" in close proximity to "w7-5"
-    # A simple heuristic: the step block containing w7-5 must not have
-    # continue-on-error: true. We look for the pattern in the CI file.
-    if echo "${CI_CONTENT}" | grep -A5 "test-w7-5-performance" | grep -q "continue-on-error: true"; then
+    # Neither probe step may be continue-on-error (DEC-PHASE13-067). The old
+    # check looked at the five lines AFTER the script name, but the key sits
+    # above it, so it passed while the step was continue-on-error. Read each
+    # step block from its "- name:" to the next.
+    step_block() { awk -v pat="$1" '/^      - name:/ {if (hit) exit; blk=""} {blk=blk $0 "\n"} index($0, pat) {hit=1} END {if (hit) printf "%s", blk}' <<<"${CI_CONTENT}"; }
+    if step_block "test-w7-4-b-runtime-verify" | grep -q "continue-on-error"; then
+        fail "W7-4-B CI step must NOT be continue-on-error" "it is the session gate (#78)"
+    else
+        pass "W7-4-B CI step is a gate (no continue-on-error)"
+    fi
+    if step_block "test-w7-5-performance" | grep -q "continue-on-error: true"; then
         fail "W7-5 CI step must NOT have continue-on-error: true" \
              "W7-5 is the active acceptance gate — CI must fail when perf targets miss"
     else

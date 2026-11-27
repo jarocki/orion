@@ -133,7 +133,7 @@ else
 fi
 
 # ===========================================================================
-# 3. runtime-verify.sh: all 5 assertion names referenced
+# 3. runtime-verify.sh: every assertion name referenced
 # ===========================================================================
 section "runtime-verify.sh: assertion names present"
 
@@ -143,6 +143,10 @@ EXPECTED_ASSERTIONS=(
     "mesh_discover_enabled"
     "matrix_synapse_state"
     "apparmor_enforcing"
+    "zeek_unit_staged"
+    "graphical_target"
+    "desktop_session"
+    "no_screen_locker"
 )
 
 for name in "${EXPECTED_ASSERTIONS[@]}"; do
@@ -176,11 +180,13 @@ else
     fail "emits ORIONX_VERIFY: <name>=<verdict> sentinels"
 fi
 
-# Serial device reference
-if [[ "${VERIFY_CONTENT}" == *"/dev/ttyS0"* ]]; then
-    pass "references /dev/ttyS0 as serial channel"
+# Delivery: the probe prints to stdout through the shared emitter; the unit's
+# StandardOutput=tty / TTYPath=/dev/ttyS0 (checked below) puts it on the
+# serial log (DEC-PHASE13-067).
+if [[ "${VERIFY_CONTENT}" == *'/usr/lib/orionx/probe-lib.sh'* ]]; then
+    pass "sources the shared probe library (emit, desktop wait)"
 else
-    fail "references /dev/ttyS0 as serial channel" "sentinel output target missing"
+    fail "sources the shared probe library" "probe-lib.sh not sourced"
 fi
 
 # ===========================================================================
