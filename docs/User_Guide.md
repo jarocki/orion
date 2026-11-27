@@ -661,9 +661,9 @@ Two clients are available:
 - **Orion-X Matrix Comms (CLI)** (Orion menu) — `matrix-commander`, a lightweight command-line client, present on the base image.
 - **Element** — the graphical Matrix client. Element is **not** on the base ISO; it is an optional post-boot installer that needs network access (see [Optional Installers](#15-optional-installers)):
   ```bash
-  sudo /opt/orionx/optional/install-element.sh
+  sudo orionx-optional install element
   ```
-  After installation, launch Element from the Applications menu or with `element-desktop`, log in, and join your team's incident response room. A terminal client, gomuks, is available the same way (`install-gomuks.sh`).
+  After installation, launch Element from the Applications menu or with `element-desktop`, log in, and join your team's incident response room. A terminal client, gomuks, is available the same way (`sudo orionx-optional install gomuks`).
 
 Matrix features in Orion-X:
 
@@ -708,7 +708,7 @@ orionx-rain --oneshot        # play the most urgent pending event once, then exi
 
 #### Spoken narration (off by default)
 
-R.A.I.N. can speak a one-sentence description *after* the alert tone — for example "critical: port scan from 192.168.4.77, 900 ports in 11 seconds". It is off by default because speech is intelligible to everyone within earshot and a tone is not. Turn it on in the Cockpit → **Awareness** tab → **Narrate alerts aloud**, or with `orionx-rain --speech on`. Narration is bounded (6 s timeout, a queue of two, 20 s minimum gap, 24 words) and never delays the tone; when Nebula is reachable it writes the sentence, otherwise a template built from the event's own fields is spoken. `espeak-ng` ships on the image. For a natural voice run `sudo /opt/orionx/optional/install-piper-voice.sh` (§15) — it is discovered automatically, nothing else changes. `orionx-rain --speech-status` reports the engine, synthesises one line and prints how long it took, Nebula reachability and the bounds; `orionx-rain --speech-test` narrates one synthetic alert end to end. Acronyms and symbols are spoken the way an operator says them (IDS as "I D S", `→` as "to", `10.0.0.5:22` as "… port 22"). If piper fails or hangs, the alert is spoken by `espeak-ng` instead and R.A.I.N. says so once on the event bus. On a live USB, piper (installed by pip into the RAM overlay) does not survive a reboot unless your persistence volume covers `/`; re-run the installer, it only fetches what is missing.
+R.A.I.N. can speak a one-sentence description *after* the alert tone — for example "critical: port scan from 192.168.4.77, 900 ports in 11 seconds". It is off by default because speech is intelligible to everyone within earshot and a tone is not. Turn it on in the Cockpit → **Awareness** tab → **Narrate alerts aloud**, or with `orionx-rain --speech on`. Narration is bounded (6 s timeout, a queue of two, 20 s minimum gap, 24 words) and never delays the tone; when Nebula is reachable it writes the sentence, otherwise a template built from the event's own fields is spoken. `espeak-ng` ships on the image. For a natural voice run `sudo orionx-optional install piper-voice` (§15) — it is discovered automatically, nothing else changes. `orionx-rain --speech-status` reports the engine, synthesises one line and prints how long it took, Nebula reachability and the bounds; `orionx-rain --speech-test` narrates one synthetic alert end to end. Acronyms and symbols are spoken the way an operator says them (IDS as "I D S", `→` as "to", `10.0.0.5:22` as "… port 22"). If piper fails or hangs, the alert is spoken by `espeak-ng` instead and R.A.I.N. says so once on the event bus. On a live USB, piper (installed by pip into the RAM overlay) does not survive a reboot unless your persistence volume covers `/`; re-run the installer, it only fetches what is missing.
 
 **Is the voice fast enough for this deck?** A narration that takes too long to synthesise is dropped as stale rather than spoken late (max age 20 s), so on a slow CPU a slow voice shows up as "sometimes silent". R.A.I.N. measures every synthesis (the daemon's own narrations, `--speech-test` and the status probe) and keeps the last 20, per session, in `$XDG_RUNTIME_DIR/orionx/speech-timing.json`. To time the engines on your hardware, run the test three times and then read the verdict:
 
@@ -776,7 +776,7 @@ Workbench → **This network** (or `orionx-osint --page network`) shows what thi
 
 Read the labels literally. Every count is **observed by this deck** inside the window you pick (5 min to 6 h; the Cockpit uses 15 min): it is a sample of what spoke while the deck listened, not an inventory of the segment. Local vs internet is RFC 1918 classification of addresses, nothing more — there is no geolocation on this page or in its data. A vendor is a registry lookup of the 24-bit prefix; a randomised (locally administered) address has no vendor and the row says so. "IoT" is a heuristic from vendor prefixes and mDNS service names, labelled as such. Neighbour-table entries age by the kernel's rules, not by the window.
 
-Zeek is optional. With it (Tier 1 or 2 starts the managed sensor; `sudo /opt/orionx/optional/install-zeek.sh` installs it), the picture reads its `conn`, `dns`, `dhcp` and `ssdp` logs. Without it, the page falls back to the neighbour table and the OUI registry and names every degraded row: a sighting whose log was read and held nothing is **absent**; a sighting whose log is not available is **unknown**, never zero. Reads are bounded (tail-capped per log, 1.5 s budget); when a cap bites, the counts are declared a lower bound. Nothing in the passive picture transmits a frame.
+Zeek is optional. With it (Tier 1 or 2 starts the managed sensor; `sudo orionx-optional install zeek` installs it), the picture reads its `conn`, `dns`, `dhcp` and `ssdp` logs. Without it, the page falls back to the neighbour table and the OUI registry and names every degraded row: a sighting whose log was read and held nothing is **absent**; a sighting whose log is not available is **unknown**, never zero. Reads are bounded (tail-capped per log, 1.5 s budget); when a cap bites, the counts are declared a lower bound. Nothing in the passive picture transmits a frame.
 
 **Gateway and upstream probes (active, operator-initiated).** Beneath the passive picture, under **Operator-initiated**, two buttons run the page's only active checks. Neither runs on page load or on a timer; each card says exactly what pressing it sends. **Ask the gateway** sends an SSDP M-SEARCH for a UPnP Internet Gateway Device on this segment only (multicast 239.255.255.250:1900, TTL 2, 2 s listen), fetches the device description from the address the gateway names (only if it is a local RFC 1918 / link-local address; anything else is listed as not followed), and asks it `GetExternalIPAddress` and `GetCommonLinkProperties`. Friendly name, manufacturer, model, external IP and link rates are shown labelled **reported by the gateway, not measured**: they are the router's claims about itself. If nothing answers, the card says the gateway did not answer, which is the absence of an answer and not evidence about the gateway (UPnP is often switched off). **Probe upstream** reaches the internet, so it is a **probe, posture-gated**: it passes the same check GODSEYE does, and at Tier 2, with an unknown posture or with no default route it does not run. The card shows the refusal instead: the posture, the hosts it would have contacted, what still works and the remedy. When allowed, it compares the system resolver with an unfiltered resolver reached directly (1.1.1.1, fallback 9.9.9.10) on three names with fixed, published addresses plus a name under `.invalid` that cannot exist; fetches `http://cp.cloudflare.com/generate_204` (anything but an empty 204 means a captive portal or interception); and tries one TCP connection each to ports 22, 53, 80, 443, 853 and 8080 on hosts known to listen there. A timeout while other ports connect is reported as possible blocking. When nothing connects at all, it says there may be no path out, not that ports are blocked.
 
@@ -1691,39 +1691,57 @@ The files named in those two comments exist **only** after you run the command; 
 
 ## 15. Optional Installers
 
-Some tools that would bloat the base ISO or require network access are shipped
-as post-boot installers under `/opt/orionx/optional/`:
-
-| Installer | Tool | Size |
-|---|---|---|
-| `install-clamav.sh` | ClamAV signature scanner | ~350 MB |
-| `install-ghidra.sh` | NSA Ghidra (RE) | ~500 MB |
-| `install-element.sh` | Element desktop Matrix client | ~200 MB |
-| `install-floss.sh` | Mandiant FLOSS | ~50 MB |
-| `install-trid.sh` | File type identification | ~5 MB |
-| `install-gomuks.sh` | Matrix TUI client | ~20 MB |
-| `install-zeek.sh` | Zeek network security monitor (the recovery path if the build-time install failed) | ~100 MB |
-| `install-geoip.sh` | DB-IP Lite country + ASN labels for the attack map | ~70 MB |
-| `install-duckdb.sh` | DuckDB accelerator for `orionx-logquery` | ~30 MB |
-| `install-piper-voice.sh` | Piper natural voice for R.A.I.N. narration (en_US-lessac-medium, SHA-256-pinned; installer synthesises audio to prove it works) | ~63 MB model, >150 MB installed with onnxruntime |
-| `install-bluetooth.sh` | Bluetooth support (bluez + blueman): turns the radio on, starts `bluetooth.service`, opens Blueman for pairing. No reboot. Installs from a cache baked into the ISO when there is no network; `--check` reports, `--dry-run` plans. Off again: `sudo rfkill block bluetooth` | ~7 MB |
-
-### Usage
+Some tools that would bloat the base ISO or need network access install after
+boot. One command manages all of them, `orionx-optional` (DEC-PHASE13-057):
 
 ```bash
-# Verify network first — optional installers fetch from the internet by design
-sudo /opt/orionx/optional/install-clamav.sh
+orionx-optional status                 # every tool, by group: installed, active, health, version
+sudo orionx-optional install clamav    # install one (needs network to its download source)
+sudo orionx-optional uninstall clamav  # remove what that install added, and nothing else
 ```
 
-The Orion Workbench's **Optional** section lists every one of these with whether it is already installed on this deck (from the installer's own evidence) and the exact command to run.
+The tools, grouped by what they are for:
 
-Each installer:
+| Group | Tool (id) | What it is | Size |
+|---|---|---|---|
+| Network & hunting | Zeek (`zeek`) | Network security monitor; also ships in the image, so this is the recovery path if that install failed | ~180 MB |
+| | GeoIP (`geoip`) | DB-IP Lite country + ASN labels for the attack map | ~22 MB |
+| | DuckDB (`duckdb`) | Faster engine for `orionx-logquery` on large captures | ~50 MB |
+| Malware analysis | ClamAV (`clamav`) | Signature scanner with freshclam | ~250 MB |
+| | FLOSS (`floss`) | Mandiant's obfuscated-string extractor | ~15 MB |
+| | TrID (`trid`) | File type identification by binary signature | ~5 MB |
+| | Ghidra (`ghidra`) | NSA reverse-engineering suite (pulls OpenJDK 21) | ~420 MB + JDK |
+| Team comms | Element (`element`) | Matrix desktop client | ~200 MB |
+| | gomuks (`gomuks`) | Matrix terminal client (legacy v0.3.1) | ~21 MB |
+| Deck: voice & peripherals | Piper voice (`piper-voice`) | Natural voice for R.A.I.N. narration (SHA-256-pinned model; the installer synthesises audio to prove it works) | ~63 MB model, >150 MB with onnxruntime |
+| | Bluetooth (`bluetooth`) | bluez + blueman: turns the radio on, starts `bluetooth.service`; installs from a cache in the ISO when offline. Off again: `sudo rfkill block bluetooth` | ~10 MB |
 
-- Requires root (`sudo`)
-- Verifies network connectivity to the download source first
-- Exits cleanly with an error message when offline (no partial installs)
-- Uses the shared `lib/orionx-installer-common.sh` for logging, apt/wget helpers,
-  and SHA256 verification
+**Status** needs no root. For each tool it reports one state: *not installed*
+(with *needs network* and the reason when the download source is
+unreachable), *working* (an install or uninstall in progress, step n of 5),
+*installed*, *active* (its service is running: Zeek sensors, freshclam,
+Bluetooth), *degraded* (installed but a health check fails: for example ClamAV
+signatures older than 14 days, a GeoIP database older than two months), or
+*failed* (the last install failed; the reason is the installer's first error
+line, the log is named). `--json` gives the same for scripts.
+
+**Install** checks the network first, records what is on the deck, runs the
+tool's installer, checks the tool works, and writes down exactly what was
+added (Debian packages, pip packages, files) in
+`/var/lib/orionx/optional/<id>.json`. **Uninstall** removes only what that
+record lists. It first asks apt what the removal would take and refuses if
+that includes anything the install did not add. A tool that shipped in the
+image, or was installed some other way, has no record and is never removed.
+One action runs at a time; each one's full output is kept in
+`/var/log/orionx/optional/`.
+
+Every install and uninstall publishes to the event bus, so R.A.I.N. and the
+Cockpit hear it: a start, then success or failure with the reason. A download
+whose SHA-256 pin or repository signing key does not match is refused and
+reported as **critical**, because that is what tampering looks like.
+
+The Orion Workbench's **Optional** section lists every tool with whether it is
+installed on this deck and the command to run.
 
 The same directory holds one diagnostic, not an installer: `sudo /opt/orionx/optional/apt-evidence.sh` collects what apt did and would do on this deck (`/var/log/apt/history.log` and `term.log`, `apt-get -s install` and `apt-get -s upgrade` simulations, `apt-cache policy`, packages not in the `ii` state, the overlay's free space, the sources) into `~/orionx-apt-evidence-<date>.tar.gz`. It changes nothing — every apt call it makes is a simulation — and prints the tarball path last. Run it when a package install behaved unexpectedly and attach the tarball to the issue.
 

@@ -44,7 +44,9 @@ run 'orionx_wget_extract https://x/a.tar.gz "'"$S"'/dest"' >/dev/null 2>&1 \
 for f in install-floss.sh install-trid.sh install-ghidra.sh install-gomuks.sh; do
     grep -qE '^[[:space:]]*(wget -q -O|wget -qO)' "$OPT/$f" && fail "$f" "raw wget of an executable remains" || pass "$f: no unverified wget"
 done
-for v in FLOSS_SHA256 TRID_BIN_SHA256 TRID_DEF_SHA256 GHIDRA_ZIP_SHA256; do
+# TRID_DEF_SHA256 is gone on purpose (DEC-PHASE13-059): the definitions are data at an
+# unversioned URL, checked for shape; the TrID program itself stays pinned.
+for v in FLOSS_SHA256 TRID_BIN_SHA256 GHIDRA_ZIP_SHA256; do
     grep -qE "^$v=\"[0-9a-f]{64}\"" "$OPT"/install-*.sh && pass "$v pinned (64 hex)" || fail "$v" "not pinned"
 done
 grep -q '^GOMUKS_SHA256=""' "$OPT/install-gomuks.sh" && pass "gomuks has no pin (dead upstream URL) and therefore refuses" || fail "gomuks pin state" "unexpected"

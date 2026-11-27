@@ -36,8 +36,8 @@ MC_DESKTOP = Path("/usr/share/applications/orionx-matrix-commander.desktop")
 SYNAPSE_UNIT = "matrix-synapse.service"
 CLIENTS = (  # (id, label, probe path or command, installer command)
     ("matrix-commander", "Matrix chat (CLI)", "matrix-commander", None),
-    ("element", "Element (desktop)", "/usr/bin/element-desktop", "sudo /opt/orionx/optional/install-element.sh"),
-    ("gomuks", "gomuks (terminal)", "/usr/local/bin/gomuks", "sudo /opt/orionx/optional/install-gomuks.sh"),
+    ("element", "Element (desktop)", "/usr/bin/element-desktop", "sudo orionx-optional install element"),
+    ("gomuks", "gomuks (terminal)", "/usr/local/bin/gomuks", "sudo orionx-optional install gomuks"),
 )
 _LOOPBACK = ("127.", "::1", "localhost")
 

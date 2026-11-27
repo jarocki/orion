@@ -1325,7 +1325,7 @@ NO_TTS_MESSAGE = (
     "R.A.I.N. speech is ON but this deck has no text-to-speech engine, so "
     "alerts are TONE-ONLY. Detection and the cues are unaffected. Fix: "
     "sudo apt-get install -y espeak-ng  (or, for the natural voice, "
-    "sudo /opt/orionx/optional/install-piper-voice.sh). "
+    "sudo orionx-optional install piper-voice). "
     "Check with: orionx-rain --speech-status"
 )
 PIPER_FALLBACK_MESSAGE = (

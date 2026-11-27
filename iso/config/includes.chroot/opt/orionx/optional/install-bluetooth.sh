@@ -136,14 +136,10 @@ cache_debs() {
     shopt -u nullglob
 }
 
-bluetooth_emit() {
-    local sev="$1"; shift
-    command -v orionx-event >/dev/null 2>&1 || return 0
-    # source=installer / category=tooling: an install is not a detection and
-    # must not move THREAT PRESSURE (same rule as install-zeek.sh).
-    orionx-event --severity "$sev" --source installer --category tooling "$*" \
-        >/dev/null 2>&1 || true
-}
+# Bus events for this install are published by orionx-optional, the one
+# writer for optional-tool events (#197, DEC-PHASE13-057): start, then success
+# or failure with this installer's first ERROR line as the reason; a line
+# containing MISMATCH (key fingerprint or SHA-256) makes the failure critical.
 
 # Service + radio: the part a re-run always re-asserts, because a masked
 # unit or a soft-blocked radio is the same "nothing pairs" symptom as an
@@ -280,4 +276,3 @@ orionx_log_info "bluetooth.service is active and the radio is unblocked. Pair a 
 orionx_log_info "  blueman-manager          # graphical (opened for you if a desktop was reachable)"
 orionx_log_info "  bluetoothctl             # terminal: scan on / pair <MAC> / connect <MAC>"
 orionx_log_info "Turn the radio off again with: sudo rfkill block bluetooth"
-bluetooth_emit notice "Bluetooth support installed from the $installed_from (bluez $BLUEZ_VER, blueman); bluetooth.service active, radio unblocked. The deck now has one more radio on."

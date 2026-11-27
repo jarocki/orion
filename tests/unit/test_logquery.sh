@@ -716,7 +716,7 @@ except SystemExit:
     pass
 PY
 ERR="$(python3 "$WORK/block_duckdb.py" "$LQ" "$WORK/evidence/access.log" 2>&1)"
-if echo "$ERR" | grep -q 'install-duckdb.sh'; then
+if echo "$ERR" | grep -q 'orionx-optional install duckdb'; then
     pass "a missing duckdb names the optional installer"
 else fail "missing duckdb names the installer" "$ERR"; fi
 if echo "$ERR" | grep -qi 'sqlite'; then

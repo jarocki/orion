@@ -88,7 +88,7 @@ OUI_SOURCES = (
     "/usr/share/ieee-data/oui.csv",
     "/usr/share/nmap/nmap-mac-prefixes",     # nmap's copy, if ieee-data is ever dropped
 )
-INSTALL_ZEEK = "sudo /opt/orionx/optional/install-zeek.sh"
+INSTALL_ZEEK = "sudo orionx-optional install zeek"
 
 NETBIOS_UDP = frozenset({137, 138})
 NETBIOS_TCP = frozenset({139, 445})

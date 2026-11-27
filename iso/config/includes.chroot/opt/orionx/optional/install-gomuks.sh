@@ -49,6 +49,13 @@ orionx_log_info "  Mission: defend — terminal Matrix client for encrypted team
 # the project moved to github.com/gomuks/gomuks, whose releases ship a desktop
 # .deb, not a static terminal binary). An unpinned binary is not run as root.
 # Choosing a replacement artifact (and pinning it) is an owner decision.
+# Rechecked 2026-11-25 (#197): the URL below is still 404, but the asset is not
+# gone. github.com/gomuks/gomuks keeps release v0.3.1 with gomuks-linux-amd64
+# (sha256 0646ba82…3167 in its sha256sums.txt, matched by a download), the
+# legacy terminal client built on the deprecated libolm; current releases
+# (v0.2611.x) also ship gomuks-terminal-amd64 with GitHub-published digests.
+# The choice is still the owner's; links.json marks gomuks `blocked` with that
+# reason so orionx-optional and the Cockpit say why instead of failing.
 # ---------------------------------------------------------------------------
 GOMUKS_VERSION="v0.3.1"
 GOMUKS_SHA256=""

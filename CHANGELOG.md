@@ -9,8 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`orionx-optional`: one manager for the optional tools (#197, #198;
+  DEC-PHASE13-057, DEC-PHASE13-058).** `orionx-optional status` (no root) gives
+  every tool's state by functional group (Network & hunting, Malware analysis,
+  Team comms, Deck: voice & peripherals): not installed (and why it cannot be:
+  no network, blocked), working (step n of 5), installed, active, degraded
+  (a health check fails, e.g. ClamAV signatures older than 14 days) or failed.
+  `install` records exactly what it added; `uninstall` removes only that, after
+  `apt-get -s purge` shows nothing else would go, and never touches a tool
+  shipped in the image. Every action publishes start and success or failure on
+  the bus; an integrity refusal (pin or signing-key MISMATCH) is critical. A
+  polkit action pinned to the helper (`auth_admin_keep`, active local sessions
+  only) lets the Cockpit run it without a terminal (the TOOLS tab is #199).
+  The catalogue (links.json) is the one list both the Cockpit and the
+  Workbench read; its commands now read `sudo orionx-optional install <id>`.
+
 ### Fixed
 
+- **Three optional installers could not install on Debian 13 (#197).** Ghidra
+  asked for `openjdk-17-jdk`, which trixie does not have; it now installs
+  `openjdk-21-jdk`. TrID's definitions pin had gone stale because upstream
+  replaces `triddefs.zip` in place; the definitions are now checked for shape
+  (one `triddefs.trd`, under 64 MB) and their hash logged, while the TrID
+  program stays pinned (DEC-PHASE13-059). gomuks still refuses: its old URL is
+  gone and the replacement is an owner decision, so the catalogue marks it
+  blocked with that reason instead of offering an install that fails.
 - **Release staging asks for the gpg passphrase first, and recovers from a
   failed signature by itself (#193, DEC-PHASE13-056).** `owner-release.sh`
   points gpg-agent's pinentry at the owner's terminal and asks once before it

@@ -44,7 +44,7 @@ GEOIP_ASN_DB = GEOIP_DIR + "/dbip-asn-lite.mmdb"
 
 # The remedy string the UI shows wherever geolocation is missing. One authority
 # for the sentence, so the page, the feed and the --help text cannot drift.
-GEOIP_REMEDY = "sudo /opt/orionx/optional/install-geoip.sh"
+GEOIP_REMEDY = "sudo orionx-optional install geoip"
 
 # Severity ordering must match rain_lib.SEVERITIES exactly.
 SEVERITIES = ("info", "notice", "warning", "critical")

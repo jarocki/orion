@@ -94,7 +94,7 @@ capture, and the narration is synthesised offline. The earlier beta walkthrough
 `nikto` have no candidate package in Debian 13 and are not installed by any
 other route. Earlier release text listed them; that text was wrong. Ghidra is
 the supported reverse-engineering option and installs post-boot via
-`/opt/orionx/optional/install-ghidra.sh`.
+`sudo orionx-optional install ghidra`.
 
 ### AI Copilot — Nebula Runtime
 
@@ -402,7 +402,7 @@ Open in the v3.1.0 ISO (each links to its tracking issue):
   a pre-planned peer list remains the deterministic option (User Guide §5).
 - **`radare2` and `fonts-iosevka` are not shipped** ([#85](https://github.com/jarocki/orion/issues/85)):
   Debian 13 has no candidate package for either. Ghidra installs post-boot via
-  `/opt/orionx/optional/install-ghidra.sh`; Hack is the monospace font.
+  `sudo orionx-optional install ghidra`; Hack is the monospace font.
 - **The operator account is root without a prompt** (by design; see the User
   Guide, §3 *The Live Account and Administrator Rights*).
 - **Hardware coverage:** boot-tested on two laptops (Lenovo Bay Trail: v3.0.0, 2026-10-18; HP Pavilion: v3.1.0, 2026-10-26) and in QEMU (BIOS + UEFI). Other hardware is untested — reports welcome.

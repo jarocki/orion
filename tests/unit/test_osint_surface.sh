@@ -224,12 +224,11 @@ for item in inst:
     if not found:
         bad("installable %r: %r does NOT ship" % (item.get("name"), what))
     cmd = item.get("command", "")
-    if item.get("runtime_path", "") not in cmd:
-        bad("installable %r: command %r does not name its own installer"
+    # #197: one helper installs every optional tool (records it, publishes it)
+    if cmd != "sudo orionx-optional install %s" % item.get("id"):
+        bad("installable %r: command %r is not 'sudo orionx-optional install <id>'"
             % (item.get("name"), cmd))
-    if not cmd.startswith("sudo "):
-        bad("installable %r: command is not copy-pasteable as root" % item.get("name"))
-print("  ok   %d installable entries, each a one-line command at a real installer"
+print("  ok   %d installable entries, each a real installer behind 'sudo orionx-optional install <id>'"
       % len(inst))
 
 online = data.get("online") or []

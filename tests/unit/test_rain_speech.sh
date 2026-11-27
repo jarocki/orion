@@ -541,7 +541,7 @@ check(cat in rl.STATUS_CATEGORIES, "the category is in rain_lib.STATUS_CATEGORIE
 check("TONE-ONLY" in msg, "names the consequence (TONE-ONLY)")
 check("unaffected" in msg, "names what still works")
 check("apt-get install -y espeak-ng" in msg, "names a copy-pasteable remedy")
-check("install-piper-voice.sh" in msg, "names the natural-voice remedy too")
+check("orionx-optional install piper-voice" in msg, "names the natural-voice remedy too")
 check("orionx-rain --speech-status" in msg, "names how to check")
 
 # A model that goes away is a DIFFERENT, milder degradation: still announced

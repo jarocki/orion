@@ -57,7 +57,6 @@ TRID_DEF_URL="https://mark0.net/download/triddefs.zip"
 # When mark0.net updates either file the install REFUSES (fail closed); review
 # the new file and update the pin. There is no vendor signature to verify.
 TRID_BIN_SHA256="3fb9ccfed650123f7bb5fc5a93ccbfcbc6ff98876cc659c8958c03a582467aa9"
-TRID_DEF_SHA256="c8cce7d9c9b3d0ed44d3df0b424d50d616710f5777f7781c6a7bec78b092015f"
 
 orionx_log_info "Downloading TrID binary..."
 orionx_apt_install unzip
@@ -72,11 +71,36 @@ rm -f "$local_bin"
 
 # Download and extract the TrID definitions
 orionx_log_info "Downloading TrID definitions (triddefs.zip)..."
+# @decision DEC-PHASE13-059
+# @category TOOLING
+# @title TrID definitions are checked for shape, not pinned; the TrID program stays pinned
+# @status accepted
+# @rationale #197. triddefs.zip sits at one unversioned URL and upstream
+#   replaces it as definitions are added: the pin written on 2026-10 no
+#   longer matched on 2026-11-25, so every TrID install was refused. A fixed
+#   pin on a moving file breaks again every few months. The definitions are
+#   data that trid reads, not code that runs, so DEC-PHASE12-122 (every
+#   fetched executable is SHA-256 pinned) is kept for the binary and relaxed
+#   for this file only: it must be a zip of exactly one entry, triddefs.trd,
+#   under 64 MB unpacked, fetched over TLS from mark0.net. The hash actually
+#   received is logged and kept in DEFS-SHA256 (the version orionx-optional
+#   reports), so an install can be traced to the exact file.
 local_def="$(mktemp)"
-orionx_download_verified "$TRID_DEF_URL" "$local_def" "$TRID_DEF_SHA256"
-unzip -q -o "$local_def" -d "$TRID_DEST"
+if ! wget -q -O "$local_def" "$TRID_DEF_URL"; then
+    rm -f "$local_def"; orionx_log_error "Download failed: $TRID_DEF_URL"; exit 1
+fi
+def_entries="$(unzip -Z1 "$local_def" 2>/dev/null || true)"
+def_bytes="$(unzip -l "$local_def" 2>/dev/null | awk 'END {print $1}')"
+if [[ "$def_entries" != "triddefs.trd" || ! "$def_bytes" =~ ^[0-9]+$ || "$def_bytes" -gt 67108864 ]]; then
+    rm -f "$local_def"
+    orionx_log_error "triddefs.zip is not a single triddefs.trd under 64 MB (entries: ${def_entries:-none}); refusing it."
+    exit 1
+fi
+def_sha="$(sha256sum "$local_def" | awk '{print $1}')"
+unzip -q -o "$local_def" triddefs.trd -d "$TRID_DEST"
 rm -f "$local_def"
-
+printf 'triddefs %s\n' "$def_sha" > "$TRID_DEST/DEFS-SHA256"
+orionx_log_info "TrID definitions installed (triddefs.zip sha256 $def_sha)"
 chmod +x "$TRID_DEST/trid"
 
 # ---------------------------------------------------------------------------

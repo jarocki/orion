@@ -21,7 +21,7 @@
 #   Ghidra 11.0.1 (NSA/ghidra, Apache-2.0)  ~400 MB extracted
 #   Destination: /opt/ghidra/
 #   Symlink:     /usr/local/bin/ghidra → /opt/ghidra/ghidraRun
-#   Requires:    java (openjdk-17-jdk or later)
+#   Requires:    java (openjdk-21-jdk or later)
 #   Mission verb: analyze (static reverse-engineering workbench)
 #
 # Note: SHA-256 pin is deferred to the first green CI build (DEC-PHASE10-008
@@ -47,8 +47,11 @@ orionx_log_info "  Network: github.com (release tarball download)"
 orionx_log_info "  Mission: analyze — static reverse-engineering workbench"
 
 # Ensure Java runtime is available (Ghidra requires JDK 17+)
-orionx_log_info "Ensuring openjdk-17-jdk is installed..."
-orionx_apt_install openjdk-17-jdk
+# Ghidra 11 needs a JDK 17 or newer. Debian 13 ships openjdk-21 and has no
+# openjdk-17 (checked 2026-11-25 on packages.debian.org: "Package not
+# available in this suite"), so asking for 17 failed every install (#197).
+orionx_log_info "Ensuring openjdk-21-jdk is installed..."
+orionx_apt_install openjdk-21-jdk
 
 # ---------------------------------------------------------------------------
 # Download and extract Ghidra

@@ -150,7 +150,7 @@ for k in ("wpad", "netbios", "llmnr", "mdns", "ldap", "dhcp", "ssdp"):
     ck(a["sightings"][k]["state"] == "unknown" and "needs Zeek" in a["sightings"][k]["detail"], f"zeek absent: {k} unknown, naming its log ({a['sightings'][k]['detail']})")
 ck(a["sightings"]["iot"]["state"] == "present" and "mDNS part needs Zeek dns.log" in a["sightings"]["iot"]["detail"], "zeek absent: IoT keeps the OUI half and says the mDNS half is missing")
 ck(set(a["degraded"]) == {"split", "hosts.zeek"} | {f"sightings.{k}" for k in ("wpad", "netbios", "llmnr", "mdns", "ldap", "dhcp", "ssdp")}, f"degraded names every Zeek-fed row ({a['degraded']})")
-ck(a["zeek"]["state"] == "absent" and "install-zeek.sh" in a["zeek"]["reason"], f"zeek state absent with the remedy ({a['zeek']['reason'][:60]}...)")
+ck(a["zeek"]["state"] == "absent" and "orionx-optional install zeek" in a["zeek"]["reason"], f"zeek state absent with the remedy ({a['zeek']['reason'][:60]}...)")
 ck(a["hosts"]["count"] == 4 and a["split"]["available"] is False and a["split"]["local_pct"] is None, "hosts from the neighbour table only; split is None, not 0/0")
 ck(a["summary"]["headline"] == "4 hosts · ARP table only · observed by this deck" and a["summary"]["split_line"] == "local/internet split needs Zeek (conn.log)", f"zeek-absent headline/split: {a['summary']['headline']} | {a['summary']['split_line']}")
 
