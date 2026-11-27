@@ -481,6 +481,20 @@ failed/unknown draft lookups stop before any asset deletion.
 `--dry-run` preserves Git refs and artifacts, including with `--restage`; only its
 diagnostic log is appended.
 
+**The passphrase is asked first (DEC-PHASE13-056, #193).** Run the script in a
+Terminal window you are watching. Right before staging it points gpg-agent's
+pinentry at that terminal and asks for the passphrase once (three tries), so the
+agent holds it when signing starts about 90 s later; it never reads or stores the
+passphrase itself. With no terminal it stops before doing any work (unless
+`ORIONX_GPG_EXTRA_ARGS` chooses `--pinentry-mode loopback`). Staging is written to
+`tmp/release-<tag>.partial`, with its source recorded in
+`tmp/release-<tag>.partial.source`, and becomes `tmp/release-<tag>` only when the
+signed set is complete. If staging fails (a gpg timeout, a full disk), re-run the
+same command: a partial with this tag's commit, run and ISO is removed and staged
+again; any other partial is refused and left in place. v3.1.4, v3.1.5 and v3.1.6
+each lost a staging run to an unseen pinentry timeout and needed a hand-written
+resume script; this replaces those scripts.
+
 Used for `v2.1.0-bullseye-rain` (6.62 GB, 4 parts) and `v2.2.0-beta`
 (3.09 GB, 7 parts). Use it when the ISO that passed the gates was built on the
 build host, or when CI cannot build or upload. It publishes the same asset
