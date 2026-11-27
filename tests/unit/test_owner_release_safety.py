@@ -133,6 +133,12 @@ if name == "gh":
         sys.exit(0)
 if name == "gpg" and args[:1] == ["--verify"]:
     sys.exit(0)
+if name == "gpg" and "--detach-sign" in args and "--output" in args:
+    out = pathlib.Path(args[args.index("--output") + 1])
+    if scenario == "gpg-fails" or not out.name.endswith(".gpg-prime.asc"):
+        sys.exit(2)
+    out.write_text("fixture signature\n")
+    sys.exit(0)
 # Executable presence is enough for unused required tools. Calls are forbidden.
 print("unexpected stub call: " + name + " " + " ".join(args), file=sys.stderr)
 sys.exit(97)
@@ -152,7 +158,16 @@ class OwnerReleaseSafetyTests(unittest.TestCase):
         # Intentional sentinel: reaching staging proves provenance validation
         # succeeded, but never executes the real signing/staging program.
         (release / "stage-split-release.sh").write_text(
-            '#!/usr/bin/env bash\necho "MOCK_STAGE_REACHED" >&2\nexit 88\n'
+            '#!/usr/bin/env bash\necho "MOCK_STAGE_REACHED" >&2\n'
+            'out=""; while [[ $# -gt 0 ]]; do [[ "$1" == --out ]] && out="$2"; shift; done\n'
+            'echo "MOCK_STAGE_OUT=$out" >&2\n'
+            'case "${MOCK_STAGE:-}" in\n'
+            '  partial) mkdir -p "$out" && : > "$out/part-aa" && echo "gpg: signing failed: Timeout" >&2; exit 2 ;;\n'
+            '  ok) mkdir -p "$out" && : > "$out/' + ISO_NAME + '.part-aa"\n'
+            '      printf "%s  %s\\n" "' + ISO_HASH + '" "' + ISO_NAME + '" > "$out/SHA256SUMS"\n'
+            '      for f in SHA256SUMS.asc SHA512SUMS SHA512SUMS.asc REASSEMBLE.txt RELEASE-NOTES.md; do echo x > "$out/$f"; done\n'
+            '      exit 0 ;;\n'
+            'esac\nexit 88\n'
         )
         bins = self.root / "bin"
         bins.mkdir()
@@ -162,16 +177,17 @@ class OwnerReleaseSafetyTests(unittest.TestCase):
             tool.chmod(0o755)
         self.env = dict(os.environ, PATH=f"{bins}:{Path(sys.executable).parent}:/usr/bin:/bin",
                         FIXTURE_ROOT=str(self.root), ORIONX_REPO_ROOT=str(self.repo),
-                        HOME=str(self.root), GH_TOKEN="", GITHUB_TOKEN="")
+                        HOME=str(self.root), GH_TOKEN="", GITHUB_TOKEN="",
+                        ORIONX_GPG_EXTRA_ARGS="--pinentry-mode loopback")
         self.ci = self.repo / f"tmp/release-{TAG}-ci"
         self.stage = self.repo / f"tmp/release-{TAG}"
 
-    def run_helper(self, step="download", scenario="normal", dry=False, extra=()):
+    def run_helper(self, step="download", scenario="normal", dry=False, extra=(), env=None):
         args = ["bash", str(self.script), "--tag", TAG, "--from", step]
         args.extend(extra)
         if dry:
             args.append("--dry-run")
-        return subprocess.run(args, cwd=self.repo, env=dict(self.env, SCENARIO=scenario),
+        return subprocess.run(args, cwd=self.repo, env=dict(self.env, SCENARIO=scenario, **(env or {})),
                               capture_output=True, text=True, timeout=20, check=False)
 
     def calls(self):
@@ -274,7 +290,9 @@ class OwnerReleaseSafetyTests(unittest.TestCase):
 
     def assert_no_publication(self):
         self.assertFalse(any(c[0] == "gh" and c[1] in ("release", "api") for c in self.calls()))
-        self.assertFalse(any(c[0] == "gpg" and "--detach-sign" in c for c in self.calls()))
+        self.assertFalse(any(c[0] == "gpg" and "--detach-sign" in c
+                             and not c[c.index("--output") + 1].endswith(".gpg-prime.asc")
+                             for c in self.calls()))
 
     def test_waits_for_new_commit_run_not_old_tag_run(self):
         result = self.run_helper("ci", "delayed")
@@ -354,6 +372,74 @@ class OwnerReleaseSafetyTests(unittest.TestCase):
         self.assertIn("MOCK_STAGE_REACHED", result.stdout + result.stderr)
         self.assertFalse(any(c[:3] == ["gh", "run", "download"] for c in self.calls()))
         self.assert_no_publication()
+
+    # --- #193: passphrase first; partial staging recovers by itself --------
+    def partial(self):
+        return self.repo / f"tmp/release-{TAG}.partial"
+
+    def test_stage_without_terminal_stops_before_any_work(self):
+        self.seed_cache()
+        env = dict(self.env); env.pop("ORIONX_GPG_EXTRA_ARGS")
+        result = subprocess.run(["bash", str(self.script), "--tag", TAG, "--from", "stage"], cwd=self.repo,
+                                env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=20, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("needs this terminal for the passphrase", result.stdout)
+        self.assertNotIn("MOCK_STAGE_REACHED", result.stdout + result.stderr)
+        self.assertFalse(self.partial().exists() or Path(f"{self.partial()}.source").exists() or self.stage.exists())
+
+    def test_passphrase_is_asked_before_staging(self):
+        self.seed_cache()
+        result = self.run_helper("stage")
+        out = result.stdout + result.stderr
+        self.assertIn("MOCK_STAGE_REACHED", out)
+        self.assertLess(out.index("passphrase cached"), out.index("MOCK_STAGE_REACHED"))
+        self.assertIn(f"MOCK_STAGE_OUT=tmp/release-{TAG}.partial", out)
+        self.assert_no_publication()
+
+    def test_failed_prime_stages_nothing(self):
+        self.seed_cache()
+        result = self.run_helper("stage", "gpg-fails")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("gpg could not sign after 3 attempts", result.stdout)
+        self.assertNotIn("MOCK_STAGE_REACHED", result.stdout + result.stderr)
+        self.assertFalse(self.partial().exists() or self.stage.exists())
+
+    def test_signing_failure_leaves_a_partial_not_unproven_staging(self):
+        self.seed_cache()
+        result = self.run_helper("stage", env={"MOCK_STAGE": "partial"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.stage.exists())
+        self.assertTrue((self.partial() / "part-aa").exists())
+        self.assertEqual(Path(f"{self.partial()}.source").read_text().strip(), f"{SHA} 202 {ISO_HASH}")
+        self.assert_no_publication()
+
+    def test_rerun_after_failed_signing_recovers_by_itself(self):
+        self.seed_cache()
+        self.run_helper("stage", env={"MOCK_STAGE": "partial"})
+        result = self.run_helper("stage", env={"MOCK_STAGE": "ok"})
+        self.assertIn("removing the partial staging", result.stdout)
+        self.assertIn("staged: 1 parts", result.stdout)
+        self.assertEqual((self.stage / ".owner-release-source").read_text().strip(), f"{SHA} 202 {ISO_HASH}")
+        self.assertFalse(self.partial().exists() or Path(f"{self.partial()}.source").exists())
+
+    def test_foreign_partial_is_refused_and_preserved(self):
+        self.seed_cache()
+        self.partial().mkdir(parents=True)
+        (self.partial() / "keep").write_text("x")
+        Path(f"{self.partial()}.source").write_text(f"{OLD_SHA} 101 {ISO_HASH}\n")
+        result = self.run_helper("stage", env={"MOCK_STAGE": "ok"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unproven partial staging", result.stdout)
+        self.assertTrue((self.partial() / "keep").exists())
+        self.assertNotIn("MOCK_STAGE_REACHED", result.stdout + result.stderr)
+
+    def test_partial_without_source_record_is_refused(self):
+        self.seed_cache()
+        self.partial().mkdir(parents=True)
+        result = self.run_helper("stage", env={"MOCK_STAGE": "ok"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unproven partial staging", result.stdout)
+        self.assertTrue(self.partial().exists())
 
     def test_resume_rejects_unproven_staging(self):
         self.seed_cache()

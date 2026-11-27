@@ -389,6 +389,34 @@ check_staged_source() {
 }
 
 # --- stage ------------------------------------------------------------------
+# prime_gpg: have gpg-agent hold the passphrase before staging starts (#193).
+# Asks in THIS terminal; never reads or stores the passphrase itself.
+prime_gpg() {
+    local prime="${R}.gpg-prime" i
+    if [[ " ${ORIONX_GPG_EXTRA_ARGS:-} " == *" --pinentry-mode loopback "* ]]; then
+        say "gpg: loopback pinentry chosen in ORIONX_GPG_EXTRA_ARGS; not priming"
+    else
+        [[ -t 0 ]] || die "staging signs with gpg and needs this terminal for the passphrase; run owner-release.sh in Terminal (not through a non-interactive shell)"
+        GPG_TTY="$(tty)"; export GPG_TTY
+        gpg-connect-agent updatestartuptty /bye >/dev/null 2>&1 || say "gpg: could not point gpg-agent at this terminal (continuing)"
+    fi
+    printf 'orionx %s gpg prime %s\n' "$TAG" "$(ts)" > "$prime" || die "cannot write ${prime}"
+    for i in 1 2 3; do
+        printf '\a'
+        say "gpg: enter the passphrase for ${KEY} now (attempt ${i}/3; a pinentry window may be behind others)"
+        # shellcheck disable=SC2086  # ORIONX_GPG_EXTRA_ARGS is a list of flags
+        if gpg --no-batch --yes ${ORIONX_GPG_EXTRA_ARGS:-} --local-user "$KEY" --armor --detach-sign --output "${prime}.asc" "$prime" \
+           && gpg --verify "${prime}.asc" "$prime" >/dev/null 2>&1; then
+            rm -f -- "$prime" "${prime}.asc"
+            say "gpg: passphrase cached by gpg-agent; staging signs in about 90 s"
+            return 0
+        fi
+        say "gpg: signing failed; retrying in 5 s"; sleep 5
+    done
+    rm -f -- "$prime" "${prime}.asc"
+    die "gpg could not sign after 3 attempts; nothing was staged (re-run the same command)"
+}
+
 CURRENT_STEP=stage
 if step_due stage; then
     say "--- stage: split, checksum, sign (gpg will ask for the passphrase)"
@@ -407,8 +435,43 @@ if step_due stage; then
             fi
         fi
         if [[ ! -e "$R" ]]; then
-            run "stage-split-release (${PART_SIZE} parts)" bash scripts/release/stage-split-release.sh "$ISO" "$TAG" --out "$R" --key "$KEY" --part-size "$PART_SIZE"
-            cp "$CI_DIR/.owner-release-source" "$R/.owner-release-source"
+            # @decision DEC-PHASE13-056
+            # @category RELEASE
+            # @title Staging asks for the passphrase before it splits, and stages
+            #   into a partial directory that a rerun recovers by itself
+            # @status accepted
+            # @rationale #193. Staging died on `gpg: signing failed: Timeout` in
+            #   v3.1.4 (2026-11-06), v3.1.5 (2026-11-08) and v3.1.6 (2026-11-18):
+            #   pinentry was asked ~90 s into staging, after the split and hashes,
+            #   from `gpg --batch`, and timed out unseen (in v3.1.6 the agent's
+            #   pinentry was bound to another terminal). Each left a marker-less
+            #   directory that check_source() rightly refused, and each needed a
+            #   hand-written resume script. Now: (1) prime_gpg asks once, up front,
+            #   in this terminal (GPG_TTY + updatestartuptty), so gpg-agent holds
+            #   the passphrase (default cache 600 s) when stage-split-release signs;
+            #   with no terminal it stops before any work unless the owner chose
+            #   loopback pinentry in ORIONX_GPG_EXTRA_ARGS. (2) stage-split-release
+            #   writes to ${R}.partial, whose provenance is in ${R}.partial.source;
+            #   only a complete, signed set is renamed to ${R} with its marker, so
+            #   a failed stage never leaves an unproven ${R}. A rerun removes a
+            #   partial whose recorded source is this tag commit, run and ISO, and
+            #   refuses any other. The sign-only resume #193 proposed is not
+            #   needed: re-splitting costs ~90 s and keeps one code path. The
+            #   passphrase is never read or held by this script (DEC-PHASE13-029).
+            P="${R}.partial"; PSRC="${P}.source"
+            want="$(cat "$CI_DIR/.owner-release-source")" || die "cannot read ${CI_DIR}/.owner-release-source"
+            if [[ -e "$P" || -L "$P" ]]; then
+                [[ -d "$P" && ! -L "$P" && -f "$PSRC" && ! -L "$PSRC" && "$(cat "$PSRC")" == "$want" ]] \
+                    || die "unproven partial staging ${P} (no matching ${PSRC}); move both aside and resume with --from stage"
+                say "removing the partial staging a failed run left in ${P} (same source: ${want})"
+                rm -rf -- "$P"
+            fi
+            prime_gpg
+            printf '%s\n' "$want" > "$PSRC" || die "cannot write ${PSRC}"
+            run "stage-split-release (${PART_SIZE} parts)" bash scripts/release/stage-split-release.sh "$ISO" "$TAG" --out "$P" --key "$KEY" --part-size "$PART_SIZE"
+            cp "$CI_DIR/.owner-release-source" "$P/.owner-release-source" || die "cannot mark ${P}"
+            mv "$P" "$R" || die "cannot move ${P} to ${R}"
+            rm -f -- "$PSRC"
         fi
         for f in SHA256SUMS SHA256SUMS.asc SHA512SUMS SHA512SUMS.asc REASSEMBLE.txt RELEASE-NOTES.md; do
             [[ -s "$R/$f" ]] || die "staging produced no ${f}"
