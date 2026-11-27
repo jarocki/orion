@@ -62,7 +62,7 @@ R="$(status_of)"
 [[ "$R" == FAIL* ]] && pass "TBD sentinel -> FAIL" || fail "sentinel" "$R"
 
 LIST="$(sed -n 's/^ORIONX_OPTIONAL_INSTALLERS=(\(.*\))$/\1/p' "$DIAG" | tr ' ' '\n' | sort | tr '\n' ' ')"
-DIR="$(ls "$REPO_ROOT/iso/config/includes.chroot/opt/orionx/optional/" | sed -n 's/^install-\(.*\)\.sh$/\1/p' | sort | tr '\n' ' ')"
+DIR="$(for f in "$REPO_ROOT"/iso/config/includes.chroot/opt/orionx/optional/install-*.sh; do f="${f##*/install-}"; echo "${f%.sh}"; done | sort | tr '\n' ' ')"
 [[ -n "$LIST" && "$LIST" == "$DIR" ]] && pass "diag checks exactly the installers the image ships ($LIST)" || fail "installer list" "diag: '$LIST' vs optional/: '$DIR'"
 
 echo; echo "Results: $PASS passed, $FAIL failed"

@@ -62,6 +62,7 @@ section "0900 library functions (canned apt-get -s output)"
 # Source only the functions (the hook returns early with ORIONX_TRIM_LIB_ONLY=1).
 # shellcheck disable=SC1090
 if ( set -e; ORIONX_TRIM_LIB_ONLY=1 source "$TRIM" ); then pass "hook sources as a library without side effects" ; else fail "lib source" "sourcing ran the main body or failed"; fi
+# shellcheck source=/dev/null
 ORIONX_TRIM_LIB_ONLY=1 source "$TRIM" 2>/dev/null
 cat > "$SCRATCH/plan" <<'EOF'
 NOTE: This is only a simulation!
@@ -110,7 +111,7 @@ fi
 if grep -qE "^ukui-polkit$" "$PKGS"; then fail "ukui-polkit not listed" "listed"; else pass "ukui-polkit not in the package list"; fi
 
 section "Hook ordering"
-ls "$REPO_ROOT/iso/config/hooks/live/" | sort | awk '/0900-trim/{t=NR} /0810-render/{r=NR} /0700-orionx/{s=NR} END{exit !(t>r && t>s)}' \
+printf '%s\n' "$REPO_ROOT"/iso/config/hooks/live/* | sed 's|.*/||' | sort | awk '/0900-trim/{t=NR} /0810-render/{r=NR} /0700-orionx/{s=NR} END{exit !(t>r && t>s)}' \
     && pass "0900-trim runs after 0700 (symlinks) and 0810 (guide render)" || fail "hook ordering" "trim must be last"
 
 section "Orphaned Qt5 (packages-build P2-9)"

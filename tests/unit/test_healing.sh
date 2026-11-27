@@ -31,6 +31,7 @@ CHROOT="$REPO_ROOT/iso/config/includes.chroot"
 # Never /tmp — scratch state lives in the repo's own tmp/ (CLAUDE.md).
 WORK="$REPO_ROOT/tmp/test-healing.$$"
 mkdir -p "$WORK"
+# shellcheck disable=SC2329  # run by the EXIT trap (ShellCheck 0.11 misses trap use when a script ends in exit)
 cleanup() { rm -rf "$WORK"; }
 trap cleanup EXIT
 

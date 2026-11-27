@@ -775,7 +775,7 @@ fi
 MODE="$(stat -c '%a' "$COPY" 2>/dev/null || stat -f '%Lp' "$COPY")"
 [[ "$MODE" == "600" ]] && pass "the copy is mode 0600" || fail "the copy is mode 0600" "mode $MODE"
 echo "$OUT" | grep -q "wireshark -r $COPY" && pass "export says how to open the copy" || fail "export says how to open the copy" "$OUT"
-ls "$EXR/out" | grep -q '\.part$' && fail "no partial file left behind" "$(ls -a "$EXR/out")" || pass "no partial file left behind"
+find "$EXR/out" -name '*.part' | grep -q . && fail "no partial file left behind" "$(ls -a "$EXR/out")" || pass "no partial file left behind"
 python3 "$CAP" export eth1 --dir "$EXR/cap" --state-dir "$EXR/state" --to "$EXR/out" >/dev/null 2>&1
 [[ $? -eq 1 ]] && pass "an interface with no capture is refused (exit 1)" || fail "no-capture export" "did not exit 1"
 python3 "$CAP" export ../etc --dir "$EXR/cap" --state-dir "$EXR/state" --to "$EXR/out" >/dev/null 2>&1

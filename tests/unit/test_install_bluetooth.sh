@@ -6,7 +6,7 @@
 # orionx-event) and the repo's real installer library, so the paths an operator
 # reaches without root — --check, --dry-run, the idempotence gate, argument
 # errors — run for real. The apply path needs root and apt; it is covered by
-# shellcheck, bash -n and the deck.
+# ShellCheck, bash -n and the deck.
 # ---------------------------------------------------------------------------
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

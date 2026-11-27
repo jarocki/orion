@@ -10,7 +10,8 @@
 
 .PHONY: lint lint-shell lint-python decision-log test-unit test-unit-bash test-unit-python test-integration test-forensic test-security test-mesh test-matrix test-e2e test-qemu-boot docker-build docker-build-matrix iso-build suricata-rules-refresh lynis clean help
 
-SHELL_SCRIPTS := $(shell find scripts -name '*.sh' -type f)
+# tests/ is linted too (#12), with tests/.shellcheckrc for the assertion idiom.
+SHELL_SCRIPTS := $(shell find scripts tests -name '*.sh' -type f)
 PYTHON_SCRIPTS := $(wildcard scripts/*.py) $(wildcard scripts/decisions/*.py)
 
 help: ## Show this help

@@ -65,16 +65,6 @@ assert_file_contains() {
     fi
 }
 
-assert_file_not_contains() {
-    local file="$1"
-    local pattern="$2"
-    local desc="${3:-$file does not contain '$pattern'}"
-    if ! grep -qE "$pattern" "$PROJECT_ROOT/$file" 2>/dev/null; then
-        pass "$desc"
-    else
-        fail "$desc" "Unexpected pattern found in $file: $pattern"
-    fi
-}
 
 # ============================================================
 # Test Group 1: File existence

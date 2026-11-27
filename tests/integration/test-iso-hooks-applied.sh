@@ -123,6 +123,7 @@ skip() { SKIP=$((SKIP + 1)); echo "${YELLOW}  SKIP${NC}: $1"; }
 #   trixie live-build ships its own (1000-/5000-/8000-/9000-) and never ran ours.
 # ---------------------------------------------------------------------------
 if [[ -z "${BUILD_LOG:-}" ]]; then
+    # shellcheck disable=SC2012  # newest by mtime; names are ours (no spaces)
     BUILD_LOG="$(ls -t "$REPO_ROOT"/tmp/build-*.log 2>/dev/null | head -1)"
 fi
 
@@ -165,7 +166,7 @@ done
 echo ""
 echo "--- build freshness and soft-fail markers ---"
 if ( ORIONX_BUILD_ISO_LIB_ONLY=1; export ORIONX_BUILD_ISO_LIB_ONLY
-     # shellcheck source=scripts/build-iso.sh
+     # shellcheck source=/dev/null  # build-iso.sh is linted on its own
      . "$REPO_ROOT/scripts/build-iso.sh"; check_no_stale_skips "$BUILD_LOG" ) >/dev/null 2>"$REPO_ROOT/tmp/.hooks-stale.$$"; then
     pass "no stale 'Skipping <stage>, already done' outside bootstrap (DEC-PHASE12-113)"
 else

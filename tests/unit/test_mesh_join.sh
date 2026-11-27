@@ -126,7 +126,6 @@ setup() {
     MOCK_CALLS_FILE="$TMPDIR_TEST/mock_calls.log"
     : > "$MOCK_CALLS_FILE"
 
-    MOCK_DISCOVER_PID_FILE="$TMPDIR_TEST/discover.pid"
 
     # --- Mock overrides ---
     # These replace WireGuard-dependent functions with test doubles
@@ -179,7 +178,7 @@ STUBEOF
     # Tests override this as needed.
     _mock_is_active=1
     mesh_is_active() {
-        return $_mock_is_active
+        return "$_mock_is_active"
     }
 }
 
@@ -509,7 +508,7 @@ setup
 _mock_is_active=1  # start inactive
 
 # First join
-OUTPUT1=$(mesh_join "" 2>&1)
+( mesh_join "" ) >/dev/null 2>&1
 rc1=$?
 assert_eq "first join exits 0" "0" "$rc1"
 assert_file_exists "state file exists after join" "$MESH_STATE_FILE"
@@ -518,7 +517,7 @@ assert_file_exists "state file exists after join" "$MESH_STATE_FILE"
 _mock_is_active=0
 
 # Leave
-OUTPUT2=$(mesh_leave 2>&1)
+( mesh_leave ) >/dev/null 2>&1
 rc2=$?
 assert_eq "leave exits 0" "0" "$rc2"
 assert_file_not_exists "state file gone after leave" "$MESH_STATE_FILE"
@@ -530,7 +529,7 @@ _mock_is_active=1
 : > "$MOCK_CALLS_FILE"
 
 # Second join
-OUTPUT3=$(mesh_join "" 2>&1)
+( mesh_join "" ) >/dev/null 2>&1
 rc3=$?
 assert_eq "second join exits 0" "0" "$rc3"
 assert_file_exists "state file exists after re-join" "$MESH_STATE_FILE"

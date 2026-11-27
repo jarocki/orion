@@ -31,6 +31,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 # Default: the newest output/orionx-phoenix-edition-*.iso (packages-build P3-9;
 # the old default named v2.0.0-rc9).
+# shellcheck disable=SC2012  # newest by mtime; names are ours (no spaces)
 ISO_PATH="${1:-$(ls -t "$REPO_ROOT"/output/orionx-phoenix-edition-*.iso 2>/dev/null | head -1)}"
 WORK=""
 
@@ -98,7 +99,7 @@ self_check() {
         /\$SQF|\$ISO_|sqf_resolve|dpkg_state|assert_release_promises|ISO_PATH/ { img = 1 }
         END { if (n >= 14 && !img) print n }' "$me")"
     if [[ -n "$dups" ]]; then echo "SELF-CHECK FAIL: duplicate section numbers: $dups" >&2; return 1; fi
-    if [[ -n "$bad" ]]; then echo "SELF-CHECK FAIL: sections that never read the image: $(echo $bad)" >&2; return 1; fi
+    if [[ -n "$bad" ]]; then echo "SELF-CHECK FAIL: sections that never read the image: ${bad//$'\n'/ }" >&2; return 1; fi
     echo "  self-check: $(grep -cE '^section "[0-9]+\.' "$me") numbered sections, unique; every section >= 14 reads the image"
 }
 if [[ "${1:-}" == "--self-check" ]]; then self_check; exit $?; fi
@@ -1062,13 +1063,11 @@ else
 fi
 # #95: the Cockpit's settings drawer ships; the retired Auto-Healing tab does
 # not (no fallback copy on the image). moved.py went with the launcher (#192).
-for _f in settings_drawer.py; do
-    if [[ -f "$CC_MODULE_DIR/$_f" ]]; then
-        pass "16e: control_center/$_f present in squashfs (#95)"
-    else
-        fail "16e: control_center/$_f present in squashfs" "#95: stage_application_content incomplete"
-    fi
-done
+if [[ -f "$CC_MODULE_DIR/settings_drawer.py" ]]; then
+    pass "16e: control_center/settings_drawer.py present in squashfs (#95)"
+else
+    fail "16e: control_center/settings_drawer.py present in squashfs" "#95: stage_application_content incomplete"
+fi
 if [[ ! -e "$CC_MODULE_DIR/sections/auto_healing.py" ]]; then
     pass "16e: control_center/sections/auto_healing.py absent (consent is the Workbench's, #95)"
 else
@@ -1620,7 +1619,7 @@ else
          "files=$IOSEVKA_FILES pkg=$IOSEVKA_PKG — Iosevka is not a Debian trixie package; where did it come from? (DEC-PHASE11-031, #85)"
 fi
 # || true: zero matches is the desired state (DEC-PHASE9-014 pipefail guard)
-IOSEVKA_VALUE_REFS=$(grep -rhE '(FontName|font-name|title_font)[^#]*Iosevka' "$SQF/etc/skel/.config" "$SQF/etc/lightdm/lightdm-gtk-greeter.conf" 2>/dev/null | grep -vE '^[[:space:]]*#' | wc -l | tr -d ' ' || true)
+IOSEVKA_VALUE_REFS=$(grep -rhE '(FontName|font-name|title_font)[^#]*Iosevka' "$SQF/etc/skel/.config" "$SQF/etc/lightdm/lightdm-gtk-greeter.conf" 2>/dev/null | grep -cvE '^[[:space:]]*#' || true)
 if [[ "$IOSEVKA_VALUE_REFS" -eq 0 ]]; then
     pass "19-f: no shipped font config value names Iosevka (skel xfce4 + greeter conf — DEC-PHASE11-031)"
 else

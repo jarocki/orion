@@ -5,7 +5,7 @@
 #
 # Tests the hook file structurally (no root/chroot needed):
 # validates file existence, permissions, shebang, strict mode,
-# shellcheck directive, @decision annotation, and all hardening
+# ShellCheck directive, @decision annotation, and all hardening
 # content (service disable, SSH hardening, sysctl, systemd).
 #
 # @decision DEC-SEC-SVC-TEST-001
@@ -41,18 +41,6 @@ assert_eq() {
     fi
 }
 
-assert_match() {
-    local description="$1" pattern="$2" actual="$3"
-    if [[ "$actual" =~ $pattern ]]; then
-        echo "  PASS: $description"
-        (( PASS_COUNT++ )) || true
-    else
-        echo "  FAIL: $description"
-        echo "        expected pattern: '$pattern'"
-        echo "        actual:           '$actual'"
-        (( FAIL_COUNT++ )) || true
-    fi
-}
 
 assert_contains() {
     local description="$1" needle="$2" haystack="$3"

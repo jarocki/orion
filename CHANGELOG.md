@@ -97,6 +97,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   victim (SQL injection victim, intel hits) never do, nor does the deck's own
   traffic. The critical floor is unchanged. Zeek notices already carried
   `dest_port` (fixed in #127); a test now pins it.
+- **`make lint` now runs ShellCheck over `tests/` too (#12).** It covered
+  only `scripts/`; 112 test scripts were never checked. Turning it on found
+  two checks that could not fail: "no partial file left behind" (capture
+  export) and "no temp files left behind" (orionx-tune) listed the directory
+  with `ls`, which hides the dotfiles both writers create
+  (`.<name>.part`, `.<name>.XXXX.tmp`); they use `find` now. Also fixed:
+  pcap-analyzer test labels mangled by an old search-and-replace, two prose
+  comments ShellCheck read as directives (which silenced it for those files),
+  and dead helpers. `tests/.shellcheckrc` excludes only the suites'
+  `check && pass || fail` idiom (SC2015) and literal-`$` grep patterns
+  (SC2016), with the reasoning.
 - **Three optional installers could not install on Debian 13 (#197).** Ghidra
   asked for `openjdk-17-jdk`, which trixie does not have; it now installs
   `openjdk-21-jdk`. TrID's definitions pin had gone stale because upstream

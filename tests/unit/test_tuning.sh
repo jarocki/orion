@@ -170,7 +170,7 @@ LOCKT="$TMP/locktest"; mkdir -p "$LOCKT"
 ( export HOME="$LOCKT"; for i in 1 2 3 4 5 6; do python3 "$TUNE" tune --sid "$((3000000+i))" >/dev/null 2>&1 & done; wait )
 N="$(HOME="$LOCKT" python3 "$TUNE" list | grep -c 'sid 300000')"
 [[ "$N" -eq 6 ]] && pass "6 concurrent orionx-tune writes: no lost update (locked read-modify-write)" || fail "concurrent writes" "only $N of 6 rules survived"
-ls "$LOCKT/.config/orionx/" | grep -q '\.tmp$' && fail "temp files" "left behind" || pass "no temp files left behind"
+find "$LOCKT/.config/orionx/" -name '*.tmp' | grep -q . && fail "temp files" "left behind: $(find "$LOCKT/.config/orionx/" -name '*.tmp')" || pass "no temp files left behind"
 
 echo "[orionx-postured wiring]"
 PD="$ROOT/scripts/awareness/orionx-postured"
