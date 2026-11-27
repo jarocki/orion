@@ -82,6 +82,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its legacy terminal client is built on the deprecated libolm and the
   current one needs a separate backend. Element (GUI) and matrix-commander
   (CLI, in the image) are the Matrix clients.
+- **Release staging asks for the gpg passphrase first, and recovers from a
+  failed signature by itself (#193, DEC-PHASE13-056).** `owner-release.sh`
+  points gpg-agent's pinentry at the owner's terminal and asks once before it
+  splits, so the passphrase is cached when signing starts; with no terminal it
+  stops before any work. Staging goes to `tmp/release-<tag>.partial` and is
+  renamed only when the signed set is complete; a rerun removes a partial whose
+  recorded source matches and refuses any other. v3.1.4, v3.1.5 and v3.1.6 each
+  lost a staging run to an unseen pinentry timeout and needed a hand-written
+  resume script.
 
 ---
 
