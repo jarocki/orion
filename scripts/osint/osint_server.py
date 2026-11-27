@@ -482,46 +482,83 @@ def load_installable(root: Path) -> list[dict]:
         return []
 
 
-def optional_state(entries: list[dict], geoip_available: bool,
-                   exists=os.path.exists, find_spec=None) -> dict:
-    """Which optional installers have actually been run on THIS deck. Pure.
+# @decision DEC-PHASE12-052
+# @title Optional features are listed on the Workbench with their
+#   real state, taken from each installer's own idempotence probe
+# @status superseded
+# @date 2026-10-05
+# @rationale v2.2.0-rc6: the Workbench's Optional section was
+#   missing Piper voice, Element and gomuks, and said nothing about
+#   whether an installer had been run. /api/status.json now reports
+#   installed / not installed from the installer's own probe
+#   (optional_state() is pure: installed only from evidence), an entry
+#   without evidence is shown as unknown rather than claimed, and the
+#   Piper card states what the voice costs and that espeak-ng speaks
+#   without it.
+#   Superseded 2026-11-26 by DEC-PHASE13-061 (#200): the state now comes from
+#   orionx-optional, and optional_state() is gone.
+# @decision DEC-PHASE13-061
+# @category OSINT
+# @title The Workbench mirrors orionx-optional read-only and hands management to the Cockpit
+# @status accepted
+# @rationale #200. The Workbench computed its own optional-tool state
+#   (optional_state(), from file probes) while #197 made `orionx-optional
+#   status` the authority: two answers to one question drift. The status now
+#   carries the helper's own JSON (groups, state, reason, version), cached for
+#   15 s because the helper resolves each download host. The page stays
+#   read-only (DEC-PHASE13-049: a loopback page that runs root actions is a
+#   target for any tab that reaches 127.0.0.1). Its one action, "Manage in
+#   Cockpit", is a POST that only opens `orionx-cockpit --tab tools --focus ID`
+#   as this user, behind the same guards as the probes (#94): loopback Host and
+#   Origin, the X-Orionx-Operator header, and an ID from the catalogue.
+#   Installing, removing and the password prompt stay in the Cockpit.
+OPTIONAL_HELPER = Path(os.environ.get("ORIONX_OPTIONAL_HELPER", "/opt/orionx/scripts/optional/orionx-optional"))
+OPTIONAL_TTL = 15.0
+_OPT_CACHE: dict = {"at": 0.0, "data": None}
+_OPT_LOCK = threading.Lock()
 
-    Each entry's `probe` is a list of paths (or `python:<module>`) that exist
-    only after its installer succeeded — the same gates the installers use
-    for idempotence. An entry with no probe is answered by what the server
-    already knows (GeoIP), or reported unknown rather than guessed. The page
-    shows 'installed' only from evidence (docs/RESILIENCE.md rule 3).
-    """
-    if find_spec is None:
-        import importlib.util  # noqa: PLC0415
-        find_spec = importlib.util.find_spec
-    out: dict = {}
-    for it in entries:
-        iid = str(it.get("id"))
-        probe = it.get("probe") or []
-        if iid == "geoip" and not probe:
-            out[iid] = {"installed": bool(geoip_available), "known": True,
-                        "evidence": "GeoIP databases readable" if geoip_available else "databases absent"}
-            continue
-        if not probe:
-            out[iid] = {"installed": False, "known": False, "evidence": "no probe declared"}
-            continue
-        hit = None
-        for p in probe:
-            p = str(p)
-            if p.startswith("python:"):
-                try:
-                    if find_spec(p[7:]) is not None:
-                        hit = p
-                except (ImportError, ValueError):
-                    pass
-            elif exists(p):
-                hit = p
-            if hit:
-                break
-        out[iid] = {"installed": hit is not None, "known": True,
-                    "evidence": hit or ("none of: " + ", ".join(map(str, probe)))}
-    return out
+
+def _optional_helper() -> Path:
+    if OPTIONAL_HELPER.exists():
+        return OPTIONAL_HELPER
+    return Path(__file__).resolve().parents[1] / "optional" / "orionx-optional"   # a checkout
+
+
+def optional_status(run=subprocess.run, now=time.time) -> dict:
+    """`orionx-optional status --json`, cached OPTIONAL_TTL s; {'error': why} on failure. Never raises."""
+    with _OPT_LOCK:
+        if _OPT_CACHE["data"] is not None and now() - _OPT_CACHE["at"] < OPTIONAL_TTL:
+            return _OPT_CACHE["data"]
+    helper = _optional_helper()
+    try:
+        r = run([sys.executable, str(helper), "status", "--json"], capture_output=True, text=True,
+                timeout=30, check=False)
+        if r.returncode != 0:
+            data = {"error": "orionx-optional status exited %d: %s" % (r.returncode, (r.stderr or "").strip()[:200])}
+        else:
+            data = json.loads(r.stdout)
+            if not isinstance(data, dict) or "tools" not in data:
+                data = {"error": "orionx-optional status returned no tool list"}
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        data = {"error": "could not ask orionx-optional (%s): %s" % (helper, exc)}
+    with _OPT_LOCK:
+        _OPT_CACHE.update(at=now(), data=data)
+    return data
+
+
+def open_cockpit(tool_id: str, ids: list[str], popen=subprocess.Popen) -> tuple[int, dict]:
+    """(http status, body) for POST /api/optional/open: open the Cockpit on one tool."""
+    if tool_id not in ids:
+        return 400, {"error": "unknown-tool", "detail": "not an optional tool id: %r" % (tool_id,)}
+    exe = shutil.which("orionx-cockpit")
+    if not exe:
+        return 503, {"error": "cockpit-missing", "detail": "orionx-cockpit is not on PATH on this deck"}
+    try:
+        popen([exe, "--tab", "tools", "--focus", tool_id], stdin=subprocess.DEVNULL,
+              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as exc:
+        return 500, {"error": "cockpit-failed", "detail": str(exc)}
+    return 200, {"ok": True, "opened": tool_id}
 
 
 def current_outbound() -> dict:
@@ -541,6 +578,7 @@ def current_outbound() -> dict:
 # uses: Part B refuses on it, Part A only records it (the segment is local).
 ACTIVE_ROUTES = ("/api/network/gateway", "/api/network/outbound")
 OPERATOR_HEADER = "X-Orionx-Operator"
+OPEN_ROUTE = "/api/optional/open"   # #200: opens the Cockpit as this user; never installs
 _PROBE_LOCK = threading.Lock()
 
 
@@ -610,23 +648,9 @@ def build_status() -> dict:
         "deck": deck_vitals.collect(sample=0.15),
         "geoip": geo,
         "server": {"pid": os.getpid(), "root": str(WEB_ROOT)},
-        # @decision DEC-PHASE12-052
-        # @title Optional features are listed on the Workbench with their
-        #   real state, taken from each installer's own idempotence probe
-        # @status accepted
-        # @date 2026-10-05
-        # @rationale v2.2.0-rc6: the Workbench's Optional section was
-        #   missing Piper voice, Element and gomuks, and said nothing about
-        #   whether an installer had been run. /api/status.json now reports
-        #   installed / not installed from the installer's own probe
-        #   (optional_state() is pure: installed only from evidence), an entry
-        #   without evidence is shown as unknown rather than claimed, and the
-        #   Piper card states what the voice costs and that espeak-ng speaks
-        #   without it.
-        # --------------------------------------------------------------------
-        # DEC-PHASE12-052: optional installers, with evidence of whether each
-        # has been run on this deck, so the Workbench can say so.
-        "optional": optional_state(load_installable(WEB_ROOT), bool(geo.get("available"))),
+        # DEC-PHASE13-061 (#200): the helper's own answer, not a second probe
+        # (supersedes DEC-PHASE12-052's optional_state()).
+        "optional": optional_status(),
         # #95: tool controls that used to be Cockpit tabs (DEC-PHASE13-049).
         "engine": engine_state(),
         "bus": {
@@ -794,7 +818,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self):                           # noqa: N802
-        """#94: the two operator-initiated probes. Nothing else accepts POST."""
+        """#94: the two operator-initiated probes; #200: open the Cockpit on one
+        optional tool. Nothing else accepts POST."""
         if self._refuse_foreign():
             return
         path = self.path.split("?", 1)[0]
@@ -802,16 +827,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             length = min(int(self.headers.get("Content-Length") or 0), 4096)
         except ValueError:
             length = 0
-        if length:
-            self.rfile.read(length)              # the body carries nothing; drain it
-        if path not in ACTIVE_ROUTES:
+        body = self.rfile.read(length) if length else b""
+        if path not in ACTIVE_ROUTES and path != OPEN_ROUTE:
             self._json_status(405, {"error": "method-not-allowed", "route": path,
-                                    "detail": "Only %s accept POST." % " and ".join(ACTIVE_ROUTES)})
+                                    "detail": "Only %s accept POST." % " and ".join(ACTIVE_ROUTES + (OPEN_ROUTE,))})
             return
         if self.headers.get(OPERATOR_HEADER) != "1":
             self._json_status(403, {"error": "not-operator-initiated", "route": path,
                                     "detail": "Probes run only from the This network page's buttons "
                                               "(header %s: 1)." % OPERATOR_HEADER})
+            return
+        if path == OPEN_ROUTE:
+            try:
+                tool_id = str(json.loads(body.decode("utf-8") or "{}").get("id", ""))
+            except (ValueError, AttributeError, UnicodeDecodeError):
+                tool_id = ""
+            code, payload = open_cockpit(tool_id, [i["id"] for i in load_installable(WEB_ROOT)])
+            self._json_status(code, payload)
             return
         if not _PROBE_LOCK.acquire(blocking=False):
             self._json_status(409, {"error": "probe-running", "route": path,

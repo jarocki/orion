@@ -35,6 +35,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reach R.A.I.N. and LIVE. Uninstall asks first; a dismissed password prompt
   changes nothing and is logged as info. `--focus ID` opens one tool. The
   Workbench's Optional section stays a read-only mirror.
+- **The Workbench mirrors the Cockpit's optional tools, read-only (#200,
+  DEC-PHASE13-061).** Its Optional section shows `orionx-optional`'s own
+  answer (groups, state, reason, version; cached 15 s) instead of computing a
+  second one, drops the copy-a-command text, and gives each tool a **Manage in
+  Cockpit** button. That button's POST only opens `orionx-cockpit --tab tools
+  --focus ID` as the operator, behind the probes' guards (loopback, operator
+  header, catalogue id); the page still never installs anything.
 
 ### Fixed
 
