@@ -7,22 +7,18 @@ DEC-PHASE11-006: Matrix-based team communications for incident response.
 - **matrix-commander** (pip venv at /opt/orionx/venv/comms/) — CLI Matrix client, symlinked at /usr/local/bin/matrix-commander
 - Runs over existing Phase 4 Matrix homeserver + Phase 3 WireGuard mesh
 
-## Layer B (W11-5b) — DEFERRED
+## Element (optional)
 
-- **gomuks** (static binary from mautrix/gomuks releases) — terminal Matrix TUI client, staged to /opt/orionx/comms/gomuks/
+- **element-desktop** (`sudo orionx-optional install element`, ~200 MB) — GUI Matrix client for operators who prefer graphical UX
 
-## Layer C (W11-8) — DEFERRED
-
-- **element-desktop** (optional installer, ~150 MB) — GUI Matrix client for operators who prefer graphical UX
+gomuks is not offered (DEC-PHASE13-003, #206): its legacy terminal client is
+built on the deprecated libolm and the current one needs a separate backend.
 
 ## Usage
 
 ```bash
 # CLI messaging
 matrix-commander --credentials ~/.config/matrix-commander/credentials.json --room "!<roomid>" --message "IR ping"
-
-# TUI (Layer B — install via W11-5b first)
-gomuks
 ```
 
 ## Wiring

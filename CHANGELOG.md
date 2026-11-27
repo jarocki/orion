@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The catalogue (links.json) is the one list both the Cockpit and the
   Workbench read; its commands now read `sudo orionx-optional install <id>`.
 
+- **The Cockpit installs and removes optional tools in place (#199,
+  DEC-PHASE13-060).** The Orion Tools tab opens with the optional tools in
+  their four groups: per tool a light, one state word, one line of reason and
+  the one button its state allows (Install, Uninstall, Retry, Details). Actions
+  run `pkexec orionx-optional` in the background; a progress bar and the
+  installer's live output fill the detail panel, and the helper's bus events
+  reach R.A.I.N. and LIVE. Uninstall asks first; a dismissed password prompt
+  changes nothing and is logged as info. `--focus ID` opens one tool. The
+  Workbench's Optional section stays a read-only mirror.
+
 ### Fixed
 
 - **Three optional installers could not install on Debian 13 (#197).** Ghidra
@@ -33,9 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `openjdk-21-jdk`. TrID's definitions pin had gone stale because upstream
   replaces `triddefs.zip` in place; the definitions are now checked for shape
   (one `triddefs.trd`, under 64 MB) and their hash logged, while the TrID
-  program stays pinned (DEC-PHASE13-059). gomuks still refuses: its old URL is
-  gone and the replacement is an owner decision, so the catalogue marks it
-  blocked with that reason instead of offering an install that fails.
+  program stays pinned (DEC-PHASE13-059). gomuks is removed (DEC-PHASE13-003 of
+  2026-10-18, recorded but never carried out; reconfirmed 2026-11-26, #206):
+  its legacy terminal client is built on the deprecated libolm and the
+  current one needs a separate backend. Element (GUI) and matrix-commander
+  (CLI, in the image) are the Matrix clients.
 - **Release staging asks for the gpg passphrase first, and recovers from a
   failed signature by itself (#193, DEC-PHASE13-056).** `owner-release.sh`
   points gpg-agent's pinentry at the owner's terminal and asks once before it

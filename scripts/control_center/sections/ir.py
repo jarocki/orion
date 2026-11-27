@@ -3,10 +3,12 @@ Orion Cockpit — Orion Tools tab (DEC-PHASE12-057, DEC-PHASE12-072): every
 on-deck tool, read from the Workbench catalogue at runtime, plus the guided
 actions.
 
-#95 (DEC-PHASE13-048): the optional installers are the Workbench's (its
-Optional section, DEC-PHASE12-052), so this tab's copy of them, and the
-network gate that only they needed, are gone; the tab points there. Toggle
-Theme is a display control and moved to the settings drawer.
+#199 (DEC-PHASE13-060): optional tools are managed here again, at the top of
+the tab: grouped status tiles that install and uninstall in place through
+`pkexec orionx-optional` (sections/optional.py). #95 had moved them to the
+Workbench, which can only show a command to copy (its loopback page never
+runs root actions, DEC-PHASE13-049); the Workbench keeps a read-only mirror.
+Toggle Theme is a display control and lives in the settings drawer.
 
 The catalogue and the presence probes are collected in a worker thread while
 the tab is visible (DEC-PHASE12-068).
@@ -31,6 +33,7 @@ from gi.repository import Gtk  # type: ignore[import]  # noqa: E402
 from ..helpers import tools_data as T  # noqa: E402
 from ..helpers import style, ux  # noqa: E402
 from ..helpers.background import Poller  # noqa: E402
+from . import optional as OPT  # noqa: E402  (#199: optional tools, grouped, install/uninstall in place)
 
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT / "osint") not in sys.path:
@@ -150,18 +153,21 @@ def collect_tools(_visible: bool = True) -> dict:
     local, installable = T.load_catalogue()
     wb = T.workbench_state()
     deck = [(it, T.run_action(it)) for it in T.on_deck(local, os.path.exists)]
-    return {"deck": [(it, a) for it, a in deck if a is not None], "n_installable": len(installable),
+    return {"deck": [(it, a) for it, a in deck if a is not None],
             "workbench": wb, "catalogue_empty": not local and not installable}
 
 
 def build_section() -> Gtk.Widget:
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
     box.set_border_width(12)
-    desc = Gtk.Label(label="Everything on this deck, and everything you can add. The list is read from the "
-                           "Workbench catalogue at runtime and checked against what is installed here.")
+    desc = Gtk.Label(label="Everything on this deck, and everything you can add. Optional tools install and "
+                           "uninstall here; the lists are read at runtime and checked against this deck.")
     desc.set_halign(Gtk.Align.START)
     desc.set_line_wrap(True)
     box.pack_start(desc, False, False, 2)
+    panel = OPT.build()
+    box.pack_start(panel.box, False, False, 4)
+    box.optional_panel = panel   # tests/unit/cockpit_gtk_checks.py reaches the panel through the tab
     wbrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     wblabel = Gtk.Label(label="Workbench server: checking…")
     wblabel.set_halign(Gtk.Align.START)
@@ -194,18 +200,6 @@ def build_section() -> Gtk.Widget:
     deck_grid.set_column_spacing(8)
     deck_grid.set_row_spacing(4)
     box.pack_start(deck_grid, False, False, 0)
-    _hdr(box, "Optional — install when you need it")
-    opt_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-    opt_note = Gtk.Label(label="The optional installers are on the Workbench (Optional), each with "
-                               "whether it is installed here.")
-    opt_note.set_halign(Gtk.Align.START)
-    opt_note.set_line_wrap(True)
-    opt_btn = Gtk.Button(label="Open the Workbench")
-    opt_btn.get_style_context().add_class("orionx-tool")
-    opt_btn.connect("clicked", lambda _w: ux.launch_detached(["orionx-osint"], friendly="the Workbench"))
-    opt_row.pack_start(opt_note, True, True, 0)
-    opt_row.pack_end(opt_btn, False, False, 0)
-    box.pack_start(opt_row, False, False, 0)
 
     def _clear(g: Gtk.Grid) -> None:
         for ch in g.get_children():
@@ -218,8 +212,6 @@ def build_section() -> Gtk.Widget:
         wb = d.get("workbench") or {}
         wblabel.set_text(f"Workbench server: {wb.get('note', 'unknown')}")
         wbstop.set_sensitive(bool(wb.get("running")))
-        opt_note.set_text(f"The {d['n_installable']} optional installers are on the Workbench (Optional), "
-                          "each with whether it is installed here.")
         _clear(deck_grid)
         if d["catalogue_empty"]:
             deck_grid.attach(Gtk.Label(label=f"catalogue missing or unreadable: {T.CATALOGUE}"), 0, 0, 1, 1)

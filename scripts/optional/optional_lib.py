@@ -219,7 +219,9 @@ def tool_status(t: dict, *, record: dict | None, live: dict | None, net: str,
     out = {"id": tid, "name": t.get("name", tid), "group": t.get("group"), "blurb": t.get("blurb", ""),
            "size": t.get("size", ""), "state": "not_installed", "reason": "", "version": "",
            "evidence": "", "managed": record is not None, "can_install": False, "can_uninstall": False,
-           "uninstall_reason": "", "install_reason": "", "progress": None, "last": None}
+           "uninstall_reason": "", "install_reason": "", "progress": None, "last": None,
+           "record": ({k: len(record.get(k) or []) for k in ("apt", "pip", "paths")}
+                      if record is not None else None)}
     running = bool(live and live.get("state") == "running" and alive(live.get("pid")))
     if live and live.get("state") in ("ok", "failed"):
         out["last"] = {k: live.get(k) for k in ("action", "state", "reason", "log", "finished")}

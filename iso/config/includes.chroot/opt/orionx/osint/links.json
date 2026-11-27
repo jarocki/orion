@@ -519,31 +519,6 @@
       ]
     },
     {
-      "id": "gomuks",
-      "name": "gomuks (Matrix client, terminal)",
-      "group": "comms",
-      "command": "sudo orionx-optional install gomuks",
-      "runtime_path": "/opt/orionx/optional/install-gomuks.sh",
-      "blurb": "A terminal Matrix client for a deck without a desktop session, or over SSH.",
-      "probe": [
-        "/usr/local/bin/gomuks"
-      ],
-      "needs_host": "github.com",
-      "size": "~21 MB",
-      "owns": [
-        "/usr/local/bin/gomuks",
-        "/usr/share/applications/gomuks.desktop"
-      ],
-      "version": "",
-      "health": [
-        {
-          "exists": "/usr/local/bin/gomuks",
-          "what": "gomuks binary"
-        }
-      ],
-      "blocked": "no pinned download: the old URL is gone and choosing the replacement (legacy v0.3.1 or the current gomuks-terminal) is an owner decision"
-    },
-    {
       "id": "bluetooth",
       "name": "Bluetooth support (mouse, keyboard, headset)",
       "group": "deck",

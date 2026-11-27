@@ -59,7 +59,7 @@ class Catalogue(unittest.TestCase):
         by = {g["id"]: sorted(t["id"] for t in tools if t["group"] == g["id"]) for g in groups}
         self.assertEqual(by, {"network": ["duckdb", "geoip", "zeek"],
                               "malware": ["clamav", "floss", "ghidra", "trid"],
-                              "comms": ["element", "gomuks"], "deck": ["bluetooth", "piper-voice"]})
+                              "comms": ["element"], "deck": ["bluetooth", "piper-voice"]})
 
     def test_every_tool_names_a_shipped_installer_and_the_helper_command(self):
         _g, tools = O.load_catalogue(CATALOGUE)
@@ -114,8 +114,9 @@ class Status(unittest.TestCase):
         s = status(TOOL, exists=lambda p: p == "/opt/demo/bin/demo")
         self.assertEqual((s["state"], s["can_uninstall"]), ("installed", False))
         self.assertIn("shipped with the image", s["uninstall_reason"])
-        s = status(TOOL, exists=lambda p: True, record={"apt": [], "pip": [], "paths": ["/opt/demo"]})
+        s = status(TOOL, exists=lambda p: True, record={"apt": ["a", "b"], "pip": [], "paths": ["/opt/demo"]})
         self.assertTrue(s["can_uninstall"])
+        self.assertEqual(s["record"], {"apt": 2, "pip": 0, "paths": 1})  # what Uninstall would remove
 
     def test_health_failure_is_degraded_with_reason(self):
         s = status(TOOL, exists=lambda p: True, run=lambda argv: 3)
@@ -226,10 +227,7 @@ class Installers(unittest.TestCase):
         ghidra = (OPTIONAL / "install-ghidra.sh").read_text()
         self.assertNotIn("orionx_apt_install openjdk-17", ghidra)
         self.assertIn("orionx_apt_install openjdk-21-jdk", ghidra)
-        gomuks = (OPTIONAL / "install-gomuks.sh").read_text()
-        self.assertIn('GOMUKS_SHA256=""', gomuks)  # refuses until the owner picks the artifact
-        _g, tools = O.load_catalogue(CATALOGUE)
-        self.assertIn("owner decision", O.find_tool(tools, "gomuks")["blocked"])
+        self.assertFalse((OPTIONAL / "install-gomuks.sh").exists())  # DEC-PHASE13-003, #206
         trid = (OPTIONAL / "install-trid.sh").read_text()
         self.assertNotIn("TRID_DEF_SHA256", trid)
         self.assertIn('TRID_BIN_SHA256="3fb9ccfed650123f7bb5fc5a93ccbfcbc6ff98876cc659c8958c03a582467aa9"', trid)

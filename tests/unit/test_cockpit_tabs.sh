@@ -84,7 +84,7 @@ ck(C.parse_joined_rooms("!abc:x\n  @a:x\n!def:x\n") == ["!abc:x", "!def:x"], "jo
 ck(C.parse_joined_members("!abc:x room\n  @a:x\n  @b:x\n!def:x\n") == {"!abc:x": ["@a:x","@b:x"], "!def:x": []}, "joined members per room")
 ck(C.desktop_exec("[Desktop Entry]\nExec=xfce4-terminal --hold -e \"matrix-commander --listen tail\" %u\n") == ["xfce4-terminal","--hold","-e","matrix-commander --listen tail"], "desktop Exec parsed, field codes dropped")
 cs = C.client_states(lambda p: p == "/usr/bin/element-desktop", lambda n: n == "matrix-commander")
-ck([c["installed"] for c in cs] == [True, True, False] and cs[2]["installer"] == "sudo orionx-optional install gomuks", "client detection + installer")
+ck([c["installed"] for c in cs] == [True, True] and cs[1]["installer"] == "sudo orionx-optional install element" and len(cs) == 2, "client detection + installer (no gomuks, DEC-PHASE13-003)")
 local = [{"id":"a","name":"A","kind":"command","command":"orionx-a --x","runtime_path":"/opt/a"}, {"id":"cyberchef","name":"CC","kind":"page","runtime_path":"/opt/cc"}, {"id":"gone","runtime_path":"/opt/gone"}]
 od = T.on_deck(local, lambda p: p in ("/opt/a","/opt/cc"))
 ck([i["id"] for i in od] == ["a","cyberchef"], "on_deck keeps only entries whose runtime_path exists")
@@ -134,7 +134,8 @@ ck(sb[1:3] == ["-i", str(td/"logs")] and out.endswith("storyboard-20261007-03000
 r = subprocess.run([sys.executable, str(root/"scripts"/sb[0])] + sb[1:], capture_output=True, text=True, timeout=120)
 ck(r.returncode == 0 and pathlib.Path(out).is_file(), f"storyboard-gen.py accepts it and writes the report (rc={r.returncode}) (UX-04)")
 ck("--disable-server" in T.THEME_ARGV[2] and "toggle-theme.sh --status" in T.THEME_ARGV[2], "theme report then a separate-process terminal (UX-24)")
-# #95: the installers (and the network gate only they needed) are the Workbench's.
+# #95 removed the old installer path from tools_data; #199 manages optional tools through
+# orionx-optional (sections/optional.py), not here.
 ck(not hasattr(T, "install_argv") and not hasattr(T, "network_gate"), "no installer path left in the Cockpit's tool helpers")
 PY
 then pass "Orion Tools helpers"; else fail "Orion Tools helpers" "see output above"; fi

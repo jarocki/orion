@@ -71,8 +71,41 @@ def walk(w):
             yield from walk(c)
 
 
-stub("orionx-event", "exit 0")
+stub("orionx-event", 'echo "$*" >> "$HOME/events.log"; exit 0')
 from control_center.helpers import ux  # noqa: E402
+from control_center.helpers import optional_view as OV  # noqa: E402
+
+
+def _opt(tid, group, state, **kw):
+    base = {"id": tid, "name": tid.capitalize(), "group": group, "state": state, "reason": "", "version": "",
+            "blurb": "", "size": "~10 MB", "can_install": state in ("not_installed", "failed"),
+            "can_uninstall": False, "install_reason": "", "uninstall_reason": "", "progress": None,
+            "last": None, "record": None}
+    base.update(kw)
+    return base
+
+
+OPT_STATUS = {
+    "groups": [{"id": "network", "name": "Network & hunting"}, {"id": "malware", "name": "Malware analysis"},
+               {"id": "comms", "name": "Team comms"}, {"id": "deck", "name": "Deck: voice & peripherals"}],
+    "tools": [
+        _opt("zeek", "network", "active", version="zeek version 9.0.1",
+             uninstall_reason="shipped with the image or installed outside orionx-optional; nothing it can safely remove"),
+        _opt("geoip", "network", "installed", version="2026-11", can_uninstall=True, record={"apt": 1, "pip": 0, "paths": 1}),
+        _opt("duckdb", "network", "not_installed"),
+        _opt("clamav", "malware", "degraded", reason="virus signatures: 41 days old (limit 14)", can_uninstall=True,
+             record={"apt": 6, "pip": 0, "paths": 0}),
+        _opt("floss", "malware", "working", progress={"action": "install", "n": 3, "m": 5, "step": "run installer",
+                                                     "line": "Downloading FLOSS v3.1.0..."}),
+        _opt("ghidra", "malware", "failed", reason="installer exited 100: E: Unable to locate package openjdk-17-jdk"),
+        _opt("element", "comms", "not_installed", can_install=False,
+             install_reason="needs network: packages.element.io does not resolve"),
+        _opt("signal", "comms", "not_installed", can_install=False, install_reason="blocked: owner decision"),
+        _opt("bluetooth", "deck", "not_installed"),
+    ],
+    "summary": {"active": 1, "installed": 1, "degraded": 1, "failed": 1, "working": 1, "not_installed": 4},
+}
+OV.collect = lambda *a, **k: OPT_STATUS
 
 TOASTS: list[tuple[str, str]] = []
 ux.set_notifier(lambda m, lvl: TOASTS.append((lvl, m)))
@@ -226,8 +259,12 @@ tools_box = cw.nb.get_nth_page(cw._pages["tools"]).get_child().get_child()
 tools_btns = [w.get_label() for w in walk(tools_box) if isinstance(w, Gtk.Button)]
 neb_box = cw.nb.get_nth_page(cw._pages["nebula"]).get_child().get_child()
 neb_btns = [w.get_label() for w in walk(neb_box) if isinstance(w, Gtk.Button)]
-ck(not aw_radios and "Toggle Theme" not in tools_btns and not any(str(b).startswith("Install") for b in tools_btns)
-   and "Warm up model" not in neb_btns, "no tab still carries a moved control (posture, theme, installers, warm-up)")
+ck(not aw_radios and "Toggle Theme" not in tools_btns and "Warm up model" not in neb_btns,
+   "no tab still carries a moved control (posture, theme, warm-up)")
+OPT_PANEL = next(w.optional_panel for w in walk(tools_box) if hasattr(w, "optional_panel"))
+_opt_btns = [w.get_label() for w in walk(OPT_PANEL.box) if isinstance(w, Gtk.Button)]
+ck(all(b not in ("Install", "Uninstall", "Retry") for b in tools_btns if b not in _opt_btns),
+   "Install/Uninstall/Retry live only in the optional-tools panel (#199)")
 cw._on_key(None, type("K", (), {"keyval": Gdk.keyval_from_name("F2"), "state": Gdk.ModifierType(0)})())
 pump(0.4)
 ck(not cw.drawer_rev.get_reveal_child() and not cw.settings_btn.get_active(), "F2 again closes it")
@@ -492,6 +529,72 @@ ck(len(_lines()) == n2, "clicks on EVENTS / NETWORK / SYSTEMS launch nothing")
 click("gauge")
 pump(0.3)
 ck("not installed" in cw.toast_bar._label.get_text(), f"missing orionx-osint -> error toast ({cw.toast_bar._label.get_text()!r})")
+
+# ---------------------------------------------------------------- Tools tab: optional tools (#199)
+print("[tools tab: optional tools grouped, state at a glance, install/uninstall in place (#199)]")
+cw.select_tab("tools")
+P = OPT_PANEL
+wait_for(lambda: len(P.tiles) == len(OPT_STATUS["tools"]), 5.0)
+ck(len(P.tiles) == 9, f"one tile per tool ({len(P.tiles)})")
+heads = [w.get_text() for w in walk(P.groups) if isinstance(w, Gtk.Label) and "ready" in w.get_text()]
+ck([h.split("  ")[0] for h in heads] == ["NETWORK & HUNTING", "MALWARE ANALYSIS", "TEAM COMMS", "DECK: VOICE & PERIPHERALS"],
+   f"four groups in catalogue order ({heads})")
+words = {tid: w["name"].get_text().split("  ")[-1] for tid, w in P.tiles.items()}
+ck(words == {"zeek": "ACTIVE", "geoip": "INSTALLED", "duckdb": "NOT INSTALLED", "clamav": "DEGRADED",
+             "floss": "INSTALLING 3/5", "ghidra": "FAILED", "element": "NOT INSTALLED", "signal": "NOT INSTALLED",
+             "bluetooth": "NOT INSTALLED"}, f"state words ({words})")
+btn = {tid: (w["button"].get_label(), w["button"].get_sensitive()) for tid, w in P.tiles.items()}
+ck(btn["zeek"] == ("Uninstall", False) and btn["geoip"] == ("Uninstall", True) and btn["duckdb"] == ("Install", True)
+   and btn["ghidra"] == ("Retry", True) and btn["element"] == ("Install", False) and btn["floss"] == ("Details", True),
+   f"one button per state, enabled only when it can act ({btn})")
+ck("41 days old" in P.tiles["clamav"]["line"].get_text() and "shipped with the image" in P.tiles["zeek"]["line"].get_text()
+   and "blocked: owner decision" in P.tiles["signal"]["line"].get_text(), "each tile says why, in one line")
+ck("some download sources do not resolve" in P.net.get_text() and P.summary.get_text() == "9 optional · 2 ready · 1 attention · 1 failed · 1 working",
+   f"header: {P.net.get_text()!r} / {P.summary.get_text()!r}")
+pump(0.3)
+min_w = P.box.get_preferred_width()[0]
+ck(min_w <= 1366 - 2 * 24, f"the panel can shrink to a 1366 px deck (minimum {min_w} px)")
+tab_min = cw.nb.get_nth_page(cw._pages["tools"]).get_child().get_preferred_width()[0]
+ck(tab_min <= 1366 - 2 * 24, f"the whole Orion Tools tab can shrink to a 1366 px deck (minimum {tab_min} px)")
+c0 = P.tiles["floss"]["led"].get_label()
+z0 = P.tiles["zeek"]["led"].get_label()
+P._pulse_tick()
+ck(P.tiles["floss"]["led"].get_label() != c0 and P.tiles["zeek"]["led"].get_label() == z0,
+   "the working tool's light pulses; a steady one does not")
+P._select("clamav")
+ck(P.d_title.get_text() == "Clamav" and "DEGRADED" in P.d_state.get_text() and P.d_button.get_label() == "Uninstall",
+   "selecting a tile fills the detail panel")
+
+print("[tools tab: an install streams progress and log, and ends in one toast (#199)]")
+script = WORK / "fake-helper.sh"
+script.write_text("#!/bin/sh\necho 'PROGRESS 1/5 preflight'\necho '| [install-duckdb.sh] Ensuring python3-pip'\n"
+                  "sleep 0.3\necho 'PROGRESS 3/5 run installer'\necho '| pip install duckdb'\nsleep 0.3\n"
+                  "echo 'PROGRESS 5/5 record'\necho 'RESULT ok Duckdb installed'\nexit 0\n")
+script.chmod(0o755)
+P.start(OPT_STATUS["tools"][2], "install", argv=[str(script)])
+pump(0.1)
+ck(P.running and not P.tiles["geoip"]["button"].get_sensitive(), "while it runs, the other action buttons wait")
+ck(wait_for(lambda: P.running is None, 6.0), "the action finished")
+buf = P.d_log.get_buffer()
+logtxt = buf.get_text(buf.get_start_iter(), buf.get_end_iter(), False)
+ck("pip install duckdb" in logtxt and "Ensuring python3-pip" in logtxt, f"the live log shows the installer output ({logtxt!r})")
+ck(abs(P.d_bar.get_fraction() - 1.0) < 1e-6, f"the bar reached 5/5 ({P.d_bar.get_fraction()})")
+ck(cw.toast_bar._label.get_text() == "✓ Duckdb installed", f"one success toast ({cw.toast_bar._label.get_text()!r})")
+ck(P.tiles["geoip"]["button"].get_sensitive(), "buttons are live again afterwards")
+
+print("[tools tab: a dismissed password prompt changes nothing and says so (#199)]")
+deny = WORK / "fake-pkexec-126.sh"
+deny.write_text("#!/bin/sh\nexit 126\n")
+deny.chmod(0o755)
+ev_before = (HOME / "events.log").read_text() if (HOME / "events.log").exists() else ""
+P.start(OPT_STATUS["tools"][8], "install", argv=[str(deny)])
+ck(wait_for(lambda: P.running is None, 4.0), "the dismissed action ends")
+msg = cw.toast_bar._label.get_text()
+ck("not started, authentication was dismissed" in msg and not msg.startswith("✗"), f"info, not failure ({msg!r})")
+pump(0.5)
+ev_after = (HOME / "events.log").read_text() if (HOME / "events.log").exists() else ""
+ck("--severity info --source cockpit --category tooling" in ev_after[len(ev_before):],
+   f"one info event records it ({ev_after[len(ev_before):]!r})")
 
 print(f"Results: {PASS} passed, {FAIL} failed", flush=True)
 os._exit(1 if FAIL else 0)   # skip GTK teardown: it can hang under Xvfb

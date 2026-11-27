@@ -129,7 +129,6 @@ Tools too large or freshness-sensitive for the base ISO live under
 | `install-element.sh` | Element Matrix desktop client |
 | `install-floss.sh` | Mandiant FLOSS string extractor |
 | `install-trid.sh` | TrID file type identification |
-| `install-gomuks.sh` | Gomuks Matrix TUI client |
 | `install-zeek.sh` | Zeek network security monitor (recovery path if the build-time install failed) |
 | `install-geoip.sh` | DB-IP Lite country + ASN labels for the attack map |
 | `install-duckdb.sh` | DuckDB accelerator for `orionx-logquery` |
