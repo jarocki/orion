@@ -486,6 +486,37 @@ def extract_none(event: dict[str, Any]) -> str | None:
     return ""
 
 
+# @decision DEC-PHASE13-066
+# @category HEALING
+# @title Critical Zeek notices may propose block_ip, only for notes whose source is the remote attacker
+# @status accepted
+# @rationale #190. A critical Zeek notice (password guessing, SQL injection,
+#   Heartbleed) could never propose block_ip; only firewall, Suricata and
+#   nucleotide could. A blanket zeek/ids/critical trigger would be wrong: on
+#   HTTP::SQL_Injection_Victim the source is our own host, and on Intel::Intel
+#   the indicator may be the destination. So the trigger's extractor answers
+#   only for ZEEK_ATTACKER_NOTES, takes the address from the event's structured
+#   detail (src_ip, set by postured from the notice), and refuses the deck's own
+#   traffic (detail origin "self"). The critical floor of DEC-PHASE13-042 is
+#   unchanged; Scan:: notes stay warning there and propose nothing.
+ZEEK_ATTACKER_NOTES = frozenset({
+    "SSH::Password_Guessing", "SSH::Login_By_Password_Guesser", "FTP::Bruteforcing",
+    "HTTP::SQL_Injection_Attacker", "Heartbleed::SSL_Heartbeat_Attack",
+    "Heartbleed::SSL_Heartbeat_Attack_Success",
+})
+
+
+def extract_zeek_attacker(event: dict[str, Any]) -> str | None:
+    """The remote source of a Zeek notice whose note names an attacker; else None."""
+    d = event.get("detail") if isinstance(event.get("detail"), dict) else {}
+    if d.get("note") not in ZEEK_ATTACKER_NOTES or d.get("origin") == "self":
+        return None
+    try:
+        return str(ipaddress.ip_address(str(d.get("src_ip") or "")))
+    except ValueError:
+        return None
+
+
 @dataclass(frozen=True)
 class Trigger:
     """One reviewed rule: this kind of event may propose this playbook."""
@@ -514,8 +545,10 @@ class Trigger:
 #   * Suricata warning is eve severity 2 (orionx-postured EVE_SEVERITY), where
 #     most ET INFO / ET POLICY signatures land: policy noise, not hostility
 #     attributable to a source.
-#   * Zeek has no trigger, and its only scan notices (Scan::*) are not in
-#     stock Zeek 8.1.1 and map to warning (orionx-postured ZEEK_NOTE_SEVERITY).
+#   * Zeek's scan notices (Scan::*) are not in stock Zeek 8.1.1 and map to
+#     warning (orionx-postured ZEEK_NOTE_SEVERITY), so they propose nothing.
+#     (Amended 2026-11-26, #190: critical Zeek notices whose source is the
+#     remote attacker now have a trigger, DEC-PHASE13-066.)
 #   * A trigger is level-agnostic: lowering the floor for `propose` lowers it
 #     for `autonomous` too, so a 16-port touch would put a LAN host in the
 #     nftables drop set. A per-level floor would be a second consent axis
@@ -532,6 +565,8 @@ TRIGGERS: tuple[Trigger, ...] = (
             "signature match attributed to a source address"),
     Trigger("block_ip", "nucleotide", "scan", "critical", extract_ip,
             "exploit-template attribution on inbound requests"),
+    Trigger("block_ip", "zeek", "ids", "critical", extract_zeek_attacker,
+            "Zeek saw this source attack the deck (password guessing, injection, Heartbleed)"),
     Trigger("quarantine_file", "yara", "malware", "warning", extract_path,
             "a YARA rule matched a file on disk"),
     Trigger("kill_process", "go-roast", "process", "critical", extract_pid,

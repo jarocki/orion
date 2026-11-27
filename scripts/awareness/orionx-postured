@@ -708,6 +708,10 @@ def upstream_scan_reporters(reporter: str) -> tuple[str, ...]:
     return SCAN_REPORTER_PRECEDENCE[:idx]
 
 
+# #189 (DEC-PHASE13-065): bus events this daemon refused, by reason; in write_status.
+BUS_REJECTED = rain_lib.RejectCounter("orionx-postured")
+
+
 def scan_sources_from_bus(lines, now: float,
                           window: float = SCAN_DEDUP_WINDOW,
                           sources: tuple[str, ...] = ("firewall",)) -> set[str]:
@@ -742,6 +746,9 @@ def scan_sources_from_bus(lines, now: float,
         # local writer and cannot suppress a real IDS alert without the same
         # root attestation required for privileged healing actions.
         if not rain_lib.verify_event(rec, key):
+            # #189: counted, logged at most once per reason per interval; no other work.
+            BUS_REJECTED.add("unsigned" if not isinstance(rec.get(rain_lib.AUTH_FIELD), str)
+                             else "bad_signature", now)
             continue
         try:
             ts = float(rec.get("ts", 0.0))
@@ -3007,6 +3014,7 @@ class PostureDaemon:
             return
         payload = {
             "ts": time.time(),
+            "rejected_events": BUS_REJECTED.snapshot(),   # #189
             "tier": self.state["tier"],
             "label": self.state["label"],
             "ids_expected": self.state["suricata"],

@@ -84,6 +84,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Refused bus events leave evidence (#189, DEC-PHASE13-065).** heald and
+  postured drop unsigned, forged, stale and replayed bus events, correctly but
+  silently. Each now counts them by reason, in memory, publishes the counts
+  with the status it already writes (`orionx-heal status` prints heald's), and
+  logs one journal line per reason at most every five minutes. A rejection
+  still causes no write and no subprocess, so a flood cannot amplify.
+- **Critical Zeek notices from an attacker can propose block_ip (#190,
+  DEC-PHASE13-066).** Password guessing (SSH, FTP), SQL injection from the
+  attacker's side and Heartbleed now propose a block of the notice's source,
+  taken from its structured detail. Notes whose source may be this deck or a
+  victim (SQL injection victim, intel hits) never do, nor does the deck's own
+  traffic. The critical floor is unchanged. Zeek notices already carried
+  `dest_port` (fixed in #127); a test now pins it.
 - **Three optional installers could not install on Debian 13 (#197).** Ghidra
   asked for `openjdk-17-jdk`, which trixie does not have; it now installs
   `openjdk-21-jdk`. TrID's definitions pin had gone stale because upstream

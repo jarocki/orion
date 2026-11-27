@@ -147,6 +147,8 @@ class Engine:
                  state_dir: Path | None = None, probe_host: bool = True) -> None:
         self.dry_run = bool(dry_run)
         self.verbose = bool(verbose)
+        # #189 (DEC-PHASE13-065): evidence of refused bus input, never extra work per event.
+        self.rejected = rain_lib.RejectCounter("orionx-heald")
         self.state_dir = Path(state_dir) if state_dir else hl.STATE_DIR
         self.config = hl.load_config()
         self.guards = collect_guards(self.config) if probe_host else hl.GuardContext(
@@ -207,6 +209,7 @@ class Engine:
             extra_error=(f"bus events cannot be verified: {self.key_error}"
                          if self._bus_key is None and self.key_error else None),
             autonomy=self.autonomy())
+        payload["rejected_events"] = self.rejected.snapshot()   # #189
         try:
             hl.write_status(payload, self.status_file)
             return True
@@ -292,6 +295,7 @@ class Engine:
         if trusted is None:
             trusted, why = self.attested(event, now)
             if not trusted:
+                self.rejected.add(rain_lib.rejection_reason(why), now)
                 return "unverified"
         elif not trusted:
             return "unverified"
