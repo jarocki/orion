@@ -144,7 +144,7 @@ fi
 for cls in orionx-page orionx-panel-title orionx-heading; do
     grep -q "\.$cls" "$APP" && pass "CSS themes .$cls (LIVE look on every tab)" || fail "CSS .$cls" "missing"
 done
-grep -q 'return moved.launch(' "$APP" && grep -q '"orionx-cockpit"' "${APP%/app.py}/moved.py" && pass "the launcher opens orionx-cockpit (moved.py, #95)" || fail "CC cockpit launcher" "app.run_app does not launch orionx-cockpit through moved.py"
+! grep -q '^def run_app' "$APP" && [[ ! -e "${APP%/app.py}/moved.py" ]] && pass "no Control Center launcher left in app.py (#192)" || fail "CC launcher" "run_app or moved.py came back"
 
 printf "\n===========================================\n"
 printf "  Results: ${GREEN}%d passed${NC}, ${RED}%d failed${NC}\n" "$PASS" "$FAIL"

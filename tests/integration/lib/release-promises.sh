@@ -99,9 +99,9 @@ assert_release_promises() {
     if [[ -z "$badexec" ]]; then pass "37d: every matrix-synapse.service.d ExecStart uses /opt/venvs/matrix-synapse/bin/python ($dropins drop-in(s))"
     else fail "37d: Synapse drop-in ExecStart uses the venv python" "$badexec"; fi
 
-    if grep -qx 'Exec=/usr/bin/orionx-cockpit --tab network' "$SQF/usr/share/applications/orionx-control-center.desktop" 2>/dev/null; then
-        pass "37e: Control Center menu entry opens the Cockpit network tab"
-    else fail "37e: orionx-control-center.desktop Exec=/usr/bin/orionx-cockpit --tab network" "Exec line missing or different"; fi
+    if [[ ! -e "$SQF/usr/share/applications/orionx-control-center.desktop" ]]; then
+        pass "37e: no Control Center menu entry (#192: the Cockpit is the window)"
+    else fail "37e: orionx-control-center.desktop removed" "the #192 removal was undone"; fi
     if grep -qx 'Name=Orion Workbench' "$SQF/usr/share/applications/orionx-osint.desktop" 2>/dev/null; then
         pass "37f: orionx-osint.desktop is the Orion Workbench"
     else fail "37f: orionx-osint.desktop Name=Orion Workbench" "Name line missing or different"; fi

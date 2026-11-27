@@ -28,7 +28,6 @@ mk_image() {  # complete synthetic image at $1
     f /var/lib/suricata/orionx-threshold.config
     f /etc/suricata/orionx.yaml 'threshold-file: /var/lib/suricata/orionx-threshold.config'
     f /etc/systemd/system/matrix-synapse.service.d/orionx.conf $'[Service]\nExecStart=\nExecStart=/opt/venvs/matrix-synapse/bin/python -m synapse.app.homeserver'
-    f /usr/share/applications/orionx-control-center.desktop 'Exec=/usr/bin/orionx-cockpit --tab network'
     f /usr/share/applications/orionx-osint.desktop 'Name=Orion Workbench'
     x /opt/orionx/scripts/awareness/orionx-tune; l /usr/bin/orionx-tune /opt/orionx/scripts/awareness/orionx-tune
     f /opt/orionx/scripts/awareness/deck_vitals.py; f /opt/orionx/scripts/awareness/tuning_lib.py

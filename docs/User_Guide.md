@@ -448,7 +448,7 @@ v3.1.5 gave every control one home, chosen by what it changes (#95): the **Cockp
 | Nebula warm-up | Cockpit → Nebula AI (**Warm up model**) | Cockpit → **Settings → Engine** since v3.2.0 (#201): **Warm up now** and an **at boot** switch; in a terminal `nebula warmup` | nothing (the boot-time switch is `systemctl enable nebula-warmup.service`) |
 | Optional installers | Cockpit → Orion Tools and the Workbench | Cockpit → **Orion Tools** since v3.2.0 (#199); the Workbench's **Optional** section mirrors it read-only | `orionx-optional` (one install record per tool) |
 
-`orionx-control-center` still exists for this release as a launcher: `orionx-control-center --where` prints this map, and `orionx-control-center --tab healing` (or `posture`, `rain`, `theme`, `dj`, `warmup`, `installers`) says where the control went and opens its new home. Tab keys (`network`, `mesh`, …) open the Cockpit as before.
+The `orionx-control-center` launcher, which printed this map and opened each control's new home, was removed in v3.2.0 (#192): the Orion Cockpit menu entry opens the Cockpit, and every control above is reached from it.
 
 **Auto-healing consent.** The Cockpit's **Settings** drawer (F2, on every tab) has an **Engine** group: one selector per action class (block_ip, kill_process, quarantine_file, isolate_node, rotate_mesh_keys, revoke_matrix_session) showing the level `orionx-heald` will use. Change it there; choosing *autonomous* asks first. Each change runs `orionx-heal autonomy`, the one writer, and is announced on the event bus (a class turned *autonomous* is a warning). The Workbench's **Engine** cards show the same levels read-only, with **Change in Cockpit**. From a terminal (as yourself, without `sudo`):
 
@@ -2070,7 +2070,6 @@ ip a                           # Network interfaces
 
 # Orion-X Desktop
 orionx-cockpit [--fullscreen] [--demo] [--tab NAME]   # Orion Cockpit (NAME: live network mesh comms awareness tools nebula healing)
-orionx-control-center          # Same window, on the Network tab (old name, kept)
 sudo orionx-wizard             # Re-run the first-boot wizard
 
 # Awareness (R.A.I.N. / event bus)

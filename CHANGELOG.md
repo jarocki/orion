@@ -70,6 +70,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default gateway. The network census now names its hosts so new ones can be
   told apart.
 
+### Removed
+
+- **The `orionx-control-center` launcher and its menu entry (#192).** Since
+  v3.1.5 it only redirected to where #95 moved each control; with #199-#201
+  every control is in the Cockpit (or mirrored read-only on the Workbench),
+  so the redirect, its map (`moved.py`), `/usr/bin/orionx-control-center`
+  and the "Orion Cockpit — Network tab" entry are gone. The Orion Cockpit
+  entry opens the Cockpit, whose tab strip reaches every tab. DEC-PHASE13-049
+  (the loopback page never writes) moved with its rule to `osint_server.py`.
+  The Orion Tools tab already lists on-deck tools from the Workbench
+  catalogue at runtime, so the two surfaces cannot drift.
+
 ### Fixed
 
 - **Three optional installers could not install on Debian 13 (#197).** Ghidra

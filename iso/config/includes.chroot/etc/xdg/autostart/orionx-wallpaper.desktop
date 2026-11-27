@@ -9,8 +9,8 @@
 #   /etc/skel/ xfconf XML only seeds the wallpaper at fresh-home creation time.
 #   This XDG autostart entry re-asserts all four XFCE backdrop keys on every
 #   session start, making the Phoenix branding survive any xfconf reset or
-#   session-init race. Sits alongside nm-applet.desktop, orionx-control-center.desktop,
-#   and orionx-disable-screen-lock.desktop in the same directory.
+#   session-init race. Sits alongside nm-applet.desktop and orionx-disable-screen-lock.desktop
+#   in the same directory.
 #   Belt-and-suspenders companion to DEC-PHASE11-014 (skel authority).
 Type=Application
 Name=Orion-X Phoenix Wallpaper

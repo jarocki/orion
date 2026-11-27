@@ -33,7 +33,7 @@ JARGON = re.compile(r"\bPhase \d+\b|DEC-PHASE|\bW\d+-\d+\b")
 # Programs Debian packages provide (not Orion-X scripts).
 SYSTEM = {"xfce4-terminal", "wireshark", "matrix-commander", "sh", "bash"}
 # The surfaces an operator must tell apart at a glance in the menu (UX-44).
-PRIMARY = {"orionx-cockpit.desktop", "orionx-control-center.desktop", "orionx-osint.desktop"}
+PRIMARY = {"orionx-cockpit.desktop", "orionx-osint.desktop"}
 out, names = [], {}
 
 

@@ -229,7 +229,7 @@ def may_act_now(autonomy: dict[str, str], playbook: str) -> bool:
     return disposition(level_for(autonomy, playbook)) == ACT_EXECUTE
 
 
-# #95 (DEC-PHASE13-049, recorded in scripts/control_center/moved.py): the
+# #95 (DEC-PHASE13-049, recorded in scripts/osint/osint_server.py): the
 # Cockpit's Auto-Healing tab was the only writer of autonomy.json and wrote it
 # whenever it was built, so opening a window granted "propose" consent. The
 # grid moved to the Workbench (read-only page + this writer via

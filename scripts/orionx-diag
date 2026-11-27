@@ -689,12 +689,13 @@ run_python_checks() {
     # 6a: control_center.app importable
     local cc_out cc_exit=0
     # control_center lives at /opt/orionx/scripts/control_center, which is not
-    # on the default sys.path — the orionx-control-center wrapper inserts its
-    # own directory before importing. A bare `python3 -c` does not, so this
-    # failed on a working install and was filed as issue #66 ("module missing
-    # from sys.path"). Mirror what the wrapper does.
+    # on the default sys.path — orionx-cockpit inserts its parent directory
+    # before importing. A bare `python3 -c` does not, so this failed on a
+    # working install and was filed as issue #66 ("module missing from
+    # sys.path"). Mirror what the Cockpit does; SECTIONS is the tab authority
+    # it reads (#192 removed the launcher's run_app).
     cc_out="$(PYTHONPATH="/opt/orionx/scripts${PYTHONPATH:+:$PYTHONPATH}" \
-              python3 -c 'from control_center.app import run_app' 2>&1)" || cc_exit=$?
+              python3 -c 'from control_center.app import SECTIONS' 2>&1)" || cc_exit=$?
     if [[ $cc_exit -eq 0 ]]; then
         check_pass "$cat" "control_center.app importable" ""
     else
