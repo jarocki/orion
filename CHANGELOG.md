@@ -18,6 +18,26 @@ than a /24 and on resolvers that answer names that cannot exist. One is a
 status line that described the code wrongly. CI builds and gates the ISO
 from the tag, the owner signs (DEC-PHASE13-029).
 
+**ISO identity.** SHA-256 `37f84f91361f4c34b07bbf64dc9f621bf97e9db719b9e8088cf6897d26fa1532`,
+3,161,604,096 bytes (3.16 GB; the same byte count as v3.1.3 to v3.1.5, a
+different image), built 2026-11-18 by the Release Pipeline (Actions run
+44204414726, on the pinned `ubuntu-24.04` runner) from `da8e837`, the tag
+commit. Baked `ISO_VERSION=v3.1.6`. Gates on this image, all in the same CI
+run: `.sha256` sidecar matches; Debian security floors (13 floors, 26 shipped
+packages at or above floor) with the boot kernel (`vmlinuz-6.12.117+deb13-amd64`,
+up from 6.12.116 in v3.1.5 by the Debian archive, not by a source change)
+bound to the packaged one; content-presence in release mode
+(`ORIONX_RELEASE_GATE=1 ORIONX_EXPECT_VERSION=v3.1.6`, 437 passed, 0 failed).
+The release workflow has no QEMU step; develop at the same commit passed QEMU
+in run 44204402356 (BIOS boot 123 s, UEFI boot 125 s). Not booted on hardware
+yet. The first staging attempt (2026-11-18) died on a gpg passphrase timeout
+(#193) and was redone with the passphrase asked up front. Signed by the owner
+with `4CB08BD1D0B3281613DD15DB1DCCDF47FEEDEEEF` and published 2026-11-19; 48
+parts of 64 MiB plus `SHA256SUMS`, `SHA512SUMS`, their `.asc` signatures and
+`REASSEMBLE.txt` (53 assets, uploaded 03:14–03:43Z, median 28 s per upload,
+none retried), every asset size verified against the staging directory and the
+signature re-verified on a fresh download by `owner-release.sh verify`.
+
 *Needs the deck:* real `aplay` playback at volume 0 and 0.5, and piper's
 scratch directory under a desktop session, are covered by stubbed tests
 only.
