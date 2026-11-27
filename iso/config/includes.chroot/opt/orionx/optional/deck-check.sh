@@ -81,7 +81,10 @@ step identity 20 sh -c 'cat /etc/os-release; echo; cat /etc/orionx-release 2>/de
 step boot-time 30 sh -c 'systemd-analyze time; echo; systemd-analyze blame --no-pager | head -25; echo; systemd-analyze critical-chain --no-pager graphical.target'
 step boot-integrity-hash 15 systemctl show -p ExecMainStartTimestampMonotonic,ExecMainExitTimestampMonotonic,Result nebula-integrity-check.service
 step probe-runtime-verify 120 env ORIONX_PROBE_SESSION_WAIT=10 bash "$PROBES/runtime-verify.sh"
-step probe-perf-measure 120 env ORIONX_PROBE_SESSION_WAIT=10 ORIONX_PROBE_SETTLE=0 bash "$PROBES/perf-measure.sh"
+# The desktop is long up by now: short bounds on its processes and on RAM
+# settling (DEC-PHASE13-069); the report says whether each held.
+step probe-perf-measure 120 env ORIONX_PROBE_SESSION_WAIT=10 ORIONX_PROBE_READY_WAIT=15 \
+    ORIONX_PROBE_STABLE_WAIT=60 ORIONX_PROBE_STABLE_STEP=10 bash "$PROBES/perf-measure.sh"
 step failed-units 15 systemctl --failed --no-pager
 
 # --- Nebula on Ollama 0.40 (#163) -----------------------------------------
