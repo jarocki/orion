@@ -2395,6 +2395,10 @@ class PostureDaemon:
         self.brake = capture.ReconfigureBrake(cooldown=args.reconfig_cooldown)
         self._last_heartbeat = 0.0
         self._verify_due = 0.0
+        # #202 (DEC-PHASE13-063): resource alarms, announced once per crossing.
+        self.resources = deck_vitals.Crossings()
+        self._res_due = 0.0
+        self._cpu_prev = None
         self._verify: dict = {"verified": None, "attached": [],
                               "reason": "not yet checked"}
         self._capture_announced: dict[str, float] = {}
@@ -2486,6 +2490,21 @@ class PostureDaemon:
         sock = getattr(capture, "COMMAND_SOCKET", Path("/var/lib/suricata/orionx-command.socket"))
         if service_active(SURICATA_UNIT):
             capture.suricatasc("ruleset-reload-nonblocking", Path(sock))
+
+    def check_resources(self, now: float, collect=None) -> list:
+        """#202: grade memory, disk, sustained CPU and battery; publish each crossing once."""
+        try:
+            v = (collect or deck_vitals.collect)(self._cpu_prev)
+        except Exception as exc:  # noqa: BLE001 - an unreadable vital must not stop enforcement
+            print(f"orionx-postured: resource check skipped: {exc!r}", file=sys.stderr, flush=True)
+            return []
+        self._cpu_prev = v.get("cpu_sample")
+        changes = self.resources.update(deck_vitals.resource_pcts(v), now)
+        for name, _old, new, pct in changes:
+            sev, msg = deck_vitals.crossing_event(name, _old, new, pct, v)
+            self.emit(sev, "health", msg, source="deck",
+                      detail={"resource": name, "level": new, "pct": round(pct, 1)})
+        return changes
 
     def emit(self, severity: str, category: str, message: str,
              source: str = "postured", detail: dict | None = None) -> None:
@@ -3148,6 +3167,9 @@ class PostureDaemon:
                     # unreadable. All three are runtime facts (DEC-PHASE12-028).
                     self._sync_zeek(now)
                     self.write_status()
+                if now >= self._res_due:
+                    self._res_due = now + deck_vitals.RESOURCE_POLL_S
+                    self.check_resources(now)
                 if (now - last_canary) >= CANARY_POLL_SECONDS:
                     last_canary = now
                     self._check_canaries()

@@ -62,6 +62,9 @@ _RED = "#ff6a4a"
 _DIM = "#9aa0a6"
 
 
+_GRADE_COLOR = {"ok": _GREEN, "amber": _AMBER, "red": _RED, "unknown": _DIM}
+
+
 def _color(text: str, hexcol: str) -> str:
     return f'<span foreground="{hexcol}">{text}</span>'
 
@@ -93,7 +96,7 @@ def _memory(v: dict) -> tuple[str, str]:
         return "n/a", _DIM
     gb = 1024 * 1024
     used = (mem["total_kib"] - mem["available_kib"]) / gb
-    col = _GREEN if pct < 70 else _AMBER if pct < 88 else _RED
+    col = _GRADE_COLOR[_V.grade("mem", pct)]   # #202: the one threshold table (DEC-PHASE13-063)
     return f"{pct:.0f}%  ({used:.1f} / {mem['total_kib'] / gb:.1f} GB)", col
 
 
@@ -102,7 +105,7 @@ def _disk(v: dict) -> tuple[str, str]:
     pct = d.get("used_pct")
     if pct is None:
         return "n/a", _DIM
-    col = _GREEN if pct < 80 else _AMBER if pct < 92 else _RED
+    col = _GRADE_COLOR[_V.grade("disk", pct)]
     return f"{pct:.0f}%  ({_V.fmt_bytes(d.get('free_bytes'))} free)", col
 
 

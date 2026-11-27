@@ -52,6 +52,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (warning when a class becomes autonomous), and every warm-up publishes its
   outcome, from any surface including the boot unit. The Workbench's Engine
   cards drop their copy-a-command buttons for **Change in Cockpit**.
+- **Resource alarms you can see and hear (#202, DEC-PHASE13-063).** One
+  threshold table (memory 80/90 %, disk 85/95 %, CPU 85/95 % sustained for a
+  minute, battery 20/10 % left when discharging) replaces three: LIVE's bars
+  used 75/90 for everything and the Awareness tab 70/88 and 80/92. LIVE's
+  DECK bars carry amber and red tick marks and a red bar flashes; the battery
+  appears beside uptime. `orionx-postured` grades the deck every 10 s and
+  publishes each crossing once (warning, critical, back to normal) with 5
+  points of hysteresis, so the alarm reaches R.A.I.N. and the stream with the
+  Cockpit closed. The Awareness tab colours by the same table.
+- **LIVE says where things are heading (#202, DEC-PHASE13-064).** A deck
+  verdict on every tab (NOMINAL, BUSY, WATCH, DEGRADED, UNDER ATTACK, with
+  why); a TASKS strip across LIVE only while work runs (optional-tool
+  installs and removals, read from their live state files); THREAT PRESSURE
+  shows its 15-minute change, DEFENSIVE ACTIONS the active and new attack
+  sources, NETWORK the hosts first seen in the last 15 minutes or a changed
+  default gateway. The network census now names its hosts so new ones can be
+  told apart.
 
 ### Fixed
 

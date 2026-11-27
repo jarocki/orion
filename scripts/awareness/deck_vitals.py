@@ -292,6 +292,136 @@ def disk(path: str = "/") -> dict[str, Any]:
     return {"path": path, "total_bytes": total, "free_bytes": free, "used_pct": used_pct}
 
 
+# ---------------------------------------------------------------------------
+# @decision DEC-PHASE13-063
+# @category COCKPIT
+# @title One table of resource thresholds; postured announces each crossing once, LIVE and Awareness colour by it
+# @status accepted
+# @rationale #202 (owner, 2026-11-25): "when resources are running low ...
+#   all of this should be instantly observable and understandable from the
+#   cyber deck cockpit." There were three threshold sets (LIVE bars 75/90 for
+#   everything, Awareness memory 70/88 and disk 80/92) and no alarm: a full
+#   disk was a red bar on a tab you might not be looking at. THRESHOLDS is now
+#   the one table; resource_levels() grades a vitals snapshot by it, and both
+#   surfaces colour from that. Crossings is the alarm: an upward crossing is
+#   announced once, a level clears only HYSTERESIS points below its line (no
+#   flapping at 89.9/90.1), and CPU must stay over a line for CPU_SUSTAIN_S
+#   before it counts (a compile is not an incident). orionx-postured, the
+#   always-on daemon whose events the broker signs, feeds it every
+#   RESOURCE_POLL_S, so the alarm reaches R.A.I.N. and LIVE whether or not the
+#   Cockpit is open. On a live stick "/" is the RAM-backed overlay: disk full
+#   is memory full, hence the higher disk lines. Battery counts only when
+#   discharging.
+THRESHOLDS: dict[str, tuple[float, float]] = {   # name -> (amber at, red at), percent used
+    "mem": (80.0, 90.0),
+    "disk": (85.0, 95.0),
+    "cpu": (85.0, 95.0),
+    "battery": (80.0, 90.0),   # percent DRAINED (100 - charge): amber at 20 % left, red at 10 %
+}
+HYSTERESIS = 5.0
+CPU_SUSTAIN_S = 60.0
+RESOURCE_POLL_S = 10.0
+LEVELS = ("ok", "amber", "red")
+LABEL = {"mem": "memory", "disk": "disk /", "cpu": "CPU", "battery": "battery"}
+
+
+def grade(name: str, pct: float | None) -> str:
+    """'ok' | 'amber' | 'red' | 'unknown' for one resource, with no memory of the past."""
+    if pct is None or name not in THRESHOLDS:
+        return "unknown"
+    amber, red = THRESHOLDS[name]
+    return "red" if pct >= red else "amber" if pct >= amber else "ok"
+
+
+def resource_pcts(v: dict[str, Any]) -> dict[str, float | None]:
+    """The four graded figures from a vitals snapshot (battery: drained %, only when discharging)."""
+    bat = v.get("battery") or {}
+    drained = (100.0 - bat["pct"]) if bat.get("pct") is not None and bat.get("status") == "Discharging" else None
+    return {"mem": (v.get("mem") or {}).get("used_pct"), "disk": (v.get("disk") or {}).get("used_pct"),
+            "cpu": v.get("cpu_pct"), "battery": drained}
+
+
+def resource_levels(v: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {k: {"pct": p, "level": grade(k, p)} for k, p in resource_pcts(v).items()}
+
+
+class Crossings:
+    """Announce each resource level change once, with hysteresis and a CPU sustain window."""
+
+    def __init__(self) -> None:
+        self.level: dict[str, str] = {}
+        self._cpu_since: dict[str, float] = {}
+
+    def _held(self, name: str, pct: float, current: str) -> str:
+        """The level `pct` implies given where we are now (clear only HYSTERESIS below a line)."""
+        amber, red = THRESHOLDS[name]
+        raw = grade(name, pct)
+        if LEVELS.index(raw) >= LEVELS.index(current):
+            return raw
+        if current == "red" and pct > red - HYSTERESIS:
+            return "red"
+        if current in ("red", "amber") and pct > amber - HYSTERESIS:
+            return "amber"
+        return raw
+
+    def update(self, pcts: dict[str, float | None], now: float) -> list[tuple[str, str, str, float]]:
+        """[(name, old, new, pct), ...] for every level change since the last update."""
+        out = []
+        for name, pct in pcts.items():
+            if pct is None or name not in THRESHOLDS:
+                continue
+            cur = self.level.get(name, "ok")
+            new = self._held(name, pct, cur)
+            if name == "cpu" and LEVELS.index(new) > LEVELS.index(cur):
+                since = self._cpu_since.setdefault(new, now)
+                if now - since < CPU_SUSTAIN_S:
+                    continue
+            if name == "cpu":
+                for lv in list(self._cpu_since):
+                    if LEVELS.index(lv) > LEVELS.index(new) or lv == new:
+                        self._cpu_since.pop(lv, None)
+            if new != cur:
+                self.level[name] = new
+                out.append((name, cur, new, pct))
+        return out
+
+
+def crossing_event(name: str, old: str, new: str, pct: float, v: dict[str, Any]) -> tuple[str, str]:
+    """(severity, message) for one crossing, saying what to look at."""
+    what = LABEL.get(name, name)
+    if name == "battery":
+        figure = f"{100 - pct:.0f}% left"
+    elif name == "disk":
+        figure = f"{pct:.0f}% used, {fmt_bytes((v.get('disk') or {}).get('free_bytes'))} free"
+    else:
+        figure = f"{pct:.0f}%"
+    if new == "ok":
+        return "notice", f"Deck {what} back to normal ({figure})"
+    sev = "critical" if new == "red" else "warning"
+    hint = {"disk": " — on a live stick this is RAM: clear captures or ~/Analysis",
+            "mem": " — the largest processes: ps aux --sort=-rss | head",
+            "cpu": " — sustained for over a minute",
+            "battery": " — connect power"}.get(name, "")
+    return sev, f"Deck {what} {new.upper()}: {figure}{hint}"
+
+
+def battery(read: Callable[[str], str] = _read, root: str = "/sys/class/power_supply") -> dict[str, Any] | None:
+    """{'pct', 'status'} of the first battery, or None (desktop, VM)."""
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return None
+    for n in names:
+        if (read(f"{root}/{n}/type") or "").strip() != "Battery":
+            continue
+        try:
+            pct = float((read(f"{root}/{n}/capacity") or "").strip())
+        except ValueError:
+            continue
+        return {"pct": pct, "status": (read(f"{root}/{n}/status") or "").strip() or "Unknown"}
+    return None
+
+
 def collect(prev_cpu: tuple[int, int] | None = None, sample: float = 0.0,
             run: Callable[..., str] = _run, read: Callable[[str], str] = _read,
             disk_path: str = "/") -> dict[str, Any]:
@@ -331,6 +461,7 @@ def collect(prev_cpu: tuple[int, int] | None = None, sample: float = 0.0,
     if out["mem"]["total_kib"] is None:
         out["reasons"].append(f"mem: {PROC_MEMINFO} unreadable")
     out["disk"] = disk(disk_path)
+    out["battery"] = battery(lambda path: _safe(read, path))
     if out["disk"]["total_bytes"] is None:
         out["reasons"].append(f"disk: statvfs({disk_path}) failed")
     ifaces = parse_ip_addr(_safe(run, ["ip", "-j", "addr"]))

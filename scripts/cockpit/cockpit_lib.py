@@ -573,7 +573,11 @@ def attack_sources(events, now: float | None = None) -> dict[str, Any]:
     feed = _pewpew.build_feed((json.dumps(e, default=str) for e in events),
                               now=time.time() if now is None else now)
     rows = [{k: s.get(k) for k in SOURCE_FIELDS} for s in feed["sources"][:SOURCES_MAX]]
-    return {"rows": rows, "total": len(feed["sources"]),
+    # "all" (#202): every source, compactly, for the active/new counts the
+    # header verdict and the pane title show (rows stays the drawn subset).
+    every = [{"ip": s.get("ip"), "last_seen": s.get("last_seen"), "events": s.get("events")}
+             for s in feed["sources"]]
+    return {"rows": rows, "total": len(feed["sources"]), "all": every,
             "window": float(feed["window_seconds"]), "held": len(events)}
 
 
@@ -761,11 +765,21 @@ SYSTEMS_MIN_H = 90
 HEADER_H = 58
 
 
+TASKS_H = 34    # #202: the TASKS strip, only while something runs
+
+
 def live_layout(W: float, H: float, pad: int = 16,
-                deck_h: int = 118) -> dict[str, tuple[float, float, float, float]]:
-    """Panel rectangles (x, y, w, h) for a W x H LIVE drawing area."""
-    body_y = pad
-    body_h = max(0, H - pad * 2)
+                deck_h: int = 118, tasks_h: int = 0) -> dict[str, tuple[float, float, float, float]]:
+    """Panel rectangles (x, y, w, h) for a W x H LIVE drawing area.
+
+    With tasks_h > 0 a full-width "tasks" strip sits on top and the panels
+    below share what is left; with 0 the layout is exactly as before.
+    """
+    tasks = {}
+    if tasks_h > 0:
+        tasks = {"tasks": (pad, pad, W - 2 * pad, tasks_h)}
+    body_y = pad + (tasks_h + pad if tasks_h > 0 else 0)
+    body_h = max(0, H - pad - body_y)
     left_w = int(W * 0.58) - pad
     out = {
         "events": (pad, body_y, left_w, max(0, body_h - deck_h - pad)),
@@ -782,6 +796,7 @@ def live_layout(W: float, H: float, pad: int = 16,
     for name, h in (("actions", a_h), ("gauge", g_h), ("net", n_h), ("systems", s_h)):
         out[name] = (rx, y, rw, h)
         y += h + pad
+    out.update(tasks)
     return out
 
 
@@ -910,3 +925,160 @@ def approve_action(action_id: str) -> tuple[bool, str]:
     tail = (out or "").strip().splitlines()
     why = tail[-1][:80] if tail else f"exit {rc}"
     return False, f"not approved ({why}) — run: sudo orionx-heal confirm {aid}"
+
+
+# ---------------------------------------------------------------------------
+# @decision DEC-PHASE13-064
+# @category COCKPIT
+# @title LIVE says where things are heading: a deck verdict on every tab, a TASKS strip while work runs, trends on pressure, sources and the network
+# @status accepted
+# @rationale #202 (owner, 2026-11-25): "When resources are running low or
+#   attacks are high or tasks are progressing or adversaries or networks are
+#   escalating ... all of this should be instantly observable and
+#   understandable from the cyber deck cockpit — that is the POINT of a
+#   cockpit." LIVE showed levels but not direction, nothing in progress, and
+#   no single answer to "is the deck all right?". These pure functions turn
+#   what the Cockpit already reads into that answer: Trend keeps 15 minutes
+#   of samples (pressure, active sources, hosts) and gives the change; the
+#   verdict is the worst of attack (HOSTILE pressure or a rising set of new
+#   sources), resources (deck_vitals' table, DEC-PHASE13-063) and work in
+#   progress; tasks_from() reads the live state files the workers already
+#   write (orionx-optional), so the strip appears only while something runs
+#   and costs LIVE no space otherwise. Nothing here publishes: the producers
+#   do (DEC-PHASE13-057, -062, -063).
+TREND_WINDOW = 900.0          # 15 minutes
+TREND_STEP = 10.0             # one sample per 10 s
+
+
+class Trend:
+    """A bounded series of (t, value) with the change over TREND_WINDOW."""
+
+    def __init__(self, window: float = TREND_WINDOW, step: float = TREND_STEP) -> None:
+        self.window, self.step = window, step
+        self.points: list[tuple[float, float]] = []
+
+    def add(self, t: float, value: float) -> None:
+        if self.points and t - self.points[-1][0] < self.step:
+            self.points[-1] = (self.points[-1][0], value)     # within a step: keep the latest
+        else:
+            self.points.append((t, value))
+        while self.points and t - self.points[0][0] > self.window:
+            self.points.pop(0)
+
+    def delta(self) -> float | None:
+        """Latest minus the oldest sample in the window (None until 2 samples a minute apart)."""
+        if len(self.points) < 2 or self.points[-1][0] - self.points[0][0] < 60:
+            return None
+        return self.points[-1][1] - self.points[0][1]
+
+    def values(self) -> list[float]:
+        return [v for _t, v in self.points]
+
+
+def arrow(delta: float | None, dead: float = 0.5) -> str:
+    if delta is None or abs(delta) < dead:
+        return "→"                      # →
+    return "↑" if delta > 0 else "↓"
+
+
+def trend_text(delta: float | None, unit: str = "", dead: float = 0.5) -> str:
+    """'↑ +31 in 15 min' / '→ steady' / '' (too little history)."""
+    if delta is None:
+        return ""
+    if abs(delta) < dead:
+        return "→ steady"
+    return f"{arrow(delta)} {delta:+.0f}{unit} in 15 min"
+
+
+def source_counts(rows: list[dict], first_seen: dict[str, float], now: float, window: float = TREND_WINDOW) -> dict:
+    """Active sources and how many are new in the window; `first_seen` is updated in place."""
+    active = [r for r in rows if r.get("ip") and (now - float(r.get("last_seen") or 0)) <= window]
+    for r in active:
+        first_seen.setdefault(r["ip"], now)
+    new = [r for r in active if now - first_seen[r["ip"]] <= window]
+    top = max(active, key=lambda r: r.get("events") or 0, default=None)
+    return {"active": len(active), "new": len(new), "top": (top or {}).get("ip")}
+
+
+def network_changes(hosts_now: set[str], hosts_seen: dict[str, float], gateway: str | None,
+                    gw_state: dict, now: float, window: float = TREND_WINDOW) -> dict:
+    """New hosts in the window and whether the default gateway changed (both updated in place)."""
+    for h in hosts_now:
+        hosts_seen.setdefault(h, now)
+    baseline = gw_state.setdefault("started", now)
+    new_hosts = sorted(h for h, t in hosts_seen.items() if now - t <= window and t > baseline)
+    changed = None
+    if gateway:
+        prev = gw_state.get("gateway")
+        if prev and prev != gateway:
+            gw_state["changed_at"], gw_state["from"] = now, prev
+        gw_state["gateway"] = gateway
+    if gw_state.get("changed_at") and now - gw_state["changed_at"] <= window:
+        changed = f"gateway {gw_state['from']} → {gw_state['gateway']}"
+    return {"new_hosts": new_hosts, "gateway_change": changed}
+
+
+def tasks_from(states: list[dict], now: float) -> list[dict]:
+    """Running work from live state files: [{'name','step','n','m','frac'}]. A dead pid is not running."""
+    out = []
+    for s in states:
+        if s.get("state") != "running":
+            continue
+        m = int(s.get("m") or 0)
+        n = int(s.get("n") or 0)
+        verb = {"install": "install", "uninstall": "remove"}.get(s.get("action"), s.get("action") or "task")
+        out.append({"name": f"{verb} {s.get('id', '?')}", "step": s.get("line") or s.get("step") or "",
+                    "n": n, "m": m, "frac": (n / m) if m else 0.0,
+                    "age": max(0.0, now - float(s.get("started") or now))})
+    return out
+
+
+def deck_verdict(pressure_value: float, levels: dict[str, dict], sources: dict, tasks: list[dict],
+                 pressure_delta: float | None = None) -> tuple[str, str, tuple[float, float, float]]:
+    """(word, detail, colour): the one answer to 'is the deck all right?'."""
+    red = [k for k, v in levels.items() if v.get("level") == "red"]
+    amber = [k for k, v in levels.items() if v.get("level") == "amber"]
+    parts = []
+    if pressure_value >= 60 or (sources.get("new", 0) >= 2 and (pressure_delta or 0) > 10):
+        word, col = "UNDER ATTACK", RED
+        parts.append(f"threat {pressure_value:.0f}" + (f" ({pressure_delta:+.0f})" if pressure_delta else ""))
+        if sources.get("active"):
+            parts.append(f"{sources['active']} sources" + (f", {sources['new']} new" if sources.get("new") else ""))
+    elif red:
+        word, col = "DEGRADED", RED
+    elif amber or pressure_value >= 25:
+        word, col = "WATCH", AMBER
+        if pressure_value >= 25:
+            parts.append(f"threat {pressure_value:.0f}")
+    elif tasks:
+        word, col = "BUSY", CYAN
+    else:
+        word, col = "NOMINAL", GREEN
+    for k in red + amber:
+        pct = levels[k].get("pct")
+        parts.append(f"{k} {pct:.0f}%" if k != "battery" else f"battery {100 - pct:.0f}% left")
+    if tasks:
+        parts.append(f"{len(tasks)} task{'s' if len(tasks) != 1 else ''} running")
+    return word, " · ".join(parts), col
+
+
+def read_task_states(state_dir: str = "/run/orionx/optional") -> list[dict]:
+    """Live state files the workers write (orionx-optional, #197), with a live pid only. Worker thread."""
+    import glob as _glob  # noqa: PLC0415
+    out = []
+    for f in sorted(_glob.glob(os.path.join(state_dir, "*.json"))):
+        try:
+            d = json.loads(Path(f).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(d, dict) or d.get("state") != "running":
+            continue
+        try:
+            os.kill(int(d.get("pid")), 0)
+        except PermissionError:
+            pass                              # root's process, alive
+        except (OSError, ValueError, TypeError):
+            continue
+        d.setdefault("id", Path(f).stem)
+        out.append(d)
+    return out
