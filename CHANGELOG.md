@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [v3.2.0] — 2026-11-27 (the Cockpit manages the deck)
+
+The Cockpit becomes the place to manage the deck. Optional tools install and
+remove from its Orion Tools tab through one manager, `orionx-optional`, which
+records what each install added and removes only that; the Workbench mirrors
+the state read-only. Auto-healing consent and Nebula warm-up move into the
+Settings drawer's Engine group. LIVE says where things stand and where they
+are heading: a one-word deck verdict, a TASKS strip, resource alarms that
+R.A.I.N. speaks, and 15-minute trends for threat pressure and attack sources.
+Ollama moves to 0.40.17 with the model store still read-only. Refused bus
+events are counted, and critical Zeek notices from an attacker can propose a
+block. The QEMU job's in-guest checks, silent since the model moved into the
+image, run again as gates and check the desktop session; with an honest
+reading, the idle-RAM budget is 1.25 GiB. `deck-check.sh` collects the
+hardware evidence in one command. gomuks and the `orionx-control-center`
+launcher are removed. CI builds and gates the ISO from the tag, the owner
+signs (DEC-PHASE13-029).
+
+Tried on the development image in QEMU (CI run 45936482841, 2026-11-27):
+ClamAV installed from the command line (5 packages, ACTIVE with signatures;
+the Tools tab and LIVE's TASKS strip followed it live) and uninstalled
+(exactly those 5 purged, the package count back to its starting value).
+
+*Needs the deck:* everything above ran in QEMU only. Narration timing (#96),
+the apt evidence (#121) and the v3.1.5 deck checks (#188) wait on a hardware
+boot; `sudo /opt/orionx/optional/deck-check.sh` collects all three. Idle RAM
+on the 2 GB deck with the Nebula model loaded is unmeasured (#218).
 
 ### Added
 
@@ -180,6 +206,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recorded source matches and refuses any other. v3.1.4, v3.1.5 and v3.1.6 each
   lost a staging run to an unseen pinentry timeout and needed a hand-written
   resume script.
+- **The Cockpit no longer promises a password prompt that never appears.**
+  The Orion Tools tab said "admin password asked once, then remembered about
+  5 minutes (polkit)", and the Engine group's at-boot switch said it asks for
+  the admin password. On the built image, live-config's
+  `sudo_on_live.rules` approves every polkit action for the live account, and
+  `pkcheck` authorizes `org.orionx.optional.manage` with no prompt (exit 0,
+  2026-11-27). Both now say so; DEC-PHASE13-058 records the measurement, the
+  User Guide's §15 matches its §3, and whether to keep the grant is #203.
+- **The Cockpit pointed to the Workbench for controls that moved (#201).** The
+  DEFENSIVE ACTIONS pane's "autonomy is OFF" line and the Nebula tab's warm-up
+  line said *Workbench → Engine*; both say *Settings (F2) → Engine* now.
+- **`orionx-diag` failed on a deck where ClamAV was installed the supported
+  way.** Its base-image gate (DEC-PHASE11-009) failed whenever ClamAV was
+  installed, and told the operator to run `install-clamav.sh`. It now passes
+  when `orionx-optional` recorded the install
+  (`/var/lib/orionx/optional/clamav.json`) and still fails for a ClamAV with
+  no record, which is what came with the image; the remedy names
+  `orionx-optional`. `tests/unit/test_orionx_diag_clamav.sh` runs the real
+  script with a stubbed dpkg for all three cases.
+- **CI no longer fails when Microsoft's apt repository does.** GitHub's runner
+  image configures `packages.microsoft.com`, which no job uses; it answered
+  403 twice on 2026-11-27 and `apt-get update` failed the QEMU job before it
+  started (runs 45922215757, 45939173768). The QEMU, E2E and release jobs drop
+  that source before updating.
+- **Documentation brought up to v3.2.0.** README: what is new, the optional
+  tools as one manager, the Settings → Engine home for auto-healing consent,
+  the Cockpit's actual tabs, Ollama 0.40.17, and Known issues that are open
+  now (the v3.1.0 hardware findings it still listed were fixed in v3.1.1 and
+  v3.1.5). User Guide: the Settings drawer's Engine group, `orionx-optional`,
+  `orionx-heal`, `nebula warmup`, `deck-check.sh` and `apt-evidence.sh` in the
+  command reference; three pointers to controls that had moved; `--tab`
+  listed a `healing` tab that does not exist. `docs/qemu-boot-test.md`: what
+  the in-guest gates check and their limits; the in-guest steps are no longer
+  `continue-on-error`. New screenshots from the development image in QEMU:
+  the desktop, the login screen, and the Cockpit's LIVE tab, Orion Tools tab
+  and Settings drawer during a real install.
 
 ---
 

@@ -55,8 +55,10 @@ class OptionalPanel:
         self.box.pack_start(top, False, False, 0)
         note = Gtk.Label(xalign=0)
         note.set_line_wrap(True)
-        note.set_markup(f'<span foreground="{V.DIM}" size="small">admin password asked once, '
-                        'then remembered about 5 minutes (polkit)</span>')
+        # Measured on the v3.2.0 image: live-config's polkit rule approves every
+        # action for the live account, so no password is asked (DEC-PHASE13-058, #203).
+        note.set_markup(f'<span foreground="{V.DIM}" size="small">runs as root through polkit; '
+                        'the live account is approved without a password (see #203)</span>')
         self.box.pack_start(note, False, False, 0)
 
         body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)

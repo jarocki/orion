@@ -49,7 +49,7 @@ from pathlib import Path
 #                                 hand-edited by the operator; what it is)
 REGISTRY: dict[str, tuple[str | None, str]] = {
     "autonomy.json": ("scripts/healing/healing_lib.py",
-                      "auto-healing consent; `orionx-heal autonomy` (Workbench → Engine)"),
+                      "auto-healing consent; `orionx-heal autonomy` (Cockpit → Settings → Engine)"),
     "threat-posture": ("scripts/control_center/helpers/posture_data.py",
                        "requested posture tier; Cockpit → Settings (request_tier)"),
     "rain.json": ("scripts/rain/rain_lib.py",

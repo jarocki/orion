@@ -139,7 +139,8 @@ assert e["runtime_path"] == "/opt/orionx/optional/install-bluetooth.sh"
 assert e["probe"] == ["/usr/bin/blueman-manager"]
 assert "radio" in e["blurb"]
 PY
-grep -q '`install-bluetooth.sh`' "$REPO_ROOT/README.md" && pass "README lists the installer" || fail "README row"
+# v3.2.0: the README lists optional tools by their orionx-optional id, not by script.
+grep -q 'Bluetooth (`bluetooth`' "$REPO_ROOT/README.md" && pass "README lists the tool by its orionx-optional id" || fail "README row" "no 'Bluetooth (\`bluetooth\`' in README.md"
 grep -q 'Bluetooth (`bluetooth`)' "$REPO_ROOT/docs/User_Guide.md" && pass "User Guide §15 lists the installer" || fail "User Guide row"
 
 printf "\n  Results: ${GREEN}%d passed${NC}, ${RED}%d failed${NC}\n" "$PASS" "$FAIL"

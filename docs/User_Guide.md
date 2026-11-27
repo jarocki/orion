@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition User Guide
 
-Source version: **<!--orionx:release-->v3.1.6<!--/orionx:release-->** — Debian 13 "trixie", Python 3.13, Linux 6.12. On the deck, the rendered guide shows the exact build from `/etc/orionx-version`. The latest published ISO is v3.1.6 (CI-built and gated from the tag, signed by the owner, 2026-11-19); v3.1.4 is the latest one also booted on hardware (an HP Pavilion, 2026-11-06).
+Source version: **<!--orionx:release-->v3.2.0<!--/orionx:release-->** — Debian 13 "trixie", Python 3.13, Linux 6.12. On the deck, the rendered guide shows the exact build from `/etc/orionx-version`. The latest published ISO is v3.1.6 (CI-built and gated from the tag, signed by the owner, 2026-11-19); v3.1.4 is the latest one also booted on hardware (an HP Pavilion, 2026-11-06).
 
 ## Table of Contents
 
@@ -110,14 +110,14 @@ Source version: **<!--orionx:release-->v3.1.6<!--/orionx:release-->** — Debian
 
 Orion-X Phoenix Edition is a complete Linux system on a USB stick for incident response and digital forensics. You start a computer from the stick instead of from its own disk; Orion-X runs entirely from memory, installs nothing, and leaves no files on that computer. It brings its own tools — network capture, memory and disk forensics, malware triage, encrypted team chat, an on-device AI assistant — and works without any internet connection.
 
-The "Phoenix" name symbolizes the toolkit's ability to help organizations rise from the ashes of security incidents through effective investigation and response. This release is built on Debian 13 "trixie" with Python 3.13 and Linux 6.12. It brings an on-device AI assistant (Nebula), audible intrusion alerts (R.A.I.N.), the Orion Cockpit — a live dashboard whose tabs also hold the network, mesh, comms, awareness, tool, AI and auto-healing controls — and a peer-to-peer WireGuard mesh.
+The "Phoenix" name symbolizes the toolkit's ability to help organizations rise from the ashes of security incidents through effective investigation and response. This release is built on Debian 13 "trixie" with Python 3.13 and Linux 6.12. It brings an on-device AI assistant (Nebula), audible intrusion alerts (R.A.I.N.), the Orion Cockpit — a live dashboard whose tabs also hold the network, mesh, comms, awareness, tool and AI views, with a Settings drawer for posture, alerts and what the auto-healing engine may do — and a peer-to-peer WireGuard mesh.
 
-**Known limits.** Orion-X v3.0.0 has been boot-tested on the Lenovo reference laptop (Intel Bay Trail, UEFI — 2026-10-18); v3.1.0 on an HP Pavilion (8 GB — 2026-10-26) and in QEMU, not yet on the Lenovo. v3.0.1 and v3.0.2 were never built as ISOs. Other hardware is untested. Please report anything confusing or broken (see [Support](SUPPORT.md)).
+**Known limits.** Orion-X v3.0.0 has been boot-tested on the Lenovo reference laptop (Intel Bay Trail, UEFI — 2026-10-18); v3.1.0 and v3.1.4 on an HP Pavilion (8 GB — 2026-10-26 and 2026-11-06); v3.1.5 to v3.2.0 in QEMU only, not yet on hardware. v3.0.1 and v3.0.2 were never built as ISOs. Other hardware is untested. Please report anything confusing or broken (see [Support](SUPPORT.md)).
 
 - x86-64 PCs only (it does not boot Apple-silicon Macs); Secure Boot must be off.
 - Nothing you change survives a reboot unless you set up [persistence](#persistence-options).
 - It does not update itself: a new release means writing a new stick.
-- `radare2` and `bulk_extractor` are not on the image (no Debian 13 package; issue #85); Ghidra is available as an optional installer (§15).
+- `radare2` and `bulk_extractor` are not on the image (no Debian 13 package; issue #85); Ghidra installs after boot from the Cockpit's Orion Tools tab or with `sudo orionx-optional install ghidra` (§15).
 - The operator account has administrator rights without a password prompt — by design for a single-operator deck; read [The Live Account and Administrator Rights](#the-live-account-and-administrator-rights) before you analyse anything hostile.
 - `/etc/orionx-version` names the exact build. If yours says `ISO_VERSION=v2.2.0-trixie-dev9`, you are running the earlier v2.2.0-beta; CHANGELOG.md lists what changed since.
 
@@ -147,12 +147,13 @@ The "Phoenix" name symbolizes the toolkit's ability to help organizations rise f
 
 - **Hardened Linux Environment**: Debian 13 "trixie" base, runs from memory with the stick's read-only image; optional encrypted persistence (§3)
 - **R.A.I.N.**: Real-time Audible Intrusion Notification — hear intrusions without watching the screen
-- **Orion Cockpit**: One window, designed for your 3 a.m. self — a live dashboard of the event stream, threat pressure, network activity and system status, plus tabs for network, mesh, comms, awareness, Orion Tools (incident-response tools), Nebula AI and auto-healing
+- **Orion Cockpit**: One window, designed for your 3 a.m. self — a live dashboard of the event stream, threat pressure, network activity and system status, plus tabs for network, mesh, comms, awareness, Orion Tools (the deck's tools, and optional ones it installs and removes in place) and Nebula AI, and a Settings drawer
 - **Nebula AI**: On-device language model (ollama serving Qwen2.5-3B-Instruct) with tool access through MCP. It answers on 127.0.0.1 only and needs no internet; see §8 for exactly what "local" covers
 - **Secure Communication**: Matrix setup (client or homeserver) for encrypted team chat — the Matrix software itself is installed over the network (§6)
 - **Private Networking**: WireGuard VPN and a peer-to-peer WireGuard mesh between Orion-X nodes
 - **Comprehensive Forensic Tools**: Built-in utilities for memory acquisition, disk imaging, network analysis, detection (suricata, yara, capa) and OAST triage (go-roast)
 - **Automated Analysis**: Custom scripts for rapid artifact processing and timeline generation
+- **Optional tools**: ClamAV, Ghidra, Zeek, Element, a natural voice and more install after boot from the Cockpit, and uninstall cleanly (§15)
 - **Sample Data Library**: Synthetic forensic samples on the image, public samples fetched on demand (§14)
 - **Visual Distinction**: A terminal colour toggle (dark/amber and green) to tell operating contexts apart (§13)
 - **Documentation**: This guide and reference materials accessible within the environment
@@ -335,7 +336,7 @@ This is deliberate. Orion-X is a single-operator deck: the operator *is* the adm
 
 ![Login screen](images/login_screen.png)
 
-*Figure: Login screen.*
+*Figure: the login screen, which appears only after you log out (autologin skips it at boot): enter the account name and its password (`live` unless the wizard set another). From the v3.2.0 development image (CI run 45936482841) in QEMU at 1280×720, 2026-11-27.*
 
 ### Persistence Options
 
@@ -387,7 +388,7 @@ After login you land on the XFCE desktop with the Phoenix wallpaper and a top pa
 
 ![Orion-X desktop](images/desktop_screenshot.png)
 
-*Figure: Orion-X desktop (captured on an earlier build; the Cockpit desktop icon and panel launcher came later).*
+*Figure: Orion-X desktop: the v3.2.0 development image (CI run 45936482841, the tree now on `develop` at `e33ccbd`) booted in QEMU at 1280×720, 2026-11-27. Top left, the **Orion-X** menu and the Cockpit launcher; top right, the status widgets (below).*
 
 ### Orion Application Menu
 
@@ -428,11 +429,16 @@ What used to be the separate Control Center window now lives inside the Orion Co
 **Settings** (the **⚙ Settings** button at the top right, or **F2**, on every tab; `orionx-cockpit --settings` opens with it out) is a drawer over the right edge of the window with the controls that change what this deck enforces, sounds and shows:
 
 - **Threat posture** — Tier 0 Passive, Tier 1 Active Monitoring, Tier 2 Deception. Choosing one writes a *request* (`~/.config/orionx/threat-posture`); the line under the tiers says *requested* until `orionx-postured` confirms it is enforced, or says why it is not. The status strip's badge shows the same.
+- **Engine** — what the deck's own engine may do (v3.2.0, #201): one selector per auto-healing action class (*off*, *propose*, *confirm*, *autonomous*; choosing *autonomous* asks first), and **Nebula warm-up**: **Warm up now** and an **at boot** switch, with when it last ran. Details under *Auto-healing consent* below.
 - **Audible alerts · R.A.I.N.** — on/off, the severity alerts start from, volume, the spoken voice cue, narration, and **Test alert**, which plays the warning cue and reports what actually happened. Saved to `~/.config/orionx/rain.json` through R.A.I.N.'s own code (the same as `orionx-rain --speech on|off`).
 - **Display** — **Toggle theme** (amber ↔ green; see [Switching Visual Themes](#switching-visual-themes)).
 - **DJ deck** — **Open DJ Deck** (the generative music bed; it ducks for every alert).
 
-A button at the top of the drawer opens the Workbench, where the tool settings are.
+![Cockpit Settings drawer](images/cockpit-settings.png)
+
+*Figure: the Settings drawer (F2) over the Orion Tools tab: threat posture (Tier 0 confirmed as enforced by `orionx-postured`) and the Engine group, with `block_ip` just set to *propose*. Nebula warm-up and the R.A.I.N., Display and DJ deck groups are further down the drawer. From the v3.2.0 development image (CI run 45936482841, the tree now on `develop` at `e33ccbd`) booted in QEMU at 1280×720, 2026-11-27.*
+
+A button at the top of the drawer opens the Workbench; its **Engine** cards show the same levels read-only. Optional tools are installed and removed on the **Orion Tools** tab (§15).
 
 ### Where the Control Center's controls went
 
@@ -755,14 +761,18 @@ The Orion Cockpit (`orionx-cockpit`; also the desktop icon, the panel's gauge ic
 
 - **EVENT STREAM** — newest first, coloured by severity, fading with age. Warning and critical events flash the whole deck — the visual twin of the R.A.I.N. tone.
 - **THREAT PRESSURE** gauge — severity-weighted with a 60 s half-life: **CALM** below 25, **ELEVATED** below 60, **HOSTILE** at 60 and above. Its title row shows where it is heading: the change over the last 15 minutes (**↑ +31 in 15 min**, red when it climbs fast; **→ steady**).
-- **DEFENSIVE ACTIONS** — its title row counts the attack sources active in the last 15 minutes and how many of them are new (**3 active sources · 2 new ↑**, red while new ones arrive). Below it, what Auto-Healing is doing and who is hitting the deck, top to bottom: **AWAITING APPROVAL** (an action class set to *confirm*; click **APPROVE?** or press **a**, **Tab** for the next one), **IN FORCE** (blocks and other actions applied, with the time until they revert), **SUGGESTED** (actions the engine proposed in the last 30 minutes for a class set to *propose*, with how many times and the `sudo orionx-heal run …` command that carries one out), and **SOURCES** (the busiest attacking addresses in the last 15 minutes: severity, event count, when last seen, which detectors saw them and the scanning tool when one was named). The healing lines come only from the snapshot `orionx-heald` publishes (`/run/orionx/healing-status.json`); SOURCES is computed by the same code as the Attack Map, over the Cockpit's last 200 bus events, so the two agree. An empty pane says why, one reason per line: *state unknown — orionx-heald not publishing* (the daemon is not running, or its snapshot is more than 30 s old); *autonomy is OFF for every action class* (the default when `~/.config/orionx/autonomy.json` does not exist — set a class to *propose* on the Workbench's **Engine** section, or `orionx-heal autonomy block_ip propose`); or *no bus event met a healing trigger in the last 30 min*. A blocked address needs a **critical** scan or IDS alert; a scan that stays at warning (fewer than 50 ports in 15 s, or 120 in 15 min) is listed under SOURCES, not proposed. Lines that do not fit are counted on the last line. Click the pane for the Attack Map.
+- **DEFENSIVE ACTIONS** — its title row counts the attack sources active in the last 15 minutes and how many of them are new (**3 active sources · 2 new ↑**, red while new ones arrive). Below it, what Auto-Healing is doing and who is hitting the deck, top to bottom: **AWAITING APPROVAL** (an action class set to *confirm*; click **APPROVE?** or press **a**, **Tab** for the next one), **IN FORCE** (blocks and other actions applied, with the time until they revert), **SUGGESTED** (actions the engine proposed in the last 30 minutes for a class set to *propose*, with how many times and the `sudo orionx-heal run …` command that carries one out), and **SOURCES** (the busiest attacking addresses in the last 15 minutes: severity, event count, when last seen, which detectors saw them and the scanning tool when one was named). The healing lines come only from the snapshot `orionx-heald` publishes (`/run/orionx/healing-status.json`); SOURCES is computed by the same code as the Attack Map, over the Cockpit's last 200 bus events, so the two agree. An empty pane says why, one reason per line: *state unknown — orionx-heald not publishing* (the daemon is not running, or its snapshot is more than 30 s old); *autonomy is OFF for every action class* (the default when `~/.config/orionx/autonomy.json` does not exist — set a class to *propose* in the Cockpit's **Settings → Engine** (F2), or `orionx-heal autonomy block_ip propose`); or *no bus event met a healing trigger in the last 30 min*. A blocked address needs a **critical** scan or IDS alert; a scan that stays at warning (fewer than 50 ports in 15 s, or 120 in 15 min) is listed under SOURCES, not proposed. Lines that do not fit are counted on the last line. Click the pane for the Attack Map.
 - **NETWORK** — rx/tx sparkline, plus the passive network picture's two headline lines (a change takes the title row instead: **1 new host ↑** in amber for hosts first seen in the last 15 minutes, or the old and new default gateway in red when it changes): how many hosts this deck has observed (neighbour table, plus Zeek `conn.log` when Zeek is running) and the local/internet split of what it heard. The same lines, from the same module, head the Workbench's **This network** page (below).
 - **SYSTEMS** LEDs — Nebula, Firewall, Mesh, R.A.I.N.
 - **DECK** band (under the stream) — this machine: hostname, every interface's address, the default gateway, uptime, the battery when there is one, and CPU / memory / disk bars with the numbers written on them. Each bar carries two tick marks, amber and red: memory 80 % / 90 %, disk 85 % / 95 % (on a live stick `/` is RAM), CPU 85 % / 95 %. A bar past its amber mark turns amber; past red it turns red and flashes. The same table drives an alarm that does not need the Cockpit open: `orionx-postured` checks every 10 s and announces each crossing once on the event bus (warning at amber, critical at red, a notice when it is back to normal), so R.A.I.N. speaks it and the stream shows it. A level clears only 5 points below its mark, so a value hovering on the line does not repeat; CPU counts only after a full minute over the line; the battery (20 % / 10 % left) only when it is discharging.
 - The status strip above the tabs (on every tab, not just LIVE) shows hostname and primary address, the **deck verdict**, the posture badge (current threat-posture tier) and the clock. The verdict is one word and why: **NOMINAL**; **BUSY** while a task runs; **WATCH** (a resource past amber, or pressure ELEVATED); **DEGRADED** (a resource past red; flashes); **UNDER ATTACK** (pressure HOSTILE, or new sources arriving while pressure climbs; flashes).
 - **TASKS** strip — across the top of LIVE, only while something runs (an optional-tool install or removal today): each task's name, step n of m, what it is doing and a progress bar. With nothing running it takes no space.
 
-Keys: **F11** toggles fullscreen on any tab. The other keys act on the **LIVE** tab only (on the other tabs they go to the controls, so typing in a text field is safe): **Esc** closes an open drill-down, and quits when none is open; **q** quits; **s** and **t** squelch or tune the event in an open drill-down (below); **Page Up** scrolls the stream back. Flags: `--fullscreen` starts fullscreen; `--demo` feeds synthetic events for a demonstration; `--tab NAME` opens on a tab (`live`, `network`, `mesh`, `comms`, `awareness`, `tools`, `nebula`, `healing`).
+![Orion Cockpit LIVE tab](images/cockpit-live.png)
+
+*Figure: LIVE while ClamAV installs: the verdict reads **BUSY · 1 task running**, the TASKS strip shows step 3 of 5, and the stream holds the install's start and the consent change made a minute earlier (`block_ip` off → propose). Real events, no demo feed; THREAT PRESSURE is calm because nothing attacked the VM. From the v3.2.0 development image (CI run 45936482841, the tree now on `develop` at `e33ccbd`) booted in QEMU at 1280×720, 2026-11-27.*
+
+Keys: **F11** toggles fullscreen on any tab. The other keys act on the **LIVE** tab only (on the other tabs they go to the controls, so typing in a text field is safe): **Esc** closes an open drill-down, and quits when none is open; **q** quits; **s** and **t** squelch or tune the event in an open drill-down (below); **Page Up** scrolls the stream back. Flags: `--fullscreen` starts fullscreen; `--demo` feeds synthetic events for a demonstration; `--tab NAME` opens on a tab (`live`, `network`, `mesh`, `comms`, `awareness`, `tools`, `nebula`); `--settings` opens with the Settings drawer out; `--tab tools --focus ID` selects one optional tool.
 
 **Tuning a false positive.** Open an IDS event (Suricata or Zeek) in the drill-down and press **s** to *squelch* that signature — from that source — for an hour, or **t** to *tune* it off and keep it. The outcome line states whether the rule **survives a reboot**: on a live USB without a persistence partition it does not, and the deck says so rather than letting you believe otherwise. `orionx-tune list` shows the rules, `orionx-tune remove <id>` restores an alert, `orionx-tune status` reports where the file is and whether it persists. Rules are applied by `orionx-postured` for both engines and derived into Suricata's threshold file, so the engine stops evaluating them too. **Who the bus trusts.** Any local program can submit to the socket, so R.A.I.N. and the Cockpit will hear and show an event you publish yourself with `orionx-event`. Its claimed `source` is not proof of origin. Auto-Healing is stricter: it acts only on events attested for root socket peers (postured, scanwatch, heald — the HMAC key lives in a root-only file); unsigned events cannot trigger actions. A spoofed alert that reaches a root producer's input (for example an IDS signature triggered on purpose) can still drive an autonomous block at that address, which is one reason autonomy is off by default. Events whose source is one of this deck's own addresses are tagged **SELF** — the deck did that, not an intruder — and they do not raise THREAT PRESSURE.
 
@@ -787,7 +797,7 @@ Zeek is optional. With it (Tier 1 or 2 starts the managed sensor; `sudo orionx-o
 
 ### GODSEYE (globe)
 
-GODSEYE (Apache-2.0, vendored at a pinned upstream commit under `/opt/orionx/osint/godseye/`) is a 3-D globe of live public feeds — aircraft, satellites, seismic events, weather, hazards. **It needs the internet.** It caches nothing, every layer is a live third-party request, and roughly fifteen of its feeds pass through public relays that see this deck's address and the exact question asked. So the menu entry opens a **preflight** page, not the globe: it names every layer that is dead in this build and every host the globe would contact (the full inventory is `/opt/orionx/osint/godseye/HOSTS.txt`). `orionx-osint` refuses to serve the globe at all — HTTP 503 with a page saying what is off, why it matters, what still works and the remedy — at a raised threat posture or when the deck has no default route. Layers that need upstream's Node backend or an API key are compiled out and say so; no credential ships in the image. If reaching out is appropriate, lower the posture in the Cockpit → **Awareness** tab → **Threat posture**.
+GODSEYE (Apache-2.0, vendored at a pinned upstream commit under `/opt/orionx/osint/godseye/`) is a 3-D globe of live public feeds — aircraft, satellites, seismic events, weather, hazards. **It needs the internet.** It caches nothing, every layer is a live third-party request, and roughly fifteen of its feeds pass through public relays that see this deck's address and the exact question asked. So the menu entry opens a **preflight** page, not the globe: it names every layer that is dead in this build and every host the globe would contact (the full inventory is `/opt/orionx/osint/godseye/HOSTS.txt`). `orionx-osint` refuses to serve the globe at all — HTTP 503 with a page saying what is off, why it matters, what still works and the remedy — at a raised threat posture or when the deck has no default route. Layers that need upstream's Node backend or an API key are compiled out and say so; no credential ships in the image. If reaching out is appropriate, lower the posture in the Cockpit → **Settings** (F2) → **Threat posture**.
 
 ### DJ Deck (optional music)
 
@@ -799,7 +809,7 @@ Nebula is Orion-X's on-device assistant: ollama serving **Qwen2.5-3B-Instruct** 
 
 **What "local" means here.** The model and everything you type stay on this machine: ollama listens on `127.0.0.1:11434` only, `nebula-runtime.service` pins it to loopback at the kernel (`IPAddressDeny=any`, `IPAddressAllow=localhost`), and its AppArmor profile confines what it can touch on disk (model files read-only, no writes to your home directory, no launching of system programs). Nebula never needs the internet. Network egress is **not** blocked by policy, though — on a disconnected deck nothing can leave; on a connected deck treat ollama like any other local service.
 
-**When it starts.** `nebula-runtime.service` is enabled at boot, after `nebula-integrity-check.service` has verified the model's SHA-256 against `MANIFEST.sha256`. The model itself is loaded into memory on the first question (or when you run `nebula warmup`, also on the Workbench's **Engine** section), which can take a few minutes on a 4 GB machine — a red or amber Nebula light before you have asked anything is normal.
+**When it starts.** `nebula-runtime.service` is enabled at boot, after `nebula-integrity-check.service` has verified the model's SHA-256 against `MANIFEST.sha256`. The model itself is loaded into memory on the first question (or when you warm it up: **Warm up now** in the Cockpit's **Settings → Engine**, or `nebula warmup`), which can take a few minutes on a 4 GB machine — a red or amber Nebula light before you have asked anything is normal.
 
 ### Using Nebula
 
@@ -1749,11 +1759,19 @@ tile each: a light and one word for its state (green ACTIVE or INSTALLED, amber
 DEGRADED or a pulsing INSTALLING n/5, red FAILED, dark NOT INSTALLED), one line
 saying why (the failing health check, the error, *needs network*, *shipped with
 the image*), and the one button that state allows: **Install**, **Uninstall**,
-**Retry** or **Details**. polkit asks for the admin password the first time and
-remembers it for about five minutes. The panel on the right shows the selected
-tool, a progress bar and the installer's live output while it runs. Uninstall
-asks first and says how much it will remove. Cancelling the password prompt
-changes nothing. `orionx-cockpit --tab tools --focus <id>` opens it on one tool.
+**Retry** or **Details**. The action runs as root through polkit, with no
+terminal. On the live account polkit approves it without asking for a
+password: live-config's rule grants the live user every polkit action (see
+[The Live Account and Administrator Rights](#the-live-account-and-administrator-rights);
+whether to keep that is [#203](https://github.com/jarocki/orion/issues/203)).
+Any other account is asked for the admin password once and is remembered for
+about five minutes; cancelling that prompt changes nothing. The panel on the
+right shows the selected tool, a progress bar and the installer's live output
+while it runs. Uninstall asks first and says how much it will remove. `orionx-cockpit --tab tools --focus <id>` opens it on one tool.
+
+![Orion Tools tab](images/cockpit-tools.png)
+
+*Figure: the Orion Tools tab during a real ClamAV install (`--tab tools --focus clamav`): tiles grouped by purpose with their state, and on the right step 3 of 5 with the installer's live output and its log. The grey line under "network online" in this build promised a polkit password prompt; it was corrected for the release, because on the live account none appears (above). From the v3.2.0 development image (CI run 45936482841, the tree now on `develop` at `e33ccbd`) booted in QEMU at 1280×720, 2026-11-27.*
 
 The Orion Workbench's **Optional** section shows the same state, grouped the
 same way, read-only: the web page never installs anything (a page on 127.0.0.1
@@ -2075,8 +2093,17 @@ lspci                          # List PCI devices
 ip a                           # Network interfaces
 
 # Orion-X Desktop
-orionx-cockpit [--fullscreen] [--demo] [--tab NAME]   # Orion Cockpit (NAME: live network mesh comms awareness tools nebula healing)
+orionx-cockpit [--fullscreen] [--demo] [--tab NAME] [--settings]   # Orion Cockpit (NAME: live network mesh comms awareness tools nebula)
 sudo orionx-wizard             # Re-run the first-boot wizard
+orionx-optional status [--json]              # Optional tools by group: installed, active, health (no root)
+sudo orionx-optional install|uninstall ID    # Install one, or remove only what its install added (§15)
+
+# Auto-Healing
+orionx-heal status             # Consent levels, chain health, actions in force, rejected bus events
+orionx-heal autonomy [CLASS LEVEL | --all LEVEL]   # Consent per class: off, propose, confirm, autonomous
+orionx-heal pending            # Actions awaiting confirmation
+sudo orionx-heal run PLAYBOOK [--target X]   # Carry out an action by hand (the SUGGESTED line gives it)
+orionx-heal verify | log [-n N]   # Check / tail the audit chain
 
 # Awareness (R.A.I.N. / event bus)
 orionx-event -s SEV --source NAME -c CAT "msg"   # Publish an event
@@ -2098,6 +2125,7 @@ tail -f /run/orionx/events.jsonl   # Watch the event bus
 nebula status [--json]         # Runtime status
 nebula chat [--session NAME]   # Chat with Nebula
 nebula tools [--json|--serve]  # List MCP tools / run MCP server
+nebula warmup                  # Load the model now, so the first answer is fast
 
 # Networking
 sudo setup-wireguard.sh        # Configure WireGuard VPN (central server)
@@ -2138,6 +2166,8 @@ download-samples.sh --samples-dir DIR   # Fetch public sample data (network)
 sudo orionx-freshen-suricata   # Replace the shipped Suricata subset with the FULL ET-Open feed (network; needs RAM)
 sudo orionx-freshen-yara       # Fetch YARA rulesets (network)
 sudo orionx-diag [--json]      # Self-check of this image
+sudo /opt/orionx/optional/deck-check.sh [--no-audio]   # Hardware boot test: one evidence tarball (§15)
+sudo /opt/orionx/optional/apt-evidence.sh   # What apt did and would do (read-only), as a tarball
 
 # File Operations
 sha256sum file                 # Calculate SHA-256 hash
@@ -2236,4 +2266,4 @@ Ctrl+E                         # Export packet dissections
 
 ---
 
-This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.1.6<!--/orionx:release--> source (Debian 13 "trixie"); the latest published ISO is v3.1.6, built and gated by CI from the tag and signed by the owner, and v3.1.4 is the latest ISO that also passed a hardware boot (an HP Pavilion, 2026-11-06) (CHANGELOG, *ISO identity*). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.
+This User Guide describes Orion-X Phoenix Edition <!--orionx:release-->v3.2.0<!--/orionx:release--> source (Debian 13 "trixie"); the latest published ISO is v3.1.6, built and gated by CI from the tag and signed by the owner, and v3.1.4 is the latest ISO that also passed a hardware boot (an HP Pavilion, 2026-11-06) (CHANGELOG, *ISO identity*). For further assistance or to report issues, see [SUPPORT.md](SUPPORT.md) or consult the project repository.

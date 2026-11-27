@@ -18,7 +18,13 @@
     so this action cannot run anything else. Recorded, not changed here: the
     live account also has NOPASSWD sudo (live-config default), so this prompt
     confirms the operator's intent rather than separating privilege; #203 is
-    that decision.
+    that decision. Amended 2026-11-27, measured on the v3.2.0 image: live-config
+    also installs /usr/share/polkit-1/rules.d/sudo_on_live.rules, which returns
+    YES for every action of the live user in an active local session, and
+    rules override these defaults. pkcheck authorizes this action for
+    orionx-operator with no prompt (exit 0). auth_admin_keep therefore applies
+    only to other accounts, or once #203 removes that rule; the Cockpit and the
+    User Guide say so instead of promising a prompt.
 -->
 <policyconfig>
   <vendor>Orion-X Phoenix Edition</vendor>

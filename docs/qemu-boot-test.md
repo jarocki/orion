@@ -234,9 +234,9 @@ mean what this section says** for the lifetime of W7-3.
 request to `develop`:
 
 - Runner: `ubuntu-latest`
-- Timeout: `timeout-minutes: 60` on the job (the ISO build alone is well past
+- Timeout: `timeout-minutes: 90` on the job (the ISO build alone is well past
   the 10–15 min it took before the model import/consolidation step; each TCG
-  boot is another 5–15 min)
+  boot is another 5–15 min, and the in-guest probes wait for the model hash)
 - Steps: checkout → install `qemu-system-x86 ovmf` → log QEMU/OVMF/KVM
   state and detect the OVMF path → set up Python 3.13 → install
   `requirements.txt` → build the ISO with `bash scripts/build-iso.sh` inside a
@@ -246,9 +246,51 @@ request to `develop`:
   (#32) → `tests/integration/test-iso-content-presence.sh` on the built ISO
   (#43 gate) → `scripts/qemu-boot-test.sh --mode both --timeout 900 [--ovmf …]`
   → W7-4-B runtime verification, W7-5 performance benchmark, W7-6
-  failure-resilience check (each `continue-on-error`) → upload
+  failure-resilience check (all three are gates) → upload
   `tmp/qemu-artifacts/` as `qemu-artifacts-<github.run_id>` (always, even on
   failure), plus W7-4-B / W7-5 artifacts on failure.
+
+### In-guest gates (W7-4-B, W7-5)
+
+Two probes inside the booted guest, `/usr/lib/orionx/runtime-verify.sh` and
+`/usr/lib/orionx/perf-measure.sh`, write `ORIONX_VERIFY:` / `ORIONX_PERF:`
+lines to the serial console; the host-side tests
+(`tests/integration/test-w7-4-b-runtime-verify.sh`,
+`tests/integration/test-w7-5-performance.sh`) parse them and own every
+threshold (DEC-PHASE13-067). Both units start after `multi-user.target`, which
+waits for `nebula-integrity-check` to hash the 1.93 GB model: about 250 s
+under TCG emulation, more on a slow runner. The host waits up to 1200 s for
+each probe (`VERIFY_WAIT`, `PERF_WAIT`). Until v3.2.0 the waits were 90–120 s,
+so no probe line ever arrived, and `continue-on-error` kept the job green (#40).
+
+- **W7-4-B** checks the mesh units (opt-in: no `wg0` on a stock deck passes;
+  only a failed unit fails), AppArmor enforcement, the Matrix and Zeek unit
+  states, and what an operator sees: `graphical.target` active, the autologin
+  user's `xfce4-session` running (waited for up to 300 s), and no screen
+  locker running or installed (light-locker, xfce4-screensaver, xscreensaver;
+  the rc5 regression, #76/#78).
+- **W7-5** reports `virt`, `multi_user_seconds`, `boot_time_seconds` (the
+  start of the desktop session, `user@UID.service`), `desktop_ready`,
+  `ram_settled` and `idle_ram_bytes` (MemTotal − MemAvailable), with a
+  meminfo breakdown and the twelve largest processes for diagnosis. The ISO
+  size is measured host-side. Limits: ISO < 4 GiB; idle RAM < 1.25 GiB; boot
+  < 90 s under KVM or on hardware. Under TCG (`virt=qemu`) the boot time is
+  recorded, not judged: it measures the runner.
+- **Idle RAM is judged only on a settled desktop** (DEC-PHASE13-069). The
+  probe waits up to 300 s for `xfce4-panel`, its plugin processes
+  (`wrapper-2.0`), `xfdesktop` and `nm-applet`, then up to 180 s for two
+  readings 15 s apart to agree within 16 MB. A reading taken without both
+  (`desktop_ready=no`, `ram_settled=no`) fails as *not judged*. The fixed
+  20 s delay this replaced read 731 MB on a fast runner (the panel plugins
+  had not started) and 1,084–1,145 MB on slow ones. Settled, the 2 GiB VM
+  reads 1,137–1,144 MB (runs 45935445926, 45935445498, 45936482841); #218
+  tracks bringing it back under 1 GiB.
+
+To read a probe's output, open `serial-bios.log` in the run's artifacts and
+search for `ORIONX_VERIFY` or `ORIONX_PERF`. For a local boot that shows the
+whole journal on the serial line, add
+`systemd.journald.forward_to_kmsg=1 systemd.journald.max_level_kmsg=info` to
+the kernel command line.
 
 Until the switch to `debian:trixie-slim` (release/2.2.0), this workflow and
 `release.yml` built inside `debian:bullseye-slim` and could not produce the
