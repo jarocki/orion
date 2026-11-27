@@ -11,6 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`/opt/orionx/optional/deck-check.sh`: the hardware boot test in one
+  command.** For the v3.2.0 boot test: it bundles, read-only, the evidence
+  the build host cannot produce: boot and session checks on hardware (#40,
+  #78), Nebula on Ollama 0.40 with AppArmor enforcing (#163), narration
+  timing (#96), apt evidence (#121), the #188 deck checks, and the Cockpit's
+  sources (#197-#202). It also lists what has to be checked by eye. A unit
+  test runs it against logging stubs and fails if it calls any command that
+  changes state.
+
 - **`orionx-optional`: one manager for the optional tools (#197, #198;
   DEC-PHASE13-057, DEC-PHASE13-058).** `orionx-optional status` (no root) gives
   every tool's state by functional group (Network & hunting, Malware analysis,
