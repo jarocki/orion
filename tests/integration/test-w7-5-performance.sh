@@ -14,7 +14,9 @@
 #                                     judged under KVM or on hardware, recorded
 #                                     under TCG emulation, where it times the runner)
 #   iso_size_bytes     < 4294967296  (host-side, via du -b)
-#   idle_ram_bytes     < 1073741824  (in-guest, via /proc/meminfo, desktop settled)
+#   idle_ram_bytes     < 1342177280  (1.25 GiB; in-guest, via /proc/meminfo,
+#                                     judged only when the guest reports
+#                                     desktop_ready=yes and ram_settled=yes)
 #
 # @decision DEC-PHASE7-W7-5-001
 # @title In-guest performance measurement via serial-console sentinels (W7-5)
@@ -56,7 +58,13 @@ PERF_WAIT="${PERF_WAIT:-1200}"
 # Thresholds
 BOOT_TIME_THRESHOLD=90
 ISO_SIZE_THRESHOLD=4294967296      # 4 GiB
-IDLE_RAM_THRESHOLD=1073741824      # 1 GiB
+# Budget per DEC-PHASE13-069 (recorded in perf-measure.sh, with the measurement).
+# Idle RAM budget 1.25 GiB, up from Phase 7's 1 GiB. Once the probe read a
+# fully started desktop, the 2 GiB test VM used 1,084-1,145 MB at idle
+# (2026-11-27, #215/#217); every earlier pass had read a half-started one.
+# The owner chose a modest raise over trimming the desktop before v3.2.0;
+# trimming (panel plugin processes, nm-applet) is #218.
+IDLE_RAM_THRESHOLD=1342177280      # 1.25 GiB
 
 # ---------------------------------------------------------------------------
 # Color helpers (only when stdout is a terminal)
@@ -276,15 +284,24 @@ for serial_log in "${SERIAL_LOGS[@]}"; do
         fail "boot_time_seconds=${boot_val} >= ${BOOT_TIME_THRESHOLD}s threshold" "virt=${virt}"
     fi
 
+    # A reading of a half-started desktop is not idle RAM (DEC-PHASE13-069):
+    # it is judged only when the guest saw every desktop process running and
+    # RAM no longer growing.
+    ready_val="$(perf_value desktop_ready)"
+    settled_val="$(perf_value ram_settled)"
     ram_val="$(perf_value idle_ram_bytes)"
     if [[ -z "${ram_val}" ]]; then
         fail "idle_ram_bytes sentinel missing from $(basename "${serial_log}")"
     elif [[ ! "${ram_val}" =~ ^[0-9]+$ ]]; then
         fail "idle_ram_bytes not measured" "${ram_val}"
+    elif [[ "${ready_val}" != yes* ]]; then
+        fail "idle_ram_bytes=${ram_val} not judged: read before the desktop finished starting" "desktop_ready=${ready_val:-missing}"
+    elif [[ "${settled_val}" != yes* ]]; then
+        fail "idle_ram_bytes=${ram_val} not judged: RAM was still growing" "ram_settled=${settled_val:-missing}"
     elif [[ "${ram_val}" -lt "${IDLE_RAM_THRESHOLD}" ]]; then
-        pass "idle_ram_bytes=${ram_val} < ${IDLE_RAM_THRESHOLD} (1 GiB) [PASS]"
+        pass "idle_ram_bytes=${ram_val} < ${IDLE_RAM_THRESHOLD} (1.25 GiB) [PASS] (desktop_ready=${ready_val}; ram_settled=${settled_val})"
     else
-        fail "idle_ram_bytes=${ram_val} >= ${IDLE_RAM_THRESHOLD} (1 GiB) threshold"
+        fail "idle_ram_bytes=${ram_val} >= ${IDLE_RAM_THRESHOLD} (1.25 GiB) threshold"
     fi
 
     # The verdict is this file's: the guest reports, it does not judge.

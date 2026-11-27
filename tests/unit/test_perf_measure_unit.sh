@@ -189,6 +189,25 @@ else
     fail "the desktop wait is bounded" "wait_desktop must take SESSION_WAIT"
 fi
 
+# DEC-PHASE13-069: the waits for the desktop's processes and for RAM to stop
+# growing are bounded too, and the probe says whether each condition held.
+for knob in 'READY_WAIT="${ORIONX_PROBE_READY_WAIT:-300}"' 'STABLE_WAIT="${ORIONX_PROBE_STABLE_WAIT:-180}"' \
+            'SECONDS - start < READY_WAIT' 'SECONDS - start < STABLE_WAIT'; do
+    if [[ "${PERF_CONTENT}" == *"${knob}"* ]]; then pass "bounded: ${knob}"; else fail "bounded: ${knob}" "not in perf-measure.sh"; fi
+done
+for field in desktop_ready ram_settled; do
+    if [[ "${PERF_CONTENT}" == *"ORIONX_PERF: ${field}=yes"* && "${PERF_CONTENT}" == *"ORIONX_PERF: ${field}=no"* ]]; then
+        pass "reports ${field} either way"
+    else
+        fail "reports ${field}" "both ${field}=yes and ${field}=no must be emitted"
+    fi
+done
+if [[ "${PERF_CONTENT}" == *PROBE_SETTLE* ]]; then
+    fail "the fixed settle delay is gone" "ORIONX_PROBE_SETTLE still referenced"
+else
+    pass "the fixed settle delay is gone (it read RAM at a time set by the runner's speed)"
+fi
+
 # ===========================================================================
 # 5. perf-measure.sh: exits 0 (probe, not gate)
 # ===========================================================================
