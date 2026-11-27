@@ -70,6 +70,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default gateway. The network census now names its hosts so new ones can be
   told apart.
 
+### Changed
+
+- **Ollama 0.30.7 → 0.40.17 (#163, DEC-PHASE13-068).** The new version
+  stores each model tag as a link to a manifest blob (`manifests-v2/`), so
+  the build's store consolidation learned that layout: it keeps the manifest
+  blob (only the link refers to it, so it had looked unused), lists it for
+  the boot integrity check, and refuses a link that leaves the store. The
+  runtime never writes the model store: 0.40 prunes the store at startup,
+  which failed against the read-only store the AppArmor profile allows, so
+  Nebula runs with `OLLAMA_NOPRUNE=1` and the image ships the empty
+  `manifests/` directory 0.40 expects; the profile keeps the store read only.
+  Measured offline in a trixie container: the shipped model lists, describes
+  and answers chat from a read-only store; the integrity check verifies all
+  three blobs; installed size 77.1 MB after the GPU prune (65.9 MB before).
+  The content gate checks the shipped store (section 45). Not yet verified on
+  a deck with AppArmor enforcing; that is the v3.2.0 boot test.
+
 ### Removed
 
 - **The `orionx-control-center` launcher and its menu entry (#192).** Since

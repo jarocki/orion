@@ -721,11 +721,14 @@ else
 fi
 
 # Tag pinned in iso/config/nebula-model-manifest.json ("ollama_model_tag": "qwen2.5:3b-instruct-q4_K_M");
-# ollama lays it out as manifests/registry.ollama.ai/library/<name>/<tag>. (34k re-derives it from the JSON.)
-if [[ -f "$NEBULA_MODELS_DIR/manifests/registry.ollama.ai/library/qwen2.5/3b-instruct-q4_K_M" ]]; then
-    pass "ollama manifest registry.ollama.ai/library/qwen2.5/3b-instruct-q4_K_M present (hook 0510 registration)"
+# Ollama 0.40 lays it out as manifests-v2/ollama.com/library/<name>/<tag> (a
+# link to a manifest blob); 0.30 used manifests/registry.ollama.ai/... Either
+# registers the tag (DEC-PHASE13-068). 34k re-derives the tag from the JSON.
+_tag_files="$(find "$NEBULA_MODELS_DIR/manifests-v2" "$NEBULA_MODELS_DIR/manifests" \( -type f -o -type l \) -path '*/library/qwen2.5/3b-instruct-q4_K_M' 2>/dev/null)"
+if [[ -n "$_tag_files" ]]; then
+    pass "ollama manifest for qwen2.5/3b-instruct-q4_K_M present (hook 0510 registration): ${_tag_files#"$NEBULA_MODELS_DIR/"}"
 else
-    fail "ollama manifest registry.ollama.ai/library/qwen2.5/3b-instruct-q4_K_M present" \
+    fail "ollama manifest for qwen2.5/3b-instruct-q4_K_M present" \
          "Tag not registered — \`ollama create\` in hook 0510 did not run or used a different tag"
 fi
 
@@ -3265,7 +3268,7 @@ if [[ -z "$_want_tag" ]]; then
                   "$REPO_ROOT/iso/config/nebula-model-manifest.json" 2>/dev/null | head -1)"
 fi
 _tag_name="${_want_tag%%:*}"
-if [[ -n "$_tag_name" ]] && find "$SQF/opt/orionx/nebula/models/manifests" -type f -path "*${_tag_name}*" 2>/dev/null | grep -q .; then
+if [[ -n "$_tag_name" ]] && find "$SQF/opt/orionx/nebula/models/manifests-v2" "$SQF/opt/orionx/nebula/models/manifests" \( -type f -o -type l \) -path "*${_tag_name}*" 2>/dev/null | grep -q .; then
     pass "34k: ollama manifest exists for the manifest-declared tag ($_want_tag)"
 else
     fail "34k: ollama manifest exists for the manifest-declared tag ($_want_tag)" \
@@ -3767,6 +3770,54 @@ if [[ -z "$_44_miss" ]]; then
     pass "44c: both probe units enabled in multi-user.target.wants"
 else
     fail "44c: probe units enabled" "not enabled:$_44_miss"
+fi
+
+# ===========================================================================
+# 45. Ollama 0.40 store (DEC-PHASE13-068, #163): the model's tag link resolves
+#     inside blobs/ to a blob MANIFEST.sha256 covers (so boot verifies which
+#     layers the model uses); manifests/ ships (0.40 fails creating it on a
+#     store it may only read); the runtime never prunes; the binary is the pin.
+# ===========================================================================
+section "45. Ollama 0.40 model store shipped verifiable and read-only (DEC-PHASE13-068)"
+
+_45_m="$SQF/opt/orionx/nebula/models"
+_45_links="$(find "$_45_m/manifests-v2" -type l 2>/dev/null)"
+_45_bad=""
+for _l in $_45_links; do
+    _t="$(readlink "$_l")"
+    case "$_t" in /*) _45_bad+=" $_l(absolute)"; continue ;; esac
+    _b="$(cd "$(dirname "$_l")" 2>/dev/null && cd "$(dirname "$_t")" 2>/dev/null && pwd -P)/$(basename "$_t")"
+    if [[ "$(dirname "$_b")" != "$(cd "$_45_m/blobs" 2>/dev/null && pwd -P)" || ! -f "$_b" ]]; then
+        _45_bad+=" $_l(-> $_t)"
+    elif ! grep -q "  blobs/$(basename "$_b")$" "$_45_m/MANIFEST.sha256" 2>/dev/null; then
+        _45_bad+=" $_l(blob not in MANIFEST.sha256)"
+    fi
+done
+if [[ -n "$_45_links" && -z "$_45_bad" ]]; then
+    pass "45a: every manifests-v2 tag is a relative link to a blob MANIFEST.sha256 lists"
+else
+    fail "45a: manifests-v2 tag links" "${_45_bad:-no manifests-v2 tag in the image}"
+fi
+if [[ -d "$_45_m/manifests" ]]; then
+    pass "45b: manifests/ ships (0.40 cannot create it on a read-only store)"
+else
+    fail "45b: manifests/ ships" "absent: nebula-runtime would fail to list models"
+fi
+if grep -qx 'Environment=OLLAMA_NOPRUNE=1' "$SQF/usr/lib/systemd/system/nebula-runtime.service" 2>/dev/null; then
+    pass "45c: nebula-runtime.service runs with OLLAMA_NOPRUNE=1"
+else
+    fail "45c: OLLAMA_NOPRUNE" "nebula-runtime.service would prune (write) the read-only store"
+fi
+_45_pin="$(sed -n 's/^OLLAMA_VERSION="\([^"]*\)"$/\1/p' "$REPO_ROOT/iso/config/hooks/live/0500-install-external-tools.hook.chroot" | head -1)"
+if [[ "$(uname -s)" == Linux && "$(uname -m)" == x86_64 ]]; then
+    _45_v="$("$SQF/usr/local/bin/ollama" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | tail -1)"
+    if [[ -n "$_45_pin" && "$_45_v" == "$_45_pin" ]]; then
+        pass "45d: the image's ollama reports the pinned version ($_45_v)"
+    else
+        fail "45d: ollama version" "image reports '${_45_v:-nothing}', pin is '$_45_pin'"
+    fi
+else
+    skip "45d: the image's ollama --version" "needs a Linux x86_64 host to run the binary"
 fi
 
 # ===========================================================================

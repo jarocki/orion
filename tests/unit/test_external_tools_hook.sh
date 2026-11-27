@@ -98,7 +98,7 @@ grep -q 'trusted.gpg.d/zeek.gpg' "$HOOK" && ! grep -qE '> /etc/apt/trusted.gpg.d
     && pass "no key is written to trusted.gpg.d (only removed, for old images)" || fail "trusted.gpg.d" "still written"
 grep -A6 '^if install_zeek; then' "$HOOK" | grep -q 'zeek_rollback' && pass "the soft-fail path calls zeek_rollback" || fail "soft-fail path" "no rollback"
 
-section "Ollama pin: version, URL, SHA-256 from the release, review-by date (#153, DEC-PHASE13-036)"
+section "Ollama pin: version, URL, SHA-256 from the release, review-by date (#153, #163, DEC-PHASE13-068)"
 OV="$(sed -n 's/^OLLAMA_VERSION="\([^"]*\)"$/\1/p' "$HOOK" | head -1)"
 OS="$(sed -n 's/^OLLAMA_TGZ_SHA256="\([^"]*\)"$/\1/p' "$HOOK" | head -1)"
 OU="$(sed -n 's/^OLLAMA_TGZ_URL="\([^"]*\)"$/\1/p' "$HOOK" | head -1)"
@@ -113,16 +113,25 @@ grep -qE "^# Cross-verified .* against https://github.com/ollama/ollama/releases
 if [[ "$OR" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
     pass "OLLAMA_PIN_REVIEW_BY is a date ($OR)"
     today="$(date -u +%Y-%m-%d)"
-    [[ "$today" < "$OR" || "$today" == "$OR" ]] && pass "the Ollama pin's review date has not passed (re-evaluate #153 by $OR)" \
-        || fail "Ollama pin review overdue" "OLLAMA_PIN_REVIEW_BY=$OR < today $today: re-run the #153 evaluation (DEC-PHASE13-036) and move the date or the pin"
+    [[ "$today" < "$OR" || "$today" == "$OR" ]] && pass "the Ollama pin's review date has not passed (re-evaluate by $OR)" \
+        || fail "Ollama pin review overdue" "OLLAMA_PIN_REVIEW_BY=$OR < today $today: re-run the #153/#163 evaluation (DEC-PHASE13-068) and move the date or the pin"
 else
     fail "OLLAMA_PIN_REVIEW_BY present" "'$OR'"
 fi
-grep -q '@decision DEC-PHASE13-036' "$HOOK" && pass "the pin carries its decision" || fail "DEC-PHASE13-036 annotation"
+grep -q '@decision DEC-PHASE13-068' "$HOOK" && pass "the pin carries its decision" || fail "DEC-PHASE13-068 annotation"
 grep -qE '^export OLLAMA_NO_CLOUD=1' "$REPO_ROOT/iso/config/hooks/live/0510-register-nebula-model.hook.chroot" \
     && pass "0510's temporary server runs with OLLAMA_NO_CLOUD=1" || fail "0510 OLLAMA_NO_CLOUD"
 grep -qE '^Environment=OLLAMA_NO_CLOUD=1$' "$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/nebula-runtime.service" \
     && pass "nebula-runtime.service runs ollama with OLLAMA_NO_CLOUD=1" || fail "nebula-runtime OLLAMA_NO_CLOUD"
+# DEC-PHASE13-068: 0.40 prunes the store at startup, which writes it; the
+# AppArmor profile grants the store read only, so both servers run NOPRUNE.
+grep -qE '^export OLLAMA_NOPRUNE=1' "$REPO_ROOT/iso/config/hooks/live/0510-register-nebula-model.hook.chroot" \
+    && pass "0510's temporary server runs with OLLAMA_NOPRUNE=1 (store.py is the one pruner)" || fail "0510 OLLAMA_NOPRUNE"
+grep -qE '^Environment=OLLAMA_NOPRUNE=1$' "$REPO_ROOT/iso/config/includes.chroot/usr/share/orionx/systemd/nebula-runtime.service" \
+    && pass "nebula-runtime.service runs ollama with OLLAMA_NOPRUNE=1 (never writes the store)" || fail "nebula-runtime OLLAMA_NOPRUNE"
+grep -q '^  /opt/orionx/nebula/models/\*\* r,$' "$REPO_ROOT/iso/config/includes.chroot/etc/apparmor.d/usr.bin.ollama" \
+    && ! grep -qE '^\s*/opt/orionx/nebula/models/.*w' "$REPO_ROOT/iso/config/includes.chroot/etc/apparmor.d/usr.bin.ollama" \
+    && pass "AppArmor: the model store stays read-only for ollama (no write grant for 0.40)" || fail "ollama profile store access" "a write grant appeared"
 
 echo; echo "Results: $PASS passed, $FAIL failed"
 [[ $FAIL -eq 0 ]]

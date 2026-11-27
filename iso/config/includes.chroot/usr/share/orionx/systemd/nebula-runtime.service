@@ -51,6 +51,11 @@ Environment=OLLAMA_MODELS=/opt/orionx/nebula/models
 # flag removes the cloud-cache attempt (the recommendations fetch has no knob
 # and stays blocked). Honoured by 0.30.7 and 0.40.x alike.
 Environment=OLLAMA_NO_CLOUD=1
+# DEC-PHASE13-068: never prune the store. Ollama 0.40 prunes at startup and
+# that writes the store (it removes the empty manifests/); the AppArmor
+# profile grants models/** read only, so without this the server fails to
+# start or to list models. The store is verified at build time and at boot.
+Environment=OLLAMA_NOPRUNE=1
 ExecStart=/usr/local/bin/ollama serve
 # Ensure log directory exists before starting.
 # LogsDirectory= makes systemd create /var/log/orionx BEFORE it opens the

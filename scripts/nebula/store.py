@@ -75,24 +75,69 @@ def _digest_hex(digest: str) -> str:
     return digest
 
 
+# Manifest roots, newest layout first. Ollama 0.30 wrote each manifest as a
+# file under manifests/<registry>/<ns>/<model>/<tag>. Ollama 0.40 writes
+# manifests-v2/<registry>/<ns>/<model>/<tag> as a RELATIVE symlink to a
+# manifest blob in blobs/ (measured on 0.40.17, 2026-11-26, #163) and leaves
+# manifests/ empty. In that layout the manifest blob is referenced by the
+# symlink, not by any layer, so it must be kept and listed like a layer, or
+# consolidation would delete it as an orphan and break the store.
+MANIFEST_ROOTS = ("manifests-v2", "manifests")
+
+
+def _manifest_files(models_dir: Path) -> list[Path]:
+    out: list[Path] = []
+    for root in MANIFEST_ROOTS:
+        base = models_dir / root
+        if base.is_dir():
+            out.extend(sorted(p for p in base.rglob("*") if p.is_file() or p.is_symlink()))
+    return out
+
+
+def _manifest_blob(models_dir: Path, mf: Path) -> Optional[str]:
+    """The digest of the blob a manifests-v2 symlink points to (None for a plain file).
+
+    The link must resolve inside blobs/ to a content-addressed name; anything
+    else (absolute path out of the store, dangling link, foreign name) is
+    refused, because the image would carry a manifest we cannot verify.
+    """
+    if not mf.is_symlink():
+        return None
+    target = mf.resolve()
+    blobs = (models_dir / "blobs").resolve()
+    if target.parent != blobs or not target.name.startswith(_BLOB_PREFIX) or not target.is_file():
+        raise StoreError(f"manifest link {mf} -> {mf.readlink()} does not name a blob in {blobs}")
+    digest = target.name[len(_BLOB_PREFIX):]
+    if len(digest) != 64:
+        raise StoreError(f"manifest link {mf} names a malformed blob {target.name}")
+    return digest
+
+
 def referenced_layers(models_dir: Path) -> list[dict[str, Any]]:
     """Return every blob referenced by any ollama manifest under *models_dir*.
 
     Each entry: {"digest": <hex>, "media_type": str, "size": int, "manifest": str}.
     Model layers (mediaType ending in ".model") are ordered first, largest first,
     so the first MANIFEST.sha256 line is the weights file that status.py sizes.
+    In the manifests-v2 layout the manifest blob itself is an entry too.
     """
-    manifests_root = models_dir / "manifests"
-    files = sorted(p for p in manifests_root.rglob("*") if p.is_file()) if manifests_root.is_dir() else []
+    files = _manifest_files(models_dir)
     if not files:
-        raise StoreError(f"no ollama manifests under {manifests_root} — was `ollama create` run?")
+        roots = " or ".join(str(models_dir / r) for r in MANIFEST_ROOTS)
+        raise StoreError(f"no ollama manifests under {roots} — was `ollama create` run?")
 
     layers: dict[str, dict[str, Any]] = {}
     for mf in files:
+        rel = str(mf.relative_to(models_dir))
+        own = _manifest_blob(models_dir, mf)
         try:
-            doc = json.loads(mf.read_text(encoding="utf-8"))
+            text = mf.read_text(encoding="utf-8")
+            doc = json.loads(text)
         except (OSError, ValueError) as exc:
             raise StoreError(f"cannot parse ollama manifest {mf}: {exc}") from exc
+        if own:
+            layers.setdefault(own, {"digest": own, "media_type": str(doc.get("mediaType", "manifest")),
+                                    "size": len(text.encode("utf-8")), "manifest": rel})
         entries = list(doc.get("layers", []))
         if isinstance(doc.get("config"), dict):
             entries.append(doc["config"])
@@ -106,7 +151,7 @@ def referenced_layers(models_dir: Path) -> list[dict[str, Any]]:
                     "digest": digest,
                     "media_type": str(entry.get("mediaType", "")),
                     "size": int(entry.get("size", 0)),
-                    "manifest": str(mf.relative_to(models_dir)),
+                    "manifest": rel,
                 },
             )
     if not layers:
@@ -202,6 +247,13 @@ def consolidate(
         p.unlink()
     if source:
         source.unlink()
+    # Ollama 0.40 creates manifests/ at startup even when it keeps every
+    # manifest under manifests-v2/; against a store it may not write (the
+    # deck's AppArmor profile grants models/** read only) the mkdir fails and
+    # `ollama list` / /api/show return errors (measured on 0.40.17, #163).
+    # Ship the directory so the runtime never needs to write the store.
+    for root in MANIFEST_ROOTS:
+        (models_dir / root).mkdir(exist_ok=True)
     (models_dir / "MANIFEST.sha256").write_text(manifest_text(layers), encoding="utf-8")
     return report
 
