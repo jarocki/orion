@@ -40,6 +40,11 @@ from __future__ import annotations
 #   or runs the command that does. test_settings_writers.sh resolves the path
 #   constants and fails when a file gains a second writer, or when a new
 #   settings file appears without a declared writer.
+#   Amended 2026-11-26 by the owner's #199-#201 request (no copy-a-command step):
+#   optional tools (DEC-PHASE13-060) and the engine controls (DEC-PHASE13-062)
+#   are Cockpit controls again, still through their one writer each; the
+#   Workbench mirrors them read-only, so DEC-PHASE13-049's rule for the loopback
+#   page is unchanged.
 
 import subprocess
 import sys
@@ -54,13 +59,18 @@ from gi.repository import GLib, Gtk  # type: ignore[import]  # noqa: E402
 from .helpers import posture_data as P  # noqa: E402
 from .helpers import settings_io as S  # noqa: E402
 from .helpers import style, ux  # noqa: E402
-from .helpers.background import run_async  # noqa: E402
+from .helpers.background import Poller, run_async  # noqa: E402
 from .helpers.tools_data import THEME_ARGV  # noqa: E402
 
 _RAIN_DIR = Path(__file__).resolve().parents[1] / "rain"
 if str(_RAIN_DIR) not in sys.path:
     sys.path.insert(0, str(_RAIN_DIR))
 import rain_lib  # noqa: E402  (rain.json schema + save: the one authority)
+
+_HEAL_DIR = Path(__file__).resolve().parents[1] / "healing"
+if str(_HEAL_DIR) not in sys.path:
+    sys.path.insert(0, str(_HEAL_DIR))
+import engine_view as EV  # noqa: E402  (#201: engine state + the commands that change it)
 
 WIDTH = 380            # px; fits beside LIVE's panels on the 1366 px reference deck
 _GREEN = "#34ff9e"
@@ -134,8 +144,8 @@ class SettingsDrawer:
         title.set_halign(Gtk.Align.START)
         self.box.pack_start(title, False, False, 0)
         self.box.pack_start(_label(
-            "What this deck enforces, sounds and shows. Tool settings (auto-healing "
-            "consent, Nebula warm-up, optional installers) are on the Workbench."), False, False, 0)
+            "What this deck enforces, sounds and shows, and what its engine may do on its "
+            "own. Optional tools are on the Orion Tools tab."), False, False, 0)
         wb = Gtk.Button(label="Open the Workbench")
         wb.get_style_context().add_class("orionx-tool")
         wb.set_halign(Gtk.Align.START)
@@ -143,6 +153,7 @@ class SettingsDrawer:
         wb.connect("clicked", lambda _b: ux.launch_detached(["orionx-osint"], friendly="the Workbench"))
         self.box.pack_start(wb, False, False, 2)
         self._build_posture()
+        self._build_engine()
         self._build_rain()
         self._build_display()
         self._build_dj()
@@ -330,6 +341,161 @@ class SettingsDrawer:
             self._test_btn.set_sensitive(True)
             ok, msg = res if err is None else (False, f"✗ R.A.I.N. test failed: {err}")
             ux.notify(msg, ux.LEVEL_INFO if ok else ux.LEVEL_ERROR)
+
+        run_async(_work, _done)
+
+    # ----------------------------------------------------------------- engine (#201)
+    def _build_engine(self) -> None:
+        """Auto-healing consent and Nebula warm-up, changed in place (DEC-PHASE13-062)."""
+        self._sep()
+        self.box.pack_start(style.heading("<b>Engine</b>"), False, False, 2)
+        self.box.pack_start(_label(
+            "What auto-healing may do without you, per action class. A class never set is off. "
+            "Each change is announced on the event bus."), False, False, 0)
+        self._engine_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.box.pack_start(self._engine_box, False, False, 0)
+        grid = Gtk.Grid()
+        grid.set_column_spacing(8)
+        grid.set_row_spacing(4)
+        self._engine_box.pack_start(grid, False, False, 0)
+        self._consent: dict[str, Gtk.ComboBoxText] = {}
+        self._consent_level: dict[str, str] = {}
+        self._engine_quiet = False
+        st = EV.engine_state()
+        for row, cls in enumerate(st["autonomy"]["classes"]):
+            name = _label(cls["id"])
+            name.set_tooltip_text(cls["summary"])
+            name.set_hexpand(True)
+            combo = Gtk.ComboBoxText()
+            for lvl in st["autonomy"]["levels"]:
+                combo.append(lvl, lvl)
+            combo.set_tooltip_text("off · propose (suggest only) · confirm (ask first) · autonomous (act now)")
+            combo.connect("changed", self._on_consent_changed, cls["id"])
+            grid.attach(name, 0, row, 1, 1)
+            grid.attach(combo, 1, row, 1, 1)
+            self._consent[cls["id"]] = combo
+        self._engine_box.pack_start(_label("<b>Nebula warm-up</b>", markup=True), False, False, 4)
+        self._warm_status = _label("")
+        self._engine_box.pack_start(self._warm_status, False, False, 0)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._warm_btn = Gtk.Button(label="Warm up now")
+        self._warm_btn.get_style_context().add_class("orionx-tool")
+        self._warm_btn.set_tooltip_text("Load the model into RAM now (nebula warmup), so the first answer is fast")
+        self._warm_btn.connect("clicked", self._on_warm_now)
+        row.pack_start(self._warm_btn, False, False, 0)
+        row.pack_start(_label("at boot"), False, False, 0)
+        self._warm_boot = Gtk.Switch()
+        self._warm_boot.set_tooltip_text("systemctl enable|disable nebula-warmup.service (asks for the admin password)")
+        self._warm_boot.connect("notify::active", self._on_warm_boot)
+        row.pack_start(self._warm_boot, False, False, 0)
+        self._engine_box.pack_start(row, False, False, 2)
+        self._apply_engine(st, None)
+        Poller(self._engine_box, 10000, lambda _vis: EV.engine_state(), self._apply_engine)
+
+    def _apply_engine(self, st: dict | None, err) -> None:
+        if err is not None or not st:
+            self._warm_status.set_markup(_color(f"engine state unreadable: {err}", _RED))
+            return
+        self._engine_quiet = True     # these set_* calls are not the operator's
+        try:
+            for cls in st["autonomy"]["classes"]:
+                self._consent_level[cls["id"]] = cls["level"]
+                self._consent[cls["id"]].set_active_id(cls["level"])
+            w = st["warmup"]
+            self._warm_boot.set_active(bool(w["enabled_at_boot"]))
+            last = time.strftime("%Y-%m-%d %H:%M", time.localtime(w["last_run"])) if w["last_run"] else "never"
+            self._warm_status.set_text(f"at boot: {'ON' if w['enabled_at_boot'] else 'off'} · last run: {last}")
+        finally:
+            self._engine_quiet = False
+
+    def _refresh_engine(self) -> None:
+        run_async(lambda: EV.engine_state(), self._apply_engine)
+
+    def _confirm(self, text: str) -> bool:
+        top = self.box.get_toplevel()
+        dlg = Gtk.MessageDialog(transient_for=top if isinstance(top, Gtk.Window) else None, modal=True,
+                                message_type=Gtk.MessageType.WARNING, buttons=Gtk.ButtonsType.OK_CANCEL, text=text)
+        resp = dlg.run()
+        dlg.destroy()
+        return resp == Gtk.ResponseType.OK
+
+    def _on_consent_changed(self, combo: Gtk.ComboBoxText, cls: str) -> None:
+        if self._engine_quiet:
+            return
+        new, old = combo.get_active_id(), self._consent_level.get(cls, "off")
+        if not new or new == old:
+            return
+        if new == "autonomous" and not self.confirm_autonomous(cls):
+            self._engine_quiet = True
+            combo.set_active_id(old)
+            self._engine_quiet = False
+            return
+        argv = EV.autonomy_argv(cls, new)
+
+        def _work():
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=15, check=False)
+            return r.returncode, (r.stderr or r.stdout).strip().splitlines()[-1:] or [""]
+
+        def _done(res, err) -> None:
+            rc, tail = res if err is None else (None, [str(err)])
+            if rc == 0:
+                ux.notify(f"✓ auto-healing: {cls} {old} → {new}", ux.LEVEL_OK)
+            else:
+                ux.notify(f"✗ auto-healing consent NOT changed ({cls}): {tail[0][:120]}", ux.LEVEL_ERROR)
+            self._refresh_engine()
+
+        run_async(_work, _done)
+
+    def confirm_autonomous(self, cls: str) -> bool:
+        """Overridable in tests; asks before a class may act without the operator."""
+        return self._confirm(f"Let auto-healing run {cls} WITHOUT asking?\n\nAutonomous actions happen as soon "
+                             "as the engine decides; every one is logged and announced, and can be undone.")
+
+    def _on_warm_now(self, _btn) -> None:
+        self._warm_btn.set_sensitive(False)
+        ux.notify("Nebula warm-up: loading the model (this can take a minute)…", ux.LEVEL_INFO)
+
+        def _work():
+            try:
+                r = subprocess.run(EV.warmup_argv(), capture_output=True, text=True, timeout=300, check=False)
+                return r.returncode, (r.stderr or r.stdout).strip()
+            except FileNotFoundError:
+                return None, "nebula is not on this deck"
+            except subprocess.TimeoutExpired:
+                return None, "nebula warmup did not finish within 5 min"
+
+        def _done(res, err) -> None:
+            self._warm_btn.set_sensitive(True)
+            rc, out = res if err is None else (None, str(err))
+            if rc == 0:
+                ux.notify("✓ Nebula warm-up finished: the model is loaded", ux.LEVEL_OK)
+            else:
+                ux.notify(f"✗ Nebula warm-up failed: {out.splitlines()[-1][:120] if out else rc}", ux.LEVEL_ERROR)
+                if rc is None:   # nebula never ran, so it published nothing; say it once here
+                    ux.emit_event("warning", "cockpit", "service", f"Nebula warm-up not run: {out}")
+            self._refresh_engine()
+
+        run_async(_work, _done)
+
+    def _on_warm_boot(self, sw: Gtk.Switch, _pspec) -> None:
+        if self._engine_quiet:
+            return
+        on = sw.get_active()
+
+        def _work():
+            try:
+                r = subprocess.run(EV.boot_argv(on), capture_output=True, text=True, timeout=120, check=False)
+                return r.returncode, (r.stderr or "").strip()
+            except (OSError, subprocess.SubprocessError) as exc:
+                return 127, str(exc)
+
+        def _done(res, err) -> None:
+            rc, out = res if err is None else (127, str(err))
+            sev, msg = EV.boot_event(on, rc)
+            ux.emit_event(sev, "cockpit", "service", msg)
+            ux.notify(("✓ " if rc == 0 else "✗ ") + msg + (f": {out[:100]}" if rc and out else ""),
+                      ux.LEVEL_OK if rc == 0 else ux.LEVEL_ERROR)
+            self._refresh_engine()
 
         run_async(_work, _done)
 

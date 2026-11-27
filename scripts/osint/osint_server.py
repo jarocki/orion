@@ -76,7 +76,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "awareness"))
 import deck_vitals  # noqa: E402  (DEC-PHASE12-049: same hostname/IP/vitals as the Cockpit)
 import gateway_probes  # noqa: E402  (DEC-PHASE13-047: the two operator-initiated probes behind POST, #94)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "healing"))
-import healing_lib  # noqa: E402  (DEC-PHASE13-049: the reader heald uses; this page never writes)
 import network_picture  # noqa: E402  (DEC-PHASE13-046: the same picture the Cockpit NETWORK panel draws, #93)
 
 # --- Where things are -------------------------------------------------------
@@ -546,19 +545,30 @@ def optional_status(run=subprocess.run, now=time.time) -> dict:
     return data
 
 
-def open_cockpit(tool_id: str, ids: list[str], popen=subprocess.Popen) -> tuple[int, dict]:
-    """(http status, body) for POST /api/optional/open: open the Cockpit on one tool."""
-    if tool_id not in ids:
-        return 400, {"error": "unknown-tool", "detail": "not an optional tool id: %r" % (tool_id,)}
+def _launch_cockpit(args: list[str], popen) -> tuple[int, dict]:
     exe = shutil.which("orionx-cockpit")
     if not exe:
         return 503, {"error": "cockpit-missing", "detail": "orionx-cockpit is not on PATH on this deck"}
     try:
-        popen([exe, "--tab", "tools", "--focus", tool_id], stdin=subprocess.DEVNULL,
-              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        popen([exe] + args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+              stderr=subprocess.DEVNULL, start_new_session=True)
     except OSError as exc:
         return 500, {"error": "cockpit-failed", "detail": str(exc)}
-    return 200, {"ok": True, "opened": tool_id}
+    return 200, {"ok": True}
+
+
+def open_cockpit(tool_id: str, ids: list[str], popen=subprocess.Popen) -> tuple[int, dict]:
+    """(http status, body) for POST /api/optional/open: open the Cockpit on one tool."""
+    if tool_id not in ids:
+        return 400, {"error": "unknown-tool", "detail": "not an optional tool id: %r" % (tool_id,)}
+    code, body = _launch_cockpit(["--tab", "tools", "--focus", tool_id], popen)
+    return code, (dict(body, opened=tool_id) if code == 200 else body)
+
+
+def open_cockpit_settings(popen=subprocess.Popen) -> tuple[int, dict]:
+    """POST /api/cockpit/settings (#201): open the Cockpit with its Settings drawer (Engine) out."""
+    code, body = _launch_cockpit(["--settings"], popen)
+    return code, (dict(body, opened="settings") if code == 200 else body)
 
 
 def current_outbound() -> dict:
@@ -579,6 +589,8 @@ def current_outbound() -> dict:
 ACTIVE_ROUTES = ("/api/network/gateway", "/api/network/outbound")
 OPERATOR_HEADER = "X-Orionx-Operator"
 OPEN_ROUTE = "/api/optional/open"   # #200: opens the Cockpit as this user; never installs
+SETTINGS_ROUTE = "/api/cockpit/settings"   # #201: opens the Cockpit's Settings drawer; never writes consent
+OPEN_ROUTES = (OPEN_ROUTE, SETTINGS_ROUTE)
 _PROBE_LOCK = threading.Lock()
 
 
@@ -588,48 +600,9 @@ def run_active(path: str) -> dict:
     if path == "/api/network/outbound":
         return gateway_probes.run_outbound(verdict)
     return gateway_probes.run_gateway(verdict)
-# Nebula warm-up (DEC-PHASE10-010): the boot-time switch is systemd's own
-# enablement link; the one-off is `nebula warmup`. Both are evidence, read here.
-WARMUP_WANTS = Path(os.environ.get(
-    "ORIONX_WARMUP_WANTS", "/etc/systemd/system/multi-user.target.wants/nebula-warmup.service"))
-WARMUP_LOG = Path(os.environ.get("ORIONX_WARMUP_LOG", "/var/log/orionx/nebula-warmup.log"))
-
-
-def engine_state() -> dict:
-    """Tool controls the Workbench shows (#95, DEC-PHASE13-048/-049). Read-only.
-
-    Auto-healing consent is what heald reads (healing_lib.load_autonomy +
-    level_for: an absent class is off), with the one command that changes
-    each class. Nebula warm-up is the unit's enablement and the last run's log.
-    Every change is a command the operator runs in the Workbench terminal; this
-    server has no write path and gains none.
-    """
-    levels = healing_lib.load_autonomy()
-    classes = [{"id": p.name, "summary": p.summary,
-                "level": healing_lib.level_for(levels, p.name), "set": p.name in levels}
-               for p in healing_lib.REGISTRY]
-    try:
-        last = WARMUP_LOG.stat().st_mtime
-    except OSError:
-        last = None
-    return {
-        "autonomy": {
-            "file": str(healing_lib.AUTONOMY_FILE),
-            "present": healing_lib.AUTONOMY_FILE.is_file(),
-            "levels": list(healing_lib.LEVELS),
-            "classes": classes,
-            "command": "orionx-heal autonomy <class> <level>",
-            "show": "orionx-heal autonomy",
-        },
-        "warmup": {
-            "enabled_at_boot": WARMUP_WANTS.exists(),
-            "last_run": last,
-            "log": str(WARMUP_LOG),
-            "now": "nebula warmup",
-            "enable": "sudo systemctl enable --now nebula-warmup.service",
-            "disable": "sudo systemctl disable nebula-warmup.service",
-        },
-    }
+# #201 (DEC-PHASE13-062): the engine state is computed once, in healing/engine_view.py,
+# for this page's read-only cards and the Cockpit's controls.
+from engine_view import WARMUP_LOG, WARMUP_WANTS, engine_state  # noqa: E402,F401
 
 
 def build_status() -> dict:
@@ -828,14 +801,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except ValueError:
             length = 0
         body = self.rfile.read(length) if length else b""
-        if path not in ACTIVE_ROUTES and path != OPEN_ROUTE:
+        if path not in ACTIVE_ROUTES and path not in OPEN_ROUTES:
             self._json_status(405, {"error": "method-not-allowed", "route": path,
-                                    "detail": "Only %s accept POST." % " and ".join(ACTIVE_ROUTES + (OPEN_ROUTE,))})
+                                    "detail": "Only %s accept POST." % ", ".join(ACTIVE_ROUTES + OPEN_ROUTES)})
             return
         if self.headers.get(OPERATOR_HEADER) != "1":
             self._json_status(403, {"error": "not-operator-initiated", "route": path,
                                     "detail": "Probes run only from the This network page's buttons "
                                               "(header %s: 1)." % OPERATOR_HEADER})
+            return
+        if path == SETTINGS_ROUTE:
+            code, payload = open_cockpit_settings()
+            self._json_status(code, payload)
             return
         if path == OPEN_ROUTE:
             try:

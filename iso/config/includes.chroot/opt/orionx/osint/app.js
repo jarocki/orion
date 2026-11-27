@@ -225,22 +225,24 @@ function optWhy(t){
   return v;
 }
 
-function manageButton(t){
-  var b = el("button", "btn copy", "Manage in Cockpit");
+function cockpitButton(label, route, payload){
+  var b = el("button", "btn copy", label);
   b.type = "button";
   b.addEventListener("click", function(){
     b.disabled = true; b.textContent = "opening…";
-    fetch("api/optional/open", {method: "POST", cache: "no-store",
+    fetch(route, {method: "POST", cache: "no-store",
           headers: {"X-Orionx-Operator": "1", "Content-Type": "application/json"},
-          body: JSON.stringify({id: t.id})})
+          body: JSON.stringify(payload || {})})
       .then(function(r){ return r.json().then(function(j){ return [r.ok, j]; }); })
       .then(function(rj){
         b.textContent = rj[0] ? "opened in the Cockpit" : ("not opened: " + (rj[1].detail || rj[1].error));
       }, function(){ b.textContent = "not opened: the Workbench server did not answer"; })
-      .then(function(){ setTimeout(function(){ b.disabled = false; b.textContent = "Manage in Cockpit"; }, 2500); });
+      .then(function(){ setTimeout(function(){ b.disabled = false; b.textContent = label; }, 2500); });
   });
   return b;
 }
+function manageButton(t){ return cockpitButton("Manage in Cockpit", "api/optional/open", {id: t.id}); }
+function settingsButton(){ return cockpitButton("Change in Cockpit", "api/cockpit/settings", {}); }
 
 function optCard(t){
   var look = OPT_BADGE[t.state] || ["cat", t.state];
@@ -292,14 +294,8 @@ function consentCard(cls){
                      cls.level + (cls.set ? "" : " (not set)")));
   c.appendChild(top);
   c.appendChild(el("p", null, cls.summary));
-  var cmd = "orionx-heal autonomy " + cls.id + " ";
-  c.appendChild(el("div", "cmd", cmd + "<off|propose|confirm|autonomous>"));
   var foot = el("div", "foot");
-  ((S.status.engine.autonomy || {}).levels || []).forEach(function(lvl){
-    var b = copyButton(cmd + lvl, lvl);
-    if (lvl === cls.level) b.className += " current";
-    foot.appendChild(b);
-  });
+  foot.appendChild(settingsButton());
   c.appendChild(foot);
   return c;
 }
@@ -315,11 +311,8 @@ function warmupCard(w){
     "The first run can take minutes and holds about 4.5 GB of RAM. " +
     (w.last_run ? "Last run logged " + new Date(w.last_run * 1000).toLocaleString() + " (" + w.log + ")."
                 : "No run logged yet (" + w.log + ").")));
-  c.appendChild(el("div", "cmd", w.now));
   var foot = el("div", "foot");
-  foot.appendChild(copyButton(w.now, "copy: now"));
-  foot.appendChild(copyButton(w.enabled_at_boot ? w.disable : w.enable,
-                              w.enabled_at_boot ? "copy: stop at boot" : "copy: every boot"));
+  foot.appendChild(settingsButton());
   c.appendChild(foot);
   return c;
 }

@@ -171,6 +171,47 @@ wait_for(lambda: any("volume 40%" in m for _l, m in TOASTS[n0:]))
 saved = (cfg_dir / "rain.json").read_text()
 ck('"volume": 0.4' in saved, "volume saved through rain_lib.save_config")
 ck(any("volume 40%" in m and "survives reboot:" in m for _l, m in TOASTS[n0:]), f"change toasts the setting + reboot truth ({TOASTS[n0:]})")
+
+print("[settings drawer: Engine changes consent and warm-up in place, through their writers (#201)]")
+stub("orionx-heal", 'echo "$*" >> "$HOME/heal-args"; exit 0')
+ck(set(aw._consent) == {"block_ip", "kill_process", "quarantine_file", "isolate_node", "rotate_mesh_keys",
+                        "revoke_matrix_session"} and all(c.get_active_id() == "off" for c in aw._consent.values()),
+   "one control per action class, every unset class shown as off")
+n0 = len(TOASTS)
+aw._consent["block_ip"].set_active_id("confirm")
+wait_for(lambda: (HOME / "heal-args").exists() and any("block_ip off → confirm" in m for _l, m in TOASTS[n0:]))
+ck((HOME / "heal-args").read_text().split("\n")[0] == "autonomy block_ip confirm",
+   "a change runs orionx-heal autonomy CLASS LEVEL (the one writer)")
+ck(any(m.startswith("✓ auto-healing: block_ip off → confirm") for _l, m in TOASTS[n0:]), f"and toasts it ({TOASTS[n0:]})")
+ck(not (cfg_dir / "autonomy.json").exists(), "the drawer itself writes no consent file")
+aw.confirm_autonomous = lambda cls: False
+before = (HOME / "heal-args").read_text()
+aw._consent["kill_process"].set_active_id("autonomous")
+pump(0.6)
+ck((HOME / "heal-args").read_text() == before and aw._consent["kill_process"].get_active_id() == "off",
+   "declining the autonomous warning changes nothing and puts the control back")
+stub("orionx-heal", 'echo "orionx-heal: consent NOT changed — disk full" >&2; exit 1')
+n0 = len(TOASTS)
+aw._consent["isolate_node"].set_active_id("propose")
+wait_for(lambda: any("NOT changed" in m for _l, m in TOASTS[n0:]))
+ck(any(lvl == "error" and "NOT changed (isolate_node)" in m and "disk full" in m for lvl, m in TOASTS[n0:]),
+   "a refused change says so, with the writer's reason")
+stub("nebula", 'exit 0')
+n0 = len(TOASTS)
+aw._on_warm_now(None)
+wait_for(lambda: any("warm-up finished" in m for _l, m in TOASTS[n0:]))
+ck(any(m.startswith("✓ Nebula warm-up finished") for _l, m in TOASTS[n0:]), "Warm up now runs nebula warmup and reports it")
+stub("systemctl", 'echo "$*" >> "$HOME/sysctl-args"; exit 0')
+ev0 = (HOME / "events.log").read_text() if (HOME / "events.log").exists() else ""
+n0 = len(TOASTS)
+aw._warm_boot.set_active(True)
+wait_for(lambda: any("at boot enabled" in m for _l, m in TOASTS[n0:]))
+ck("enable nebula-warmup.service" in (HOME / "sysctl-args").read_text(), "the boot switch runs systemctl enable")
+pump(0.4)
+ev1 = (HOME / "events.log").read_text() if (HOME / "events.log").exists() else ""
+ck("Nebula warm-up at boot enabled" in ev1[len(ev0):], f"and the change is on the bus ({ev1[len(ev0):]!r})")
+(BIN / "systemctl").unlink()
+(BIN / "nebula").unlink()
 win.destroy()
 
 # ---------------------------------------------------------------- Auto-Healing (#95)
@@ -247,7 +288,7 @@ for key in cw._pages:
     opened.append(cw.drawer_rev.get_child_revealed() and cw.settings.box.get_mapped())
 ck(all(opened), f"the drawer stays out on every tab ({sum(opened)}/{len(opened)})")
 dheads = [w.get_text() for w in walk(cw.settings.box) if isinstance(w, Gtk.Label) and w.get_style_context().has_class("orionx-heading")]
-ck(dheads == ["Threat posture", "Audible alerts · R.A.I.N.", "Display", "DJ deck"], f"drawer groups: {dheads}")
+ck(dheads == ["Threat posture", "Engine", "Audible alerts · R.A.I.N.", "Display", "DJ deck"], f"drawer groups: {dheads}")
 first = next(w for w in walk(cw.settings.box) if isinstance(w, Gtk.Label))
 ck(cw.settings.box.get_style_context().has_class("orionx-page") and first.get_text() == "Settings"
    and first.get_style_context().has_class("orionx-panel-title"), "the drawer wears the tab look, titled Settings")

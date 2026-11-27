@@ -48,7 +48,20 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 import engine as eng  # noqa: E402
+import engine_view as ev  # noqa: E402  (#201: consent-change events)
 import healing_lib as hl  # noqa: E402
+
+
+def _publish(severity: str, message: str) -> None:
+    """Best effort: a consent change is announced on the bus (heard by R.A.I.N., shown on LIVE)."""
+    import subprocess  # noqa: PLC0415
+    try:
+        r = subprocess.run(["orionx-event", "--severity", severity, "--source", "heal", "--category", "heal",
+                            message], capture_output=True, text=True, timeout=10, check=False)
+        if r.returncode != 0:
+            print(f"orionx-heal: NOT published to the bus (orionx-event exit {r.returncode})", file=sys.stderr)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"orionx-heal: NOT published to the bus ({exc})", file=sys.stderr)
 
 
 def _engine(args) -> eng.Engine:
@@ -124,6 +137,7 @@ def cmd_autonomy(args) -> int:
             return 2
         changes[args.action_class] = args.level
     if changes:
+        before = hl.load_autonomy()
         ok, err = hl.set_autonomy(changes)
         if not ok:
             print(f"orionx-heal: consent NOT changed — {err}", file=sys.stderr)
@@ -131,6 +145,9 @@ def cmd_autonomy(args) -> int:
         for name, lvl in sorted(changes.items()):
             warn = "   (acts WITHOUT asking)" if lvl == "autonomous" else ""
             print(f"set {name} = {lvl}{warn}")
+            old = hl.level_for(before, name)
+            if old != lvl:   # #201 (DEC-PHASE13-062): the writer publishes; any surface, one event
+                _publish(*ev.consent_event(name, old, lvl))
         print(_reboot_line())
     levels = hl.load_autonomy()
     print(f"Standing consent: {hl.AUTONOMY_FILE}"

@@ -277,7 +277,7 @@ out, note = M.target_argv("network")
 assert out[0].endswith("orionx-cockpit") and out[1:] == ["--tab", "network"] and note == "", (out, note)
 assert set(M.MOVED) == {"posture", "rain", "theme", "dj", "healing", "warmup", "installers"}, sorted(M.MOVED)
 assert all(M.MOVED[k][1].startswith("Orion Cockpit → Settings") for k in ("posture", "rain", "theme", "dj"))
-assert all(M.MOVED[k][1].startswith("Orion Workbench") for k in ("healing", "warmup"))
+assert all(M.MOVED[k][1] == "Orion Cockpit → Settings → Engine" for k in ("healing", "warmup"))  # #201
 assert M.MOVED["installers"][1:3] == ("Orion Cockpit → Orion Tools", ["orionx-cockpit", "--tab", "tools"])  # #199
 print("ok")
 PY
@@ -286,7 +286,7 @@ then
 else
     fail "launcher map" "see output above"
 fi
-if python3 "$ENTRY" --help 2>&1 | grep -q "Orion Workbench → Engine"; then
+if python3 "$ENTRY" --help 2>&1 | grep -q "Orion Cockpit → Settings → Engine"; then
     pass "--help carries the where-it-went map (no display needed)"
 else
     fail "--help map" "$(python3 "$ENTRY" --help 2>&1 | tail -3)"
@@ -325,7 +325,7 @@ while IFS= read -r -d '' pyfile; do
         # The stdlib is asked, not listed: a hand-kept regex failed six times on
         # 2026-10-06 for re/shlex/time/collections (all stdlib). In-repo sibling
         # modules under scripts/ are ours, not third-party (DEC-PHASE12-053).
-        if ! [[ "$top" =~ ^(gi|__future__|control_center|deck_vitals|osint_server|pewpew_feed|tuning_lib|cockpit_lib|rain_lib)$ ]] \
+        if ! [[ "$top" =~ ^(gi|__future__|control_center|deck_vitals|osint_server|pewpew_feed|tuning_lib|cockpit_lib|rain_lib|engine_view)$ ]] \
            && ! python3 -c 'import sys; raise SystemExit(0 if sys.argv[1] in sys.stdlib_module_names else 1)' "$top"; then
             fail "no third-party import: ${pyfile#"$REPO_ROOT/"} imports '$top'" \
                  "Only stdlib + gi.repository allowed in shipped Python"

@@ -113,10 +113,32 @@ def run_warmup() -> bool:
     return False
 
 
+def publish_outcome(ok: bool, run=None) -> bool:
+    """#201 (DEC-PHASE13-062): every warm-up, from the Cockpit, the CLI or the boot
+    unit, announces its outcome on the bus. Best effort; returns whether it published."""
+    import subprocess  # noqa: PLC0415
+    sev, msg = (("notice", "Nebula warm-up finished: the model is loaded") if ok
+                else ("warning", "Nebula warm-up FAILED; see %s" % WARMUP_LOG))
+    try:
+        r = (run or subprocess.run)(["orionx-event", "--severity", sev, "--source", "nebula",
+                                     "--category", "service", msg],
+                                    capture_output=True, text=True, timeout=10, check=False)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        logger.warning("warm-up outcome NOT published to the bus (orionx-event unavailable)")
+        return False
+
+
+def warm_and_publish() -> bool:
+    ok = run_warmup()
+    publish_outcome(ok)
+    return ok
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     """CLI entrypoint.  Returns 0 on success, 1 on failure."""
     logger.info("nebula warmup starting (log: %s)", WARMUP_LOG)
-    success = run_warmup()
+    success = warm_and_publish()
     if success:
         logger.info("nebula warmup PASSED")
         return 0

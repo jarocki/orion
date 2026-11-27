@@ -48,9 +48,12 @@ MOVED: dict[str, tuple[str, str, list[str], str]] = {
               ["orionx-cockpit", "--settings"], "toggle-theme.sh"),
     "dj": ("DJ deck", "Orion Cockpit → Settings (opens orionx-dj)",
            ["orionx-cockpit", "--settings"], "orionx-dj"),
-    "healing": ("Auto-healing consent (the autonomy grid)", "Orion Workbench → Engine",
-                ["orionx-osint"], "orionx-heal autonomy CLASS LEVEL"),
-    "warmup": ("Nebula warm-up", "Orion Workbench → Engine", ["orionx-osint"], "nebula warmup"),
+    # #201 (DEC-PHASE13-062): back in the Cockpit as controls; the Workbench's
+    # Engine cards mirror them read-only.
+    "healing": ("Auto-healing consent (the autonomy grid)", "Orion Cockpit → Settings → Engine",
+                ["orionx-cockpit", "--settings"], "orionx-heal autonomy CLASS LEVEL"),
+    "warmup": ("Nebula warm-up", "Orion Cockpit → Settings → Engine", ["orionx-cockpit", "--settings"],
+               "nebula warmup"),
     # #199 (DEC-PHASE13-060): back in the Cockpit, installing and removing in place;
     # the Workbench's Optional section is a read-only mirror (#200).
     "installers": ("Optional tools: status, install, uninstall", "Orion Cockpit → Orion Tools",
