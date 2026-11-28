@@ -52,6 +52,8 @@ REGISTRY: dict[str, tuple[str | None, str]] = {
                       "auto-healing consent; `orionx-heal autonomy` (Cockpit → Settings → Engine)"),
     "threat-posture": ("scripts/control_center/helpers/posture_data.py",
                        "requested posture tier; Cockpit → Settings (request_tier)"),
+    "sensors": ("scripts/control_center/helpers/posture_data.py",
+                "manual Suricata/Zeek start/stop; Cockpit → Orion Tools → Sensors (request_sensor, DEC-PHASE13-073)"),
     "rain.json": ("scripts/rain/rain_lib.py",
                   "R.A.I.N. settings; Cockpit → Settings and `orionx-rain` (save_config)"),
     "music.json": ("scripts/music/orionx_synth.py", "DJ deck state; orionx-dj / orionx-music"),

@@ -162,6 +162,10 @@ from zeek_logs import (  # noqa: E402,F401
 # Root's own ~/.config is therefore the wrong place to look first, which is why
 # posture_candidates() searches the real home directories.
 POSTURE_RELPATH = Path(".config") / "orionx" / "threat-posture"
+# DEC-PHASE13-073: the operator's manual sensor start/stop (Cockpit → Orion
+# Tools → Sensors). Same directory, same trust rules as the posture file.
+SENSORS_RELPATH = Path(".config") / "orionx" / "sensors"
+SENSOR_NAMES = ("suricata", "zeek")
 # WHO the operator is has ONE authority: tuning_lib.operator_user()
 # (ORIONX_OPERATOR_USER, else the live-config username). DEC-PHASE12-081.
 DESKTOP_USER = tuning_lib.operator_user()
@@ -359,6 +363,49 @@ def read_tier_report(path: Path | None) -> tuple[str, str | None]:
 
 def read_tier(path: Path | None) -> str:
     return read_tier_report(path)[0]
+
+
+def parse_sensor_overrides(text: str | None) -> dict[str, bool]:
+    """{'suricata': True|False, 'zeek': True|False} for the sensors the
+    operator started or stopped by hand; a sensor absent here follows the tier.
+
+    @decision DEC-PHASE13-073
+    @title Manual sensor start/stop is an override the posture daemon applies
+    @status accepted
+    @rationale John (2026-11-27): Zeek and Suricata need start/stop buttons in
+      Orion Tools. Starting them with systemctl from the Cockpit would make a
+      second authority: this daemon reasserts its plan every 30 s and would
+      stop a sensor the operator started (or restart one they stopped). So
+      the buttons write a request, ~/.config/orionx/sensors, and this daemon
+      folds it into tier_plan(): an override wins over the tier for that one
+      sensor, everything else (gate file, interface set, recovery budget,
+      verification) is unchanged. A deliberate tier change clears the file
+      (posture_data.request_tier), so "Tier 2" always starts from what Tier 2
+      means. Format: one `name=on|off` per line; anything else is ignored,
+      and an unreadable or untrusted file means no overrides — the tier
+      decides, as it did before this existed.
+    """
+    out: dict[str, bool] = {}
+    for line in (text or "").splitlines():
+        name, sep, val = line.strip().partition("=")
+        name, val = name.strip(), val.strip().lower()
+        if sep and name in SENSOR_NAMES and val in ("on", "off"):
+            out[name] = val == "on"
+    return out
+
+
+def sensors_path(home_root: Path = HOME_ROOT, desktop_user: str = DESKTOP_USER,
+                 env: dict | None = None) -> Path:
+    env = os.environ if env is None else env
+    return Path(env.get("ORIONX_SENSORS_FILE") or Path(home_root) / desktop_user / SENSORS_RELPATH)
+
+
+def read_sensor_overrides(path: Path | None) -> tuple[dict[str, bool], str | None]:
+    """(overrides, refusal). A missing file is no overrides and no refusal."""
+    if path is None or not Path(path).exists():
+        return {}, None
+    text, refusal = tuning_lib.read_trusted(path)
+    return (parse_sensor_overrides(text) if refusal is None else {}), refusal
 
 
 # ===========================================================================
@@ -1185,7 +1232,8 @@ def zeek_blind(conn_records: int, watch_started: float, now: float,
 # PURE: what each tier actually means
 # ===========================================================================
 
-def tier_plan(tier: str, rules_usable: bool, live_ifaces=None) -> dict:
+def tier_plan(tier: str, rules_usable: bool, live_ifaces=None,
+              overrides: dict | None = None) -> dict:
     """The desired system state for a tier. No side effects, fully testable.
 
     Tier 0 — passive. Nothing is started, no gate file, no packets, no
@@ -1228,6 +1276,11 @@ def tier_plan(tier: str, rules_usable: bool, live_ifaces=None) -> dict:
     """
     tier = tier if tier in TIERS else "0"
     ids = tier in ("1", "2")
+    # DEC-PHASE13-073: a manual start/stop wins over the tier for that sensor.
+    overrides = overrides or {}
+    want_s = bool(overrides.get("suricata", ids))
+    want_z = bool(overrides.get("zeek", ids))
+    sensing = want_s or want_z
 
     # DEC-PHASE12-038. `live_ifaces` is the measured set of interfaces
     # carrying packets. Three states, not two:
@@ -1252,20 +1305,25 @@ def tier_plan(tier: str, rules_usable: bool, live_ifaces=None) -> dict:
     return {
         "tier": tier,
         "label": TIER_LABEL[tier],
-        "gate_file": ids,
-        "suricata": ids and capture_ok,
+        "gate_file": want_s,
+        "suricata": want_s and capture_ok,
         # DEC-PHASE13-033: Zeek runs where Suricata runs, on the same set.
-        "zeek": ids and capture_ok,
-        "eve_ingest": ids,
+        "zeek": want_z and capture_ok,
+        "eve_ingest": want_s,
         "zeek_ingest": True,
-        "nebula_context": ids,
+        "nebula_context": want_s,
         "deception": tier == "2",
-        "warn_no_rules": ids and not rules_usable,
-        # Interfaces Suricata should capture on. Empty at Tier 0 because Tier
-        # 0 starts nothing and sends nothing.
-        "capture_ifaces": chosen if ids else (),
+        "warn_no_rules": want_s and not rules_usable,
+        # Interfaces the sensors capture on. Empty at Tier 0 because Tier 0
+        # starts nothing and sends nothing (unless the operator started a
+        # sensor by hand, DEC-PHASE13-073).
+        "capture_ifaces": chosen if sensing else (),
         # True only when we have MEASURED that there is nothing to capture.
-        "warn_no_capture": bool(ids and known and not chosen),
+        "warn_no_capture": bool(sensing and known and not chosen),
+        # Where each sensor's on/off came from: "tier" or "manual".
+        "sensor_source": {"suricata": "manual" if "suricata" in overrides else "tier",
+                          "zeek": "manual" if "zeek" in overrides else "tier"},
+        "sensor_wanted": {"suricata": want_s, "zeek": want_z},
     }
 
 
@@ -2413,6 +2471,8 @@ class PostureDaemon:
         self._blind_announced = False
         self._config_verdict: dict | None = None
         self._brake_decision: dict = {"act": False, "reason": "no-sample"}
+        self.overrides: dict[str, bool] = {}       # DEC-PHASE13-073
+        self._overrides_refusal: str | None = None
         # One synchronous sample before anything is applied, so the very
         # first plan is made against measured interfaces rather than a guess.
         self.heartbeat_tick(time.time())
@@ -2599,7 +2659,8 @@ class PostureDaemon:
         and nowhere else.
         """
         self._last_heartbeat = now
-        self.heartbeat.observe(capture.sample_interfaces(self.sysfs), now)
+        self.heartbeat.observe(capture.sample_interfaces(self.sysfs), now,
+                               up=capture.sample_up(self.sysfs))
         return self.heartbeat.selected(now)
 
     def capture_target(self, now: float) -> tuple:
@@ -3044,6 +3105,25 @@ class PostureDaemon:
                 "active": [i for i in (self.state.get("capture_ifaces") or ())
                            if self.state.get("zeek") and service_active(zeek_unit(i))],
             },
+            # DEC-PHASE13-073: per-sensor truth for Orion Tools' Sensors
+            # group: wanted (and why), and whether it is actually running.
+            "sensors": {
+                "suricata": {
+                    "source": (self.state.get("sensor_source") or {}).get("suricata", "tier"),
+                    "wanted": bool((self.state.get("sensor_wanted") or {}).get("suricata")),
+                    "active": service_active(SURICATA_UNIT),
+                    "capture_ifaces": list(self.state.get("capture_ifaces") or ()),
+                },
+                "zeek": {
+                    "source": (self.state.get("sensor_source") or {}).get("zeek", "tier"),
+                    "wanted": bool((self.state.get("sensor_wanted") or {}).get("zeek")),
+                    "active": bool(self.state.get("zeek")) and any(
+                        service_active(zeek_unit(i)) for i in (self.state.get("capture_ifaces") or ())),
+                    "capture_ifaces": list(self.state.get("capture_ifaces") or ())
+                    if self.state.get("zeek") else [],
+                },
+                "overrides_refused": self._overrides_refusal or "",
+            },
             "zeek_published": self.zeek_published,
             "zeek_suppressed": self.zeek_suppressed,
             "capture": capture_status(),
@@ -3076,7 +3156,8 @@ class PostureDaemon:
         now = time.time()
         self.refresh_rules()
         target = self.capture_target(now)
-        plan = tier_plan(tier, self.rules["usable"], live_ifaces=target)
+        plan = tier_plan(tier, self.rules["usable"], live_ifaces=target,
+                         overrides=self.overrides)
         actions = plan_actions(self.state, plan)
         prev_ifaces = tuple((self.state or {}).get("capture_ifaces") or ())
         tier_changed = self.state is None or self.state["tier"] != plan["tier"]
@@ -3087,6 +3168,17 @@ class PostureDaemon:
             # NIC the operator just plugged in would be the daemon giving up
             # on a situation it has never actually attempted.
             self._suricata_recovery_reset()
+        if not tier_changed:
+            # DEC-PHASE13-073: a manual start/stop is a posture change too,
+            # and the operator hears it the same way.
+            before = (self.state or {}).get("sensor_wanted") or {}
+            for name, on in sorted(plan["sensor_wanted"].items()):
+                if before.get(name) != on and plan["sensor_source"][name] == "manual":
+                    label = "Suricata" if name == "suricata" else "Zeek"
+                    self.emit("notice", "posture",
+                              f"{label} {'started' if on else 'stopped'} by hand (Orion Tools) "
+                              f"under {plan['label']}; it follows the tier again when the tier is next changed",
+                              detail={"sensor": name, "wanted": on, "tier": plan["tier"]})
         if tier_changed:
             self.emit("notice", "posture",
                       f"Posture enforcement: {plan['label']} — "
@@ -3129,6 +3221,14 @@ class PostureDaemon:
                                                     "stricter; re-select the tier in the Cockpit"})
                 self._refresh_tuning(now)
                 self._refresh_deck_addrs(now)
+                overrides, orefusal = read_sensor_overrides(sensors_path())
+                if orefusal != self._overrides_refusal:
+                    self._overrides_refusal = orefusal
+                    if orefusal:
+                        self.emit("warning", "posture",
+                                  f"sensor start/stop file refused, sensors follow the tier: {orefusal}"[:300])
+                overrides_changed = overrides != self.overrides
+                self.overrides = overrides
                 if (now - self._last_heartbeat) >= self.args.heartbeat:
                     # DEC-PHASE12-038. The interface heartbeat runs on its own
                     # cadence, faster than the 30s reassert, because a USB NIC
@@ -3136,15 +3236,16 @@ class PostureDaemon:
                     # a yanked one must leave the config before the engine is
                     # next started against a device that no longer exists.
                     self.heartbeat_tick(now)
-                    if self.state is not None and self.state["tier"] in ("1",
-                                                                         "2"):
+                    if self.state is not None and any(
+                            (self.state.get("sensor_wanted") or {}).values()):
                         target = self.capture_target(now)
                         if (tuple(self.state.get("capture_ifaces") or ())
                                 != target):
                             self.apply_tier(self.state["tier"])
                             last_reassert = now
 
-                if self.state is None or new_tier != self.state["tier"]:
+                if (self.state is None or new_tier != self.state["tier"]
+                        or overrides_changed):
                     tier = new_tier
                     self.apply_tier(tier)
                     last_reassert = now
@@ -3272,7 +3373,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.print_plan:
         now = time.time()
         target = daemon.capture_target(now)
-        plan = tier_plan(tier, daemon.rules["usable"], live_ifaces=target)
+        plan = tier_plan(tier, daemon.rules["usable"], live_ifaces=target,
+                         overrides=read_sensor_overrides(sensors_path())[0])
         print(json.dumps({"posture_file": str(daemon.posture_path or ""),
                           "rules": daemon.rules,
                           "zeek": daemon.zeek.state,

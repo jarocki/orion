@@ -159,6 +159,21 @@ class Cockpit(Gtk.Window):
         strip = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         strip.pack_start(self.header, True, True, 0)
         strip.pack_end(self.settings_btn, False, False, 0)
+        # John, 2026-11-27: the Workbench and the Attack Map one click away on
+        # every tab. They were reachable only through Settings → "Open the
+        # Workbench" and by clicking two LIVE panels, which nothing announced.
+        for label, tip, cb in (
+                ("Attack Map", "Live tracers from this deck's event bus, in the browser",
+                 lambda _b: self._say(*(lambda r: (r[1], "ok" if r[0] else "error"))(L.open_attack_map()))),
+                ("Workbench", "The analyst's toolbox: CyberChef, This network, GODSEYE, the tool catalogue",
+                 lambda _b: CCUX.launch_detached(["orionx-osint"], needs="orionx-osint", friendly="the Workbench"))):
+            b = Gtk.Button(label=label)
+            b.get_style_context().add_class("orionx-tool")
+            b.set_tooltip_text(tip)
+            b.set_valign(Gtk.Align.CENTER)
+            b.set_margin_end(6)
+            b.connect("clicked", cb)
+            strip.pack_end(b, False, False, 0)
         body = Gtk.Overlay()
         body.add(self.nb)
         body.add_overlay(self.drawer_rev)

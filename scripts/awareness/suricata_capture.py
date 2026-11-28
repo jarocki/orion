@@ -107,7 +107,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 from collections import deque
 from pathlib import Path
 
@@ -210,6 +212,26 @@ def list_interfaces(root: Path = SYSFS_NET) -> list[str]:
     return [n for n in names if not is_loopback(n, root)]
 
 
+def is_up(name: str, root: Path = SYSFS_NET) -> bool:
+    """True when the kernel reports the interface operationally UP.
+
+    operstate is the kernel's own answer to "is this link carrying a
+    connection right now": "up" for an associated Wi-Fi card or a cabled
+    Ethernet port, "down"/"dormant"/"lowerlayerdown" otherwise. "unknown" (WireGuard,
+    tun, a bridge with no ports on some drivers) does NOT count: those are
+    judged by their packet rate alone, as before DEC-PHASE13-071.
+    """
+    try:
+        return Path(root, name, "operstate").read_text(encoding="utf-8").strip() == "up"
+    except OSError:
+        return False
+
+
+def sample_up(root: Path = SYSFS_NET) -> set[str]:
+    """Candidate interfaces that are operationally up (DEC-PHASE13-071)."""
+    return {n for n in list_interfaces(root) if is_up(n, root)}
+
+
 def rx_packets(name: str, root: Path = SYSFS_NET) -> int | None:
     """Lifetime received-packet counter, or None if unreadable/absent."""
     try:
@@ -267,16 +289,24 @@ class InterfaceHeartbeat:
         self._samples: dict[str, deque] = {}
         self._promoted: dict[str, float] = {}   # iface -> last time it was live
         self.present: set[str] = set()
+        self.up: set[str] = set()               # operstate up (DEC-PHASE13-071)
         self.last_sample = 0.0
         self.started = 0.0
 
     # --- ingest ---
-    def observe(self, counts: dict[str, int], now: float) -> None:
-        """Record one snapshot taken at `now`."""
+    def observe(self, counts: dict[str, int], now: float,
+                up: set[str] | None = None) -> None:
+        """Record one snapshot taken at `now`.
+
+        `up` is the set of interfaces the kernel reports operationally up
+        (sample_up). None keeps the pre-DEC-PHASE13-071 behaviour: liveness
+        by packet rate only.
+        """
         if not self.started:
             self.started = now
         self.last_sample = now
         self.present = set(counts)
+        self.up = set(up or ()) & self.present
 
         for name, value in counts.items():
             series = self._samples.setdefault(name, deque())
@@ -342,6 +372,12 @@ class InterfaceHeartbeat:
 
         chosen = set(self._promoted)
         chosen |= {n for n in self.pinned if n in self.present}
+        # DEC-PHASE13-071: an interface the kernel reports UP is captured
+        # whether or not it is busy. The packet threshold alone left a deck
+        # on a quiet segment with no IDS at Tier 2, and stopped a running
+        # Suricata when the link went quiet: the moment before a scan is the
+        # moment a sensor must already be running.
+        chosen |= self.up
 
         if len(chosen) > self.max_ifaces:
             # Keep the busiest. A deck with twenty veths should watch the
@@ -350,6 +386,7 @@ class InterfaceHeartbeat:
             ranked = sorted(
                 chosen,
                 key=lambda n: (n in self.pinned,
+                               n in self._promoted,
                                rates.get(n, {}).get("packets", 0)),
                 reverse=True)
             chosen = set(ranked[:self.max_ifaces])
@@ -372,7 +409,7 @@ class InterfaceHeartbeat:
         """
         if not self.started:
             return True
-        if self.live(now):
+        if self.live(now) or self.up:
             return False
         return (now - self.started) < self.window
 
@@ -382,6 +419,7 @@ class InterfaceHeartbeat:
         return {
             "candidates": sorted(self.present),
             "live": sorted(self.live(now)),
+            "up": sorted(self.up),
             "selected": list(self.selected(now)),
             "pinned": list(self.pinned),
             "window_seconds": self.window,
@@ -540,18 +578,43 @@ def classify_config_test(returncode: int | None, output: str) -> dict:
 
 
 def check_config(config: Path = ORIONX_YAML, runner=subprocess.run,
-                binary: str = SURICATA_BIN) -> dict:
-    """Run `suricata -T -v` against a config and classify the result."""
+                binary: str = SURICATA_BIN, log_dir: str | None = None) -> dict:
+    """Run `suricata -T -v -l <private dir>` against a config and classify it.
+
+    @decision DEC-PHASE13-072
+    @title The config test writes its logs to a private directory
+    @status accepted
+    @rationale orionx-postured runs this test inside its own sandbox
+      (ProtectSystem=strict; /var/log is read-only there). Without -l the
+      test inherits default-log-dir /var/log/suricata/ and fails with
+      'The logging directory ... is not writable', so every tier raise
+      published a CRITICAL "Suricata REJECTED its configuration" and held the
+      start back until the 30 s recovery started it anyway (measured on the
+      v3.2.0 image in QEMU, 2026-11-27). The real service runs outside the
+      sandbox and writes /var/log/suricata itself; the test only needs
+      somewhere to write. -l points it at a fresh directory under the
+      daemon's PrivateTmp, removed afterwards.
+    """
+    own = log_dir is None
+    if own:
+        try:
+            log_dir = tempfile.mkdtemp(prefix="orionx-suricata-test-")
+        except OSError as exc:
+            return {"verdict": "unknown", "error": f"no scratch log dir: {exc}", "rc": None}
     try:
-        res = runner([binary, "-T", "-v", "-c", str(config)],
-                     capture_output=True, text=True, timeout=120, check=False)
-    except FileNotFoundError:
-        return {"verdict": "absent", "error": f"{binary} is not installed",
-                "rc": None}
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {"verdict": "unknown", "error": str(exc), "rc": None}
-    return classify_config_test(res.returncode,
-                                (res.stdout or "") + (res.stderr or ""))
+        try:
+            res = runner([binary, "-T", "-v", "-c", str(config), "-l", str(log_dir)],
+                         capture_output=True, text=True, timeout=120, check=False)
+        except FileNotFoundError:
+            return {"verdict": "absent", "error": f"{binary} is not installed",
+                    "rc": None}
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {"verdict": "unknown", "error": str(exc), "rc": None}
+        return classify_config_test(res.returncode,
+                                    (res.stdout or "") + (res.stderr or ""))
+    finally:
+        if own:
+            shutil.rmtree(str(log_dir), ignore_errors=True)
 
 
 # ===========================================================================
