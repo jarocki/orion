@@ -815,18 +815,21 @@ Nebula is Orion-X's on-device assistant: ollama serving **Qwen2.5-3B-Instruct** 
 
 From the Cockpit's **Nebula AI** tab: check runtime and integrity status, chat in the **Ask Nebula** pane, and see the MCP tools it can call. To preload the model, press **Warm up now** in the Cockpit's Settings drawer (F2 → Engine), or run `nebula warmup`; the **at boot** switch beside it does it at every boot. Each run's outcome is announced on the event bus. Good first questions: "What does this tshark output mean?" (paste it), or "Summarise ~/Analysis/pcaps/synthetic-sample.pcap" (Nebula calls `pcap_analyze` for you).
 
-Start, stop or restart the runtime from a terminal:
+Start, stop or restart the runtime from a terminal. `nebula stop` unloads the model from memory first, then stops the runtime and the warm-up unit, and says how much memory came back; nothing restarts it until you run `nebula start` (or reboot):
 
 ```bash
+nebula stop                                 # unload the model, stop the runtime
+nebula start                                # start it again
 systemctl status nebula-runtime.service
 sudo systemctl restart nebula-runtime.service
-sudo systemctl stop nebula-runtime.service
 ```
 
 From a terminal:
 
 ```bash
 nebula status                  # runtime status (add --json for machine-readable)
+nebula stop                    # unload the model from RAM and stop the runtime
+nebula start                   # start the runtime again (load the model: nebula warmup)
 nebula chat                    # interactive chat
 nebula chat --session triage   # named session
 nebula tools                   # list available MCP tools (add --json)
@@ -2126,6 +2129,8 @@ nebula status [--json]         # Runtime status
 nebula chat [--session NAME]   # Chat with Nebula
 nebula tools [--json|--serve]  # List MCP tools / run MCP server
 nebula warmup                  # Load the model now, so the first answer is fast
+nebula stop                    # Unload the model and stop the runtime (frees its RAM)
+nebula start                   # Start the runtime again
 
 # Networking
 sudo setup-wireguard.sh        # Configure WireGuard VPN (central server)

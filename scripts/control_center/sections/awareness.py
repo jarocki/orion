@@ -126,8 +126,10 @@ def _svc_active(unit: str) -> bool:
 def _nebula_health(_v: dict) -> tuple[str, str]:
     if _svc_active("nebula-runtime.service"):
         return "running", _GREEN
-    # UX-29: the Nebula tab has no start button; name the command that works.
-    return "down — sudo systemctl start nebula-runtime.service", _RED
+    # UX-29: the Nebula tab has no start button; name the command that works
+    # (`nebula start`, DEC-PHASE13-070). Still red: a deliberate `nebula stop`
+    # is not told apart from a crash here.
+    return "down — start it with: nebula start", _RED
 
 
 def _network_health(_v: dict) -> tuple[str, str]:

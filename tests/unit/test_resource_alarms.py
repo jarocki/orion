@@ -86,6 +86,41 @@ class Messages(unittest.TestCase):
         self.assertEqual(V.crossing_event("mem", "amber", "ok", 70.0, {}), ("notice", "Deck memory back to normal (70%)"))
         self.assertIn("8% left", V.crossing_event("battery", "amber", "red", 92.0, {})[1])
 
+    @staticmethod
+    def _proc(d: Path, procs: dict) -> None:
+        for pid, body in procs.items():
+            (d / str(pid)).mkdir()
+            (d / str(pid) / "status").write_text(body)
+        (d / "meminfo").write_text("not a pid\n")
+
+    def test_memory_alarm_names_the_programs_not_a_command(self):
+        """The mem crossing names the top programs by RSS, never 'ps aux'."""
+        (ROOT / "tmp").mkdir(exist_ok=True)               # project tmp/, never /tmp
+        with tempfile.TemporaryDirectory(dir=ROOT / "tmp") as td:
+            d = Path(td)
+            self._proc(d, {
+                1: "Name:\tsystemd\nVmRSS:\t   12000 kB\n",
+                2: "Name:\tkthreadd\n",                                  # kernel thread: no VmRSS
+                10: "Name:\tollama\nVmRSS:\t 2202009 kB\n",
+                11: "Name:\tIsolated Web Co\nVmRSS:\t  300000 kB\n",
+                12: "Name:\tIsolated Web Co\nVmRSS:\t  300000 kB\n",
+                13: "Name:\tXorg\nVmRSS:\t  143360 kB\n",
+                14: "Name:\tps\nVmRSS:\t 9999999 kB\n",               # the caller itself: skipped
+                15: "",                                                  # vanished / unreadable
+            })
+            top = V.top_rss(str(d), self_pid=14)
+            self.assertEqual([n for n, _b, _c in top], ["ollama", "Isolated Web Co", "Xorg"])
+            self.assertEqual(top[1][2], 2)                              # summed per program
+            (d / "14" / "status").unlink()                               # crossing_event skips os.getpid()
+            sev, msg = V.crossing_event("mem", "ok", "red", 93.0, {}, proc_root=str(d))
+            self.assertEqual(sev, "critical")
+            self.assertNotIn("ps aux", msg)
+            self.assertIn("largest: ollama 2.1 GiB, Isolated Web Co 585.9 MiB (2 processes), Xorg 140.0 MiB", msg)
+
+    def test_memory_alarm_without_proc_has_no_hint(self):
+        self.assertEqual(V.crossing_event("mem", "ok", "amber", 82.0, {}, proc_root="/nonexistent-proc"),
+                         ("warning", "Deck memory AMBER: 82%"))
+
 
 class Postured(unittest.TestCase):
     """orionx-postured feeds the tracker and publishes each crossing (signed: it runs as root)."""

@@ -386,7 +386,55 @@ class Crossings:
         return out
 
 
-def crossing_event(name: str, old: str, new: str, pct: float, v: dict[str, Any]) -> tuple[str, str]:
+def top_rss(proc_root: str = "/proc", limit: int = 3, self_pid: int | None = None,
+            read: Callable[[str], str] | None = None) -> list[tuple[str, int, int]]:
+    """[(name, rss_bytes, process_count)] — the programs holding the most memory.
+
+    Why (v3.2.0 deck test): the memory alarm used to end "— the largest
+    processes: ps aux --sort=-rss | head", a command for the operator to type.
+    Spoken by R.A.I.N. and shown as a toast, it read as if `ps aux` were the
+    biggest process. It now names the programs. Read from /proc/<pid>/status
+    (Name, VmRSS), so no subprocess and no `ps` of ours shows up in the
+    answer; the caller's own pid is skipped too. Kernel threads (no VmRSS)
+    and pids that vanish or cannot be read are skipped. RSS is summed per
+    program name, so Firefox's content processes count as one Firefox rather
+    than three "Isolated Web Co" rows hiding the rest. Pure over `proc_root`.
+    """
+    rd = read or _read
+    me = os.getpid() if self_pid is None else self_pid
+    totals: dict[str, list[int]] = {}
+    try:
+        pids = [e for e in os.listdir(proc_root) if e.isdigit()]
+    except OSError:
+        return []
+    for pid in pids:
+        if int(pid) == me:
+            continue
+        name, rss = None, None
+        for line in rd(f"{proc_root}/{pid}/status").splitlines():
+            if line.startswith("Name:"):
+                name = line.split(":", 1)[1].strip()
+            elif line.startswith("VmRSS:"):
+                try:
+                    rss = int(line.split()[1]) * 1024
+                except (IndexError, ValueError):
+                    rss = None
+        if not name or not rss:
+            continue
+        t = totals.setdefault(name, [0, 0])
+        t[0] += rss
+        t[1] += 1
+    ranked = sorted(totals.items(), key=lambda kv: (-kv[1][0], kv[0]))[:max(0, limit)]
+    return [(n, b, c) for n, (b, c) in ranked]
+
+
+def top_rss_text(top: list[tuple[str, int, int]]) -> str:
+    """'ollama 2.1 GiB, firefox-esr 612.0 MiB (9 processes), Xorg 140.0 MiB' or ''."""
+    return ", ".join(f"{n} {fmt_bytes(b)}" + (f" ({c} processes)" if c > 1 else "") for n, b, c in top)
+
+
+def crossing_event(name: str, old: str, new: str, pct: float, v: dict[str, Any],
+                   proc_root: str = "/proc") -> tuple[str, str]:
     """(severity, message) for one crossing, saying what to look at."""
     what = LABEL.get(name, name)
     if name == "battery":
@@ -399,9 +447,12 @@ def crossing_event(name: str, old: str, new: str, pct: float, v: dict[str, Any])
         return "notice", f"Deck {what} back to normal ({figure})"
     sev = "critical" if new == "red" else "warning"
     hint = {"disk": " — on a live stick this is RAM: clear captures or ~/Analysis",
-            "mem": " — the largest processes: ps aux --sort=-rss | head",
             "cpu": " — sustained for over a minute",
             "battery": " — connect power"}.get(name, "")
+    if name == "mem":
+        # Name the programs (top_rss), never a command for the operator to type.
+        largest = top_rss_text(top_rss(proc_root))
+        hint = f" — largest: {largest}" if largest else ""
     return sev, f"Deck {what} {new.upper()}: {figure}{hint}"
 
 

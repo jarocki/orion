@@ -37,6 +37,13 @@ on the 2 GB deck with the Nebula model loaded is unmeasured (#218).
 
 ### Added
 
+- **`nebula stop` and `nebula start` (DEC-PHASE13-070).** `nebula stop`
+  unloads every loaded model through the loopback API, then stops
+  `nebula-warmup` and `nebula-runtime` with plain `systemctl` (polkit asks if
+  it needs to), and says how much memory came back. Already stopped is not an
+  error; a refused stop exits non-zero and says why. Nothing restarts the
+  runtime until `nebula start` or a reboot. Asked for in the v3.2.0 deck test.
+
 - **`/opt/orionx/optional/deck-check.sh`: the hardware boot test in one
   command.** For the v3.2.0 boot test: it bundles, read-only, the evidence
   the build host cannot produce: boot and session checks on hardware (#40,
@@ -136,6 +143,12 @@ on the 2 GB deck with the Nebula model loaded is unmeasured (#218).
 
 ### Fixed
 
+- **The memory alarm names the programs using the memory.** It ended with
+  "the largest processes: ps aux --sort=-rss | head", a command to type,
+  which R.A.I.N. spoke as if `ps aux` were the biggest process. It now reads
+  `/proc` and names the top three programs by resident memory, each
+  program's processes summed (e.g. "largest: ollama 2.1 GiB, firefox-esr
+  612.0 MiB (9 processes), Xorg 140.0 MiB"). Found in the v3.2.0 deck test.
 - **Refused bus events leave evidence (#189, DEC-PHASE13-065).** heald and
   postured drop unsigned, forged, stale and replayed bus events, correctly but
   silently. Each now counts them by reason, in memory, publishes the counts

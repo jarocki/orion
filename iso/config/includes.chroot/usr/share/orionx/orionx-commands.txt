@@ -10,6 +10,7 @@
 quick :: orionx-cockpit :: Live dashboard plus the Mesh, Comms and other tabs
 quick :: orionx-osint :: Orion Workbench: local tools in the browser
 quick :: nebula chat :: Ask the on-device AI assistant (127.0.0.1 only)
+help :: nebula warmup|stop|start :: Load the model / unload and stop / start
 quick :: sudo orionx-diag :: Self-check of this image (--json for a report)
 quick :: orionx-help :: Every Orion-X command, one line each
 help :: sudo orionx-mesh join|status|peers|leave :: WireGuard peer-to-peer mesh between decks

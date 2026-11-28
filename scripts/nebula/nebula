@@ -7,6 +7,8 @@ Usage:
     nebula --help
     nebula status [--json]
     nebula warmup
+    nebula stop          # unload the model and stop the runtime (DEC-PHASE13-070)
+    nebula start         # start the runtime again
 
 Subcommands landing in later slices (W10-2+):
     nebula chat [--pcap <file>]
@@ -108,6 +110,20 @@ def cmd_warmup(_args: argparse.Namespace) -> int:
         return 0
     print("Warm-up failed — check logs at /var/log/orionx/nebula-warmup.log", file=sys.stderr)
     return 1
+
+
+def cmd_stop(_args: argparse.Namespace) -> int:
+    """Unload the model and stop the runtime (DEC-PHASE13-070). Lazy import."""
+    _ensure_package_on_path()
+    from nebula.runtime_ctl import stop  # noqa: PLC0415
+    return stop()
+
+
+def cmd_start(_args: argparse.Namespace) -> int:
+    """Start the runtime again (DEC-PHASE13-070). Lazy import."""
+    _ensure_package_on_path()
+    from nebula.runtime_ctl import start  # noqa: PLC0415
+    return start()
 
 
 def cmd_chat(args: argparse.Namespace) -> int:
@@ -242,6 +258,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Run a 1-token inference to warm the model into RAM (opt-in).",
     )
 
+    # nebula stop / start (DEC-PHASE13-070)
+    subparsers.add_parser(
+        "stop",
+        help="Unload the model from RAM and stop the Nebula runtime.",
+    )
+    subparsers.add_parser(
+        "start",
+        help="Start the Nebula runtime (load the model with: nebula warmup).",
+    )
+
     # nebula chat (W10-2)
     sp_chat = subparsers.add_parser(
         "chat",
@@ -334,6 +360,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.subcommand == "warmup":
         return cmd_warmup(args)
+
+    if args.subcommand == "stop":
+        return cmd_stop(args)
+
+    if args.subcommand == "start":
+        return cmd_start(args)
 
     if args.subcommand == "chat":
         return cmd_chat(args)
