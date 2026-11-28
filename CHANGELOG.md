@@ -181,8 +181,24 @@ on the 2 GB deck with the Nebula model loaded is unmeasured (#218).
   engine, inside its own sandbox, where `/var/log/suricata` is read-only. The
   test failed with "The logging directory ... is not writable", the daemon
   published a CRITICAL saying the IDS could not start, and held the start
-  back until its 30-second recovery started it anyway. The test now writes
-  its logs to a private scratch directory. Found in QEMU on the v3.2.0 image.
+  back until its 30-second recovery started it anyway. Pointing the test at
+  a writable directory then exposed a second fault that the first had hidden:
+  loading the 3,200 shipped rules peaks at 124.3 MB, the daemon's cap is
+  128 MB, and the kernel's out-of-memory killer took the daemon down in a
+  restart loop. The test now runs in a transient systemd unit of its own
+  (`systemd-run --wait --pipe`), capped at `suricata.service`'s own
+  MemoryMax and writing its logs to a directory systemd creates and removes.
+  Both found in QEMU on the v3.2.0 image; verified there afterwards: no
+  rejection, no restarts, Suricata confirmed capturing.
+- **`nebula start` ended in a traceback when the runtime was slow to come
+  up.** The runtime first runs the model integrity check (4 min 22 s of CPU
+  under QEMU); the 120-second limit on `systemctl start` raised
+  `TimeoutExpired`. The limit is now 300 s and a timeout is reported as
+  "still starting", with where to look.
+- **Disabled buttons looked enabled on every Cockpit tab.** The page-wide
+  label colour out-ranked the disabled style for the label inside a button,
+  so, for example, Zeek's Uninstall (it ships with the image) looked
+  clickable. Seen in the v3.2.0 screenshots.
 - **A Nebula runtime stopped on purpose showed as DOWN (DEC-PHASE13-075).**
   LIVE's SYSTEMS panel and the Awareness tab drew any stopped runtime red,
   the same as a crash. A clean stop (systemd's `inactive`, e.g. after
@@ -300,8 +316,9 @@ on the 2 GB deck with the Nebula model loaded is unmeasured (#218).
   listed a `healing` tab that does not exist. `docs/qemu-boot-test.md`: what
   the in-guest gates check and their limits; the in-guest steps are no longer
   `continue-on-error`. New screenshots from the development image in QEMU:
-  the desktop, the login screen, and the Cockpit's LIVE tab, Orion Tools tab
-  and Settings drawer during a real install.
+  the desktop and the login screen; the Cockpit's LIVE tab, Orion Tools tab
+  (top, and its Guided actions and On this deck groups) and Settings drawer
+  were retaken on the release-branch image after the deck-test fixes.
 
 ---
 

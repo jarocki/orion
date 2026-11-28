@@ -131,6 +131,10 @@ button.orionx-tool:hover {
     box-shadow: 0 0 10px rgba(255,106,19,0.5), inset 0 0 6px rgba(255,106,19,0.15);
 }
 button.orionx-tool:disabled { color: #5b6470; border-color: rgba(140,153,168,0.18); background: rgba(14,16,20,0.80); }
+/* The page-wide label colour (.orionx-page label) out-ranked the line above for
+   the label INSIDE a button, so a disabled button looked live on every tab
+   (seen on the v3.2.0 image: Zeek's disabled Uninstall). */
+.orionx-page button.orionx-tool:disabled label { color: #5b6470; }
 /* --- optional tools: the live installer log (#199) --- */
 textview.orionx-log, textview.orionx-log text { background-color: #07090c; color: #9fb0c0; }
 /* --- toasts --- */

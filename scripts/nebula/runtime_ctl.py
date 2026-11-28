@@ -48,9 +48,21 @@ Runner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
 Http = Callable[[str, str, "dict[str, Any] | None", float], "dict[str, Any]"]
 
 
+SYSTEMCTL_TIMEOUT = 300   # nebula-runtime first runs the model integrity check (hashes ~2 GB)
+
+
 def run(argv: list[str]) -> "subprocess.CompletedProcess[str]":
-    """Default runner: capture output, never raise on a non-zero exit."""
-    return subprocess.run(argv, capture_output=True, text=True, check=False, timeout=120)
+    """Default runner: capture output, never raise — not on a non-zero exit,
+    and not on a timeout either (rc 124, like timeout(1)).
+
+    Measured on the v3.2.0 image in QEMU: `systemctl start nebula-runtime`
+    waits for nebula-integrity-check, which took over 120 s under emulation,
+    and the old 120 s limit ended `nebula start` in a TimeoutExpired traceback.
+    """
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, check=False, timeout=SYSTEMCTL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(argv, 124, "", f"still waiting after {SYSTEMCTL_TIMEOUT} s")
 
 
 def http_json(method: str, url: str, body: dict[str, Any] | None = None,
@@ -150,6 +162,10 @@ def start(runner: Runner = run, say: Callable[[str], None] = print) -> int:
         say(f"Nebula is already running ({RUNTIME_UNIT}).")
         return 0
     r = runner(["systemctl", "start", RUNTIME_UNIT])
+    if r.returncode == 124:
+        say(f"{RUNTIME_UNIT} is still starting after {SYSTEMCTL_TIMEOUT} s (the model integrity "
+            f"check runs first). Check again with: nebula status, or systemctl status {RUNTIME_UNIT}")
+        return 1
     if r.returncode != 0 or not unit_active(RUNTIME_UNIT, runner):
         detail = (r.stderr or r.stdout or "").strip()
         say(f"FAILED to start {RUNTIME_UNIT}" + (f": {detail}" if detail else "")

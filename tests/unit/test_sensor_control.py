@@ -41,11 +41,44 @@ def test_config_test_writes_logs_to_a_private_dir_and_removes_it():
         seen["dir_existed"] = os.path.isdir(argv[argv.index("-l") + 1])
         return R()
 
-    v = capture.check_config(Path("/etc/suricata/orionx.yaml"), runner=runner, binary="suricata")
+    v = capture.check_config(Path("/etc/suricata/orionx.yaml"), runner=runner, binary="suricata", isolate=False)
     assert v["verdict"] == "ok"
     assert seen["argv"][:5] == ["suricata", "-T", "-v", "-c", "/etc/suricata/orionx.yaml"]
     assert "-l" in seen["argv"] and seen["dir_existed"]
     assert not os.path.exists(seen["argv"][seen["argv"].index("-l") + 1]), "scratch log dir left behind"
+
+
+def test_on_a_deck_the_config_test_runs_in_its_own_capped_unit():
+    argv = capture.config_test_argv("suricata", Path("/etc/suricata/orionx.yaml"), True, None, "805306368")
+    assert argv[:5] == ["systemd-run", "--quiet", "--wait", "--pipe", "--collect"]
+    assert "MemoryMax=805306368" in argv and "RuntimeDirectory=orionx-suricata-test" in argv
+    assert argv[-2:] == ["-l", "/run/orionx-suricata-test"], "logs go where the unit can write, not the daemon's /var/log"
+
+
+def test_isolated_test_takes_the_engine_memory_cap_and_reports_its_verdict(monkeypatch):
+    calls = []
+
+    class R:
+        def __init__(self, rc, out):
+            self.returncode, self.stdout, self.stderr = rc, out, ""
+
+    def runner(argv, **_kw):
+        calls.append(argv)
+        if argv[0] == "systemctl":
+            return R(0, "805306368\n")
+        return R(0, "Configuration provided was successfully loaded.")
+
+    monkeypatch.setattr(capture.shutil, "which", lambda name: "/usr/bin/" + name)
+    v = capture.check_config(Path("/etc/suricata/orionx.yaml"), runner=runner, binary="suricata", isolate=True)
+    assert v["verdict"] == "ok"
+    assert calls[0][:3] == ["systemctl", "show", "suricata.service"]
+    assert "MemoryMax=805306368" in calls[1]
+
+
+def test_isolated_test_with_no_engine_is_absent_not_rejected(monkeypatch):
+    monkeypatch.setattr(capture.shutil, "which", lambda name: None)
+    v = capture.check_config(Path("x.yaml"), runner=lambda *a, **k: 1 / 0, binary="suricata", isolate=True)
+    assert v["verdict"] == "absent"
 
 
 def test_config_test_keeps_a_caller_supplied_log_dir(tmp_path):
@@ -54,7 +87,7 @@ def test_config_test_keeps_a_caller_supplied_log_dir(tmp_path):
         stdout = "successfully loaded"
         stderr = ""
 
-    capture.check_config(Path("x.yaml"), runner=lambda argv, **_k: R(), binary="suricata", log_dir=str(tmp_path))
+    capture.check_config(Path("x.yaml"), runner=lambda argv, **_k: R(), binary="suricata", log_dir=str(tmp_path), isolate=False)
     assert tmp_path.is_dir()
 
 

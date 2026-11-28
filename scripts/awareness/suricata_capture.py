@@ -151,6 +151,7 @@ ENGINE_LOG_TAIL = 65536
 ENGINE_BANNER = "This is Suricata version"
 
 SURICATA_BIN = "suricata"
+SURICATA_UNIT_NAME = "suricata.service"
 SURICATASC_BIN = "suricatasc"
 
 # --- Thresholds (justified in the module docstring) -------------------------
@@ -595,36 +596,83 @@ def classify_config_test(returncode: int | None, output: str) -> dict:
     return {"verdict": "invalid", "error": tail[0], "rc": returncode}
 
 
+TEST_RUNTIME_DIR = "orionx-suricata-test"   # under /run, made and removed by systemd
+DEFAULT_TEST_MEMORY_MAX = "768M"            # fallback only; suricata.service's own cap is the authority
+
+
+def engine_memory_max(run=subprocess.run) -> str:
+    """suricata.service's MemoryMax (orionx-memory.conf), so the test is capped like the engine."""
+    try:
+        r = run(["systemctl", "show", SURICATA_UNIT_NAME, "-p", "MemoryMax", "--value"],
+                capture_output=True, text=True, timeout=10, check=False)
+        v = (r.stdout or "").strip()
+        return v if v and v != "infinity" else DEFAULT_TEST_MEMORY_MAX
+    except (OSError, subprocess.SubprocessError):
+        return DEFAULT_TEST_MEMORY_MAX
+
+
+def config_test_argv(binary: str, config: Path, isolate: bool, log_dir: str | None,
+                     memory_max: str = DEFAULT_TEST_MEMORY_MAX) -> list[str]:
+    """The command that runs `suricata -T`. Pure.
+
+    isolate=True (the daemon on a deck): a transient systemd unit, outside
+    orionx-postured's cgroup and mount namespace, capped like the engine.
+    """
+    if isolate:
+        return ["systemd-run", "--quiet", "--wait", "--pipe", "--collect",
+                "-p", f"MemoryMax={memory_max}", "-p", f"RuntimeDirectory={TEST_RUNTIME_DIR}",
+                binary, "-T", "-v", "-c", str(config), "-l", f"/run/{TEST_RUNTIME_DIR}"]
+    return [binary, "-T", "-v", "-c", str(config), "-l", str(log_dir)]
+
+
 def check_config(config: Path = ORIONX_YAML, runner=subprocess.run,
-                binary: str = SURICATA_BIN, log_dir: str | None = None) -> dict:
-    """Run `suricata -T -v -l <private dir>` against a config and classify it.
+                 binary: str = SURICATA_BIN, log_dir: str | None = None,
+                 isolate: bool | None = None) -> dict:
+    """Run `suricata -T -v -l <scratch>` against a config and classify it.
 
     @decision DEC-PHASE13-072
-    @title The config test writes its logs to a private directory
+    @title The config test runs in its own transient unit, capped like the engine
     @status accepted
-    @rationale orionx-postured runs this test inside its own sandbox
-      (ProtectSystem=strict; /var/log is read-only there). Without -l the
-      test inherits default-log-dir /var/log/suricata/ and fails with
-      'The logging directory ... is not writable', so every tier raise
-      published a CRITICAL "Suricata REJECTED its configuration" and held the
-      start back until the 30 s recovery started it anyway (measured on the
-      v3.2.0 image in QEMU, 2026-11-27). The real service runs outside the
-      sandbox and writes /var/log/suricata itself; the test only needs
-      somewhere to write. -l points it at a fresh directory under the
-      daemon's PrivateTmp, removed afterwards.
+    @rationale orionx-postured ran `suricata -T` inside its own sandbox. Two
+      failures, both measured on the v3.2.0 image in QEMU (2026-11-27):
+      (1) /var/log is read-only there, so the test failed with 'The logging
+      directory ... is not writable' and every tier raise published a CRITICAL
+      "Suricata REJECTED its configuration" and held the start back ~30 s;
+      (2) with -l pointed at a writable directory, the test got far enough to
+      load the 3,200 shipped rules, peaked at 124.3 MB (systemd-run's own
+      "Memory peak") against the daemon's MemoryMax=128M, and the kernel's
+      cgroup OOM killer took the daemon down, which then restart-looped. That
+      test had never actually run on a deck; failing at the log directory
+      had hidden it. Raising the daemon's cap would only move the cliff: the
+      full ET-Open feed (orionx-freshen-suricata) needs several times more.
+      So the test runs as `systemd-run --wait --pipe` in a transient unit of
+      its own, capped at suricata.service's MemoryMax (the engine's own
+      authority, orionx-memory.conf) and writing its logs to a RuntimeDirectory
+      systemd creates and removes. orionx-postured already drives systemd
+      over D-Bus to start the engine; this is the same channel. When not root
+      or systemd-run is absent (tests, a checkout), it runs directly with a
+      private scratch directory.
     """
-    own = log_dir is None
+    if isolate is None:
+        isolate = os.geteuid() == 0 and shutil.which("systemd-run") is not None
+    if isolate and shutil.which(binary) is None:
+        # Inside the transient unit a missing engine would read as a rejected
+        # config; say what it is.
+        return {"verdict": "absent", "error": f"{binary} is not installed", "rc": None}
+    own = not isolate and log_dir is None
     if own:
         try:
             log_dir = tempfile.mkdtemp(prefix="orionx-suricata-test-")
         except OSError as exc:
             return {"verdict": "unknown", "error": f"no scratch log dir: {exc}", "rc": None}
+    argv = config_test_argv(binary, config, isolate, log_dir,
+                            engine_memory_max(runner) if isolate else DEFAULT_TEST_MEMORY_MAX)
     try:
         try:
-            res = runner([binary, "-T", "-v", "-c", str(config), "-l", str(log_dir)],
-                         capture_output=True, text=True, timeout=120, check=False)
+            res = runner(argv, capture_output=True, text=True, timeout=180, check=False,
+                         stdin=subprocess.DEVNULL)
         except FileNotFoundError:
-            return {"verdict": "absent", "error": f"{binary} is not installed",
+            return {"verdict": "absent", "error": f"{argv[0]} is not installed",
                     "rc": None}
         except (OSError, subprocess.SubprocessError) as exc:
             return {"verdict": "unknown", "error": str(exc), "rc": None}

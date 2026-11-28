@@ -333,8 +333,13 @@ def build_section() -> Gtk.Widget:
         frame, gb = TL.group("Sensors", f"{sum(1 for n in PD.SENSOR_NAMES if PD.sensor_view(n, d['status'], d['now'], d['overrides'])['word'] == 'RUNNING')} of 2 running")
         for n in PD.SENSOR_NAMES:
             v = PD.sensor_view(n, d["status"], d["now"], d["overrides"])
-            btns = [("Start", lambda n=n: _sensor(n, True), v["start"], f"Run {v['label']} now, whatever the tier"),
-                    ("Stop", lambda n=n: _sensor(n, False), v["stop"], f"Stop {v['label']} now, whatever the tier")]
+            # A switch, not a pair: only the action that applies is offered
+            # (both when the state is UNKNOWN, so the operator is never stuck).
+            btns = []
+            if v["start"]:
+                btns.append(("Start", lambda n=n: _sensor(n, True), True, f"Run {v['label']} now, whatever the tier"))
+            if v["stop"]:
+                btns.append(("Stop", lambda n=n: _sensor(n, False), True, f"Stop {v['label']} now, whatever the tier"))
             if v["follow"]:
                 btns.append(("Follow tier", lambda n=n: _sensor(n, None), True,
                              f"Let the threat-posture tier decide {v['label']} again"))
@@ -346,9 +351,12 @@ def build_section() -> Gtk.Widget:
         for kind, label in (("nebula", "Nebula AI runtime"), ("workbench", "Workbench server")):
             v = service_tile(kind, d)
             start_label = "Open" if kind == "workbench" else "Start"
-            row, _w = TL.tile(label, v["word"], TL.LEVEL_COLOR[v["level"]], v["line"],
-                              [(start_label, lambda k=kind: _service(k, True), v["start"], ""),
-                               ("Stop", lambda k=kind: _service(k, False), v["stop"], "")], tooltip=v["line"])
+            btns = []
+            if v["start"]:
+                btns.append((start_label, lambda k=kind: _service(k, True), True, ""))
+            if v["stop"]:
+                btns.append(("Stop", lambda k=kind: _service(k, False), True, ""))
+            row, _w = TL.tile(label, v["word"], TL.LEVEL_COLOR[v["level"]], v["line"], btns, tooltip=v["line"])
             gb.pack_start(row, False, False, 0)
         svc_flow.add(frame)
         svc_flow.show_all()

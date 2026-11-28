@@ -436,7 +436,7 @@ What used to be the separate Control Center window now lives inside the Orion Co
 
 ![Cockpit Settings drawer](images/cockpit-settings.png)
 
-*Figure: the Settings drawer (F2) over the Orion Tools tab: threat posture (Tier 0 confirmed as enforced by `orionx-postured`) and the Engine group, with `block_ip` just set to *propose*. Nebula warm-up and the R.A.I.N., Display and DJ deck groups are further down the drawer. From the v3.2.0 development image (CI run 45936482841, the tree now on `develop` at `e33ccbd`) booted in QEMU at 1280×720, 2026-11-27.*
+*Figure: the Settings drawer (F2) over the Orion Tools tab: threat posture confirmed as **Tier 2 · Deception enforced by orionx-postured — deception armed**, and the Engine group with every action class off. Behind it, the Guided actions and On this deck groups. The header carries the Workbench and Attack Map buttons beside Settings. From the v3.2.0 release-branch image (CI run 46104893241) booted in QEMU at 1280×720, 2026-11-28, with the four files fixed after that build (`suricata_capture.py`, `sections/ir.py`, `app.py`, `nebula/runtime_ctl.py`) copied in; the release ISO is built with them.*
 
 A button at the top of the drawer opens the Workbench; its **Engine** cards show the same levels read-only. Optional tools are installed and removed on the **Orion Tools** tab (§15).
 
@@ -775,7 +775,7 @@ The Orion Cockpit (`orionx-cockpit`; also the desktop icon, the panel's gauge ic
 
 ![Orion Cockpit LIVE tab](images/cockpit-live.png)
 
-*Figure: LIVE while ClamAV installs: the verdict reads **BUSY · 1 task running**, the TASKS strip shows step 3 of 5, and the stream holds the install's start and the consent change made a minute earlier (`block_ip` off → propose). Real events, no demo feed; THREAT PRESSURE is calm because nothing attacked the VM. From the v3.2.0 development image (CI run 45936482841, the tree now on `develop` at `e33ccbd`) booted in QEMU at 1280×720, 2026-11-27.*
+*Figure: LIVE a minute after a ClamAV install finished, at Tier 2. The stream shows what this release changed, from real events: Suricata capturing on enp0s1 (confirmed by asking the engine), Zeek ingest active, Zeek stopped and Suricata started by hand from Orion Tools, the CPU alarm and its recovery, and ClamAV installed. SYSTEMS shows NEBULA online; THREAT PRESSURE is calm because nothing attacked the VM. From the v3.2.0 release-branch image (CI run 46104893241) booted in QEMU at 1280×720, 2026-11-28, with the four files fixed after that build (`suricata_capture.py`, `sections/ir.py`, `app.py`, `nebula/runtime_ctl.py`) copied in; the release ISO is built with them.*
 
 Keys: **F11** toggles fullscreen on any tab. The other keys act on the **LIVE** tab only (on the other tabs they go to the controls, so typing in a text field is safe): **Esc** closes an open drill-down, and quits when none is open; **q** quits; **s** and **t** squelch or tune the event in an open drill-down (below); **Page Up** scrolls the stream back. Flags: `--fullscreen` starts fullscreen; `--demo` feeds synthetic events for a demonstration; `--tab NAME` opens on a tab (`live`, `network`, `mesh`, `comms`, `awareness`, `tools`, `nebula`); `--settings` opens with the Settings drawer out; `--tab tools --focus ID` selects one optional tool.
 
@@ -1779,7 +1779,11 @@ while it runs. Uninstall asks first and says how much it will remove. `orionx-co
 
 ![Orion Tools tab](images/cockpit-tools.png)
 
-*Figure: the Orion Tools tab during a real ClamAV install (`--tab tools --focus clamav`): tiles grouped by purpose with their state, and on the right step 3 of 5 with the installer's live output and its log. The grey line under "network online" in this build promised a polkit password prompt; it was corrected for the release, because on the live account none appears (above). From the v3.2.0 development image (CI run 45936482841, the tree now on `develop` at `e33ccbd`) booted in QEMU at 1280×720, 2026-11-27.*
+*Figure: the top of Orion Tools at Tier 2: Sensors (Suricata and Zeek RUNNING on enp0s1 *by Tier 2 · Deception*, each with the one switch that applies), Services (the Nebula runtime RUNNING, the Workbench server STOPPED with Open), then the optional tools with ClamAV just installed and ACTIVE in the panel on the right. Zeek's Uninstall is greyed because it ships with the image. From the v3.2.0 release-branch image (CI run 46104893241) booted in QEMU at 1280×720, 2026-11-28, with the four files fixed after that build (`suricata_capture.py`, `sections/ir.py`, `app.py`, `nebula/runtime_ctl.py`) copied in; the release ISO is built with them.*
+
+![Orion Tools: guided actions and on this deck](images/cockpit-tools-deck.png)
+
+*Figure: further down the same tab: Guided actions (5 of 5 ready, each with Run; Download Samples says it will download because the deck is online) and On this deck, the Workbench catalogue checked against the deck, here its Workbench pages group with Open. A tool missing from the deck would be listed as MISSING with its button disabled. From the v3.2.0 release-branch image (CI run 46104893241) booted in QEMU at 1280×720, 2026-11-28, with the four files fixed after that build (`suricata_capture.py`, `sections/ir.py`, `app.py`, `nebula/runtime_ctl.py`) copied in; the release ISO is built with them.*
 
 The Orion Workbench's **Optional** section shows the same state, grouped the
 same way, read-only: the web page never installs anything (a page on 127.0.0.1

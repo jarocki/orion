@@ -50,11 +50,11 @@ a block. The QEMU job's in-guest checks had delivered no result for weeks;
 they run again as gates and now check the desktop session too. See the
 [changelog](CHANGELOG.md) for the full list.
 
-| LIVE, while an optional tool installs | Orion Tools, the same install |
+| LIVE at Tier 2, after an optional tool installed | Orion Tools: sensors, services, optional tools |
 |---|---|
-| [![Orion Cockpit LIVE tab during an install](docs/images/cockpit-live.png)](docs/images/cockpit-live.png) | [![Orion Tools tab during an install](docs/images/cockpit-tools.png)](docs/images/cockpit-tools.png) |
+| [![Orion Cockpit LIVE tab at Tier 2](docs/images/cockpit-live.png)](docs/images/cockpit-live.png) | [![Orion Tools tab with sensor and service switches](docs/images/cockpit-tools.png)](docs/images/cockpit-tools.png) |
 
-*The v3.2.0 development image in QEMU (2026-11-27): real events, no demo feed. More in the [User Guide](docs/User_Guide.md#orion-cockpit).*
+*The v3.2.0 release-branch image in QEMU (2026-11-28): real events, no demo feed. More in the [User Guide](docs/User_Guide.md#orion-cockpit).*
 
 Earlier, v3.1.0 gave every Cockpit tab the LIVE look and the status strip, filled out the
 Network tab (interfaces, protocol traffic, NetworkManager WireGuard VPNs,
