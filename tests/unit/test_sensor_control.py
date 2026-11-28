@@ -212,3 +212,12 @@ def test_sensor_view_words():
     assert wait["word"] == "WAITING" and wait["level"] == "error"
     stale = PDATA.sensor_view("suricata", _status(now - 120, {"wanted": True, "active": True}), now)
     assert stale["word"] == "UNKNOWN"
+
+
+# ---------------------------------------------------------------- DEC-075
+def test_a_deliberate_stop_is_not_drawn_as_down():
+    import cockpit_lib as L
+    assert L.stopped_or_up("active") is True
+    assert L.stopped_or_up("inactive") == "stopped"       # after `nebula stop`
+    assert L.stopped_or_up("failed") is False             # a crash stays red
+    assert L.stopped_or_up("unknown") is False

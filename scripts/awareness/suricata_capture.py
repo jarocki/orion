@@ -228,7 +228,25 @@ def is_up(name: str, root: Path = SYSFS_NET) -> bool:
 
 
 def sample_up(root: Path = SYSFS_NET) -> set[str]:
-    """Candidate interfaces that are operationally up (DEC-PHASE13-071)."""
+    """Candidate interfaces that are operationally up.
+
+    @decision DEC-PHASE13-071
+    @title An interface the kernel reports UP is captured whether or not it is busy
+    @status accepted
+    @rationale Narrows DEC-PHASE12-038's liveness rule. Capture used to need
+      >= 5 packets in 30 s. On the deck at Tier 2 neither sensor ran, and on
+      the v3.2.0 image in QEMU (2026-11-27) a running Suricata was stopped the
+      moment its link went quiet and restarted when traffic came back: the
+      sensor was absent exactly when the first packets of a scan would arrive.
+      The empty-interface failure that rule guards against (Suricata exits 1
+      with no af-packet entry) does not apply to an UP interface, which
+      af-packet opens fine whether or not it is busy. So operstate "up" joins
+      the selected set immediately and stays while it is up; the packet rate
+      still decides for interfaces without a meaningful operstate (WireGuard,
+      tun: "unknown") and still ranks interfaces when the cap bites, live ones
+      first. A vanished interface is still dropped at once (one unopenable
+      device fails the whole engine).
+    """
     return {n for n in list_interfaces(root) if is_up(n, root)}
 
 

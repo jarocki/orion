@@ -21,8 +21,12 @@ events are counted, and critical Zeek notices from an attacker can propose a
 block. The QEMU job's in-guest checks, silent since the model moved into the
 image, run again as gates and check the desktop session; with an honest
 reading, the idle-RAM budget is 1.25 GiB. `deck-check.sh` collects the
-hardware evidence in one command. gomuks and the `orionx-control-center`
-launcher are removed. CI builds and gates the ISO from the tag, the owner
+hardware evidence in one command. After the first deck test, Suricata and
+Zeek run on any connected interface at Tier 1 and 2 and have Start/Stop
+switches, every Orion Tools entry shows its status and its switches,
+`nebula stop` frees the model's memory, and the header opens the Attack Map
+and the Workbench. gomuks and the `orionx-control-center` launcher are
+removed. CI builds and gates the ISO from the tag, the owner
 signs (DEC-PHASE13-029).
 
 Tried on the development image in QEMU (CI run 45936482841, 2026-11-27):
@@ -36,6 +40,28 @@ boot; `sudo /opt/orionx/optional/deck-check.sh` collects all three. Idle RAM
 on the 2 GB deck with the Nebula model loaded is unmeasured (#218).
 
 ### Added
+
+- **Start/Stop for Suricata and Zeek (DEC-PHASE13-073).** Orion Tools →
+  Sensors has a tile for each with Start, Stop and Follow tier. The buttons
+  write a request (`~/.config/orionx/sensors`); `orionx-postured` stays the
+  one thing that starts and stops the sensors and folds the request into the
+  tier's plan, so its 30-second reassert no longer fights a hand-started
+  sensor. Choosing a tier clears the overrides. `posture-status.json` gains
+  a `sensors` block (wanted, why, running, interfaces). Asked for in the
+  v3.2.0 deck test.
+
+- **Orion Tools: every tool is a status tile with its switches
+  (DEC-PHASE13-074).** Sensors & services (Suricata, Zeek, the Nebula
+  runtime, the Workbench server), Optional tools, Guided actions and On this
+  deck are drawn by one tile: status light, status word, one line saying why,
+  and the buttons that apply (start/stop, install/uninstall, run/open). On
+  this deck lists the whole catalogue and marks an absent entry MISSING
+  instead of hiding it. Group boxes no longer share one height, which left
+  the empty space visible in the earlier screenshot.
+
+- **Attack Map and Workbench buttons in the Cockpit header**, beside
+  Settings, on every tab. They were reachable only through Settings → Open
+  the Workbench and by clicking two LIVE panels.
 
 - **`nebula stop` and `nebula start` (DEC-PHASE13-070).** `nebula stop`
   unloads every loaded model through the loopback API, then stops
@@ -143,6 +169,27 @@ on the 2 GB deck with the Nebula model loaded is unmeasured (#218).
 
 ### Fixed
 
+- **Tier 1 and 2 ran no sensor on a quiet network (DEC-PHASE13-071).** Suricata
+  and Zeek captured only on an interface that received 5 packets in 30
+  seconds. On the deck at Tier 2 neither ran, and in QEMU a running Suricata
+  was stopped as soon as the link went quiet, then restarted when traffic
+  came back. An interface the kernel reports up (a connected Wi-Fi card, a
+  cabled port) is now captured whether or not it is busy; the packet test
+  still decides for interfaces with no such state (WireGuard, tun).
+- **A false CRITICAL "Suricata REJECTED its configuration" on every start
+  (DEC-PHASE13-072).** `orionx-postured` tests the config before starting the
+  engine, inside its own sandbox, where `/var/log/suricata` is read-only. The
+  test failed with "The logging directory ... is not writable", the daemon
+  published a CRITICAL saying the IDS could not start, and held the start
+  back until its 30-second recovery started it anyway. The test now writes
+  its logs to a private scratch directory. Found in QEMU on the v3.2.0 image.
+- **A Nebula runtime stopped on purpose showed as DOWN (DEC-PHASE13-075).**
+  LIVE's SYSTEMS panel and the Awareness tab drew any stopped runtime red,
+  the same as a crash. A clean stop (systemd's `inactive`, e.g. after
+  `nebula stop`) is now a grey STOPPED; only `failed` is red.
+- **README: Suricata ships rules.** The Suricata entry still said it ships no
+  threat rules and detects nothing until `orionx-freshen-suricata` runs; the
+  curated ET-Open set has been on the image since DEC-PHASE13-043.
 - **The memory alarm names the programs using the memory.** It ended with
   "the largest processes: ps aux --sort=-rss | head", a command to type,
   which R.A.I.N. spoke as if `ps aux` were the biggest process. It now reads

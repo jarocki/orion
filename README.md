@@ -39,6 +39,11 @@ class and Nebula warm-up. LIVE shows where things are heading: the deck
 verdict (NOMINAL, BUSY, WATCH, DEGRADED, UNDER ATTACK), a TASKS strip while
 something runs, resource alarms with amber and red marks that R.A.I.N. also
 speaks, and the 15-minute change in threat pressure and attack sources.
+Every tool on Orion Tools now shows its status and the switches that apply to
+it; Suricata and Zeek get Start/Stop beside the tier, and they run on any
+connected interface rather than waiting for traffic. `nebula stop` frees the
+model's memory, and two header buttons open the Attack Map and the Workbench
+from every tab.
 Ollama moves to 0.40.17 with the model store kept read-only. Refused bus
 events are now counted, and critical Zeek notices from an attacker can propose
 a block. The QEMU job's in-guest checks had delivered no result for weeks;
@@ -98,12 +103,12 @@ capture, and the narration is synthesised offline. The earlier beta walkthrough
   sweeps many ports. Runs by default, needs no rules and no network, and sends
   no packets, so it works at Tier 0. A wider second window also
   catches timing-evasive scans such as `nmap -T2`.
-- **Suricata IDS** — lazy-start network IDS. It is **off by default and ships
-  no threat rules**: enable with
-  `sudo touch /var/lib/suricata/orionx-enabled && sudo systemctl start suricata`,
-  then fetch rules with `sudo orionx-freshen-suricata` (needs a network).
-  Until both are done Suricata detects nothing — port-scan coverage on a stock
-  deck comes from `orionx-scanwatch` above.
+- **Suricata IDS** — network IDS with a curated ET-Open ruleset on the image
+  (about 3,200 signatures, sized for a 2 GB deck). It is **off at Tier 0**:
+  threat-posture Tier 1 or 2 starts it, as does **Start** on its tile in
+  Cockpit → Orion Tools → Sensors. The full ET-Open feed is an opt-in
+  (`sudo orionx-freshen-suricata`, needs a network and more RAM). Port-scan
+  coverage at Tier 0 comes from `orionx-scanwatch` above.
 - **capa** — capability detection for binaries (`/opt/orionx/venv/re/`)
 - **ssdeep**, **hashdeep** (provides `md5deep`/`sha1deep`), **python3-pefile** —
   fuzzy hashing, recursive hashing, and PE parsing
@@ -167,9 +172,10 @@ and uninstall is announced on the event bus. See the
 ### Detection, Autonomy and Confinement
 
 - **Threat posture is enforced, not just displayed** — `orionx-postured` applies
-  the tier you select. Tier 0 starts nothing; Tier 1 starts Suricata and
-  publishes alerts with MITRE ATT&CK technique IDs; Tier 2 adds local-only
-  decoys and canary files. If a tier implies IDS coverage but Suricata has no
+  the tier you select. Tier 0 starts nothing; Tier 1 starts Suricata and Zeek
+  on every connected interface and publishes alerts with MITRE ATT&CK
+  technique IDs; Tier 2 adds local-only decoys and canary files. Orion Tools
+  can start or stop either sensor by hand until the tier is next changed. If a tier implies IDS coverage but Suricata has no
   threat rules, the deck says so loudly rather than watching nothing in silence.
 - **Auto-healing** — `orionx-heald` executes the action classes you pre-approve
   in the Cockpit's **Settings → Engine** group (or `orionx-heal autonomy`), with a real undo for each, rollback timers, and a

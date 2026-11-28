@@ -123,13 +123,25 @@ def _svc_active(unit: str) -> bool:
         return False
 
 
+def _svc_state(unit: str) -> str:
+    """`systemctl is-active` verbatim ("unknown" if it cannot be asked)."""
+    try:
+        out = subprocess.run(["systemctl", "is-active", unit],
+                             capture_output=True, text=True, timeout=4, check=False)
+        return out.stdout.strip() or "unknown"
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+
+
 def _nebula_health(_v: dict) -> tuple[str, str]:
-    if _svc_active("nebula-runtime.service"):
+    # DEC-PHASE13-075: systemd tells a clean stop ("inactive", e.g. after
+    # `nebula stop`) from a crash ("failed"); only the crash is red.
+    state = _svc_state("nebula-runtime.service")
+    if state == "active":
         return "running", _GREEN
-    # UX-29: the Nebula tab has no start button; name the command that works
-    # (`nebula start`, DEC-PHASE13-070). Still red: a deliberate `nebula stop`
-    # is not told apart from a crash here.
-    return "down — start it with: nebula start", _RED
+    if state == "inactive":
+        return "stopped — start it with: nebula start (or Orion Tools → Services)", _DIM
+    return f"{state} — start it with: nebula start; journalctl -u nebula-runtime", _RED
 
 
 def _network_health(_v: dict) -> tuple[str, str]:

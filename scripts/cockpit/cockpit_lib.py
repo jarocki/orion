@@ -362,6 +362,42 @@ def service_active(unit: str) -> bool:
         return False
 
 
+def service_state(unit: str) -> str:
+    """`systemctl is-active` verbatim: active, inactive, failed, activating, …;
+    "unknown" when it cannot be asked.
+
+    inactive after a clean stop and failed after a crash are different facts:
+    `nebula stop` (DEC-PHASE13-070) leaves nebula-runtime inactive, and a
+    service the operator stopped on purpose is not an alarm (DEC-PHASE13-075).
+    """
+    if shutil.which("systemctl") is None:
+        return "unknown"
+    try:
+        out = subprocess.run(["systemctl", "is-active", unit],
+                             capture_output=True, text=True, timeout=3, check=False)
+        return out.stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
+def stopped_or_up(state: str):
+    """SYSTEMS LED value: True up, "stopped" deliberately stopped, False down/failed.
+
+    @decision DEC-PHASE13-075
+    @title A service stopped on purpose is shown STOPPED, not DOWN
+    @status accepted
+    @rationale With `nebula stop` and the Orion Tools start/stop switches
+      (DEC-PHASE13-070/073), stopping Nebula is an operator action. LIVE and
+      Awareness drew it red "DOWN", the same as a crash, which teaches the
+      operator to ignore red. systemd already tells the two apart: a clean
+      stop leaves the unit "inactive", a crash leaves it "failed". Only
+      "failed" (or anything else unexpected) is red.
+    """
+    if state == "active":
+        return True
+    return "stopped" if state == "inactive" else False
+
+
 def process_running(name: str) -> bool:
     """True if a process whose cmdline contains `name` exists (pgrep -f)."""
     if shutil.which("pgrep") is None:

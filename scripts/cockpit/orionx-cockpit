@@ -291,7 +291,7 @@ class Cockpit(Gtk.Window):
     def _collect_sys(self, _visible: bool) -> dict:
         """Worker thread: every probe that forks or reads root-published state."""
         systems = {}
-        systems["NEBULA"] = L.service_active("nebula-runtime.service")
+        systems["NEBULA"] = L.stopped_or_up(L.service_state("nebula-runtime.service"))  # DEC-PHASE13-075
         systems["FIREWALL"] = L.service_active("orionx-firewall.service")
         # DEC-PHASE12-067: the snapshot verdict, as on every other surface.
         # None = unknown (stale / no snapshot), drawn amber, never as ONLINE.
@@ -1152,8 +1152,9 @@ class Cockpit(Gtk.Window):
         ly = cy + max(14.0, ch / 2)
         for i, (name, ok) in enumerate(items):
             lx = cx + col_w * i + 14
-            col = L.GREEN if ok else L.AMBER if ok is None else L.RED
-            cr.set_source_rgba(*col, (0.35 if ok else 0.2) * pulse)
+            stopped = ok == "stopped"      # DEC-PHASE13-075: stopped on purpose, not an alarm
+            col = L.DIM if stopped else L.GREEN if ok else L.AMBER if ok is None else L.RED
+            cr.set_source_rgba(*col, (0.35 if ok and not stopped else 0.2) * pulse)
             cr.arc(lx, ly, 12, 0, 2 * math.pi)
             cr.fill()
             cr.set_source_rgb(*col)
@@ -1161,7 +1162,8 @@ class Cockpit(Gtk.Window):
             cr.fill()
             room = col_w - 34
             self._text(cr, lx + 18, ly - 2, name, 11, L.DIM if ok else col, bold=True, max_w=room)
-            self._text(cr, lx + 18, ly + 13, "ONLINE" if ok else "UNKNOWN" if ok is None else "DOWN", 11, col, max_w=room)
+            word = "STOPPED" if stopped else "ONLINE" if ok else "UNKNOWN" if ok is None else "DOWN"
+            self._text(cr, lx + 18, ly + 13, word, 11, col, max_w=room)
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="orionx-cockpit",
