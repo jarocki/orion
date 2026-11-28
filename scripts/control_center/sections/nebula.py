@@ -8,8 +8,8 @@ W10-1 replaces the W9-2 placeholder text with a dynamic status row that reads:
 
 plus the Ask Nebula chat (W10-2) and the local MCP tool list (W10-3).
 Status and the tool list are collected in a worker thread (DEC-PHASE12-068).
-The warm-up button moved to the Workbench's Engine section (#95,
-DEC-PHASE13-048): warming the model is tuning a tool, not the environment.
+The warm-up control is in the Settings drawer's Engine group since v3.2.0
+(#201; it was on the Workbench's Engine section from #95, DEC-PHASE13-048).
 
 @decision DEC-PHASE10-005
 @title Control Center Nebula section: W10-1 activates live runtime status
@@ -197,9 +197,9 @@ class _NebulaSectionWidget:
         # A 6 s CLI call used to run inside the constructor (P1-5).
         run_async(_list_tools, _tools_done)
 
-        # #95: warm-up is a tool control; it lives on the Workbench now.
+        # #201: warm-up lives in the Settings drawer's Engine group.
         warm = Gtk.Label(label="Warm-up (load the model so the first prompt is fast): "
-                               "Workbench → Engine, or in a terminal: nebula warmup")
+                               "Settings (F2) → Engine, or in a terminal: nebula warmup")
         warm.set_halign(Gtk.Align.START)
         warm.set_line_wrap(True)
         warm.set_selectable(True)

@@ -107,7 +107,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 from collections import deque
 from pathlib import Path
 
@@ -149,6 +151,7 @@ ENGINE_LOG_TAIL = 65536
 ENGINE_BANNER = "This is Suricata version"
 
 SURICATA_BIN = "suricata"
+SURICATA_UNIT_NAME = "suricata.service"
 SURICATASC_BIN = "suricatasc"
 
 # --- Thresholds (justified in the module docstring) -------------------------
@@ -210,6 +213,44 @@ def list_interfaces(root: Path = SYSFS_NET) -> list[str]:
     return [n for n in names if not is_loopback(n, root)]
 
 
+def is_up(name: str, root: Path = SYSFS_NET) -> bool:
+    """True when the kernel reports the interface operationally UP.
+
+    operstate is the kernel's own answer to "is this link carrying a
+    connection right now": "up" for an associated Wi-Fi card or a cabled
+    Ethernet port, "down"/"dormant"/"lowerlayerdown" otherwise. "unknown" (WireGuard,
+    tun, a bridge with no ports on some drivers) does NOT count: those are
+    judged by their packet rate alone, as before DEC-PHASE13-071.
+    """
+    try:
+        return Path(root, name, "operstate").read_text(encoding="utf-8").strip() == "up"
+    except OSError:
+        return False
+
+
+def sample_up(root: Path = SYSFS_NET) -> set[str]:
+    """Candidate interfaces that are operationally up.
+
+    @decision DEC-PHASE13-071
+    @title An interface the kernel reports UP is captured whether or not it is busy
+    @status accepted
+    @rationale Narrows DEC-PHASE12-038's liveness rule. Capture used to need
+      >= 5 packets in 30 s. On the deck at Tier 2 neither sensor ran, and on
+      the v3.2.0 image in QEMU (2026-11-27) a running Suricata was stopped the
+      moment its link went quiet and restarted when traffic came back: the
+      sensor was absent exactly when the first packets of a scan would arrive.
+      The empty-interface failure that rule guards against (Suricata exits 1
+      with no af-packet entry) does not apply to an UP interface, which
+      af-packet opens fine whether or not it is busy. So operstate "up" joins
+      the selected set immediately and stays while it is up; the packet rate
+      still decides for interfaces without a meaningful operstate (WireGuard,
+      tun: "unknown") and still ranks interfaces when the cap bites, live ones
+      first. A vanished interface is still dropped at once (one unopenable
+      device fails the whole engine).
+    """
+    return {n for n in list_interfaces(root) if is_up(n, root)}
+
+
 def rx_packets(name: str, root: Path = SYSFS_NET) -> int | None:
     """Lifetime received-packet counter, or None if unreadable/absent."""
     try:
@@ -267,16 +308,24 @@ class InterfaceHeartbeat:
         self._samples: dict[str, deque] = {}
         self._promoted: dict[str, float] = {}   # iface -> last time it was live
         self.present: set[str] = set()
+        self.up: set[str] = set()               # operstate up (DEC-PHASE13-071)
         self.last_sample = 0.0
         self.started = 0.0
 
     # --- ingest ---
-    def observe(self, counts: dict[str, int], now: float) -> None:
-        """Record one snapshot taken at `now`."""
+    def observe(self, counts: dict[str, int], now: float,
+                up: set[str] | None = None) -> None:
+        """Record one snapshot taken at `now`.
+
+        `up` is the set of interfaces the kernel reports operationally up
+        (sample_up). None keeps the pre-DEC-PHASE13-071 behaviour: liveness
+        by packet rate only.
+        """
         if not self.started:
             self.started = now
         self.last_sample = now
         self.present = set(counts)
+        self.up = set(up or ()) & self.present
 
         for name, value in counts.items():
             series = self._samples.setdefault(name, deque())
@@ -342,6 +391,12 @@ class InterfaceHeartbeat:
 
         chosen = set(self._promoted)
         chosen |= {n for n in self.pinned if n in self.present}
+        # DEC-PHASE13-071: an interface the kernel reports UP is captured
+        # whether or not it is busy. The packet threshold alone left a deck
+        # on a quiet segment with no IDS at Tier 2, and stopped a running
+        # Suricata when the link went quiet: the moment before a scan is the
+        # moment a sensor must already be running.
+        chosen |= self.up
 
         if len(chosen) > self.max_ifaces:
             # Keep the busiest. A deck with twenty veths should watch the
@@ -350,6 +405,7 @@ class InterfaceHeartbeat:
             ranked = sorted(
                 chosen,
                 key=lambda n: (n in self.pinned,
+                               n in self._promoted,
                                rates.get(n, {}).get("packets", 0)),
                 reverse=True)
             chosen = set(ranked[:self.max_ifaces])
@@ -372,7 +428,7 @@ class InterfaceHeartbeat:
         """
         if not self.started:
             return True
-        if self.live(now):
+        if self.live(now) or self.up:
             return False
         return (now - self.started) < self.window
 
@@ -382,6 +438,7 @@ class InterfaceHeartbeat:
         return {
             "candidates": sorted(self.present),
             "live": sorted(self.live(now)),
+            "up": sorted(self.up),
             "selected": list(self.selected(now)),
             "pinned": list(self.pinned),
             "window_seconds": self.window,
@@ -539,19 +596,91 @@ def classify_config_test(returncode: int | None, output: str) -> dict:
     return {"verdict": "invalid", "error": tail[0], "rc": returncode}
 
 
-def check_config(config: Path = ORIONX_YAML, runner=subprocess.run,
-                binary: str = SURICATA_BIN) -> dict:
-    """Run `suricata -T -v` against a config and classify the result."""
+TEST_RUNTIME_DIR = "orionx-suricata-test"   # under /run, made and removed by systemd
+DEFAULT_TEST_MEMORY_MAX = "768M"            # fallback only; suricata.service's own cap is the authority
+
+
+def engine_memory_max(run=subprocess.run) -> str:
+    """suricata.service's MemoryMax (orionx-memory.conf), so the test is capped like the engine."""
     try:
-        res = runner([binary, "-T", "-v", "-c", str(config)],
-                     capture_output=True, text=True, timeout=120, check=False)
-    except FileNotFoundError:
-        return {"verdict": "absent", "error": f"{binary} is not installed",
-                "rc": None}
-    except (OSError, subprocess.SubprocessError) as exc:
-        return {"verdict": "unknown", "error": str(exc), "rc": None}
-    return classify_config_test(res.returncode,
-                                (res.stdout or "") + (res.stderr or ""))
+        r = run(["systemctl", "show", SURICATA_UNIT_NAME, "-p", "MemoryMax", "--value"],
+                capture_output=True, text=True, timeout=10, check=False)
+        v = (r.stdout or "").strip()
+        return v if v and v != "infinity" else DEFAULT_TEST_MEMORY_MAX
+    except (OSError, subprocess.SubprocessError):
+        return DEFAULT_TEST_MEMORY_MAX
+
+
+def config_test_argv(binary: str, config: Path, isolate: bool, log_dir: str | None,
+                     memory_max: str = DEFAULT_TEST_MEMORY_MAX) -> list[str]:
+    """The command that runs `suricata -T`. Pure.
+
+    isolate=True (the daemon on a deck): a transient systemd unit, outside
+    orionx-postured's cgroup and mount namespace, capped like the engine.
+    """
+    if isolate:
+        return ["systemd-run", "--quiet", "--wait", "--pipe", "--collect",
+                "-p", f"MemoryMax={memory_max}", "-p", f"RuntimeDirectory={TEST_RUNTIME_DIR}",
+                binary, "-T", "-v", "-c", str(config), "-l", f"/run/{TEST_RUNTIME_DIR}"]
+    return [binary, "-T", "-v", "-c", str(config), "-l", str(log_dir)]
+
+
+def check_config(config: Path = ORIONX_YAML, runner=subprocess.run,
+                 binary: str = SURICATA_BIN, log_dir: str | None = None,
+                 isolate: bool | None = None) -> dict:
+    """Run `suricata -T -v -l <scratch>` against a config and classify it.
+
+    @decision DEC-PHASE13-072
+    @title The config test runs in its own transient unit, capped like the engine
+    @status accepted
+    @rationale orionx-postured ran `suricata -T` inside its own sandbox. Two
+      failures, both measured on the v3.2.0 image in QEMU (2026-11-27):
+      (1) /var/log is read-only there, so the test failed with 'The logging
+      directory ... is not writable' and every tier raise published a CRITICAL
+      "Suricata REJECTED its configuration" and held the start back ~30 s;
+      (2) with -l pointed at a writable directory, the test got far enough to
+      load the 3,200 shipped rules, peaked at 124.3 MB (systemd-run's own
+      "Memory peak") against the daemon's MemoryMax=128M, and the kernel's
+      cgroup OOM killer took the daemon down, which then restart-looped. That
+      test had never actually run on a deck; failing at the log directory
+      had hidden it. Raising the daemon's cap would only move the cliff: the
+      full ET-Open feed (orionx-freshen-suricata) needs several times more.
+      So the test runs as `systemd-run --wait --pipe` in a transient unit of
+      its own, capped at suricata.service's MemoryMax (the engine's own
+      authority, orionx-memory.conf) and writing its logs to a RuntimeDirectory
+      systemd creates and removes. orionx-postured already drives systemd
+      over D-Bus to start the engine; this is the same channel. When not root
+      or systemd-run is absent (tests, a checkout), it runs directly with a
+      private scratch directory.
+    """
+    if isolate is None:
+        isolate = os.geteuid() == 0 and shutil.which("systemd-run") is not None
+    if isolate and shutil.which(binary) is None:
+        # Inside the transient unit a missing engine would read as a rejected
+        # config; say what it is.
+        return {"verdict": "absent", "error": f"{binary} is not installed", "rc": None}
+    own = not isolate and log_dir is None
+    if own:
+        try:
+            log_dir = tempfile.mkdtemp(prefix="orionx-suricata-test-")
+        except OSError as exc:
+            return {"verdict": "unknown", "error": f"no scratch log dir: {exc}", "rc": None}
+    argv = config_test_argv(binary, config, isolate, log_dir,
+                            engine_memory_max(runner) if isolate else DEFAULT_TEST_MEMORY_MAX)
+    try:
+        try:
+            res = runner(argv, capture_output=True, text=True, timeout=180, check=False,
+                         stdin=subprocess.DEVNULL)
+        except FileNotFoundError:
+            return {"verdict": "absent", "error": f"{argv[0]} is not installed",
+                    "rc": None}
+        except (OSError, subprocess.SubprocessError) as exc:
+            return {"verdict": "unknown", "error": str(exc), "rc": None}
+        return classify_config_test(res.returncode,
+                                    (res.stdout or "") + (res.stderr or ""))
+    finally:
+        if own:
+            shutil.rmtree(str(log_dir), ignore_errors=True)
 
 
 # ===========================================================================

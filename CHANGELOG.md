@@ -7,9 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [v3.2.0] — 2026-11-27 (the Cockpit manages the deck)
+
+The Cockpit becomes the place to manage the deck. Optional tools install and
+remove from its Orion Tools tab through one manager, `orionx-optional`, which
+records what each install added and removes only that; the Workbench mirrors
+the state read-only. Auto-healing consent and Nebula warm-up move into the
+Settings drawer's Engine group. LIVE says where things stand and where they
+are heading: a one-word deck verdict, a TASKS strip, resource alarms that
+R.A.I.N. speaks, and 15-minute trends for threat pressure and attack sources.
+Ollama moves to 0.40.17 with the model store still read-only. Refused bus
+events are counted, and critical Zeek notices from an attacker can propose a
+block. The QEMU job's in-guest checks, silent since the model moved into the
+image, run again as gates and check the desktop session; with an honest
+reading, the idle-RAM budget is 1.25 GiB. `deck-check.sh` collects the
+hardware evidence in one command. After the first deck test, Suricata and
+Zeek run on any connected interface at Tier 1 and 2 and have Start/Stop
+switches, every Orion Tools entry shows its status and its switches,
+`nebula stop` frees the model's memory, and the header opens the Attack Map
+and the Workbench. gomuks and the `orionx-control-center` launcher are
+removed. CI builds and gates the ISO from the tag, the owner
+signs (DEC-PHASE13-029).
+
+Tried on the development image in QEMU (CI run 45936482841, 2026-11-27):
+ClamAV installed from the command line (5 packages, ACTIVE with signatures;
+the Tools tab and LIVE's TASKS strip followed it live) and uninstalled
+(exactly those 5 purged, the package count back to its starting value).
+
+*Needs the deck:* everything above ran in QEMU only. Narration timing (#96),
+the apt evidence (#121) and the v3.1.5 deck checks (#188) wait on a hardware
+boot; `sudo /opt/orionx/optional/deck-check.sh` collects all three. Idle RAM
+on the 2 GB deck with the Nebula model loaded is unmeasured (#218).
 
 ### Added
+
+- **Start/Stop for Suricata and Zeek (DEC-PHASE13-073).** Orion Tools →
+  Sensors has a tile for each with Start, Stop and Follow tier. The buttons
+  write a request (`~/.config/orionx/sensors`); `orionx-postured` stays the
+  one thing that starts and stops the sensors and folds the request into the
+  tier's plan, so its 30-second reassert no longer fights a hand-started
+  sensor. Choosing a tier clears the overrides. `posture-status.json` gains
+  a `sensors` block (wanted, why, running, interfaces). Asked for in the
+  v3.2.0 deck test.
+
+- **Orion Tools: every tool is a status tile with its switches
+  (DEC-PHASE13-074).** Sensors & services (Suricata, Zeek, the Nebula
+  runtime, the Workbench server), Optional tools, Guided actions and On this
+  deck are drawn by one tile: status light, status word, one line saying why,
+  and the buttons that apply (start/stop, install/uninstall, run/open). On
+  this deck lists the whole catalogue and marks an absent entry MISSING
+  instead of hiding it. Group boxes no longer share one height, which left
+  the empty space visible in the earlier screenshot.
+
+- **Attack Map and Workbench buttons in the Cockpit header**, beside
+  Settings, on every tab. They were reachable only through Settings → Open
+  the Workbench and by clicking two LIVE panels.
+
+- **`nebula stop` and `nebula start` (DEC-PHASE13-070).** `nebula stop`
+  unloads every loaded model through the loopback API, then stops
+  `nebula-warmup` and `nebula-runtime` with plain `systemctl` (polkit asks if
+  it needs to), and says how much memory came back. Already stopped is not an
+  error; a refused stop exits non-zero and says why. Nothing restarts the
+  runtime until `nebula start` or a reboot. Asked for in the v3.2.0 deck test.
 
 - **`/opt/orionx/optional/deck-check.sh`: the hardware boot test in one
   command.** For the v3.2.0 boot test: it bundles, read-only, the evidence
@@ -110,6 +169,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Tier 1 and 2 ran no sensor on a quiet network (DEC-PHASE13-071).** Suricata
+  and Zeek captured only on an interface that received 5 packets in 30
+  seconds. On the deck at Tier 2 neither ran, and in QEMU a running Suricata
+  was stopped as soon as the link went quiet, then restarted when traffic
+  came back. An interface the kernel reports up (a connected Wi-Fi card, a
+  cabled port) is now captured whether or not it is busy; the packet test
+  still decides for interfaces with no such state (WireGuard, tun).
+- **A false CRITICAL "Suricata REJECTED its configuration" on every start
+  (DEC-PHASE13-072).** `orionx-postured` tests the config before starting the
+  engine, inside its own sandbox, where `/var/log/suricata` is read-only. The
+  test failed with "The logging directory ... is not writable", the daemon
+  published a CRITICAL saying the IDS could not start, and held the start
+  back until its 30-second recovery started it anyway. Pointing the test at
+  a writable directory then exposed a second fault that the first had hidden:
+  loading the 3,200 shipped rules peaks at 124.3 MB, the daemon's cap is
+  128 MB, and the kernel's out-of-memory killer took the daemon down in a
+  restart loop. The test now runs in a transient systemd unit of its own
+  (`systemd-run --wait --pipe`), capped at `suricata.service`'s own
+  MemoryMax and writing its logs to a directory systemd creates and removes.
+  Both found in QEMU on the v3.2.0 image; verified there afterwards: no
+  rejection, no restarts, Suricata confirmed capturing.
+- **`nebula start` ended in a traceback when the runtime was slow to come
+  up.** The runtime first runs the model integrity check (4 min 22 s of CPU
+  under QEMU); the 120-second limit on `systemctl start` raised
+  `TimeoutExpired`. The limit is now 300 s and a timeout is reported as
+  "still starting", with where to look.
+- **Disabled buttons looked enabled on every Cockpit tab.** The page-wide
+  label colour out-ranked the disabled style for the label inside a button,
+  so, for example, Zeek's Uninstall (it ships with the image) looked
+  clickable. Seen in the v3.2.0 screenshots.
+- **A Nebula runtime stopped on purpose showed as DOWN (DEC-PHASE13-075).**
+  LIVE's SYSTEMS panel and the Awareness tab drew any stopped runtime red,
+  the same as a crash. A clean stop (systemd's `inactive`, e.g. after
+  `nebula stop`) is now a grey STOPPED; only `failed` is red.
+- **README: Suricata ships rules.** The Suricata entry still said it ships no
+  threat rules and detects nothing until `orionx-freshen-suricata` runs; the
+  curated ET-Open set has been on the image since DEC-PHASE13-043.
+- **The memory alarm names the programs using the memory.** It ended with
+  "the largest processes: ps aux --sort=-rss | head", a command to type,
+  which R.A.I.N. spoke as if `ps aux` were the biggest process. It now reads
+  `/proc` and names the top three programs by resident memory, each
+  program's processes summed (e.g. "largest: ollama 2.1 GiB, firefox-esr
+  612.0 MiB (9 processes), Xorg 140.0 MiB"). Found in the v3.2.0 deck test.
 - **Refused bus events leave evidence (#189, DEC-PHASE13-065).** heald and
   postured drop unsigned, forged, stale and replayed bus events, correctly but
   silently. Each now counts them by reason, in memory, publishes the counts
@@ -180,6 +282,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recorded source matches and refuses any other. v3.1.4, v3.1.5 and v3.1.6 each
   lost a staging run to an unseen pinentry timeout and needed a hand-written
   resume script.
+- **The Cockpit no longer promises a password prompt that never appears.**
+  The Orion Tools tab said "admin password asked once, then remembered about
+  5 minutes (polkit)", and the Engine group's at-boot switch said it asks for
+  the admin password. On the built image, live-config's
+  `sudo_on_live.rules` approves every polkit action for the live account, and
+  `pkcheck` authorizes `org.orionx.optional.manage` with no prompt (exit 0,
+  2026-11-27). Both now say so; DEC-PHASE13-058 records the measurement, the
+  User Guide's §15 matches its §3, and whether to keep the grant is #203.
+- **The Cockpit pointed to the Workbench for controls that moved (#201).** The
+  DEFENSIVE ACTIONS pane's "autonomy is OFF" line and the Nebula tab's warm-up
+  line said *Workbench → Engine*; both say *Settings (F2) → Engine* now.
+- **`orionx-diag` failed on a deck where ClamAV was installed the supported
+  way.** Its base-image gate (DEC-PHASE11-009) failed whenever ClamAV was
+  installed, and told the operator to run `install-clamav.sh`. It now passes
+  when `orionx-optional` recorded the install
+  (`/var/lib/orionx/optional/clamav.json`) and still fails for a ClamAV with
+  no record, which is what came with the image; the remedy names
+  `orionx-optional`. `tests/unit/test_orionx_diag_clamav.sh` runs the real
+  script with a stubbed dpkg for all three cases.
+- **CI no longer fails when Microsoft's apt repository does.** GitHub's runner
+  image configures `packages.microsoft.com`, which no job uses; it answered
+  403 twice on 2026-11-27 and `apt-get update` failed the QEMU job before it
+  started (runs 45922215757, 45939173768). The QEMU, E2E and release jobs drop
+  that source before updating.
+- **Documentation brought up to v3.2.0.** README: what is new, the optional
+  tools as one manager, the Settings → Engine home for auto-healing consent,
+  the Cockpit's actual tabs, Ollama 0.40.17, and Known issues that are open
+  now (the v3.1.0 hardware findings it still listed were fixed in v3.1.1 and
+  v3.1.5). User Guide: the Settings drawer's Engine group, `orionx-optional`,
+  `orionx-heal`, `nebula warmup`, `deck-check.sh` and `apt-evidence.sh` in the
+  command reference; three pointers to controls that had moved; `--tab`
+  listed a `healing` tab that does not exist. `docs/qemu-boot-test.md`: what
+  the in-guest gates check and their limits; the in-guest steps are no longer
+  `continue-on-error`. New screenshots from the development image in QEMU:
+  the desktop and the login screen; the Cockpit's LIVE tab, Orion Tools tab
+  (top, and its Guided actions and On this deck groups) and Settings drawer
+  were retaken on the release-branch image after the deck-test fixes.
 
 ---
 

@@ -666,5 +666,62 @@ ev_after = (HOME / "events.log").read_text() if (HOME / "events.log").exists() e
 ck("--severity info --source cockpit --category tooling" in ev_after[len(ev_before):],
    f"one info event records it ({ev_after[len(ev_before):]!r})")
 
+# ---------------------------------------------------------------- Tools tab: one tile everywhere (DEC-PHASE13-073/074)
+print("[tools tab: sensors, services, guided actions and on-this-deck are status tiles with switches (DEC-PHASE13-073/074)]")
+IR = sys.modules["control_center.sections.ir"]
+IR.T.load_catalogue = lambda *_a, **_k: ([
+    {"id": "pewpew", "name": "Orion-X Attack Map", "kind": "page", "launch": "/pewpew/", "blurb": "tracers",
+     "runtime_path": str(ROOT / "scripts")},
+    {"id": "nmap", "name": "nmap", "kind": "command", "command": "nmap -sV -Pn <target>", "blurb": "discovery",
+     "runtime_path": "pkg:nmap-not-on-this-box"},
+    {"id": "diag", "name": "orionx-diag", "kind": "command", "command": "sudo orionx-diag", "blurb": "verify",
+     "runtime_path": str(ROOT / "scripts/orionx-diag")},
+], [])
+stub("systemctl", "echo inactive; exit 3")
+cw.select_tab("tools")
+_in_tools = set(map(id, walk(tools_box)))
+for pl in [x for x in Poller.instances if id(x.owner) in _in_tools]:
+    pl.kick()
+
+
+def _tools_labels():
+    return [w.get_text() for w in walk(tools_box) if isinstance(w, Gtk.Label)]
+
+
+ck(wait_for(lambda: any(t.startswith("SENSORS") for t in _tools_labels())
+            and any(t.startswith("BASE TOOLS") for t in _tools_labels()), 8.0),
+   "the Sensors group and the On-this-deck groups are drawn")
+heads = [t.split("  ")[0] for t in _tools_labels() if t.isupper() or "  " in t and t.split("  ")[0].isupper()]
+for g in ("SENSORS", "SERVICES", "GUIDED ACTIONS", "WORKBENCH PAGES", "ORION-X COMMANDS", "BASE TOOLS"):
+    ck(g in heads, f"group {g} is a titled tile group ({heads})")
+names = " | ".join(_tools_labels())
+ck("Suricata  UNKNOWN" in names and "Zeek  UNKNOWN" in names,
+   "with no posture status the sensors say UNKNOWN, not RUNNING or STOPPED")
+ck("nmap  MISSING" in names and "Orion-X Attack Map  READY" in names,
+   "an absent catalogue entry is listed as MISSING instead of hidden")
+ck("Nebula AI runtime  STOPPED" in names and "Workbench server  " in names, "services show their state")
+btns = [w for w in walk(tools_box) if isinstance(w, Gtk.Button)]
+start = next((b for b in btns if (b.get_tooltip_text() or "").startswith("Run Suricata now")), None)
+ck(start is not None and start.get_sensitive(), "Suricata has a Start switch")
+nmap_btn = [b for b in btns if (b.get_tooltip_text() or "").startswith("discovery")]
+ck(nmap_btn and not nmap_btn[0].get_sensitive(), "a MISSING tool's button is disabled")
+if start is not None:
+    start.clicked()
+    pump(0.3)
+    sens = HOME / ".config" / "orionx" / "sensors"
+    ck(sens.exists() and sens.read_text() == "suricata=on\n", f"Start writes the request ({sens.read_text() if sens.exists() else 'absent'!r})")
+    ck("Suricata: start requested" in cw.toast_bar._label.get_text(), f"and says it is a request ({cw.toast_bar._label.get_text()!r})")
+    ck(wait_for(lambda: any(isinstance(w, Gtk.Button) and w.get_label() == "Follow tier" for w in walk(tools_box)), 8.0),
+       "a manual override offers Follow tier")
+    fol = next(w for w in walk(tools_box) if isinstance(w, Gtk.Button) and w.get_label() == "Follow tier")
+    fol.clicked()
+    pump(0.3)
+    ck(not sens.exists(), "Follow tier removes the override")
+hb = [w.get_label() for w in walk(cw) if isinstance(w, Gtk.Button)]
+ck("Attack Map" in hb and "Workbench" in hb, f"the header carries Attack Map and Workbench on every tab ({[b for b in hb if b in ('Attack Map', 'Workbench')]})")
+pump(0.3)
+tab_min = cw.nb.get_nth_page(cw._pages["tools"]).get_child().get_preferred_width()[0]
+ck(tab_min <= 1366 - 2 * 24, f"the rebuilt Orion Tools tab still fits a 1366 px deck (minimum {tab_min} px)")
+
 print(f"Results: {PASS} passed, {FAIL} failed", flush=True)
 os._exit(1 if FAIL else 0)   # skip GTK teardown: it can hang under Xvfb

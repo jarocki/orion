@@ -132,6 +132,7 @@ If `orionx-diag` emits a FAIL on a freshly booted, unmodified ISO:
 |--------|-------------|
 | `mesh/orionx-mesh` | WireGuard P2P mesh CLI |
 | `nebula/nebula` | Nebula AI CLI dispatcher |
+| `nebula/runtime_ctl.py` | `nebula stop` / `nebula start`: unload the model, stop or start the runtime |
 | `orionx-freshen-yara.sh` | Post-boot YARA ruleset updater |
 | `orionx-freshen-suricata.sh` | Post-boot Suricata ET-Open rule fetcher |
 

@@ -103,11 +103,15 @@ Verifies the Debian packages the image depends on:
 - `ssdeep` (fuzzy hashing), `hashdeep` (provides `md5deep`, `sha1deep`,
   `hashdeep`), `yara`, `python3-yara`, `suricata` installed
 - `pefile` importable (from `python3-pefile` or the RE venv)
-- `clamav` **ABSENT** (dropped from the base ISO per DEC-PHASE11-009; available
-  via `/opt/orionx/optional/install-clamav.sh`)
+- `clamav` **ABSENT** from the base ISO (DEC-PHASE11-009). Since v3.2.0 the
+  operator adds it with `sudo orionx-optional install clamav`, which leaves an
+  install record in `/var/lib/orionx/optional/clamav.json`; with that record
+  the check passes (*installed by orionx-optional*). ClamAV with no record
+  came with the image or another route, and fails.
 
 `radare2` is not asserted: it is not packaged in Debian trixie and is not on the
-image (#85). Ghidra is the reverse-engineering option, via `install-ghidra.sh`.
+image (#85). Ghidra is the reverse-engineering option, via
+`sudo orionx-optional install ghidra`.
 
 ### 4. `files`
 
@@ -122,7 +126,8 @@ Verifies files and directories that must exist in the live filesystem:
   rulesets themselves are fetched post-boot by `orionx-freshen-yara`)
 - `/var/lib/suricata/orionx-README.md`
 - Optional installer library `/opt/orionx/optional/lib/orionx-installer-common.sh`
-- Every optional installer present and executable
+- Every optional installer present and executable (`orionx-optional` runs
+  them; operators use `orionx-optional`, not the scripts)
   (`install-{bluetooth,clamav,duckdb,element,floss,geoip,ghidra,piper-voice,trid,zeek}.sh`)
 - GTK theme `/usr/share/themes/Orion-X-Cyberdeck/`
 - Plymouth theme `/usr/share/plymouth/themes/orionx-phoenix/`
@@ -197,7 +202,7 @@ this tree, in both cases telling the operator nothing true about the image.
 
 ### 10. `optional`
 
-- All 6 installer scripts source `orionx-installer-common.sh`
+- All 10 installer scripts source `orionx-installer-common.sh`
 - `orionx-installer-common.sh` defines all 7 required functions
   (`check_root`, `check_network`, `apt_install`, `wget_verified`,
   `verify_sha256`, `log_info`, `log_error`)
@@ -358,8 +363,10 @@ regenerated (`scripts/nebula/store.py consolidate` rebinds it).
 **`[packages] clamav ABSENT from base ... FAIL`**
 
 ClamAV is present on this image, which means it was not removed per
-DEC-PHASE11-009. This indicates a pre-W11-7 ISO. Use `install-clamav.sh` on a
-current image instead.
+DEC-PHASE11-009 and has no `orionx-optional` install record: it came with
+the image (a pre-W11-7 ISO, or a build regression) or was installed some other
+way. On a current image add it with `sudo orionx-optional install clamav`,
+which records the install, so this check passes.
 
 **`[branding] xsettings.xml contains Orion-X-Cyberdeck GTK theme ... FAIL`**
 

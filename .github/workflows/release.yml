@@ -199,6 +199,10 @@ jobs:
       - name: Install release tooling on the runner (xorriso, squashfs-tools)
         if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.can_sign == 'true'
         run: |
+          # The runner image configures Microsoft's apt repository, which this job
+          # does not use. It answered 403 on 2026-11-27 (runs 45922215757 and
+          # 45939173768) and apt-get update failed the job. Drop it first.
+          sudo grep -rl packages.microsoft.com /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -f
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends xorriso squashfs-tools
 

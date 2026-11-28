@@ -20,6 +20,7 @@ from gi.repository import GLib, Gtk, Pango  # type: ignore[import]  # noqa: E402
 from ..helpers import optional_view as V  # noqa: E402
 from ..helpers import style, ux  # noqa: E402
 from ..helpers.background import Poller  # noqa: E402
+from . import tiles as TL  # noqa: E402  (DEC-PHASE13-074: one tile for every list on the tab)
 
 POLL_MS = 15000          # idle refresh while the tab is visible
 POLL_BUSY_MS = 2000      # while an action runs (ours or one started elsewhere)
@@ -55,19 +56,14 @@ class OptionalPanel:
         self.box.pack_start(top, False, False, 0)
         note = Gtk.Label(xalign=0)
         note.set_line_wrap(True)
-        note.set_markup(f'<span foreground="{V.DIM}" size="small">admin password asked once, '
-                        'then remembered about 5 minutes (polkit)</span>')
+        # Measured on the v3.2.0 image: live-config's polkit rule approves every
+        # action for the live account, so no password is asked (DEC-PHASE13-058, #203).
+        note.set_markup(f'<span foreground="{V.DIM}" size="small">runs as root through polkit; '
+                        'the live account is approved without a password (see #203)</span>')
         self.box.pack_start(note, False, False, 0)
 
         body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        self.groups = Gtk.FlowBox()
-        self.groups.set_selection_mode(Gtk.SelectionMode.NONE)
-        self.groups.set_min_children_per_line(1)
-        self.groups.set_max_children_per_line(2)
-        self.groups.set_column_spacing(10)
-        self.groups.set_row_spacing(10)
-        self.groups.set_homogeneous(True)
-        self.groups.set_valign(Gtk.Align.START)
+        self.groups = TL.flow()
         body.pack_start(self.groups, True, True, 0)
         body.pack_start(self._build_detail(), False, False, 0)
         self.box.pack_start(body, False, False, 0)
@@ -174,17 +170,10 @@ class OptionalPanel:
             self.groups.remove(ch)
         self.tiles = {}
         for g, tools in V.grouped(d):
-            frame = Gtk.Frame()
-            gb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-            gb.set_border_width(8)
-            head = Gtk.Label(xalign=0)
             ready = sum(1 for t in tools if t.get("state") in ("installed", "active"))
-            head.set_markup(f'<span foreground="{V.CYAN}"><b>{_esc(g["name"].upper())}</b></span>'
-                            f'  <span foreground="{V.DIM}">{ready} of {len(tools)} ready</span>')
-            gb.pack_start(head, False, False, 2)
+            frame, gb = TL.group(g["name"], f"{ready} of {len(tools)} ready")
             for t in tools:
                 gb.pack_start(self._tile(t), False, False, 0)
-            frame.add(gb)
             self.groups.add(frame)
         self.groups.show_all()
         if self.selected is None and FOCUS:
@@ -193,33 +182,13 @@ class OptionalPanel:
 
     def _tile(self, t: dict) -> Gtk.Widget:
         look = V.tile(t)
-        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        led = Gtk.Label()
-        led.set_markup(f'<span foreground="{look["color"]}" size="large">●</span>')
-        texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        name = Gtk.Label(xalign=0)
-        name.set_markup(f'<b>{_esc(t.get("name", t["id"]))}</b>  '
-                        f'<span foreground="{look["color"]}" size="small"><b>{_esc(look["word"])}</b></span>')
-        name.set_ellipsize(Pango.EllipsizeMode.END)
-        line = Gtk.Label(xalign=0)
-        line.set_markup(f'<span foreground="{V.DIM}" size="small">{_esc(look["line"])}</span>')
-        line.set_ellipsize(Pango.EllipsizeMode.END)
-        texts.pack_start(name, False, False, 0)
-        texts.pack_start(line, False, False, 0)
-        btn = Gtk.Button(label=look["button"])
-        btn.get_style_context().add_class("orionx-tool")
-        btn.set_size_request(104, -1)
-        btn.set_sensitive(look["enabled"] and not (self.running and look["action"]))
-        if look["tip"]:
-            btn.set_tooltip_text(look["tip"])
-        btn.connect("clicked", lambda _w, i=t["id"]: self._on_button(i))
-        ev = Gtk.EventBox()     # click the tile body to select it
-        ev.add(texts)
-        ev.connect("button-press-event", lambda *_a, i=t["id"]: self._select(i))
-        row.pack_start(led, False, False, 0)
-        row.pack_start(ev, True, True, 0)
-        row.pack_end(btn, False, False, 0)
-        self.tiles[t["id"]] = {"led": led, "button": btn, "look": look, "name": name, "line": line}
+        tid = t["id"]
+        row, w = TL.tile(t.get("name", tid), look["word"], look["color"], look["line"],
+                         [(look["button"], lambda i=tid: self._on_button(i),
+                           look["enabled"] and not (self.running and look["action"]), look["tip"])],
+                         on_select=lambda i=tid: self._select(i))   # click the tile body to select it
+        self.tiles[tid] = {"led": w["led"], "button": w["buttons"][0], "look": look,
+                           "name": w["name"], "line": w["line"]}
         return row
 
     def _select(self, tid: str) -> bool:

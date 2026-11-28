@@ -436,10 +436,19 @@ run_packages_checks() {
             "python3-pefile not installed via dpkg and not importable from /opt/orionx/venv/re/"
     fi
 
-    # 3h: clamav MUST be absent (W11-7 debloat gate)
+    # 3h: clamav MUST NOT come with the image (W11-7 debloat gate). Since
+    # v3.2.0 the operator adds it with `orionx-optional install clamav`, which
+    # leaves an install record; a clamav with that record is the supported
+    # optional install, not a base-image regression. Without a record it came
+    # with the image (or another route), which is what this gate catches.
+    local optional_records="${ORIONX_OPTIONAL_RECORD_DIR:-/var/lib/orionx/optional}"
     if dpkg -l clamav 2>/dev/null | grep -q "^ii"; then
-        check_fail "$cat" "clamav ABSENT from base (W11-7 DEC-PHASE11-009)" \
-            "clamav is installed but must be optional-only; run install-clamav.sh to use it"
+        if [[ -f "$optional_records/clamav.json" ]]; then
+            check_pass "$cat" "clamav not in the base image (installed by orionx-optional; DEC-PHASE11-009)" ""
+        else
+            check_fail "$cat" "clamav ABSENT from base (W11-7 DEC-PHASE11-009)" \
+                "clamav is installed with no orionx-optional record ($optional_records/clamav.json): it came with the image or another route; the base must not ship it (add it with: sudo orionx-optional install clamav)"
+        fi
     else
         check_pass "$cat" "clamav ABSENT from base (W11-7 DEC-PHASE11-009)" ""
     fi

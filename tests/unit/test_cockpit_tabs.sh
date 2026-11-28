@@ -207,7 +207,7 @@ grep -q 'M.read_history()' "$CC/sections/mesh.py" && pass "Mesh tab reads bus hi
 grep -q 'C.client_states(' "$CC/sections/comms.py" && grep -q 'Gtk.Button(label="Install")' "$CC/sections/comms.py" && pass "Comms offers Install for absent clients" || fail "comms install" "missing"
 grep -q '"Next hop", _next_hop' "$CC/sections/awareness.py" && grep -q '"DNS", _dns' "$CC/sections/awareness.py" && grep -qF 'rows["Firewall address"] = _firewall_addr' "$CC/sections/awareness.py" && pass "Awareness rows: firewall address, next hop, DNS" || fail "awareness rows" "missing"
 grep -q 'Spark("packets/s"' "$CC/sections/awareness.py" && pass "Awareness sparklines (packets/cpu/mem/disk)" || fail "sparklines" "missing"
-grep -q 'T.on_deck(local, os.path.exists)' "$CC/sections/ir.py" && pass "Orion Tools is dynamic: the Workbench catalogue at runtime" || fail "tools dynamic" "missing"
+grep -q 'deck_groups(local, os.path.exists)' "$CC/sections/ir.py" && pass "Orion Tools is dynamic: the Workbench catalogue at runtime, checked against the deck (DEC-PHASE13-074)" || fail "tools dynamic" "missing"
 ! grep -q 'optional_state\|install_argv' "$CC/sections/ir.py" && pass "Orion Tools has no installer copy; the Workbench's Optional section is the one (#95)" || fail "installers" "Orion Tools still carries installers"
 for d in 053 054 055 056 057; do grep -rq "DEC-PHASE12-$d" "$CC" && pass "DEC-PHASE12-$d annotated" || fail "DEC-PHASE12-$d" "not annotated"; done
 echo "==========================================="; echo "Results: $PASS passed, $FAIL failed"; echo "==========================================="

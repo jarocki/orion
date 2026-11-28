@@ -138,7 +138,8 @@ file to the tarball, or write it on the issue.
 [ ] Desktop: no password box after 10 minutes idle (#76/#78).
 [ ] Cockpit Tools tab: tools grouped (network, malware, comms, deck); each
     shows installed/active/health; install and uninstall work from the tab and
-    ask for your password once per few minutes (#197-#199).
+    run without a password prompt on the live account (live-config's polkit
+    rule approves it; #203) (#197-#199).
 [ ] Cockpit header: the deck verdict (NOMINAL/BUSY/WATCH/...) changes while an
     optional install runs, and the TASKS strip shows it (#202).
 [ ] LIVE: memory/disk/battery marks; a resource crossing flashes (#202).

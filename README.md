@@ -1,6 +1,6 @@
 # Orion-X Phoenix Edition — Cyberdeck for the Good Guys
 
-**Source version:** v3.1.6 (Codex-findings patch on v3.1.5: narration audio stays out of the shared `/tmp` (#191), volume and mute hold on `aplay`-only decks, the network picture takes directed broadcasts from the deck's own subnets, and the gateway DNS canary judges the direct resolver too; includes v3.0.1 through v3.1.5). **Latest ISO:** [v3.1.6](https://github.com/jarocki/orion/releases/tag/v3.1.6) — CI-built and gated from the tag, signed by the owner (2026-11-19), not yet booted on hardware; previous: [v3.1.5](https://github.com/jarocki/orion/releases/tag/v3.1.5) (2026-11-15, also not booted on hardware), [v3.1.4](https://github.com/jarocki/orion/releases/tag/v3.1.4) (2026-11-06, booted on an HP Pavilion 2026-11-06), [v3.1.3](https://github.com/jarocki/orion/releases/tag/v3.1.3) (2026-11-05, also not booted on hardware), [v3.1.2](https://github.com/jarocki/orion/releases/tag/v3.1.2) (2026-10-31, also not booted on hardware), [v3.1.0](https://github.com/jarocki/orion/releases/tag/v3.1.0) (booted on an HP Pavilion 2026-10-26) and [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0).
+**Source version:** v3.2.0 (the Cockpit installs and removes optional tools in place, and auto-healing consent and Nebula warm-up are Cockpit controls; resource alarms and where-it-is-heading trends on LIVE; Ollama 0.40.17; the QEMU job's in-guest checks gate again; a one-command hardware check, `deck-check.sh`; includes v3.0.1 through v3.1.6). **Latest ISO:** [v3.1.6](https://github.com/jarocki/orion/releases/tag/v3.1.6) — CI-built and gated from the tag, signed by the owner (2026-11-19), not yet booted on hardware; previous: [v3.1.5](https://github.com/jarocki/orion/releases/tag/v3.1.5) (2026-11-15, also not booted on hardware), [v3.1.4](https://github.com/jarocki/orion/releases/tag/v3.1.4) (2026-11-06, booted on an HP Pavilion 2026-11-06), [v3.1.3](https://github.com/jarocki/orion/releases/tag/v3.1.3) (2026-11-05, also not booted on hardware), [v3.1.2](https://github.com/jarocki/orion/releases/tag/v3.1.2) (2026-10-31, also not booted on hardware), [v3.1.0](https://github.com/jarocki/orion/releases/tag/v3.1.0) (booted on an HP Pavilion 2026-10-26) and [v3.0.0](https://github.com/jarocki/orion/releases/tag/v3.0.0).
 **Base:** Debian 13 "trixie" live (kernel 6.12, Python 3.13, XFCE 4.20) | **Runtime:** Qwen2.5-3B-Instruct (Apache-2.0)
 **Previous line:** v2.1.0-bullseye-rain (final Debian 11 build, kept as a known-good fallback)
 
@@ -30,16 +30,42 @@ Mission verbs: **monitor** / **detect** / **defend** / **triage** / **timeline**
 > between reboots unless you set up persistence, or update itself. See
 > [Known issues](#known-issues).
 
-v3.1.0 gives every Cockpit tab the LIVE look and the status strip, fills out the
+v3.2.0 makes the Cockpit the place to manage the deck. Its **Orion Tools** tab
+installs and removes the optional tools in place, with a live progress bar and
+an uninstall that removes only what the install added (`orionx-optional`, one
+manager for all of them); the Workbench mirrors that state read-only. The
+**Settings** drawer gains an **Engine** group: auto-healing consent per action
+class and Nebula warm-up. LIVE shows where things are heading: the deck
+verdict (NOMINAL, BUSY, WATCH, DEGRADED, UNDER ATTACK), a TASKS strip while
+something runs, resource alarms with amber and red marks that R.A.I.N. also
+speaks, and the 15-minute change in threat pressure and attack sources.
+Every tool on Orion Tools now shows its status and the switches that apply to
+it; Suricata and Zeek get Start/Stop beside the tier, and they run on any
+connected interface rather than waiting for traffic. `nebula stop` frees the
+model's memory, and two header buttons open the Attack Map and the Workbench
+from every tab.
+Ollama moves to 0.40.17 with the model store kept read-only. Refused bus
+events are now counted, and critical Zeek notices from an attacker can propose
+a block. The QEMU job's in-guest checks had delivered no result for weeks;
+they run again as gates and now check the desktop session too. See the
+[changelog](CHANGELOG.md) for the full list.
+
+| LIVE at Tier 2, after an optional tool installed | Orion Tools: sensors, services, optional tools |
+|---|---|
+| [![Orion Cockpit LIVE tab at Tier 2](docs/images/cockpit-live.png)](docs/images/cockpit-live.png) | [![Orion Tools tab with sensor and service switches](docs/images/cockpit-tools.png)](docs/images/cockpit-tools.png) |
+
+*The v3.2.0 release-branch image in QEMU (2026-11-28): real events, no demo feed. More in the [User Guide](docs/User_Guide.md#orion-cockpit).*
+
+Earlier, v3.1.0 gave every Cockpit tab the LIVE look and the status strip, filled out the
 Network tab (interfaces, protocol traffic, NetworkManager WireGuard VPNs,
-bounded capture with a path into Wireshark), fixes the Workbench and Cockpit
-icons, and stops `orionx-logquery` waiting silently on a terminal. It also
-carries the v3.0.2 security-review fixes in [PR #100](https://github.com/jarocki/orion/pull/100)
-and [PR #101](https://github.com/jarocki/orion/pull/101). It moves event
-publication behind a root-owned local socket broker and adds RFC 5848 signed
+bounded capture with a path into Wireshark), fixed the Workbench and Cockpit
+icons, and stopped `orionx-logquery` waiting silently on a terminal. It also
+carried the v3.0.2 security-review fixes in [PR #100](https://github.com/jarocki/orion/pull/100)
+and [PR #101](https://github.com/jarocki/orion/pull/101), which moved event
+publication behind a root-owned local socket broker and added RFC 5848 signed
 logging. See the [review](docs/SECURITY_REVIEW_2026-10-24.md) and
 [changelog](CHANGELOG.md) for scope, trust limits, and verification status.
-The videos below show the v3.0.0 image, not v3.0.1–v3.1.0.
+The videos below show the v3.0.0 image, not later releases; the screenshots in the [User Guide](docs/User_Guide.md) are of v3.2.0.
 
 [![Watch the Orion-X 3.0 release trailer](docs/media/orionx-trailer-v3.0.0-poster.png)](docs/media/orionx-trailer-v3.0.0.mp4)
 
@@ -77,12 +103,12 @@ capture, and the narration is synthesised offline. The earlier beta walkthrough
   sweeps many ports. Runs by default, needs no rules and no network, and sends
   no packets, so it works at Tier 0. A wider second window also
   catches timing-evasive scans such as `nmap -T2`.
-- **Suricata IDS** — lazy-start network IDS. It is **off by default and ships
-  no threat rules**: enable with
-  `sudo touch /var/lib/suricata/orionx-enabled && sudo systemctl start suricata`,
-  then fetch rules with `sudo orionx-freshen-suricata` (needs a network).
-  Until both are done Suricata detects nothing — port-scan coverage on a stock
-  deck comes from `orionx-scanwatch` above.
+- **Suricata IDS** — network IDS with a curated ET-Open ruleset on the image
+  (about 3,200 signatures, sized for a 2 GB deck). It is **off at Tier 0**:
+  threat-posture Tier 1 or 2 starts it, as does **Start** on its tile in
+  Cockpit → Orion Tools → Sensors. The full ET-Open feed is an opt-in
+  (`sudo orionx-freshen-suricata`, needs a network and more RAM). Port-scan
+  coverage at Tier 0 comes from `orionx-scanwatch` above.
 - **capa** — capability detection for binaries (`/opt/orionx/venv/re/`)
 - **ssdeep**, **hashdeep** (provides `md5deep`/`sha1deep`), **python3-pefile** —
   fuzzy hashing, recursive hashing, and PE parsing
@@ -98,7 +124,7 @@ the supported reverse-engineering option and installs post-boot via
 
 ### AI Copilot — Nebula Runtime
 
-- **Ollama** serving **Qwen2.5-3B-Instruct Q4_K_M** locally (1.9 GB, Apache-2.0,
+- **Ollama 0.40.17** serving **Qwen2.5-3B-Instruct Q4_K_M** locally (1.9 GB, Apache-2.0,
   approximately 2-3x faster than Mistral-7B on CPU — see DEC-PHASE11-002)
 - **Integrity check** — the model blob ollama loads is SHA-256-verified at every
   boot by `nebula-integrity-check.service`; on mismatch the runtime is not started
@@ -117,36 +143,42 @@ the supported reverse-engineering option and installs post-boot via
 - **matrix-commander** — CLI Matrix client at `/opt/orionx/venv/comms/`
 - **Element desktop** — available via optional installer (see below)
 
-### Optional Installers (network-connected nodes only)
+### Optional Tools (installed after boot, over the network)
 
-Tools too large or freshness-sensitive for the base ISO live under
-`/opt/orionx/optional/`. Run any installer as root on a network-connected node:
+Tools too large or freshness-sensitive for the base ISO install after boot.
+One manager handles all of them, from the Cockpit's **Orion Tools** tab or a
+terminal:
 
-| Script | What it installs |
+```bash
+orionx-optional status                 # every tool by group: installed, active, health
+sudo orionx-optional install clamav    # needs network to the tool's download source
+sudo orionx-optional uninstall clamav  # removes what that install added, nothing else
+```
+
+| Group | Tools (id) |
 |---|---|
-| `install-clamav.sh` | ClamAV (~350 MB; signature freshness decays — hence optional) |
-| `install-ghidra.sh` | NSA Ghidra reverse engineering suite |
-| `install-element.sh` | Element Matrix desktop client |
-| `install-floss.sh` | Mandiant FLOSS string extractor |
-| `install-trid.sh` | TrID file type identification |
-| `install-zeek.sh` | Zeek network security monitor (recovery path if the build-time install failed) |
-| `install-geoip.sh` | DB-IP Lite country + ASN labels for the attack map |
-| `install-duckdb.sh` | DuckDB accelerator for `orionx-logquery` |
-| `install-piper-voice.sh` | Piper natural voice for R.A.I.N. narration |
-| `install-bluetooth.sh` | Bluetooth support (bluez + blueman) for a mouse, keyboard or headset; no reboot, works offline from a cache on the ISO |
+| Network & hunting | Zeek (`zeek`, also in the image; this is its recovery path), GeoIP labels for the attack map (`geoip`), DuckDB for `orionx-logquery` (`duckdb`) |
+| Malware analysis | ClamAV (`clamav`), FLOSS (`floss`), TrID (`trid`), Ghidra with OpenJDK 21 (`ghidra`) |
+| Team comms | Element desktop (`element`) |
+| Deck: voice & peripherals | Piper natural voice for R.A.I.N. (`piper-voice`), Bluetooth (`bluetooth`, works offline from a cache on the ISO) |
 
-All installers share `orionx-installer-common.sh`: root check, network check,
-apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
+Each install checks the tool works and records exactly what it added in
+`/var/lib/orionx/optional/<id>.json`; uninstall removes only that, and refuses
+if apt would take anything else with it. A download whose SHA-256 pin or
+signing key does not match is refused and reported as critical. Every install
+and uninstall is announced on the event bus. See the
+[User Guide, §15](docs/User_Guide.md#15-optional-installers).
 
 ### Detection, Autonomy and Confinement
 
 - **Threat posture is enforced, not just displayed** — `orionx-postured` applies
-  the tier you select. Tier 0 starts nothing; Tier 1 starts Suricata and
-  publishes alerts with MITRE ATT&CK technique IDs; Tier 2 adds local-only
-  decoys and canary files. If a tier implies IDS coverage but Suricata has no
+  the tier you select. Tier 0 starts nothing; Tier 1 starts Suricata and Zeek
+  on every connected interface and publishes alerts with MITRE ATT&CK
+  technique IDs; Tier 2 adds local-only decoys and canary files. Orion Tools
+  can start or stop either sensor by hand until the tier is next changed. If a tier implies IDS coverage but Suricata has no
   threat rules, the deck says so loudly rather than watching nothing in silence.
 - **Auto-healing** — `orionx-heald` executes the action classes you pre-approve
-  in the Cockpit's Auto-Healing tab, with a real undo for each, rollback timers, and a
+  in the Cockpit's **Settings → Engine** group (or `orionx-heal autonomy`), with a real undo for each, rollback timers, and a
   hash-chained audit ledger (`orionx-heal verify`). It fails closed: with no
   autonomy file it does nothing. It will not block your own address, loopback or
   the mesh.
@@ -168,7 +200,7 @@ apt/wget helpers, and SHA256 verification. See `docs/User_Guide.md` for usage.
 
 - **Plymouth**: Phoenix splash on boot (`orionx-phoenix` theme)
 - **GRUB / isolinux**: plain, readable text menus (the graphical GRUB theme was retired after failing on hardware — DEC-PHASE11-044; the boot identity is the Plymouth splash)
-- **Orion Cockpit**: live Cairo dashboard on the R.A.I.N. event bus, plus tabs for network, mesh, comms, awareness, tools, Nebula AI and auto-healing (`orionx-cockpit`; desktop icon and panel launcher); every Orion-X tool lives under the **Orion** application menu
+- **Orion Cockpit**: live Cairo dashboard on the R.A.I.N. event bus, plus tabs for network, mesh, comms, awareness, Orion Tools and Nebula AI and a Settings drawer (`orionx-cockpit`; desktop icon and panel launcher); every Orion-X tool lives under the **Orion** application menu
 - **LightDM greeter**: Orion-X-Greeter with Phoenix backdrop
 - **XFCE GTK theme**: `Orion-X-Cyberdeck` (Adwaita-dark fork with Phoenix red-orange `#FF5722` accent)
 - **Icons**: `Orion-X-Icons` (Papirus-Dark inheritance + 6 custom SVG icons)
@@ -294,8 +326,8 @@ sudo orionx-diag --category nebula
 ```
 
 Expected: all identity, manifest, packages, files, and systemd categories PASS.
-For the v3.1.0 ISO, `grep ISO_VERSION= /etc/orionx-version` prints
-`ISO_VERSION=v3.1.0` (the v3.0.0 ISO prints `ISO_VERSION=v3.0.0`).
+For the v3.1.6 ISO, `grep ISO_VERSION= /etc/orionx-version` prints
+`ISO_VERSION=v3.1.6`; every release prints its own tag.
 See `docs/orionx-diag.md` for interpreting results.
 
 ---
@@ -303,7 +335,7 @@ See `docs/orionx-diag.md` for interpreting results.
 ## Development
 
 ```bash
-make lint              # ShellCheck + ruff
+make lint              # ShellCheck over scripts/ and tests/, ruff, decision-log check
 make test-unit         # bash + python unit tests (~1400+ assertions)
 make iso-build         # Full ISO build (Linux only; use Docker on macOS)
 make docker-build      # Build the Debian Trixie container for ISO builds
@@ -323,6 +355,7 @@ Contributor guide: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 - [User Guide](docs/User_Guide.md) — Comprehensive operator manual
 - [orionx-diag](docs/orionx-diag.md) — Diagnostic tool reference
 - [orionx-imager](docs/orionx-imager.md) — Host-side USB writer reference
+- [QEMU boot test](docs/qemu-boot-test.md) — Boot harness and the CI gates (in-guest checks, limits)
 - [Release Process](docs/release-process.md) — rc-cut and hotfix cadence
 - [Development Checklist](docs/DEVELOPMENT_CHECKLIST.md) — Contributor pre-commit gates
 - [Architecture Decisions](MASTER_PLAN.md) — DEC-PHASE*-xxx series is canonical (Phase 12 decisions live inline as `@decision` blocks until #97 lands)
@@ -381,16 +414,30 @@ without the bundled model.
 
 ## Known issues
 
-Open in the v3.1.0 ISO (each links to its tracking issue):
+Open for v3.2.0 (each links to its tracking issue):
 
-- **Found on hardware (HP Pavilion, 2026-10-26; also present in v3.0.0):** display
-  brightness #119, panel widgets #120/#121, spoken-alert fallback #122 and
-  pronunciation #123, Cockpit → Attack Map #124, Suricata ruleset #125,
-  DEFENSIVE ACTIONS pane #126, logquery depth #127, tool attribution #128
-  (milestones v3.1.1 and v3.2.0).
+- **Waiting on a hardware boot:** narration latency on the reference deck
+  ([#96](https://github.com/jarocki/orion/issues/96)), why an `apt install` on
+  the live system disturbed other packages
+  ([#121](https://github.com/jarocki/orion/issues/121)), and the v3.1.5 deck
+  checks ([#188](https://github.com/jarocki/orion/issues/188)). Run
+  `sudo /opt/orionx/optional/deck-check.sh` on the deck and attach its tarball;
+  it collects the evidence for all three.
+- **Idle RAM is about 1.1 GB** in the 2 GiB test VM once the desktop has
+  finished starting; the budget is 1.25 GiB for v3.2.0, and
+  [#218](https://github.com/jarocki/orion/issues/218) tracks bringing it back
+  under 1 GiB. On a 2 GB deck with no swap, loading the Nebula model (about
+  2 GB) next to the desktop leaves little room.
+- **Passwordless administrator rights**
+  ([#203](https://github.com/jarocki/orion/issues/203)): whether the live
+  account keeps NOPASSWD sudo once the wizard has set a password is an open
+  owner decision (see below).
 
-- **SSH is installed but not started at boot** (fixes
-  [#98](https://github.com/jarocki/orion/issues/98), still open until the owner closes it). The old "SSH admin
+The hardware findings from the HP Pavilion boot of v3.1.0 (#119–#128) are
+fixed in v3.1.1 and v3.1.5.
+
+- **SSH is installed but not started at boot**
+  ([#98](https://github.com/jarocki/orion/issues/98)). The old "SSH admin
   one-shot" credential was removed: it targeted an account SSH refuses. Start
   sshd deliberately with `sudo systemctl start ssh`; the firewall accepts port
   22 only over the mesh (`wg0`), key login only, for `orionx-operator`.
@@ -399,17 +446,19 @@ Open in the v3.1.0 ISO (each links to its tracking issue):
   until the operator runs `sudo orionx-mesh candidates approve <VPN_IP>`.
   Installing the optional team PSK before joining permits automatic discovery;
   a pre-planned peer list remains the deterministic option (User Guide §5).
-- **`radare2` and `fonts-iosevka` are not shipped** ([#85](https://github.com/jarocki/orion/issues/85)):
+- **`radare2` and `fonts-iosevka` are not shipped** ([#85](https://github.com/jarocki/orion/issues/85), closed):
   Debian 13 has no candidate package for either. Ghidra installs post-boot via
   `sudo orionx-optional install ghidra`; Hack is the monospace font.
 - **The operator account is root without a prompt** (by design; see the User
   Guide, §3 *The Live Account and Administrator Rights*).
-- **Hardware coverage:** boot-tested on two laptops (Lenovo Bay Trail: v3.0.0, 2026-10-18; HP Pavilion: v3.1.0, 2026-10-26) and in QEMU (BIOS + UEFI). Other hardware is untested — reports welcome.
-- **Deferred items and their decisions** (Zeek capture unit, gomuks removal, TrID
+- **Hardware coverage:** boot-tested on two laptops (Lenovo Bay Trail: v3.0.0, 2026-10-18; HP Pavilion: v3.1.0, 2026-10-26, and v3.1.4, 2026-11-06) and in QEMU (BIOS + UEFI). v3.1.5, v3.1.6 and v3.2.0 are QEMU-gated but not yet booted on hardware. Other hardware is untested — reports welcome.
+- **Deferred items and their decisions** (Zeek capture unit, TrID
   pins, MAC randomisation, exim4, firmware, mesh auto-peering, daemon user,
   duckdb/GeoIP pinning, the old demo recorder) are listed in the CHANGELOG under
   v3.0.0 "Known issues", each with its owner decision DEC-PHASE13-001 … 012 for
-  a later patch line.
+  a later patch line. Two of them are settled in v3.2.0: gomuks is removed
+  (DEC-PHASE13-003, #206) and TrID's definitions are shape-checked rather
+  than pinned (DEC-PHASE13-059).
 
 ---
 
